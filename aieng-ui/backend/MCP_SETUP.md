@@ -51,18 +51,18 @@ Then point an MCP HTTP client at `http://127.0.0.1:8765/sse`.
 
 ## Wiring into Claude Code
 
-Add the following to `~/.claude/mcp.json` (global) or `<project>/.claude/mcp.json`
-(per-workspace). Replace the absolute paths with the ones on your machine.
-
-### Windows / PowerShell
+A project-scoped config is already committed to this repo (`.mcp.json` for Claude
+Code, `.vscode/mcp.json` for VS Code/Copilot), so a fresh clone needs no manual
+wiring **if you have a conda env named `aieng311`** with build123d installed. It uses
+`conda run` so it stays portable — no hard-coded username or install path:
 
 ```json
 {
   "mcpServers": {
     "aieng-workbench": {
-      "command": "C:\\Users\\RL_Carla\\anaconda3\\envs\\aieng311\\python.exe",
-      "args": ["-m", "app.mcp_server"],
-      "cwd": "C:\\Users\\RL_Carla\\Desktop\\workspace_aieng\\aieng-ui\\backend",
+      "command": "conda",
+      "args": ["run", "-n", "aieng311", "--no-capture-output", "python", "-m", "app.mcp_server"],
+      "cwd": "aieng-ui/backend",
       "env": {
         "AIENG_BACKEND_URL": "http://127.0.0.1:8000"
       }
@@ -71,9 +71,16 @@ Add the following to `~/.claude/mcp.json` (global) or `<project>/.claude/mcp.jso
 }
 ```
 
-> **Note on Python:** Use the `aieng311` conda environment — it has build123d installed.
-> System Python (`C:\Python314\`) does NOT have build123d; using it will cause
-> `cad.execute_build123d` to return `build123d_unavailable`.
+> **Why `conda run -n aieng311`:** MCP clients launch the server as a subprocess
+> without activating any environment, so a bare `python` would pick up whatever is
+> on PATH (often a system Python *without* build123d → `cad.execute_build123d`
+> returns `build123d_unavailable`). `conda run -n aieng311` always resolves the right
+> interpreter regardless of machine. `--no-capture-output` is required so conda does
+> not buffer the stdio JSON-RPC stream.
+>
+> **If your env has a different name** (or you don't use conda), either rename your
+> env to `aieng311`, edit the `-n aieng311` argument, or point `command` directly at
+> that interpreter, e.g. `"command": "C:\\path\\to\\envs\\myenv\\python.exe", "args": ["-m", "app.mcp_server"]`.
 
 > **`AIENG_BACKEND_URL` (Phase 2 — live UI):** when set, the MCP server forwards
 > every tool call to the *running* FastAPI backend's `/api/agent/invoke-tool`
@@ -86,13 +93,16 @@ Add the following to `~/.claude/mcp.json` (global) or `<project>/.claude/mcp.jso
 
 ### macOS / Linux
 
+Same `conda run` form (paths use forward slashes; the committed config already works
+from a clone):
+
 ```json
 {
   "mcpServers": {
     "aieng-workbench": {
-      "command": "python",
-      "args": ["-m", "app.mcp_server"],
-      "cwd": "/path/to/workspace_aieng/aieng-ui/backend",
+      "command": "conda",
+      "args": ["run", "-n", "aieng311", "--no-capture-output", "python", "-m", "app.mcp_server"],
+      "cwd": "aieng-ui/backend",
       "env": {
         "AIENG_BACKEND_URL": "http://127.0.0.1:8000"
       }
@@ -101,9 +111,8 @@ Add the following to `~/.claude/mcp.json` (global) or `<project>/.claude/mcp.jso
 }
 ```
 
-If you use a conda env (the workspace memory mentions `aieng311`), make
-`command` point at that env's Python instead of the system one — e.g.
-`"command": "C:\\Users\\RL_Carla\\anaconda3\\envs\\aieng311\\python.exe"`.
+If you don't use conda, point `command` at the interpreter that has build123d
+directly, e.g. `"command": "/path/to/venv/bin/python", "args": ["-m", "app.mcp_server"]`.
 
 ## Per-agent config quick reference
 
@@ -124,11 +133,14 @@ Claude Code via `CLAUDE.md` `@import`; Copilot via `.github/copilot-instructions
 
 Codex uses TOML, not JSON, and its MCP config is global (not per-project). Add:
 
+Codex's MCP config is global (not project-scoped), so `cwd` must be the absolute
+path to *your* clone — replace it. The `command` stays portable via `conda run`:
+
 ```toml
 [mcp_servers.aieng-workbench]
-command = "C:\\Users\\RL_Carla\\anaconda3\\envs\\aieng311\\python.exe"
-args = ["-m", "app.mcp_server"]
-cwd = "C:\\Users\\RL_Carla\\Desktop\\workspace_aieng\\aieng-ui\\backend"
+command = "conda"
+args = ["run", "-n", "aieng311", "--no-capture-output", "python", "-m", "app.mcp_server"]
+cwd = "<absolute-path-to-clone>/aieng-ui/backend"
 
 [mcp_servers.aieng-workbench.env]
 AIENG_BACKEND_URL = "http://127.0.0.1:8000"

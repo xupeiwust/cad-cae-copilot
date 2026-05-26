@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aieng-freecad-mcp"
+version = "1.0.0rc1"
+description = "Composable FreeCAD MCP server — agent-facing bridge for CAD/CAE engineering operations with optional .aieng evidence layer."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Libin Mao", email = "id256211@ostfalia.de"},
+    {name = "Yinan Wang", email = "fhwangyinan@sina.com"},
+]
+keywords = [
+    "mcp",
+    "freecad",
+    "cad",
+    "cae",
+    "fea",
+    "agent",
+    "llm",
+    "ai",
+    "model-context-protocol",
+    "claude",
+    "anthropic",
+    "engineering",
+    "calculix",
+    "step",
+    "bridge",
+    "adapter",
+    "tool-use",
+    "design-automation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "mcp>=1.25.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "PyYAML>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/armpro24-blip/aieng-freecad-mcp"
+Repository = "https://github.com/armpro24-blip/aieng-freecad-mcp"
+Issues = "https://github.com/armpro24-blip/aieng-freecad-mcp/issues"
+Documentation = "https://github.com/armpro24-blip/aieng-freecad-mcp/blob/main/docs/mcp_runtime_tools.md"
+"Sister project (aieng)" = "https://github.com/armpro24-blip/aieng"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-timeout>=2.3.0",
+]
+
+[project.scripts]
+freecad-mcp = "freecad_mcp.server:main"
+
+[project.entry-points."aieng.backends"]
+freecad = "freecad_mcp.aieng_bridge.modeling_executor:FreeCADModelingBackend"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["-ra", "-q", "--strict-markers"]
+markers = [
+    "freecad: tests that require a real FreeCAD installation",
+]

@@ -1,0 +1,83 @@
+{
+  "claim_policy": {
+    "aieng_core_executes_external_tools": false,
+    "aieng_core_executes_solvers_meshers_or_optimizers": false,
+    "aieng_core_performs_cad_edits": false,
+    "best_effort_conversion": true,
+    "do_not_infer_missing_information": true,
+    "external_tools_execute": true,
+    "missingness_explicit": true,
+    "unsupported_is_not_false": true
+  },
+  "converter_id": "freecad_reference",
+  "converter_version": "0.1.0",
+  "display_name": "FreeCAD reference converter",
+  "format_version": "0.1.0",
+  "generated_at_utc": "2026-05-14T01:44:11Z",
+  "notes": [
+    "Reference converter \u2014 intentionally narrow. Other FreeCAD adapters may extend or replace it.",
+    "Never runs solvers, meshers, optimizers, or CAD edits."
+  ],
+  "source_file_extensions": [
+    ".FCStd",
+    ".fcstd"
+  ],
+  "source_system": "FreeCAD",
+  "supported_levels": [
+    {
+      "level": 0,
+      "name": "source_metadata",
+      "notes": [
+        "Always: records source FCStd metadata, byte size, sha256."
+      ],
+      "supported": true
+    },
+    {
+      "conditional_requirements": [
+        "FreeCAD runtime importable AND OCC/CadQuery installed",
+        "Or a STEP export performed externally and imported via aieng import-step"
+      ],
+      "level": 1,
+      "name": "geometry_topology",
+      "notes": [
+        "Offline FCStd parsing does not produce stable topology IDs. Run `aieng extract-topology --backend occ` on a STEP export instead."
+      ],
+      "supported": false
+    },
+    {
+      "level": 2,
+      "name": "object_registry",
+      "notes": [
+        "Object registry is built from FCStd Document.xml object names."
+      ],
+      "supported": true
+    },
+    {
+      "level": 3,
+      "name": "feature_aware",
+      "notes": [
+        "Feature candidates derived from heuristic naming rules. All features are marked with recognition.confidence='medium' or 'low' and an explicit uncertainty note; they are NOT treated as confirmed CAD feature truth."
+      ],
+      "supported": true
+    },
+    {
+      "level": 4,
+      "name": "editability_metadata",
+      "notes": [
+        "Editability metadata is recorded for FCStd parameters (parameter_source='freecad_property', writeback_strategy='none'). The converter does NOT perform any edit."
+      ],
+      "supported": true
+    },
+    {
+      "conditional_requirements": [
+        "Future FreeCAD scripted-rebuild adapter (out of scope for the reference converter)"
+      ],
+      "level": 5,
+      "name": "roundtrip_writeback_metadata",
+      "notes": [
+        "Writeback strategy metadata is not yet emitted by this reference converter; the contract is in place for future implementations."
+      ],
+      "supported": false
+    }
+  ]
+}

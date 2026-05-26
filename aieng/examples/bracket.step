@@ -1,0 +1,10 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('AIENG Phase 5C reference fixture: minimal STEP-like file. Current topology extraction is mock-based and does not parse this content.'),'2;1');
+FILE_NAME('bracket.step','2026-05-06T00:00:00',('aieng'),('aieng'),'aieng mock fixture','aieng','');
+FILE_SCHEMA(('CONFIG_CONTROL_DESIGN'));
+ENDSEC;
+DATA;
+#1=PRODUCT('BRACKET_REFERENCE','Mock bracket reference fixture','Not real CAD geometry',());
+ENDSEC;
+END-ISO-10303-21;

@@ -1,0 +1,252 @@
+{
+  "features": [
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Definition-sourced semantic parameters are available for proposals, but no geometry regeneration backend is attached.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_flange_body_001",
+      "intent": {
+        "generation_hint": "circular_disc",
+        "role": "structural_base_candidate"
+      },
+      "name": "Flange body disc",
+      "parameter_confidence": "medium",
+      "parameter_source": "agent_defined",
+      "parameters": {
+        "outer_diameter_mm": 200,
+        "shape": "circular_disc",
+        "thickness_mm": 25
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "structured_definition"
+      },
+      "type": "base_plate",
+      "writeback_strategy": "none"
+    },
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Definition-sourced semantic parameters are available for proposals, but no geometry regeneration backend is attached.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_pipe_bore_001",
+      "intent": {
+        "generation_hint": "central_through_bore",
+        "role": "pipe_interface_protected"
+      },
+      "name": "Pipe bore through-hole",
+      "parameter_confidence": "medium",
+      "parameter_source": "agent_defined",
+      "parameters": {
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "center_mm": [
+          0,
+          0,
+          12.5
+        ],
+        "depth_mm": 25,
+        "diameter_mm": 100,
+        "through": true
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "structured_definition"
+      },
+      "relationships": [
+        {
+          "reason": "Central bore is part of flange body.",
+          "source_feature_id": "feat_pipe_bore_001",
+          "target_feature_id": "feat_flange_body_001",
+          "type": "located_on"
+        }
+      ],
+      "type": "boss",
+      "writeback_strategy": "none"
+    },
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Definition-sourced semantic parameters are available for proposals, but no geometry regeneration backend is attached.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_bolt_hole_pattern_001",
+      "intent": {
+        "generation_hint": "eight_through_holes_pcd_160",
+        "role": "mounting_interface_candidate"
+      },
+      "name": "Bolt-hole mounting pattern",
+      "parameter_confidence": "medium",
+      "parameter_source": "agent_defined",
+      "parameters": {
+        "axis": [
+          0,
+          0,
+          1
+        ],
+        "count": 8,
+        "diameter_mm": 20,
+        "distribution": "equal_angular",
+        "pitch_circle_diameter_mm": 160,
+        "through": true
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "structured_definition"
+      },
+      "relationships": [
+        {
+          "reason": "Bolt holes are on the flange face.",
+          "source_feature_id": "feat_bolt_hole_pattern_001",
+          "target_feature_id": "feat_flange_body_001",
+          "type": "located_on"
+        }
+      ],
+      "type": "mounting_hole_pattern",
+      "writeback_strategy": "none"
+    },
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Definition-sourced semantic parameters are available for proposals, but no geometry regeneration backend is attached.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_raised_face_001",
+      "intent": {
+        "generation_hint": "annular_raised_face",
+        "role": "sealing_interface_candidate"
+      },
+      "name": "Raised sealing face",
+      "parameter_confidence": "medium",
+      "parameter_source": "agent_defined",
+      "parameters": {
+        "center_mm": [
+          0,
+          0,
+          25
+        ],
+        "inner_diameter_mm": 100,
+        "nominal_area_mm2": 3140,
+        "normal": [
+          0,
+          0,
+          1
+        ],
+        "outer_diameter_mm": 130
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "structured_definition"
+      },
+      "relationships": [
+        {
+          "reason": "Raised face is on the top surface of the flange.",
+          "source_feature_id": "feat_raised_face_001",
+          "target_feature_id": "feat_flange_body_001",
+          "type": "located_on"
+        }
+      ],
+      "type": "interface_face",
+      "writeback_strategy": "none"
+    },
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Definition-sourced semantic parameters are available for proposals, but no geometry regeneration backend is attached.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_lightening_pocket_001",
+      "intent": {
+        "generation_hint": "pockets_between_bolt_holes",
+        "role": "mass_reduction_candidate"
+      },
+      "name": "Lightening pocket candidate",
+      "parameter_confidence": "medium",
+      "parameter_source": "agent_defined",
+      "parameters": {
+        "candidate_region": "flange_outer_ring_between_bolt_holes",
+        "notes": "Candidate region for mass reduction; not yet validated."
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "structured_definition"
+      },
+      "relationships": [
+        {
+          "reason": "Pocket region is between the bolt holes.",
+          "source_feature_id": "feat_lightening_pocket_001",
+          "target_feature_id": "feat_bolt_hole_pattern_001",
+          "type": "adjacent_to"
+        }
+      ],
+      "type": "unknown_feature",
+      "writeback_strategy": "none"
+    }
+  ],
+  "format_version": "0.1.0",
+  "metadata": {
+    "assumptions": [
+      "Flange is represented semantically; no CAD topology exists in this probe.",
+      "Bolt-hole pattern and pipe bore are the protected interfaces.",
+      "Flange outer ring is the primary candidate for mass reduction."
+    ],
+    "definition_sourced": true,
+    "design_requirements": {
+      "mass_target": {
+        "objective": "reduce_flange_ring_mass_without_changing_interfaces",
+        "protected_feature_ids": [
+          "feat_bolt_hole_pattern_001",
+          "feat_pipe_bore_001"
+        ],
+        "target_reduction_percent": 10
+      },
+      "protected_interfaces": [
+        "feat_bolt_hole_pattern_001",
+        "feat_pipe_bore_001"
+      ],
+      "structural_targets": {
+        "max_von_mises_stress_mpa": 120
+      }
+    },
+    "geometry_generation": "not_implemented",
+    "known_limitations": [
+      "No imported STEP geometry.",
+      "No solver result evidence attached by default.",
+      "Feature parameters are semantic intent only."
+    ],
+    "limitations": [
+      "No imported STEP geometry.",
+      "No solver result evidence attached by default.",
+      "Feature parameters are semantic intent only.",
+      "No STEP geometry is present.",
+      "No topology map is present.",
+      "Feature geometry references are semantic-only."
+    ],
+    "manufacturing": {},
+    "provenance": {
+      "authoring_method": "deterministic_fixture",
+      "source": "hand_authored_benchmark_probe"
+    },
+    "simulation": {
+      "fixed": [
+        "feat_bolt_hole_pattern_001"
+      ],
+      "loads": [
+        {
+          "application": "distributed_pressure_1_5_mpa_on_bore_area_7854mm2",
+          "direction": [
+            0,
+            0,
+            1
+          ],
+          "target": "feat_pipe_bore_001",
+          "type": "pressure",
+          "value_n": 11781
+        }
+      ],
+      "type": "static_structural"
+    },
+    "source_mode": "definition"
+  }
+}

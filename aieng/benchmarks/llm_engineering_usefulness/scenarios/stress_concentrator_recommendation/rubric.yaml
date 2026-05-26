@@ -1,0 +1,107 @@
+# Deterministic substring rubric for stress_concentrator_recommendation.
+#
+# The scenario asks a recommendation, not a multi-choice. Scoring is
+# split across four criteria so a model that identifies the right
+# feature but doesn't propose a fix (or vice-versa) lands at partial
+# credit, not at full correctness.
+#
+# Anti-hallucination penalties target the most common failure modes:
+# claiming a definitive cure, recommending the wrong feature.
+
+scenario_id: stress_concentrator_recommendation
+rubric_type: deterministic_substring
+version: "0.1"
+
+efficiency:
+  token_budget: 4000
+  description: >-
+    Min(1.0, token_budget / total_tokens_used). Same budget as scenario 2;
+    multi-step reasoning with a longer expected explanation.
+
+criteria:
+  - id: names_concentrator_feature
+    description: Names fillet_inner_corner / the 1 mm fillet / rib-to-flange fillet.
+    weight: 0.4
+    patterns:
+      - "fillet_inner_corner"
+      - "inner-corner fillet"
+      - "inner corner fillet"
+      - "1 mm fillet"
+      - "1mm fillet"
+      - "1.0 mm fillet"
+      - "inner fillet"
+      - "rib-to-flange fillet"
+      - "rib to flange fillet"
+      - "fillet at the central_rib"
+  - id: proposes_radius_increase
+    description: Proposes increasing the fillet radius / using a larger fillet.
+    weight: 0.3
+    patterns:
+      - "increase the fillet radius"
+      - "increase the radius"
+      - "increasing the fillet radius"
+      - "increasing the radius"
+      - "increasing the fillet"
+      - "increased fillet radius"
+      - "larger fillet"
+      - "larger radius"
+      - "increase fillet"
+      - "round the corner more"
+      - "bigger fillet"
+      - "more generous fillet"
+      - "generous fillet"
+      - "enlarge the fillet"
+      - "enlarging the fillet"
+  - id: evidence_grounded
+    description: Cites a specific stress / SF / yield number from the package.
+    weight: 0.2
+    patterns:
+      - "280 mpa"
+      - "280"
+      - "1.25"
+      - "350 mpa"
+      - "safety factor"
+      - "below the"
+      - "below 1.5"
+      - "yield"
+  - id: acknowledges_uncertainty
+    description: Acknowledges that the proposal needs re-analysis / is not validated.
+    weight: 0.1
+    patterns:
+      - "re-analysis"
+      - "reanalysis"
+      - "re-analyse"
+      - "rerun"
+      - "re-run"
+      - "should be verified"
+      - "needs verification"
+      - "needs validation"
+      - "to confirm"
+      - "preliminary"
+      - "not validated"
+      - "should be checked"
+      - "fea would be required"
+
+# Hallucination guards
+hallucination_penalties:
+  - pattern: "will restore the safety factor"
+    penalty: 0.3
+  - pattern: "guaranteed safe"
+    penalty: 0.3
+  - pattern: "definitively safe"
+    penalty: 0.3
+  - pattern: "the part is safe as-is"
+    penalty: 0.4
+  - pattern: "modify the outer fillet"
+    penalty: 0.4
+  - pattern: "fillet_outer_corner is the concentrator"
+    penalty: 0.5
+  - pattern: "central_rib is the concentrator"
+    penalty: 0.5
+  - pattern: "remove the central_rib"
+    penalty: 0.4
+
+# Score interpretation:
+#   C: total >= 0.6 AND no hallucination penalties applied
+#   P: 0.3 <= total < 0.6 OR total >= 0.6 with penalties
+#   I: total < 0.3

@@ -1,0 +1,24 @@
+{
+  "mappings": [
+    {
+      "target_id": "bc_fixed_mounting_holes",
+      "target_name": "fixed_mounting_holes",
+      "target_type": "boundary_condition",
+      "feature_id": "feat_mounting_holes_001",
+      "interface_id": "iface_mounting_001",
+      "geometry_ref_id": "geom_feat_mounting_holes_001",
+      "mapping_method": "user_provided",
+      "confidence": "high"
+    },
+    {
+      "target_id": "load_center_load",
+      "target_name": "center_load",
+      "target_type": "load",
+      "feature_id": "feat_base_plate_001",
+      "interface_id": "iface_load_001",
+      "geometry_ref_id": "geom_feat_base_plate_001",
+      "mapping_method": "user_provided",
+      "confidence": "high"
+    }
+  ]
+}

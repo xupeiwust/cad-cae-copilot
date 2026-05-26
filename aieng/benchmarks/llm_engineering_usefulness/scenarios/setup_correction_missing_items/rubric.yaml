@@ -1,0 +1,110 @@
+# Deterministic substring rubric for setup_correction_missing_items.
+#
+# This scenario specifically rewards completeness — naming all three
+# gaps (missing loads, missing solver_settings, dangling load reference)
+# is the gold-standard correct answer. The rubric uses four criteria so
+# a response that names two-of-three lands at "P" (partial) rather than
+# "C" (correct).
+
+scenario_id: setup_correction_missing_items
+rubric_type: deterministic_substring
+version: "0.1"
+
+# Per-trial token budget. This scenario is less reasoning-heavy than the
+# recommendation scenarios — the answer is itemising what is absent —
+# so the budget is tighter than scenario 2 / 3.
+efficiency:
+  token_budget: 3000
+  description: >-
+    Min(1.0, token_budget / total_tokens_used). Tight budget because
+    listing missing items requires concise output, not multi-step
+    reasoning.
+
+criteria:
+  - id: names_missing_loads
+    description: Identifies parsed_loads.json / loads as missing.
+    weight: 0.3
+    patterns:
+      - "parsed_loads"
+      - "parsed_loads.json"
+      - "loads are missing"
+      - "loads is missing"
+      - "missing loads"
+      - "no loads"
+      - "loads file is absent"
+      - "loads file is missing"
+      - "load definitions are missing"
+      - "load definition is missing"
+  - id: names_missing_solver_settings
+    description: Identifies solver_settings.json / solver settings as missing.
+    weight: 0.3
+    patterns:
+      - "solver_settings"
+      - "solver settings"
+      - "solver settings are missing"
+      - "solver settings is missing"
+      - "missing solver"
+      - "no solver settings"
+      - "solver step"
+      - "analysis settings"
+  - id: identifies_dangling_reference
+    description: Identifies the load_case_001 references an undefined load_lateral.
+    weight: 0.25
+    patterns:
+      - "load_lateral"
+      - "dangling reference"
+      - "undefined load"
+      - "load reference"
+      - "load is not defined"
+      - "load is undefined"
+      - "load_refs references"
+      - "references a load"
+      - "load case references"
+      - "load_case_001 references"
+      - "load_case_001 refers"
+  - id: proposes_correction_plan
+    description: Proposes an additive correction action.
+    weight: 0.15
+    patterns:
+      - "add parsed_loads"
+      - "add the loads"
+      - "create parsed_loads"
+      - "create the loads"
+      - "define the load"
+      - "provide the load"
+      - "add solver_settings"
+      - "create solver_settings"
+      - "define solver settings"
+      - "provide solver settings"
+      - "add the missing"
+      - "add the following"
+
+# Anti-hallucination guards. Most dangerous failure mode is a model
+# that says "the setup looks ready, run the solver". The penalty
+# weights zero out the correct-answer credit in that case.
+hallucination_penalties:
+  - pattern: "ready_for_solver: true"
+    penalty: 0.5
+  - pattern: "ready for solver"
+    penalty: 0.3
+  - pattern: "the setup is complete"
+    penalty: 0.5
+  - pattern: "setup looks ready"
+    penalty: 0.5
+  - pattern: "ready to run"
+    penalty: 0.4
+  - pattern: "run the solver as-is"
+    penalty: 0.5
+  - pattern: "no issues"
+    penalty: 0.4
+  - pattern: "mesh is missing"
+    penalty: 0.4
+  - pattern: "materials are missing"
+    penalty: 0.4
+  - pattern: "boundary conditions are missing"
+    penalty: 0.4
+
+# Score interpretation:
+#   C: total >= 0.6 AND no hallucination penalties applied
+#   P: 0.3 <= total < 0.6 OR >= 0.6 with penalties
+#   I: total < 0.3

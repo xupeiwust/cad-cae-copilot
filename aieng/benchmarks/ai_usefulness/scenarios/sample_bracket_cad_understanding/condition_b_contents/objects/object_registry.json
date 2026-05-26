@@ -1,0 +1,70 @@
+{
+  "format": "aieng.object_registry",
+  "format_version": "0.1.0",
+  "notes": [
+    "Generated index from FCStd Document.xml objects.",
+    "Object registry is not the source of truth; graph/feature_graph.json and the source FCStd remain authoritative."
+  ],
+  "objects": [
+    {
+      "defined_in": "graph/feature_graph.json",
+      "id": "obj_plate",
+      "kind": "feature",
+      "name": "Base plate",
+      "referenced_by": [
+        "graph/feature_graph.json"
+      ],
+      "roles": [
+        "freecad_object"
+      ],
+      "status": "generated_index",
+      "type": "Part::Box"
+    },
+    {
+      "defined_in": "graph/feature_graph.json",
+      "id": "obj_mountinghole_1",
+      "kind": "feature",
+      "name": "MountingHole_1",
+      "referenced_by": [
+        "graph/feature_graph.json"
+      ],
+      "roles": [
+        "freecad_object"
+      ],
+      "status": "generated_index",
+      "type": "PartDesign::Hole"
+    },
+    {
+      "defined_in": "graph/feature_graph.json",
+      "id": "obj_mountinghole_2",
+      "kind": "feature",
+      "name": "MountingHole_2",
+      "referenced_by": [
+        "graph/feature_graph.json"
+      ],
+      "roles": [
+        "freecad_object"
+      ],
+      "status": "generated_index",
+      "type": "PartDesign::Hole"
+    },
+    {
+      "defined_in": "graph/feature_graph.json",
+      "id": "obj_flange_top",
+      "kind": "feature",
+      "name": "Flange_Top",
+      "referenced_by": [
+        "graph/feature_graph.json"
+      ],
+      "roles": [
+        "freecad_object"
+      ],
+      "status": "generated_index",
+      "type": "PartDesign::Pad"
+    }
+  ],
+  "relationships": [],
+  "source_files": [
+    "graph/feature_graph.json"
+  ]
+}

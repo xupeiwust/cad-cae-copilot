@@ -1,0 +1,204 @@
+{
+  "format_version": "0.1.0",
+  "timestamp_utc": "2026-05-12T00:00:00Z",
+  "adapters": [
+    {
+      "adapter_id": "importer_step_v1",
+      "adapter_role": "importer_step",
+      "display_name": "STEP File Importer",
+      "capability_level": 1,
+      "supported_resources": [
+        "manifest.json",
+        "geometry/source.step",
+        "geometry/normalized.step"
+      ],
+      "known_limitations": [
+        {
+          "category": "topology",
+          "description": "Real topology extraction requires CadQuery backend (--backend occ); mock topology available for testing"
+        },
+        {
+          "category": "features",
+          "description": "No automatic feature recognition; only geometry imported"
+        },
+        {
+          "category": "constraints",
+          "description": "Design intent and constraints not extracted from STEP"
+        }
+      ],
+      "notes": [
+        "L1: Import-only adapter; stores STEP as-is without semantic extraction"
+      ]
+    },
+    {
+      "adapter_id": "importer_cae_deck_v1",
+      "adapter_role": "importer_cae_deck",
+      "display_name": "CAE Deck Importer (CalculiX)",
+      "capability_level": 3,
+      "supported_resources": [
+        "manifest.json",
+        "simulation/setup.yaml",
+        "simulation/cae_mapping.json",
+        "graph/constraints.json"
+      ],
+      "known_limitations": [
+        {
+          "category": "simulation_setup",
+          "description": "Linear static structural analysis only; nonlinear, transient, thermal not supported"
+        },
+        {
+          "category": "mesh",
+          "description": "Mesh information extracted but not validated for quality"
+        },
+        {
+          "category": "roundtrip_invariance",
+          "description": "Material property precision may drift in roundtrip"
+        }
+      ],
+      "notes": [
+        "L3: Structured mapping of CAE setup to .aieng; known-only extraction with explicit unknowns"
+      ]
+    },
+    {
+      "adapter_id": "importer_solver_evidence_v1",
+      "adapter_role": "importer_solver_evidence",
+      "display_name": "Solver Result Evidence Importer",
+      "capability_level": 4,
+      "supported_resources": [
+        "manifest.json",
+        "results/evidence_index.json",
+        "results/claim_map.json",
+        "provenance/tool_trace.json"
+      ],
+      "known_limitations": [
+        {
+          "category": "results",
+          "description": "Only numeric marker detection and known observations extracted; full mesh solution not parsed"
+        },
+        {
+          "category": "validation",
+          "description": "No automatic verification status update; import is evidence-only"
+        }
+      ],
+      "notes": [
+        "L4: Validated evidence recording with explicit unknown handling; produces deterministic output per input"
+      ]
+    },
+    {
+      "adapter_id": "importer_mesh_evidence_v1",
+      "adapter_role": "importer_mesh_evidence",
+      "display_name": "Mesh Evidence Importer",
+      "capability_level": 4,
+      "supported_resources": [
+        "manifest.json",
+        "results/evidence_index.json",
+        "results/claim_map.json",
+        "provenance/tool_trace.json"
+      ],
+      "known_limitations": [
+        {
+          "category": "mesh",
+          "description": "Element and node count recorded; quality metrics (skew, aspect ratio) not computed"
+        },
+        {
+          "category": "topology",
+          "description": "Mesh-to-geometry correspondence not validated"
+        }
+      ],
+      "notes": [
+        "L4: Mesh summary evidence with explicit quality unknowns; deterministic input-to-output mapping"
+      ]
+    },
+    {
+      "adapter_id": "exporter_calculix_v1",
+      "adapter_role": "exporter_calculix",
+      "display_name": "CalculiX Solver Deck Exporter",
+      "capability_level": 3,
+      "supported_resources": [
+        "manifest.json",
+        "simulation/setup.yaml",
+        "simulation/cae_mapping.json",
+        "graph/constraints.json"
+      ],
+      "known_limitations": [
+        {
+          "category": "simulation_setup",
+          "description": "Linear static structural analysis only"
+        },
+        {
+          "category": "mesh",
+          "description": "Deck is scaffold only; meshing must be done externally with Gmsh or other tool"
+        },
+        {
+          "category": "validation",
+          "description": "Exported deck is not automatically validated with CalculiX"
+        }
+      ],
+      "notes": [
+        "L3: Generates CalculiX input deck scaffold from .aieng simulation setup; external tool validates execution"
+      ]
+    },
+    {
+      "adapter_id": "exporter_updated_deck_v1",
+      "adapter_role": "exporter_updated_deck",
+      "display_name": "Updated CalculiX Deck Exporter",
+      "capability_level": 2,
+      "supported_resources": [
+        "manifest.json",
+        "simulation/setup.yaml"
+      ],
+      "known_limitations": [
+        {
+          "category": "geometry",
+          "description": "No geometry update; only material/BC/load parameters from updated setup.yaml"
+        },
+        {
+          "category": "roundtrip_invariance",
+          "description": "Roundtrip may change deck formatting"
+        }
+      ],
+      "notes": [
+        "L2: Partial extraction; regenerates deck from simulation/setup.yaml without full semantic validation"
+      ]
+    },
+    {
+      "adapter_id": "tool_trace_recorder_v1",
+      "adapter_role": "tool_trace_recorder",
+      "display_name": "Tool Trace Recorder (CLI record-trace)",
+      "capability_level": 4,
+      "supported_resources": [
+        "manifest.json",
+        "provenance/tool_trace.json"
+      ],
+      "known_limitations": [
+        {
+          "category": "validation",
+          "description": "Does not execute external tools; records only what caller provides"
+        }
+      ],
+      "notes": [
+        "L4: Deterministic, schema-validated provenance recording; explicit validation of required fields"
+      ]
+    },
+    {
+      "adapter_id": "evidence_recorder_v1",
+      "adapter_role": "evidence_recorder",
+      "display_name": "Evidence Recorder (Core Ledger)",
+      "capability_level": 4,
+      "supported_resources": [
+        "manifest.json",
+        "results/evidence_index.json",
+        "results/claim_map.json"
+      ],
+      "known_limitations": [
+        {
+          "category": "validation",
+          "description": "Records evidence references; does not validate external tool execution"
+        }
+      ],
+      "notes": [
+        "L4: Evidence ledger management with deterministic ID generation and cross-reference validation"
+      ]
+    }
+  ]
+}

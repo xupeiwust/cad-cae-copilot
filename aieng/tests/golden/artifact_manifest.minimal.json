@@ -1,0 +1,35 @@
+{
+  "artifact_count": 3,
+  "artifacts": [
+    {
+      "category": "package",
+      "claim_advancement": "none",
+      "exists": true,
+      "kind": "package_manifest",
+      "path": "manifest.json"
+    },
+    {
+      "category": "geometry",
+      "claim_advancement": "none",
+      "exists": true,
+      "kind": "geometry",
+      "path": "geometry/source.step"
+    },
+    {
+      "category": "solver_output",
+      "claim_advancement": "none",
+      "evidence_role": "computed_extrema",
+      "exists": true,
+      "geometry_revision": 1,
+      "kind": "result",
+      "path": "results/computed_metrics.json",
+      "producer_tool": "cae.run_solver",
+      "requires_revalidation": false
+    }
+  ],
+  "claim_advancement": "none",
+  "current_geometry_revision": 1,
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "requires_revalidation": false,
+  "schema_version": "0.1"
+}

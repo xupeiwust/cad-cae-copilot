@@ -1,0 +1,108 @@
+{
+  "claim_map_id": "claim_map_001",
+  "claim_policy": {
+    "aieng_core_generates_mesh_evidence": false,
+    "aieng_core_generates_solver_evidence": false,
+    "aieng_core_modifies_cad_geometry": false,
+    "external_tools_execute": true
+  },
+  "claims": [
+    {
+      "actual_evidence_ids": [
+        "ev_task_spec_001"
+      ],
+      "claim_id": "claim_task_defined_001",
+      "claim_text": "A structured task specification has been written for this package.",
+      "claim_type": "task/task_defined",
+      "decision_criteria": {
+        "auto_advance": false,
+        "fail_requires": "explicit evidence that task specification is invalid or contradicted",
+        "note": "aieng write-task-spec sets this to pass automatically when the file is created.",
+        "pass_requires": "task/task_spec.yaml present in package with schema_validated verification status",
+        "unsupported_if": "task/task_spec.yaml absent from package"
+      },
+      "notes": "task/task_spec.yaml is present. Claim is pass.",
+      "required_evidence_ids": [
+        "ev_task_spec_001"
+      ],
+      "verification_status": "pass"
+    },
+    {
+      "actual_evidence_ids": [
+        "ev_handoff_001"
+      ],
+      "claim_id": "claim_handoff_defined_001",
+      "claim_text": "An external tool handoff contract has been written for this package.",
+      "claim_type": "handoff/contract_defined",
+      "decision_criteria": {
+        "auto_advance": false,
+        "fail_requires": "explicit evidence that handoff contract is invalid or contradicted",
+        "note": "aieng write-external-tool-requirements sets this to pass automatically when the file is created.",
+        "pass_requires": "task/external_tool_requirements.json present in package with schema_validated verification status",
+        "unsupported_if": "task/external_tool_requirements.json absent from package"
+      },
+      "notes": "task/external_tool_requirements.json is present. Claim is pass.",
+      "required_evidence_ids": [
+        "ev_handoff_001"
+      ],
+      "verification_status": "pass"
+    },
+    {
+      "actual_evidence_ids": [],
+      "claim_id": "claim_solver_result_001",
+      "claim_text": "Solver result evidence is available for this package.",
+      "claim_type": "solver/result_available",
+      "decision_criteria": {
+        "auto_advance": false,
+        "fail_requires": "explicit evidence of solver failure or numeric results contradicting engineering targets",
+        "needs_review_if": "solver result evidence present but all numeric_observations in not_found",
+        "note": "Use aieng update-claim --claim-id claim_solver_result_001 --status pass --evidence-id <id> after reviewing numeric observations.",
+        "pass_requires": "at least one evidence item with evidence_type=solver_result and verification_status in [available, schema_validated, unverified]",
+        "unsupported_if": "no solver result evidence attached"
+      },
+      "notes": "No solver result evidence has been attached. External solver execution required.",
+      "required_evidence_ids": [
+        "ev_solver_001"
+      ],
+      "verification_status": "unsupported"
+    },
+    {
+      "actual_evidence_ids": [],
+      "claim_id": "claim_mesh_evidence_001",
+      "claim_text": "Mesh generation evidence is available for this package.",
+      "claim_type": "mesh/evidence_available",
+      "decision_criteria": {
+        "auto_advance": false,
+        "needs_review_if": "mesh evidence present but mesh_summary absent or quality metrics not declared",
+        "note": "Use aieng update-claim --claim-id claim_mesh_evidence_001 --status pass --evidence-id <id> after reviewing mesh summary.",
+        "pass_requires": "at least one evidence item with evidence_type=mesh_evidence and verification_status in [available, schema_validated, unverified]",
+        "unsupported_if": "no mesh evidence attached"
+      },
+      "notes": "No mesh evidence has been attached. External CAE mesh generation required.",
+      "required_evidence_ids": [
+        "ev_mesh_001"
+      ],
+      "verification_status": "unsupported"
+    },
+    {
+      "actual_evidence_ids": [],
+      "claim_id": "claim_geometry_modification_001",
+      "claim_text": "CAD geometry modification evidence is available for this package.",
+      "claim_type": "geometry/modification_evidence_available",
+      "decision_criteria": {
+        "auto_advance": false,
+        "fail_requires": "explicit evidence of failed CAD geometry modification",
+        "note": "Use aieng update-claim --claim-id claim_geometry_modification_001 --status pass --evidence-id <id> after external CAD writeback completes.",
+        "pass_requires": "at least one evidence item with evidence_type=geometry_modification and verification_status in [available, schema_validated, unverified]; external CAD tool must have written back a modified geometry artifact",
+        "unsupported_if": "no geometry modification evidence attached"
+      },
+      "notes": "No geometry modification evidence has been attached. External CAD tool required.",
+      "required_evidence_ids": [
+        "ev_geometry_mod_001"
+      ],
+      "verification_status": "unsupported"
+    }
+  ],
+  "format_version": "0.1.0",
+  "source_task_id": "task_001"
+}

@@ -1,0 +1,60 @@
+{
+  "run_id": "run_20260514T021302Z",
+  "timestamp_utc": "20260514T021302Z",
+  "benchmark_scenario": "ai_usefulness_v1",
+  "track": "cad_understanding",
+  "question_set_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/questions.md",
+  "rubric_path": "benchmarks/ai_usefulness/scoring_rubric.md",
+  "evaluator": "Claude Code (AI evaluator)",
+  "provider": "unknown",
+  "model": "unknown",
+  "package_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_b.aieng",
+  "raw_source_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_a.md",
+  "excluded_capabilities": [
+    "MCP tool calls",
+    "RAG or retrieval augmentation",
+    "Skills, plugins, or LLM fine-tuning",
+    "External CAD tool calls",
+    "External CAE tool calls",
+    "Solver execution or result generation",
+    "LLM API calls beyond prompting with designated input files"
+  ],
+  "condition_a_files": [
+    "condition_a.md"
+  ],
+  "condition_b_files": [
+    "provenance/conversion_manifest.json",
+    "provenance/completeness_report.json",
+    "objects/object_registry.json",
+    "graph/feature_graph.json",
+    "metadata/units.yaml"
+  ],
+  "condition_a_scores": {
+    "geometry_understanding_score": 1,
+    "feature_identification_score": 1,
+    "referenceability_score": 0,
+    "missingness_honesty_score": 1,
+    "hallucination_count": 0,
+    "hallucination_penalty": 0,
+    "task_success_score": 1,
+    "total_score": 4,
+    "notes": "Correctly identified objects and parameters from raw XML; could not cite structured IDs or coverage_categories because they do not exist in Document.xml."
+  },
+  "condition_b_scores": {
+    "geometry_understanding_score": 2,
+    "feature_identification_score": 2,
+    "referenceability_score": 2,
+    "missingness_honesty_score": 2,
+    "hallucination_count": 0,
+    "hallucination_penalty": 0,
+    "task_success_score": 1,
+    "total_score": 9,
+    "notes": "Cited feat_* IDs, recognition.confidence, coverage_categories status values, and specific missing_items text across all questions."
+  },
+  "summary": "Condition B scored 9/9 compared with Condition A's 4/9, producing a delta of +5. The largest gains were in referenceability (+2) and geometry understanding, feature identification, and missingness honesty (+1 each). The .aieng package's structured coverage_categories, feature IDs, and explicit uncertainty notes enabled the AI to give grounded, specific answers rather than vague inferences from raw XML.",
+  "warnings": [
+    "Model and provider are recorded as 'unknown' because the evaluator did not record the specific AI model used for the benchmark session.",
+    "Temperature and system prompt settings were not recorded.",
+    "One run on one scenario is not sufficient for broad conclusions about .aieng utility."
+  ]
+}

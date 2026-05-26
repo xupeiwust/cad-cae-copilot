@@ -1,0 +1,43 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build and generated demo outputs
+build/
+dist/
+*.egg-info/
+examples/real_bracket.step
+
+# Local editor/system files
+.vscode/
+.idea/
+.env
+.DS_Store
+Thumbs.db
+
+# Agent/project local memory
+AGENT_WORKBOOK.md
+.backup/
+
+# Claude Code local configuration
+.claude/
+
+# inspect_ai per-run logs (Phase 30 benchmark harness)
+logs/
+# Built benchmark fixtures (regenerated from build_fixture.py)
+benchmarks/llm_engineering_usefulness/scenarios/*/fixture.aieng
+
+# Local scratch notes
+tmp/

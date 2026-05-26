@@ -1,0 +1,268 @@
+{
+  "achieved_capability_levels": [
+    {
+      "level": 0,
+      "name": "source_metadata"
+    },
+    {
+      "level": 2,
+      "name": "object_registry"
+    },
+    {
+      "level": 3,
+      "name": "feature_aware"
+    },
+    {
+      "level": 4,
+      "name": "editability_metadata"
+    }
+  ],
+  "claim_policy": {
+    "aieng_core_executes_external_tools": false,
+    "aieng_core_executes_solvers_meshers_or_optimizers": false,
+    "aieng_core_performs_cad_edits": false,
+    "best_effort_conversion": true,
+    "do_not_infer_missing_information": true,
+    "external_tools_execute": true,
+    "missingness_explicit": true,
+    "unsupported_is_not_false": true
+  },
+  "converter": {
+    "converter_id": "freecad_reference",
+    "converter_version": "0.1.0",
+    "display_name": "FreeCAD reference converter",
+    "runtime_mode": "offline",
+    "source_system": "FreeCAD"
+  },
+  "coverage_categories": [
+    {
+      "category": "geometry",
+      "missing_items": [
+        "B-rep geometry (requires FreeCAD runtime STEP export or external `aieng import-step` before topology extraction)"
+      ],
+      "notes": "Offline FCStd parsing does not produce STEP geometry. The source FCStd is preserved under provenance/source.fcstd.",
+      "status": "missing"
+    },
+    {
+      "category": "topology",
+      "missing_items": [
+        "stable face/edge/body IDs (requires `aieng extract-topology --backend occ` on a STEP export)"
+      ],
+      "status": "missing"
+    },
+    {
+      "category": "object_registry",
+      "notes": "Object names and types lifted directly from FCStd Document.xml.",
+      "resources_emitted": [
+        "objects/object_registry.json"
+      ],
+      "status": "complete"
+    },
+    {
+      "category": "stable_references",
+      "inferred_items": [
+        "Object IDs are slug-derived from FCStd names; they are not stable across renames and are not confirmed CAD stable references."
+      ],
+      "status": "partial"
+    },
+    {
+      "category": "features",
+      "inferred_items": [
+        "Feature types inferred from FCStd object name/type via regex heuristics; treat all as candidates requiring engineer review."
+      ],
+      "resources_emitted": [
+        "graph/feature_graph.json"
+      ],
+      "status": "partial"
+    },
+    {
+      "category": "parameters",
+      "inferred_items": [
+        "Numeric FCStd property values lifted as parameter proposals."
+      ],
+      "missing_items": [
+        "Non-numeric, computed, and constrained parameters not extracted."
+      ],
+      "resources_emitted": [
+        "graph/feature_graph.json"
+      ],
+      "status": "partial"
+    },
+    {
+      "category": "assemblies",
+      "notes": "Reference converter does not inspect FCStd assembly structure.",
+      "status": "unknown"
+    },
+    {
+      "category": "materials",
+      "missing_items": [
+        "Material assignments not extracted by the reference converter."
+      ],
+      "status": "missing"
+    },
+    {
+      "category": "loads",
+      "missing_items": [
+        "Load definitions not present in FCStd Document.xml."
+      ],
+      "status": "missing"
+    },
+    {
+      "category": "boundary_conditions",
+      "missing_items": [
+        "Boundary condition definitions not present in FCStd Document.xml."
+      ],
+      "status": "missing"
+    },
+    {
+      "category": "mesh",
+      "missing_items": [
+        "Mesh not generated; run an external mesher on exported geometry."
+      ],
+      "status": "missing"
+    },
+    {
+      "category": "solver_deck",
+      "missing_items": [
+        "No solver deck present; provide externally if needed."
+      ],
+      "status": "missing"
+    },
+    {
+      "category": "cad_cae_mappings",
+      "missing_items": [
+        "CAD-to-CAE mappings not established; requires geometry and mesh first."
+      ],
+      "status": "missing"
+    },
+    {
+      "category": "editability_metadata",
+      "inferred_items": [
+        "parameter_source and writeback_strategy recorded for all feature candidates."
+      ],
+      "notes": "Parameters are proposals only. The converter does not execute edits or regenerate geometry.",
+      "resources_emitted": [
+        "graph/feature_graph.json"
+      ],
+      "status": "partial"
+    },
+    {
+      "category": "writeback_metadata",
+      "notes": "L5 writeback metadata (roundtrip rebuild strategy) is not emitted by the reference converter. A future FreeCAD scripted-rebuild adapter would be required.",
+      "status": "unsupported"
+    }
+  ],
+  "declared_capability_levels": [
+    {
+      "level": 0,
+      "name": "source_metadata"
+    },
+    {
+      "level": 2,
+      "name": "object_registry"
+    },
+    {
+      "level": 3,
+      "name": "feature_aware"
+    },
+    {
+      "level": 4,
+      "name": "editability_metadata"
+    }
+  ],
+  "emitted_resources": [
+    {
+      "kind": "object_registry",
+      "level": 2,
+      "path": "objects/object_registry.json"
+    },
+    {
+      "kind": "feature_graph",
+      "level": 3,
+      "path": "graph/feature_graph.json"
+    },
+    {
+      "kind": "geometry",
+      "level": 0,
+      "notes": [
+        "Original FCStd archive preserved for traceability."
+      ],
+      "path": "provenance/source.fcstd"
+    }
+  ],
+  "format_version": "0.1.0",
+  "generated_at_utc": "2026-05-14T01:44:11Z",
+  "manifest_id": "conversion_001",
+  "notes": [
+    "Converted from FCStd source via freecad_reference (runtime_mode=offline).",
+    "No solver, mesher, optimizer, or CAD edit was executed by the converter."
+  ],
+  "source": {
+    "byte_size": 791,
+    "content_sha256": "8acea4287607cee759f5375ff7d7892be49ba0661b8b4900555c85d357f2f918",
+    "filename": "sample_bracket.FCStd",
+    "source_document_metadata": {
+      "fileversion": "1",
+      "programversion": "0.21",
+      "schemaversion": "4"
+    },
+    "source_system": "FreeCAD"
+  },
+  "uncertainty_notes": [
+    {
+      "affected_ids": [
+        "feat_plate"
+      ],
+      "description": "Feature feat_plate was classified as 'base_plate' from FCStd object name 'Plate' / type 'Part::Box'. Treat as candidate, not confirmed truth.",
+      "scope": "feature_candidate"
+    },
+    {
+      "affected_ids": [
+        "feat_mountinghole_1"
+      ],
+      "description": "Feature feat_mountinghole_1 was classified as 'mounting_hole' from FCStd object name 'MountingHole_1' / type 'PartDesign::Hole'. Treat as candidate, not confirmed truth.",
+      "scope": "feature_candidate"
+    },
+    {
+      "affected_ids": [
+        "feat_mountinghole_2"
+      ],
+      "description": "Feature feat_mountinghole_2 was classified as 'mounting_hole' from FCStd object name 'MountingHole_2' / type 'PartDesign::Hole'. Treat as candidate, not confirmed truth.",
+      "scope": "feature_candidate"
+    },
+    {
+      "affected_ids": [
+        "feat_flange_top"
+      ],
+      "description": "Feature feat_flange_top was classified as 'flange' from FCStd object name 'Flange_Top' / type 'PartDesign::Pad'. Treat as candidate, not confirmed truth.",
+      "scope": "feature_candidate"
+    }
+  ],
+  "unsupported_or_missing": [
+    {
+      "category": "topology",
+      "description": "Offline FCStd parsing cannot produce stable face/edge/body IDs. Run aieng extract-topology --backend occ on a STEP export to reach L1.",
+      "status": "missing"
+    },
+    {
+      "category": "simulation_setup",
+      "description": "FCStd Document.xml does not carry simulation setup; provide it externally if needed.",
+      "status": "missing"
+    },
+    {
+      "category": "materials",
+      "description": "FreeCAD material data was not extracted by the reference converter; provide externally if needed.",
+      "status": "missing"
+    },
+    {
+      "category": "protected_regions",
+      "description": "Protected regions must be provided by the engineer; not inferred from FCStd alone.",
+      "status": "missing"
+    },
+    {
+      "category": "writeback_strategy",
+      "description": "Reference converter does not emit writeback strategy metadata at L5.",
+      "status": "unsupported"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# Core CadQuery modeling dependency
+cadquery
+
+# Preferred Python offscreen renderer for visual review screenshots
+pyvista
+vtk

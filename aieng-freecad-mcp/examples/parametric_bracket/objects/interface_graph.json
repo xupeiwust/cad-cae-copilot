@@ -1,0 +1,18 @@
+{
+  "interfaces": [
+    {
+      "interface_id": "iface_mounting_001",
+      "name": "Mounting Interface",
+      "feature_ids": ["feat_mounting_holes_001"],
+      "role": "fixed_support",
+      "description": "Four-hole mounting pattern"
+    },
+    {
+      "interface_id": "iface_load_001",
+      "name": "Load Application Face",
+      "feature_ids": ["feat_base_plate_001"],
+      "role": "load_face",
+      "description": "Center load face on base plate"
+    }
+  ]
+}

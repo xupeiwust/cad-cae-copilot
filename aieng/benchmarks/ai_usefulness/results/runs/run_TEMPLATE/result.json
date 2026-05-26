@@ -1,0 +1,61 @@
+{
+  "run_id": "run_00000000T000000Z",
+  "timestamp_utc": "00000000T000000Z",
+  "benchmark_scenario": "ai_usefulness_v1",
+  "track": "cad_understanding",
+  "question_set_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/questions.md",
+  "rubric_path": "benchmarks/ai_usefulness/scoring_rubric.md",
+  "evaluator": "FILL_IN",
+  "provider": "FILL_IN",
+  "model": "FILL_IN",
+  "package_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_b.aieng",
+  "raw_source_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_a.md",
+  "excluded_capabilities": [
+    "MCP tool calls",
+    "RAG or retrieval augmentation",
+    "Skills, plugins, or LLM fine-tuning",
+    "External CAD tool calls",
+    "External CAE tool calls",
+    "Solver execution or result generation",
+    "LLM API calls beyond prompting with designated input files"
+  ],
+  "condition_a_files": [
+    "FILL_IN — list each file provided to the AI in Condition A"
+  ],
+  "condition_b_files": [
+    "FILL_IN — list each file provided to the AI in Condition B"
+  ],
+  "condition_a_scores": {
+    "geometry_understanding_score": 0,
+    "feature_identification_score": 0,
+    "referenceability_score": 0,
+    "missingness_honesty_score": 0,
+    "hallucination_count": 0,
+    "hallucination_penalty": 0,
+    "task_success_score": 0,
+    "total_score": 0,
+    "notes": "FILL_IN — replace zero scores with actual scored values from scoring_notes.md"
+  },
+  "condition_b_scores": {
+    "geometry_understanding_score": 0,
+    "feature_identification_score": 0,
+    "referenceability_score": 0,
+    "missingness_honesty_score": 0,
+    "hallucination_count": 0,
+    "hallucination_penalty": 0,
+    "task_success_score": 0,
+    "total_score": 0,
+    "notes": "FILL_IN — replace zero scores with actual scored values from scoring_notes.md"
+  },
+  "summary": "FILL_IN — one paragraph summary: delta, what changed between conditions, key driver",
+  "warnings": [
+    "TEMPLATE — this file has not been filled in. Do not treat it as a result.",
+    "Replace run_id and timestamp_utc with the UTC datetime of the actual run.",
+    "Replace all FILL_IN placeholders with actual values.",
+    "Replace all zero scores with scores from scoring_notes.md.",
+    "Remove these template warnings; add real run caveats if any.",
+    "See scoring_notes.md in this directory for the scoring rationale.",
+    "See observation_report.md in this directory for qualitative observations.",
+    "One run on one scenario is not sufficient for broad conclusions about .aieng utility."
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "features": {
+    "feat_base_plate_001": {
+      "name": "Base Plate",
+      "editability": {
+        "executable": true,
+        "mode": "executable_by_regeneration"
+      },
+      "writeback_strategy": "freecad_regeneration",
+      "freecad_object_name": "BasePlate",
+      "parameters": [
+        {
+          "name": "thickness_mm",
+          "freecad_parameter_name": "Thickness",
+          "current_value": 10.0,
+          "unit": "mm"
+        },
+        {
+          "name": "length_mm",
+          "freecad_parameter_name": "Length",
+          "current_value": 100.0,
+          "unit": "mm"
+        }
+      ]
+    },
+    "feat_mounting_holes_001": {
+      "name": "Mounting Holes",
+      "editability": {
+        "executable": true,
+        "mode": "executable_by_regeneration"
+      },
+      "writeback_strategy": "freecad_regeneration",
+      "freecad_object_name": "MountingHoles",
+      "parameters": [
+        {
+          "name": "diameter_mm",
+          "freecad_parameter_name": "Diameter",
+          "current_value": 6.0,
+          "unit": "mm"
+        }
+      ]
+    },
+    "feat_semantic_rib_001": {
+      "name": "Structural Rib",
+      "editability": {
+        "executable": false,
+        "mode": "semantic_only"
+      },
+      "writeback_strategy": "none",
+      "freecad_object_name": "Rib",
+      "parameters": [
+        {
+          "name": "height_mm",
+          "freecad_parameter_name": "Height",
+          "current_value": 5.0,
+          "unit": "mm"
+        }
+      ]
+    }
+  }
+}

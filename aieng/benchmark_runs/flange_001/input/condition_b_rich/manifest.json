@@ -1,0 +1,46 @@
+{
+  "created_by": {
+    "created_at": "2026-05-13T00:26:15Z",
+    "tool": "aieng 0.1.0"
+  },
+  "format_version": "0.1.0",
+  "model_id": "definition_flange_001",
+  "resources": {
+    "ai": {
+      "patches": [],
+      "readme": "README_FOR_AI.md",
+      "summary": "ai/summary.md"
+    },
+    "engineering_context": {
+      "material": "engineering_context/material.yaml"
+    },
+    "geometry": {},
+    "graph": {
+      "constraints": "graph/constraints.json",
+      "feature_graph": "graph/feature_graph.json"
+    },
+    "previews": {},
+    "readme_for_ai": "README_FOR_AI.md",
+    "results": {
+      "claim_map": "results/claim_map.json",
+      "evidence_index": "results/evidence_index.json"
+    },
+    "simulation": {},
+    "task": {
+      "external_tool_requirements": "task/external_tool_requirements.json",
+      "task_spec": "task/task_spec.yaml"
+    },
+    "validation": {
+      "completeness_report": "validation/completeness_report.json",
+      "evidence_report": "validation/evidence_report.json",
+      "status": "validation/status.yaml"
+    }
+  },
+  "source_mode": "definition",
+  "units": {
+    "force": "N",
+    "length": "mm",
+    "mass": "kg",
+    "stress": "MPa"
+  }
+}

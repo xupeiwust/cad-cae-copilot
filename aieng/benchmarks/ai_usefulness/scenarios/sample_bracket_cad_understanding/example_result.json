@@ -1,0 +1,61 @@
+{
+  "run_id": "run_20260513T000000Z",
+  "timestamp_utc": "20260513T000000Z",
+  "benchmark_scenario": "ai_usefulness_v1",
+  "track": "cad_understanding",
+  "question_set_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/questions.md",
+  "rubric_path": "benchmarks/ai_usefulness/scoring_rubric.md",
+  "provider": "example_illustrative",
+  "model": "not_a_real_run",
+  "evaluator": "phase21_scaffold_author",
+  "package_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_b.aieng",
+  "raw_source_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_a.md",
+  "excluded_capabilities": [
+    "MCP tool calls",
+    "RAG or retrieval augmentation",
+    "Skills, plugins, or LLM fine-tuning",
+    "External CAD tool calls",
+    "External CAE tool calls",
+    "Solver execution",
+    "LLM API calls beyond prompting with designated input files"
+  ],
+  "condition_a_files": [
+    "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_a.md"
+  ],
+  "condition_b_files": [
+    "README_FOR_AI.md",
+    "manifest.json",
+    "provenance/conversion_manifest.json",
+    "validation/completeness_report.json",
+    "graph/feature_graph.json",
+    "objects/object_registry.json"
+  ],
+  "condition_a_scores": {
+    "geometry_understanding_score": 1,
+    "feature_identification_score": 1,
+    "referenceability_score": 0,
+    "missingness_honesty_score": 0,
+    "hallucination_count": 1,
+    "hallucination_penalty": -1,
+    "task_success_score": 1,
+    "total_score": 2,
+    "notes": "ILLUSTRATIVE. Condition A: AI identified object types from Document.xml but could not cite coverage_categories or stable IDs. One hallucination instance: claimed topology face IDs are available."
+  },
+  "condition_b_scores": {
+    "geometry_understanding_score": 2,
+    "feature_identification_score": 2,
+    "referenceability_score": 2,
+    "missingness_honesty_score": 2,
+    "hallucination_count": 0,
+    "hallucination_penalty": 0,
+    "task_success_score": 1,
+    "total_score": 9,
+    "notes": "ILLUSTRATIVE. Condition B: AI cited coverage_categories (geometry/topology=missing), feature IDs (feat_plate, feat_mountinghole_1/2, feat_flange_top), recognition.confidence and uncertainty_note, and explicitly reported 11 missing categories without fabricating any."
+  },
+  "summary": "ILLUSTRATIVE EXAMPLE. Delta = +7. The .aieng package substantially improved referenceability (+2) and missingness honesty (+2) scores. These dimensions are not accessible from raw Document.xml alone.",
+  "warnings": [
+    "This is an illustrative example result, not a real benchmark run.",
+    "Scores are hypothetical and based on expected_scoring.md guidance.",
+    "Replace this file with actual run data."
+  ]
+}

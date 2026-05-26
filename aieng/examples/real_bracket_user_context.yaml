@@ -1,0 +1,22 @@
+material: Al6061-T6
+
+# This default context assumes the common rule-based IDs produced for the real bracket demo.
+# scripts/run_real_step_demo.py will auto-generate a fallback context if IDs differ.
+protected_features:
+  - feat_hole_pattern_001
+
+simulation:
+  type: static_structural
+  fixed:
+    - feat_hole_pattern_001
+  loads:
+    - target: feat_base_plate_001
+      type: force
+      value_n: 500
+      direction: [1, 0, 0]
+
+targets:
+  max_von_mises_stress_mpa: 120
+
+assumptions:
+  - No solver execution or mesh validation is included in this demo.

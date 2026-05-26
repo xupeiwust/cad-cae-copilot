@@ -1,0 +1,5 @@
+interface:
+  display_name: Aieng CAD Authoring
+  short_description: Create auditable .aieng CAD packages from natural-language design intent.
+  icon: cube
+  accent_color: blue

@@ -1,0 +1,41 @@
+# Assembly definition: bracket + baseplate
+#
+# Usage:
+#   aieng build-assembly-graph bracket_001.aieng --definition bracket_assembly_def.yaml
+#
+# This file defines the multi-part assembly structure. Geometry is not modified.
+# Mating relationships are structural descriptions only — no solver claims.
+
+parts:
+  - part_id: bracket_001
+    label: Bracket
+    step_ref: geometry/normalized.step
+
+  - part_id: baseplate_001
+    label: Mounting Baseplate
+
+mates:
+  - mate_id: mate_bracket_base_001
+    part_a: bracket_001
+    part_b: baseplate_001
+    mate_type: planar
+    interface_refs: []
+    notes: "Bracket base flange sits on top face of baseplate"
+
+coordinate_system:
+  frame: global_origin
+  notes: "Assembly coordinate system at mating face centre"
+
+claim_policy:
+  allowed:
+    - "describe assembly structure"
+    - "describe mating relationships between parts"
+    - "describe interface geometry candidates"
+  forbidden:
+    - "claim assembly is structurally validated without FEM analysis"
+    - "claim tolerance stack-up is acceptable without analysis"
+    - "claim interface forces are known without solver evidence"
+
+notes:
+  - "Example assembly: single bracket mounted on baseplate"
+  - "No FEM interface forces imported; assembly claims are structural descriptions only"

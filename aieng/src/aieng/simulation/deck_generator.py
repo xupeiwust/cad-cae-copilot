@@ -1,0 +1,661 @@
+"""Generate a runnable CalculiX solver input deck from existing .aieng setup artifacts.
+
+Phase 33 — Honest deck generation from CAE setup.
+
+This module assembles a runnable `.inp` deck by:
+1. Extracting the mesh section (and existing BC/load mappings) from a previously
+   imported source solver deck (`simulation/cae_imports/source_solver_deck.inp`).
+2. Generating *MATERIAL cards from current setup artifacts.
+3. Generating *STEP / *STATIC / output-request cards.
+
+It does NOT generate mesh nodes or elements. If no source deck with mesh is
+present, generation refuses with an explicit `missing_items` list.
+
+## Why hand-assembled keyword cards instead of `pyccx`?
+
+A reasonable off-the-shelf option for this layer is
+[`pyccx`](https://github.com/drlukeparry/pyccx) (BSD-2, v0.2.0 2025-08),
+which exposes Python wrappers around CalculiX cards. We chose to hand-
+assemble the cards directly here for three reasons that are load-bearing
+for the Phase 33 honesty boundary:
+
+1. **No solver execution.** `pyccx`'s purpose is to drive CalculiX —
+   build a model and run `ccx`. Phase 33 explicitly forbids solver
+   execution: AIENG generates the deck, an external runtime (e.g.
+   `aieng-ui` or a separate orchestrator) runs the solver and writes
+   back evidence. Importing `pyccx` would pull in execution machinery
+   we are contractually not allowed to call from this module.
+2. **Explicit refusal surface.** The `missing_items` path
+   (`missing_items=["materials", ...]`) is the contract surface for
+   "setup is incomplete". A library that builds a model object before
+   you can serialize it makes the *which-piece-is-missing* signal
+   harder to surface honestly. The hand-written `_resolve_*` paths
+   keep the rejection reasons explicit.
+3. **Minimal runtime dependency.** `pyccx` would become a required
+   dependency of the simulation extra; today the runtime needs only
+   `pyyaml`. Phase 33 is intentionally a *linear-static-only*
+   generator; the surface is small enough that the
+   maintenance/legibility trade favors keeping it in-tree.
+
+If a future phase needs nonlinear/modal/transient cards or
+`pyccx`-style abstractions for re-export, we should add it as an
+optional `[solver]` extra in `pyproject.toml` (mirroring `[geometry]`
+for CadQuery) rather than pulling it into the core runtime. Re-visit
+this decision when Phase 36 closed-loop benchmark shows a concrete
+need for richer deck features that the hand-assembled path cannot
+honestly express.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import tempfile
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from aieng import FORMAT_VERSION
+
+SOLVER_INPUT_PATH_TEMPLATE = "simulation/runs/{run_id}/solver_input.inp"
+SOURCE_DECK_PATH = "simulation/cae_imports/source_solver_deck.inp"
+SETUP_PATH = "simulation/setup.yaml"
+PARSED_MATERIALS_PATH = "simulation/cae_imports/parsed_materials.json"
+PARSED_BCS_PATH = "simulation/cae_imports/parsed_boundary_conditions.json"
+PARSED_LOADS_PATH = "simulation/cae_imports/parsed_loads.json"
+SOLVER_SETTINGS_PATH = "simulation/solver_settings.json"
+CAE_MAPPING_PATH = "simulation/cae_mapping.json"
+
+# Keywords that belong to the mesh / structural section of a CalculiX deck.
+# Stored as the first token (before any space or comma) for robust matching.
+_MESH_KEYWORDS = frozenset(
+    {
+        "*NODE",
+        "*ELEMENT",
+        "*NSET",
+        "*ELSET",
+        "*SOLID",       # *SOLID SECTION
+        "*SHELL",       # *SHELL SECTION
+        "*BEAM",        # *BEAM SECTION
+        "*SURFACE",
+    }
+)
+
+# Keywords that terminate a data block.
+_CONTROL_KEYWORDS = frozenset(
+    {
+        "*MATERIAL",
+        "*ELASTIC",
+        "*DENSITY",
+        "*BOUNDARY",
+        "*STEP",
+        "*STATIC",
+        "*CLOAD",
+        "*DLOAD",
+        "*NODE FILE",
+        "*EL FILE",
+        "*END STEP",
+    }
+)
+
+
+class DeckGenerationError(Exception):
+    """Raised when deck generation cannot proceed due to missing or invalid data."""
+
+
+class MissingSetupError(DeckGenerationError):
+    """Raised when required setup artifacts are absent."""
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def generate_solver_input_package(
+    package_path: str | Path,
+    *,
+    run_id: str = "run_001",
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate a runnable CalculiX `.inp` inside a `.aieng` package.
+
+    Args:
+        package_path: Path to the `.aieng` package.
+        run_id: Solver run identifier (used in output path).
+        overwrite: Whether to overwrite an existing solver input deck.
+
+    Returns:
+        Dict with ``ok``, ``out_path``, ``missing_items``, ``warnings``.
+
+    Raises:
+        MissingSetupError: If required artifacts are missing.
+        FileNotFoundError: If the package does not exist.
+        ValueError: If the package is not a valid `.aieng` archive.
+        FileExistsError: If the output deck already exists and overwrite=False.
+    """
+    package_file = Path(package_path)
+    if not package_file.exists():
+        raise FileNotFoundError(f"package does not exist: {package_file}")
+    if package_file.suffix != ".aieng":
+        raise ValueError("package path must end with .aieng")
+
+    out_path_in_zip = SOLVER_INPUT_PATH_TEMPLATE.format(run_id=run_id)
+
+    try:
+        with zipfile.ZipFile(package_file, mode="r") as zf:
+            names = set(zf.namelist())
+            if "manifest.json" not in names:
+                raise ValueError("package is missing manifest.json")
+
+            if out_path_in_zip in names and not overwrite:
+                raise FileExistsError(
+                    f"{out_path_in_zip} already exists; use --overwrite to replace it"
+                )
+
+            manifest = json.loads(zf.read("manifest.json"))
+            setup = _read_optional_yaml(zf, SETUP_PATH)
+            parsed_materials = _read_optional_json(zf, PARSED_MATERIALS_PATH)
+            parsed_bcs = _read_optional_json(zf, PARSED_BCS_PATH)
+            parsed_loads = _read_optional_json(zf, PARSED_LOADS_PATH)
+            solver_settings = _read_optional_json(zf, SOLVER_SETTINGS_PATH)
+            cae_mapping = _read_optional_json(zf, CAE_MAPPING_PATH)
+            source_deck_text = (
+                zf.read(SOURCE_DECK_PATH).decode("utf-8", errors="replace")
+                if SOURCE_DECK_PATH in names
+                else None
+            )
+            members = _read_existing_members(zf, out_path_in_zip)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"package is not a valid zip archive: {package_file}") from exc
+
+    # --- readiness check -----------------------------------------------------
+    missing: list[str] = []
+    warnings: list[str] = []
+
+    if source_deck_text is None:
+        missing.append("mesh_source_deck")
+        warnings.append(
+            "No source solver deck found. Import a complete CalculiX `.inp" "` containing mesh "
+            "via `aieng import-cae-deck` before generating a solver input."
+        )
+
+    materials = _resolve_materials(setup, parsed_materials)
+    if not materials:
+        missing.append("materials")
+
+    bcs = _resolve_boundary_conditions(setup, parsed_bcs, cae_mapping, warnings)
+    if not bcs:
+        missing.append("boundary_conditions")
+
+    loads = _resolve_loads(setup, parsed_loads, cae_mapping, warnings)
+    if not loads:
+        missing.append("loads")
+
+    if missing:
+        raise MissingSetupError(
+            f"Cannot generate solver input: missing required setup: {', '.join(missing)}"
+        )
+
+    # --- deck assembly -------------------------------------------------------
+    deck_text = _assemble_deck(
+        manifest=manifest,
+        run_id=run_id,
+        source_deck_text=source_deck_text,
+        materials=materials,
+        boundary_conditions=bcs,
+        loads=loads,
+        solver_settings=solver_settings,
+        warnings=warnings,
+    )
+
+    # --- write back into package ---------------------------------------------
+    _rewrite_package(package_file, members, manifest, out_path_in_zip, deck_text)
+
+    return {
+        "ok": True,
+        "out_path": out_path_in_zip,
+        "missing_items": [],
+        "warnings": warnings,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Setup artifact resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_materials(
+    setup: dict[str, Any] | None,
+    parsed_materials: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Return a list of material dicts, preferring setup.yaml over parsed JSON."""
+    if isinstance(setup, dict):
+        setup_mats = setup.get("materials")
+        if isinstance(setup_mats, dict) and setup_mats:
+            result: list[dict[str, Any]] = []
+            for name, props in setup_mats.items():
+                if not isinstance(props, dict):
+                    continue
+                entry: dict[str, Any] = {"name": name}
+                e = props.get("youngs_modulus_mpa")
+                nu = props.get("poisson_ratio")
+                if e is not None and nu is not None:
+                    entry["elastic"] = {"youngs_modulus": e, "poisson_ratio": nu}
+                rho = props.get("density_kg_m3")
+                if rho is not None:
+                    entry["density"] = rho
+                result.append(entry)
+            return result
+
+    if isinstance(parsed_materials, dict):
+        mats = parsed_materials.get("materials")
+        if isinstance(mats, list):
+            return [m for m in mats if isinstance(m, dict)]
+
+    return []
+
+
+def _resolve_boundary_conditions(
+    setup: dict[str, Any] | None,
+    parsed_bcs: dict[str, Any] | None,
+    cae_mapping: dict[str, Any] | None,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    """Return BC dicts. Prefers setup.yaml when feature-to-nset mapping exists."""
+    if isinstance(setup, dict):
+        setup_bcs = setup.get("boundary_conditions")
+        if isinstance(setup_bcs, list) and setup_bcs:
+            mapped_bcs: list[dict[str, Any]] = []
+            for bc in setup_bcs:
+                if not isinstance(bc, dict):
+                    continue
+                target_feature = bc.get("target_feature")
+                nset = _feature_to_nset(target_feature, cae_mapping)
+                if nset is None:
+                    warnings.append(
+                        f"BC '{bc.get('id', 'unknown')}' target_feature '{target_feature}' "
+                        f"has no CAE mapping; falling back to parsed boundary conditions."
+                    )
+                    continue
+                mapped_bcs.append(
+                    {
+                        "id": bc.get("id", "unknown"),
+                        "target": nset,
+                        "dof_start": _bc_dof_start(bc.get("type", "fixed")),
+                        "dof_end": 3,
+                        "value": 0.0,
+                    }
+                )
+            if mapped_bcs:
+                return mapped_bcs
+
+    if isinstance(parsed_bcs, dict):
+        bcs = parsed_bcs.get("boundary_conditions")
+        if isinstance(bcs, list):
+            return [b for b in bcs if isinstance(b, dict)]
+
+    return []
+
+
+def _resolve_loads(
+    setup: dict[str, Any] | None,
+    parsed_loads: dict[str, Any] | None,
+    cae_mapping: dict[str, Any] | None,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    """Return load dicts. Prefers setup.yaml when feature-to-nset mapping exists."""
+    if isinstance(setup, dict):
+        setup_loads = setup.get("loads")
+        if isinstance(setup_loads, list) and setup_loads:
+            mapped_loads: list[dict[str, Any]] = []
+            for load in setup_loads:
+                if not isinstance(load, dict):
+                    continue
+                target_feature = load.get("target_feature")
+                nset = _feature_to_nset(target_feature, cae_mapping)
+                if nset is None:
+                    warnings.append(
+                        f"Load '{load.get('id', 'unknown')}' target_feature '{target_feature}' "
+                        f"has no CAE mapping; falling back to parsed loads."
+                    )
+                    continue
+                direction = load.get("direction", [0, -1, 0])
+                # For a concentrated force, map direction to primary DOF.
+                dof = _primary_dof_from_direction(direction)
+                mapped_loads.append(
+                    {
+                        "id": load.get("id", "unknown"),
+                        "target": nset,
+                        "dof": dof,
+                        "value": load.get("value_n", 0.0),
+                    }
+                )
+            if mapped_loads:
+                return mapped_loads
+
+    if isinstance(parsed_loads, dict):
+        loads = parsed_loads.get("loads")
+        if isinstance(loads, list):
+            return [l for l in loads if isinstance(l, dict)]
+
+    return []
+
+
+def _feature_to_nset(
+    feature_id: str | None,
+    cae_mapping: dict[str, Any] | None,
+) -> str | None:
+    """Look up a feature_id in cae_mapping and return the corresponding CAE entity (nset)."""
+    if not feature_id or not isinstance(cae_mapping, dict):
+        return None
+    for mapping in cae_mapping.get("mappings", []):
+        if not isinstance(mapping, dict):
+            continue
+        maps_to = mapping.get("maps_to")
+        if not isinstance(maps_to, dict):
+            continue
+        if maps_to.get("feature_id") == feature_id:
+            return mapping.get("cae_entity")
+    return None
+
+
+def _bc_dof_start(bc_type: str) -> int:
+    """Map BC type to starting DOF for CalculiX *BOUNDARY."""
+    t = str(bc_type).lower().strip()
+    if t in {"fixed", "clamp", "encastre"}:
+        return 1
+    if t in {"pinned", "hinge"}:
+        return 1
+    if t == "rollers":
+        return 2
+    return 1
+
+
+def _primary_dof_from_direction(direction: Any) -> int:
+    """Return the dominant DOF (1=x, 2=y, 3=z) from a direction vector."""
+    if isinstance(direction, list) and len(direction) >= 3:
+        abs_vals = [abs(direction[0]), abs(direction[1]), abs(direction[2])]
+        return int(abs_vals.index(max(abs_vals))) + 1
+    return 2  # default to y
+
+
+# ---------------------------------------------------------------------------
+# Deck assembly
+# ---------------------------------------------------------------------------
+
+
+def _extract_solid_section_materials(source_deck_text: str) -> set[str]:
+    """Extract material names referenced by *SOLID SECTION in the source deck."""
+    materials: set[str] = set()
+    for line in source_deck_text.splitlines():
+        stripped = line.strip().upper()
+        if stripped.startswith("*SOLID SECTION"):
+            for part in stripped.split(","):
+                p = part.strip()
+                if p.startswith("MATERIAL="):
+                    materials.add(p.split("=", 1)[1].strip())
+    return materials
+
+
+def _assemble_deck(
+    manifest: dict[str, Any],
+    run_id: str,
+    source_deck_text: str | None,
+    materials: list[dict[str, Any]],
+    boundary_conditions: list[dict[str, Any]],
+    loads: list[dict[str, Any]],
+    solver_settings: dict[str, Any] | None,
+    warnings: list[str],
+) -> str:
+    """Assemble the complete CalculiX deck text."""
+    model_id = manifest.get("model_id", "unknown_model")
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    lines: list[str] = []
+
+    # ---- Header ----
+    lines += [
+        "*HEADING",
+        f"AIENG generated solver input - model_id={model_id} run_id={run_id}",
+        f"Generated at: {now}",
+        "**",
+        "** This deck was assembled by aieng.simulation.deck_generator.",
+        "** Mesh and element/node sets are preserved from the source solver deck.",
+        "** Material definitions reflect the current simulation/setup.yaml state.",
+        "**",
+    ]
+
+    # ---- Mesh section (preserved from source deck) ----
+    mesh_section = _extract_mesh_section(source_deck_text) if source_deck_text else None
+    if mesh_section:
+        lines.append("** --- Mesh section (from source_solver_deck.inp) ---")
+        lines.append(mesh_section)
+        lines.append("")
+    else:
+        # Should not reach here because readiness check catches missing mesh,
+        # but keep defensive.
+        lines.append("** ERROR: No mesh section available.")
+
+    # ---- Material name reconciliation ----
+    # If the source deck's *SOLID SECTION references a material name that does
+    # not match setup.yaml, align the setup material name so the deck stays
+    # runnable.  This is the honest path: generator does not edit mesh-to-
+    # material mapping, only the material property values.
+    solid_mats = _extract_solid_section_materials(source_deck_text or "")
+    if len(materials) == 1 and len(solid_mats) == 1:
+        setup_name = materials[0].get("name", "")
+        solid_name = list(solid_mats)[0]
+        if setup_name != solid_name:
+            warnings.append(
+                f"Renaming setup material '{setup_name}' to '{solid_name}' "
+                f"so it matches the *SOLID SECTION reference in the source deck."
+            )
+            materials[0]["name"] = solid_name
+    elif solid_mats:
+        setup_names = {m.get("name", "") for m in materials}
+        for sm in solid_mats:
+            if sm not in setup_names:
+                warnings.append(
+                    f"*SOLID SECTION references material '{sm}' which is not defined "
+                    f"in simulation/setup.yaml. The solver may fail."
+                )
+
+    # ---- Material definitions ----
+    if materials:
+        lines.append("** --- Material definitions ---")
+        for mat in materials:
+            name = mat.get("name", "unnamed")
+            elastic = mat.get("elastic")
+            density = mat.get("density")
+            lines.append(f"*MATERIAL, NAME={name}")
+            if isinstance(elastic, dict):
+                e = elastic.get("youngs_modulus", "")
+                nu = elastic.get("poisson_ratio", "")
+                lines += ["*ELASTIC", f"{e}, {nu}"]
+            if density is not None:
+                lines += ["*DENSITY", f"{density}"]
+            lines.append("")
+    else:
+        lines.append("** WARNING: No material definitions available.")
+
+    # ---- Boundary conditions ----
+    if boundary_conditions:
+        lines.append("** --- Boundary conditions ---")
+        lines.append("*BOUNDARY")
+        for bc in boundary_conditions:
+            target = bc.get("target", "unknown")
+            dof_start = bc.get("dof_start", 1)
+            dof_end = bc.get("dof_end", 3)
+            value = bc.get("value", 0.0)
+            lines.append(f"{target}, {dof_start}, {dof_end}, {value}")
+        lines.append("")
+
+    # ---- Loads ----
+    if loads:
+        lines.append("** --- Loads ---")
+        lines.append("*CLOAD")
+        for load in loads:
+            target = load.get("target", "unknown")
+            dof = load.get("dof", 2)
+            value = load.get("value", 0.0)
+            lines.append(f"{target}, {dof}, {value}")
+        lines.append("")
+
+    # ---- Step ----
+    step_name = _resolve_step_name(solver_settings)
+    lines += [
+        f"*STEP, NAME={step_name}",
+        "*STATIC",
+        "1.0, 1.0",
+        "*NODE FILE",
+        "U",
+        "*EL FILE",
+        "S",
+        "*END STEP",
+    ]
+
+    return "\n".join(lines) + "\n"
+
+
+def _extract_mesh_section(source_deck_text: str) -> str:
+    """Extract mesh-related lines from a CalculiX deck.
+
+    Preserves *NODE, *ELEMENT, *NSET, *ELSET, *SOLID SECTION, *SURFACE,
+    and their data lines.  Stops at non-mesh keywords (e.g. *MATERIAL,
+    *BOUNDARY, *STEP).
+    """
+
+    def _is_mesh_keyword(line: str) -> bool:
+        upper = line.upper().strip()
+        tokens = [t.strip().rstrip(",") for t in upper.split()]
+        if not tokens:
+            return False
+        head = tokens[0]
+
+        # *NODE by itself (or with NSET=...) is a mesh keyword.
+        # *NODE FILE, *NODE PRINT, *NODE OUTPUT are output requests — not mesh.
+        if head == "*NODE":
+            return len(tokens) == 1 or tokens[1] not in {"FILE", "PRINT", "OUTPUT"}
+
+        return head in _MESH_KEYWORDS
+
+    lines = source_deck_text.splitlines()
+    mesh_lines: list[str] = []
+    in_mesh_block = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("**"):
+            if in_mesh_block:
+                mesh_lines.append(line)
+            continue
+
+        if stripped.startswith("*"):
+            if _is_mesh_keyword(stripped):
+                in_mesh_block = True
+                mesh_lines.append(line)
+            else:
+                in_mesh_block = False
+            continue
+
+        if in_mesh_block:
+            mesh_lines.append(line)
+
+    return "\n".join(mesh_lines)
+
+
+def _resolve_step_name(solver_settings: dict[str, Any] | None) -> str:
+    """Derive a step name from solver settings, if available."""
+    if isinstance(solver_settings, dict):
+        name = solver_settings.get("step_name") or solver_settings.get("analysis_type")
+        if isinstance(name, str) and name:
+            return name.replace(" ", "_")
+    return "LoadStep"
+
+
+# ---------------------------------------------------------------------------
+# Package I/O helpers
+# ---------------------------------------------------------------------------
+
+
+def _read_optional_json(zf: zipfile.ZipFile, member: str) -> Any | None:
+    if member not in set(zf.namelist()):
+        return None
+    try:
+        return json.loads(zf.read(member))
+    except Exception:
+        return None
+
+
+def _read_optional_yaml(zf: zipfile.ZipFile, member: str) -> Any | None:
+    if member not in set(zf.namelist()):
+        return None
+    try:
+        return yaml.safe_load(zf.read(member).decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+
+
+def _read_existing_members(
+    zf: zipfile.ZipFile,
+    skip_path: str,
+) -> list[tuple[zipfile.ZipInfo, bytes]]:
+    skip = {"manifest.json", skip_path}
+    seen: set[str] = set()
+    members: list[tuple[zipfile.ZipInfo, bytes]] = []
+    for info in zf.infolist():
+        if info.filename in skip or info.filename in seen:
+            continue
+        seen.add(info.filename)
+        data = b"" if info.is_dir() else zf.read(info.filename)
+        members.append((info, data))
+    return members
+
+
+def _rewrite_package(
+    path: Path,
+    members: list[tuple[zipfile.ZipInfo, bytes]],
+    manifest: dict[str, Any],
+    out_path_in_zip: str,
+    deck_text: str,
+) -> None:
+    """Atomically rewrite the .aieng package with the new solver input deck."""
+    resources = manifest.setdefault("resources", {})
+    simulation_resources = resources.setdefault("simulation", {})
+    if not isinstance(simulation_resources, dict):
+        raise ValueError("manifest resources.simulation must be an object")
+
+    runs = simulation_resources.setdefault("runs", {})
+    if not isinstance(runs, dict):
+        runs = {}
+        simulation_resources["runs"] = runs
+    run_entry = runs.setdefault(Path(out_path_in_zip).parent.name, {})
+    if not isinstance(run_entry, dict):
+        run_entry = {}
+        runs[Path(out_path_in_zip).parent.name] = run_entry
+    run_entry["solver_input"] = out_path_in_zip
+
+    manifest_json = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    deck_bytes = deck_text.encode()
+
+    # Ensure the parent directory entry exists in the ZIP
+    dir_entry = str(Path(out_path_in_zip).parent) + "/"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".aieng", dir=path.parent) as fh:
+        temp_path = Path(fh.name)
+
+    try:
+        with zipfile.ZipFile(temp_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for info, data in members:
+                zf.writestr(info, data)
+            if dir_entry not in {m.filename for m, _ in members}:
+                zf.writestr(dir_entry, b"")
+            zf.writestr("manifest.json", manifest_json)
+            zf.writestr(out_path_in_zip, deck_bytes)
+        shutil.move(str(temp_path), path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()

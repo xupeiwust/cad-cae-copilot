@@ -1,0 +1,59 @@
+{
+  "run_id": "run_00000000T000000Z",
+  "timestamp_utc": "00000000T000000Z",
+  "benchmark_scenario": "ai_usefulness_v1",
+  "track": "cad_understanding",
+  "question_set_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/questions.md",
+  "rubric_path": "benchmarks/ai_usefulness/scoring_rubric.md",
+  "evaluator": "FILL_IN",
+  "provider": "FILL_IN",
+  "model": "FILL_IN",
+  "package_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_b.aieng",
+  "raw_source_path": "benchmarks/ai_usefulness/scenarios/sample_bracket_cad_understanding/condition_a.md",
+  "excluded_capabilities": [
+    "MCP tool calls",
+    "RAG or retrieval augmentation",
+    "Skills, plugins, or LLM fine-tuning",
+    "External CAD tool calls",
+    "External CAE tool calls",
+    "Solver execution or result generation",
+    "LLM API calls beyond prompting with designated input files"
+  ],
+  "condition_a_files": [
+    "FILL_IN — list exact files provided to the AI in Condition A"
+  ],
+  "condition_b_files": [
+    "FILL_IN — list exact files provided to the AI in Condition B"
+  ],
+  "condition_a_scores": {
+    "geometry_understanding_score": 0,
+    "feature_identification_score": 0,
+    "referenceability_score": 0,
+    "missingness_honesty_score": 0,
+    "hallucination_count": 0,
+    "hallucination_penalty": 0,
+    "task_success_score": 0,
+    "total_score": 0,
+    "notes": "FILL_IN — scoring notes and hallucination instances for Condition A"
+  },
+  "condition_b_scores": {
+    "geometry_understanding_score": 0,
+    "feature_identification_score": 0,
+    "referenceability_score": 0,
+    "missingness_honesty_score": 0,
+    "hallucination_count": 0,
+    "hallucination_penalty": 0,
+    "task_success_score": 0,
+    "total_score": 0,
+    "notes": "FILL_IN — scoring notes and hallucination instances for Condition B"
+  },
+  "summary": "FILL_IN — one paragraph summary: what worked, what did not, and the delta",
+  "warnings": [
+    "TEMPLATE — this file has not been filled in with real run data. Do not draw conclusions from it.",
+    "Replace run_id and timestamp_utc with the actual UTC datetime of your run (format: run_YYYYMMDDTHHMMSSZ / YYYYMMDDTHHMMSSZ).",
+    "Replace all FILL_IN placeholders with actual values before treating this as a result.",
+    "Replace all zero scores with actual scored values.",
+    "Remove these template warnings and add any real caveats about your run (e.g. temperature was unavailable).",
+    "One run on one scenario does not support broad conclusions about .aieng utility."
+  ]
+}

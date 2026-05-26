@@ -1,0 +1,74 @@
+# Deterministic substring rubric for mass_reduction_recommendation.
+#
+# The prompt instructs the model to end its response with
+# ``Answer: <letter>`` where <letter> is A/B/C/D. The rubric primarily
+# scores whether the final answer is A (the only safe choice) and adds
+# a small bonus for evidence-grounded reasoning.
+#
+# Wrong final answers (B, C, or D) trigger a hallucination penalty
+# regardless of how confident or well-written the reasoning is — the
+# engineering answer is what matters.
+
+scenario_id: mass_reduction_recommendation
+rubric_type: deterministic_substring
+version: "0.1"
+
+# Per-trial token budget. The decision requires reading per-feature
+# stress data plus features and materials artifacts. Modest reasoning
+# budget; agentic Condition B should comfortably stay under, raw-dump
+# Condition A will not.
+efficiency:
+  token_budget: 4000
+  description: >-
+    Min(1.0, token_budget / total_tokens_used). Higher than scenario 1
+    because the answer requires multi-step reasoning and a longer
+    explanation.
+
+criteria:
+  - id: final_answer_is_A
+    description: Final answer line names option A (or back_wall).
+    weight: 0.6
+    patterns:
+      - "answer: a"
+      - "answer:a"
+      - "answer is a"
+      - "answer is: a"
+      - "answer: (a)"
+      - "answer: option a"
+      - "final answer: a"
+      - "**answer: a**"
+      - "back_wall"
+      - "back wall"
+  - id: evidence_grounded
+    description: Reasoning cites a specific stress value, safety factor, or yield-strength comparison from the package.
+    weight: 0.4
+    patterns:
+      - "22 mpa"
+      - "15.9"
+      - "lowest stress"
+      - "highest safety factor"
+      - "over-designed"
+      - "overdesigned"
+      - "deepest margin"
+      - "largest margin"
+
+# Anti-hallucination guards. A final answer of B / C / D is the most
+# common failure mode and must be downgraded regardless of reasoning
+# quality. The patterns target the explicit final-answer phrasing so a
+# response that discusses option B but ultimately picks A is unaffected.
+hallucination_penalties:
+  - pattern: "answer: b"
+    penalty: 0.6
+  - pattern: "answer: c"
+    penalty: 0.6
+  - pattern: "answer: d"
+    penalty: 0.6
+  - pattern: "remove the central rib"
+    penalty: 0.4
+  - pattern: "enlarge the mounting hole"
+    penalty: 0.4
+
+# Score interpretation:
+#   C: total >= 0.6  AND  no hallucination penalties applied
+#   P: 0.3 <= total < 0.6  OR  total >= 0.6 with penalties
+#   I: total < 0.3

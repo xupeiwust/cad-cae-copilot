@@ -1,0 +1,130 @@
+name: AIENG Demo Health
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: demo-health-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo-health:
+    name: Demo smoke-check gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check out AIENG core
+        uses: actions/checkout@v4
+        with:
+          repository: armpro24-blip/aieng
+          path: vendor/aieng
+
+      - name: Check out AIENG FreeCAD MCP
+        uses: actions/checkout@v4
+        with:
+          repository: armpro24-blip/aieng-freecad-mcp
+          path: vendor/aieng_freecad_mcp
+
+      - name: Prepare sibling repo layout
+        run: |
+          ln -sfn "$GITHUB_WORKSPACE/vendor/aieng" "$GITHUB_WORKSPACE/../aieng"
+          ln -sfn "$GITHUB_WORKSPACE/vendor/aieng_freecad_mcp" "$GITHUB_WORKSPACE/../aieng_freecad_mcp"
+          ln -sfn "$GITHUB_WORKSPACE/vendor/aieng_freecad_mcp" "$GITHUB_WORKSPACE/../aieng-freecad-mcp"
+          ls -la "$GITHUB_WORKSPACE"
+          ls -la "$GITHUB_WORKSPACE/.."
+          test -d "$GITHUB_WORKSPACE/../aieng/src"
+          test -d "$GITHUB_WORKSPACE/../aieng_freecad_mcp/src"
+          test -d "$GITHUB_WORKSPACE/../aieng-freecad-mcp/src"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          python -m pip install -e ../../aieng
+          python -m pip install -e ../../aieng_freecad_mcp
+
+      - name: Run demo smoke-check tests
+        working-directory: backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}/../aieng/src:${{ github.workspace }}/../aieng_freecad_mcp/src
+        run: python -m pytest -q -k "smoke_check"
+
+  full-validation:
+    name: Full backend + frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check out AIENG core
+        uses: actions/checkout@v4
+        with:
+          repository: armpro24-blip/aieng
+          path: vendor/aieng
+
+      - name: Check out AIENG FreeCAD MCP
+        uses: actions/checkout@v4
+        with:
+          repository: armpro24-blip/aieng-freecad-mcp
+          path: vendor/aieng_freecad_mcp
+
+      - name: Prepare sibling repo layout
+        run: |
+          ln -sfn "$GITHUB_WORKSPACE/vendor/aieng" "$GITHUB_WORKSPACE/../aieng"
+          ln -sfn "$GITHUB_WORKSPACE/vendor/aieng_freecad_mcp" "$GITHUB_WORKSPACE/../aieng_freecad_mcp"
+          ln -sfn "$GITHUB_WORKSPACE/vendor/aieng_freecad_mcp" "$GITHUB_WORKSPACE/../aieng-freecad-mcp"
+          ls -la "$GITHUB_WORKSPACE"
+          ls -la "$GITHUB_WORKSPACE/.."
+          test -d "$GITHUB_WORKSPACE/../aieng/src"
+          test -d "$GITHUB_WORKSPACE/../aieng_freecad_mcp/src"
+          test -d "$GITHUB_WORKSPACE/../aieng-freecad-mcp/src"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          python -m pip install -e ../../aieng
+          python -m pip install -e ../../aieng_freecad_mcp
+
+      - name: Run full backend tests
+        working-directory: backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}/../aieng/src:${{ github.workspace }}/../aieng_freecad_mcp/src
+        run: python -m pytest -q
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build

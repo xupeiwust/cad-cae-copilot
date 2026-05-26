@@ -1,0 +1,7 @@
+{
+  "name": "parametric_bracket",
+  "version": "0.1.0",
+  "description": "Reference fixture for .aieng patch execution end-to-end workflow",
+  "geometry_source": "geometry/source.step",
+  "primary_material": "Aluminum 6061-T6"
+}

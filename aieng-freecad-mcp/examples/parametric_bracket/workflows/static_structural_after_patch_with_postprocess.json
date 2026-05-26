@@ -1,0 +1,34 @@
+{
+  "workflow_id": "static_structural_after_patch_with_postprocess",
+  "description": "Example explicit orchestration: run CAD patch + CAE analysis with post-processing. CAD and CAE are independent workflows; this is an optional composition example.",
+  "patch": "patches/reduce_base_plate_thickness.json",
+  "cae_config": {
+    "analysis_type": "static_structural",
+    "run_mesh": true,
+    "export_solver_deck": true,
+    "run_solver": false,
+    "import_solver_evidence": true
+  },
+  "postprocess_config": {
+    "run_postprocess": true,
+    "export_postprocess_csv": true,
+    "export_postprocess_vtk": false
+  },
+  "expected_behavior": {
+    "patch_executed": true,
+    "modified_step_exported": true,
+    "mesh_generated": true,
+    "solver_deck_exported": true,
+    "solver_executed": false,
+    "postprocess_csv_exported": true,
+    "postprocess_vtk_exported": false,
+    "evidence_written": true,
+    "claim_map_modified": false
+  },
+  "notes": [
+    "Post-processing extracts metrics and exports CSV.",
+    "VTK export is unsupported in surrogate mode.",
+    "Surrogate post-processing is not solver validation evidence.",
+    "claim_map.json must remain unchanged."
+  ]
+}

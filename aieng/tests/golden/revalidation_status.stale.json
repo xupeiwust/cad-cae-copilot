@@ -1,0 +1,21 @@
+{
+  "affected_artifacts": [
+    "geometry/source.step"
+  ],
+  "affected_domains": [
+    "result_summary",
+    "field_summaries",
+    "solver_outputs"
+  ],
+  "claim_advancement": "none",
+  "current_geometry_revision": 2,
+  "geometry_modified": true,
+  "last_validated_geometry_revision": 1,
+  "reason": "geometry_changed",
+  "recorded_at": "2026-01-01T00:10:00+00:00",
+  "requires_revalidation": true,
+  "schema_version": "0.2",
+  "stale_since_geometry_revision": 2,
+  "triggering_tool": "cad.edit_parameter",
+  "validated_by_run_id": null
+}

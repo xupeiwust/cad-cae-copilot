@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aieng.dev/schemas/freecad_mcp/job_trace.schema.json",
+  "title": "FreeCAD MCP Job Trace",
+  "type": "object",
+  "required": [
+    "job_id",
+    "operation",
+    "producer",
+    "status",
+    "inputs",
+    "outputs",
+    "artifacts",
+    "logs",
+    "claim_policy"
+  ],
+  "properties": {
+    "job_id": { "type": "string" },
+    "operation": { "type": "string" },
+    "producer": { "type": "string", "const": "freecad_mcp" },
+    "freecad_version": { "type": ["string", "null"] },
+    "approved_script_or_module": { "type": ["string", "null"] },
+    "status": {
+      "type": "string",
+      "enum": ["success", "failed", "unsupported", "rejected"]
+    },
+    "exit_status": { "type": ["string", "null"] },
+    "inputs": { "type": "object" },
+    "outputs": { "type": "object" },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "input_artifacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "output_artifacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "logs": {
+      "type": "object",
+      "properties": {
+        "stdout": { "type": ["string", "null"] },
+        "stderr": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "claim_ids_possibly_supported": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "claim_policy": {
+      "type": "object",
+      "required": ["claims_advanced", "requires_explicit_update_claim"],
+      "properties": {
+        "claims_advanced": { "type": "boolean" },
+        "requires_explicit_update_claim": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "primary_error_code": {
+      "type": ["string", "null"],
+      "description": "Machine-decidable error code for evidence/trace/claim path failures. Null when no error."
+    }
+  },
+  "additionalProperties": true
+}

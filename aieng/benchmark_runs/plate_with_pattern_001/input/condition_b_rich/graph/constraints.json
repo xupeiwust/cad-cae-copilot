@@ -1,0 +1,26 @@
+{
+  "assumptions": [
+    "Plate is represented semantically; no CAD topology exists in this probe.",
+    "Hole pattern is the protected mounting interface.",
+    "Package is definition-sourced and does not contain STEP geometry.",
+    "Feature geometry references are semantic-only until geometry generation is implemented."
+  ],
+  "constraints": [
+    {
+      "id": "con_protect_holes_001",
+      "reason": "Preserve mounting interface.",
+      "target": "feat_hole_pattern_001",
+      "type": "protect_geometry"
+    },
+    {
+      "id": "con_static_target_001",
+      "metric": "max_von_mises_stress_mpa",
+      "operator": "<=",
+      "reason": "Keep stress below target after modifications.",
+      "target": "sim_static_001",
+      "type": "simulation_target",
+      "value": 140
+    }
+  ],
+  "format_version": "0.1.0"
+}

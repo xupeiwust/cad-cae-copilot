@@ -1,0 +1,141 @@
+{
+  "claim_status_counts": {
+    "fail": 0,
+    "needs_review": 0,
+    "partially_supported": 0,
+    "pass": 2,
+    "unsupported": 3
+  },
+  "claims": [
+    {
+      "actual_evidence_ids": [],
+      "claim_id": "claim_geometry_modification_001",
+      "claim_text": "CAD geometry modification evidence is available for this package.",
+      "claim_type": "geometry/modification_evidence_available",
+      "linked_evidence": [
+        {
+          "evidence_id": "ev_geometry_mod_001",
+          "status": "missing_in_evidence_index"
+        }
+      ],
+      "missing_required_evidence_ids": [
+        "ev_geometry_mod_001"
+      ],
+      "required_evidence_ids": [
+        "ev_geometry_mod_001"
+      ],
+      "verification_status": "unsupported"
+    },
+    {
+      "actual_evidence_ids": [
+        "ev_handoff_001"
+      ],
+      "claim_id": "claim_handoff_defined_001",
+      "claim_text": "An external tool handoff contract has been written for this package.",
+      "claim_type": "handoff/contract_defined",
+      "linked_evidence": [
+        {
+          "artifact_path": "task/external_tool_requirements.json",
+          "evidence_id": "ev_handoff_001",
+          "evidence_type": "external_tool_requirements",
+          "producer_kind": "aieng_core",
+          "verification_status": "schema_validated"
+        }
+      ],
+      "missing_required_evidence_ids": [],
+      "required_evidence_ids": [
+        "ev_handoff_001"
+      ],
+      "verification_status": "pass"
+    },
+    {
+      "actual_evidence_ids": [],
+      "claim_id": "claim_mesh_evidence_001",
+      "claim_text": "Mesh generation evidence is available for this package.",
+      "claim_type": "mesh/evidence_available",
+      "linked_evidence": [
+        {
+          "evidence_id": "ev_mesh_001",
+          "status": "missing_in_evidence_index"
+        }
+      ],
+      "missing_required_evidence_ids": [
+        "ev_mesh_001"
+      ],
+      "required_evidence_ids": [
+        "ev_mesh_001"
+      ],
+      "verification_status": "unsupported"
+    },
+    {
+      "actual_evidence_ids": [],
+      "claim_id": "claim_solver_result_001",
+      "claim_text": "Solver result evidence is available for this package.",
+      "claim_type": "solver/result_available",
+      "linked_evidence": [
+        {
+          "evidence_id": "ev_solver_001",
+          "status": "missing_in_evidence_index"
+        }
+      ],
+      "missing_required_evidence_ids": [
+        "ev_solver_001"
+      ],
+      "required_evidence_ids": [
+        "ev_solver_001"
+      ],
+      "verification_status": "unsupported"
+    },
+    {
+      "actual_evidence_ids": [
+        "ev_task_spec_001"
+      ],
+      "claim_id": "claim_task_defined_001",
+      "claim_text": "A structured task specification has been written for this package.",
+      "claim_type": "task/task_defined",
+      "linked_evidence": [
+        {
+          "artifact_path": "task/task_spec.yaml",
+          "evidence_id": "ev_task_spec_001",
+          "evidence_type": "task_spec",
+          "producer_kind": "aieng_core",
+          "verification_status": "schema_validated"
+        }
+      ],
+      "missing_required_evidence_ids": [],
+      "required_evidence_ids": [
+        "ev_task_spec_001"
+      ],
+      "verification_status": "pass"
+    }
+  ],
+  "derived_view_policy": {
+    "authoritative_sources": [
+      "validation/status.yaml",
+      "results/claim_map.json",
+      "results/evidence_index.json"
+    ],
+    "is_derived_view": true,
+    "no_claim_auto_advance": true,
+    "source_of_truth_is_elsewhere": true
+  },
+  "format_version": "0.1.0",
+  "generated_at_utc": "2026-05-13T00:26:15Z",
+  "model_id": "definition_flange_001",
+  "notes": [
+    "This report is a generated consolidated read view.",
+    "validation/status.yaml, results/claim_map.json, and results/evidence_index.json remain authoritative."
+  ],
+  "report_id": "evidence_report_001",
+  "source_files": [
+    "validation/status.yaml",
+    "results/claim_map.json",
+    "results/evidence_index.json"
+  ],
+  "validation_state_snapshot": {
+    "forbidden_claims_count": 7,
+    "mesh_generation": "not_run",
+    "patch_execution": "not_run",
+    "solver_execution": "not_run"
+  }
+}

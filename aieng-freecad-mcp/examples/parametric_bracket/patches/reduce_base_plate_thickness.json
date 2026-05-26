@@ -1,0 +1,11 @@
+{
+  "patch_id": "patch_reduce_base_plate_thickness",
+  "operations": [
+    {
+      "operation": "modify_parameter",
+      "target_feature_id": "feat_base_plate_001",
+      "parameter_name": "thickness_mm",
+      "new_value": 8.0
+    }
+  ]
+}

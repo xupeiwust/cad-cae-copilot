@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aieng-format"
+version = "0.1.0a2"
+description = "AI-readable engineering context package format for CAD/CAE agents — converts STEP / CalculiX / FreeCAD artifacts into structured, auditable, evidence-tracked packages."
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Libin Mao", email = "id256211@ostfalia.de"},
+    {name = "Yinan Wang", email = "fhwangyinan@sina.com"},
+]
+keywords = [
+    "cad",
+    "cae",
+    "fea",
+    "engineering",
+    "ai",
+    "llm",
+    "agent",
+    "mcp",
+    "step",
+    "calculix",
+    "freecad",
+    "evidence",
+    "semantic",
+    "package-format",
+    "ai-readable",
+    "design-automation",
+    "fem",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+  "jsonschema>=4.0",
+  "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/armpro24-blip/aieng"
+Repository = "https://github.com/armpro24-blip/aieng"
+Issues = "https://github.com/armpro24-blip/aieng/issues"
+Documentation = "https://github.com/armpro24-blip/aieng#readme"
+"Workspace docs" = "https://github.com/armpro24-blip/aieng/tree/main/docs"
+
+[project.scripts]
+aieng = "aieng.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+benchmark = [
+  "anthropic",
+  "openai",
+  "inspect-ai>=0.3.220",
+]
+# Phase 7B.2: OCP/CadQuery-based real STEP extraction is implemented but experimental.
+# Platform reliability varies (conda may be needed on some systems).
+# Manual install: pip install cadquery
+# Do not add cadquery to this list until cross-platform CI is confirmed.
+geometry = []
+mcp = ["mcp>=1.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+markers = [
+    "geometry: requires a working OCC/OCP STEP backend (install cadquery)",
+    "benchmark: exercises the LLM benchmark harness (requires anthropic/inspect-ai)",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aieng"]
+artifacts = ["src/aieng/schemas/*.json"]
+

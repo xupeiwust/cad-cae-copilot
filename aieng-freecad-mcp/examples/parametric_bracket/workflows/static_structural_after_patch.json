@@ -1,0 +1,26 @@
+{
+  "workflow_id": "static_structural_after_patch",
+  "description": "Example explicit orchestration: run static structural CAE analysis after applying a CAD patch. CAD and CAE are independent workflows; this is an optional composition example.",
+  "patch": "patches/reduce_base_plate_thickness.json",
+  "cae_config": {
+    "analysis_type": "static_structural",
+    "run_mesh": true,
+    "export_solver_deck": true,
+    "run_solver": false,
+    "import_solver_evidence": true
+  },
+  "expected_behavior": {
+    "patch_executed": true,
+    "modified_step_exported": true,
+    "mesh_generated": true,
+    "solver_deck_exported": true,
+    "solver_executed": false,
+    "evidence_written": true,
+    "claim_map_modified": false
+  },
+  "notes": [
+    "Solver is disabled by default (run_solver: false).",
+    "Surrogate CAE results are marked as estimates, not validation evidence.",
+    "claim_map.json must remain unchanged."
+  ]
+}

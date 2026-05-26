@@ -1,0 +1,67 @@
+generated_by: aieng 0.1.0
+model_id: definition_plate_with_pattern
+package_format_version: 0.1.0
+generated_at: '2026-05-13T00:13:28Z'
+package_validation:
+  package_resources_present: true
+  manifest_present: true
+  structured_resources_validated: schema_checked
+geometry_status:
+  step_imported: false
+  definition_sourced: true
+  source_geometry_present: false
+  normalized_geometry_present: false
+  real_geometry_parsing: not_run
+  real_geometry_validity: not_run
+  geometry_generation: not_implemented
+  reason: Definition-sourced package contains semantic model data but no STEP geometry.
+topology_status:
+  topology_map_present: false
+  aag_present: false
+  extraction_mode: none
+  status: not_generated
+  warning: No topology exists until a geometry generation or import step runs.
+feature_status:
+  feature_graph_present: true
+  recognition_mode: structured_definition
+  status: semantic_definition
+  warning: Features are structured design intent, not validated geometry.
+engineering_context_status:
+  context_source: structured_definition
+  status: structured_context_present
+  material_present: true
+  constraints_present: true
+  assumptions_present: true
+  known_limitations_present: true
+  design_requirements_present: true
+  manufacturing_intent_present: false
+  simulation_intent_present: true
+solver_mesh_status:
+  mesh_generation: not_run
+  solver_execution: not_run
+  stress_validation: not_validated
+  displacement_validation: not_validated
+  manufacturing_validation: not_run
+patch_status:
+  patch_proposals_present: false
+  patch_execution: not_run
+  geometry_modified_by_patch: false
+  solver_run_for_patch: false
+  patch_validation_required: false
+claim_policy:
+  allowed_claims:
+  - The package contains structured engineering context.
+  - The package contains candidate feature graph data.
+  - The package contains simulation intent.
+  - Patch proposals are unexecuted suggestions.
+  - Solver deck is a scaffold if present.
+  - Topology was parsed from STEP by an experimental backend, if topology metadata
+    confirms real_step_parsing.
+  forbidden_claims:
+  - The design is safe.
+  - The stress target is satisfied.
+  - A mesh has been generated.
+  - A solver has been run.
+  - The patch has been applied.
+  - Manufacturing feasibility has been validated.
+  - Feature labels are confirmed engineering truth.

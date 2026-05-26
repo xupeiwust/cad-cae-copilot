@@ -1,0 +1,101 @@
+name: G12 Interop Conformance Suite
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  conformance:
+    name: G12 Interop Conformance Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run G12 Interop Conformance Tests
+        run: |
+          pytest tests/test_g12_interop_conformance.py -v --tb=short \
+            --junit-xml=conformance-results.xml
+
+      - name: Generate Conformance Report
+        if: always()
+        run: |
+          python -c "
+          import json
+          from pathlib import Path
+
+          try:
+              import xml.etree.ElementTree as ET
+              root = ET.parse('conformance-results.xml').getroot()
+              total = int(root.get('tests', 0))
+              passed = total - int(root.get('failures', 0)) - int(root.get('errors', 0))
+          except Exception:
+              total = 0
+              passed = 0
+
+          report = {
+              'gate': 'G12',
+              'name': 'Interop Conformance Suite CI',
+              'status': 'PASS' if passed == total and total > 0 else 'FAIL',
+              'tests_total': total,
+              'tests_passed': passed,
+              'timestamp': '${{ github.event.head_commit.timestamp }}',
+              'commit': '${{ github.sha }}',
+              'branch': '${{ github.ref }}',
+          }
+
+          Path('conformance-report.json').write_text(json.dumps(report, indent=2))
+          print('G12 Report: {}/{} tests passed'.format(passed, total))
+          "
+
+      - name: Upload Conformance Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g12-conformance-results
+          path: |
+            conformance-results.xml
+            conformance-report.json
+          retention-days: 30
+
+      - name: Comment on PR with Results
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let report = {};
+            if (fs.existsSync('conformance-report.json')) {
+              report = JSON.parse(fs.readFileSync('conformance-report.json', 'utf8'));
+            }
+
+            const status = report.status === 'PASS' ? '✅' : '❌';
+            const body = `## ${status} G12 Interop Conformance\n\n` +
+              `- Tests: ${report.tests_passed}/${report.tests_total} passed\n` +
+              `- Gate: ${report.gate}\n` +
+              `- Status: ${report.status}\n\n` +
+              `[Full Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

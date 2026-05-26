@@ -1,0 +1,350 @@
+{
+  "categories": [
+    {
+      "category": "geometry",
+      "missing_items": [
+        "geometry/source.step",
+        "geometry/normalized.step"
+      ],
+      "notes": [
+        "Definition-sourced package intentionally has no STEP geometry until an external CAD generator or import step creates it."
+      ],
+      "required_for": [
+        "cad_reference",
+        "topology_extraction",
+        "geometry_roundtrip"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "topology",
+      "missing_items": [
+        "geometry/topology_map.json"
+      ],
+      "notes": [
+        "Topology is absent for definition-sourced packages until generated or imported CAD geometry exists."
+      ],
+      "required_for": [
+        "stable_face_edge_body_references",
+        "feature_grounding"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "adjacency",
+      "missing_items": [
+        "graph/aag.json"
+      ],
+      "notes": [
+        "AAG is a generated adjacency index, not source-of-truth geometry."
+      ],
+      "required_for": [
+        "adjacency_reasoning",
+        "feature_grouping"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "features",
+      "missing_items": [],
+      "notes": [
+        "Feature graph is structured design definition; feature geometry references remain semantic-only until CAD generation/topology exists."
+      ],
+      "required_for": [
+        "engineering_feature_grounding",
+        "patch_targeting"
+      ],
+      "resources": [
+        "graph/feature_graph.json"
+      ],
+      "status": "available"
+    },
+    {
+      "category": "protected_regions",
+      "missing_items": [
+        "ai/protected_regions.json"
+      ],
+      "notes": [
+        "Missing protected regions means the AI must not assume editable or protected areas."
+      ],
+      "required_for": [
+        "safe_patch_proposals",
+        "do_not_modify_constraints"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "constraints",
+      "missing_items": [],
+      "notes": [
+        "Constraints are structured engineering context, not solver evidence."
+      ],
+      "required_for": [
+        "design_intent",
+        "validation_targets"
+      ],
+      "resources": [
+        "graph/constraints.json"
+      ],
+      "status": "available"
+    },
+    {
+      "category": "simulation_setup",
+      "missing_items": [
+        "simulation/setup.yaml"
+      ],
+      "notes": [
+        "Definition-sourced package may contain simulation intent in engineering_context/material.yaml, but no executable simulation/setup.yaml has been emitted."
+      ],
+      "required_for": [
+        "analysis_setup_understanding",
+        "solver_handoff"
+      ],
+      "resources": [
+        "engineering_context/material.yaml"
+      ],
+      "status": "partial"
+    },
+    {
+      "category": "cae_imports",
+      "missing_items": [
+        "simulation/cae_imports/source_solver_deck.inp",
+        "simulation/cae_imports/parsed_materials.json",
+        "simulation/cae_imports/parsed_boundary_conditions.json",
+        "simulation/cae_imports/parsed_loads.json"
+      ],
+      "notes": [
+        "Imported CAE decks are parsed inputs, not solver execution evidence."
+      ],
+      "required_for": [
+        "cae_deck_understanding",
+        "cae_entity_mapping"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "cae_mapping",
+      "missing_items": [
+        "simulation/cae_mapping.json"
+      ],
+      "notes": [
+        "CAE mappings should remain explicit; do not infer unmapped CAE names as feature truth."
+      ],
+      "required_for": [
+        "cae_to_feature_traceability"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "mesh_handoff_contract",
+      "missing_items": [
+        "simulation/mesh_handoff_contract.json"
+      ],
+      "notes": [
+        "Mesh handoff contract describes external meshing expectations; it is not mesh evidence by itself."
+      ],
+      "required_for": [
+        "external_meshing_handoff",
+        "mesh_evidence_roundtrip"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "task_contract",
+      "missing_items": [
+        "task/task_spec.yaml"
+      ],
+      "notes": [
+        "Task specs describe requested work and forbidden claims."
+      ],
+      "required_for": [
+        "agent_work_order",
+        "forbidden_claim_policy"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "external_tool_handoff",
+      "missing_items": [
+        "task/external_tool_requirements.json"
+      ],
+      "notes": [
+        "External tool handoff states that CAD/CAE tools execute; .aieng records and validates."
+      ],
+      "required_for": [
+        "external_cad_cae_execution_boundary",
+        "tool_handoff"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "evidence_ledger",
+      "missing_items": [
+        "results/evidence_index.json"
+      ],
+      "notes": [
+        "Evidence ledger absence means no external tool evidence has been recorded in the package."
+      ],
+      "required_for": [
+        "evidence_traceability",
+        "claim_support"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "claim_map",
+      "missing_items": [
+        "results/claim_map.json"
+      ],
+      "notes": [
+        "Unsupported claims are not false; they have no attached evidence yet."
+      ],
+      "required_for": [
+        "claim_evidence_traceability",
+        "unsupported_claim_detection"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "provenance_trace",
+      "missing_items": [
+        "provenance/tool_trace.json"
+      ],
+      "notes": [
+        "Tool trace records external tool-reported steps; it is not validation evidence by itself."
+      ],
+      "required_for": [
+        "external_tool_audit_trail",
+        "writeback_traceability"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "validation_status",
+      "missing_items": [],
+      "notes": [
+        "Validation status is a claim-policy ledger, not a solver result."
+      ],
+      "required_for": [
+        "engineering_claim_discipline",
+        "validation_state_summary"
+      ],
+      "resources": [
+        "validation/status.yaml"
+      ],
+      "status": "available"
+    },
+    {
+      "category": "visual_resources",
+      "missing_items": [
+        "visual/model_manifest.json",
+        "visual/annotation_layers.json"
+      ],
+      "notes": [
+        "Visual resources are annotation/manifest scaffolds unless rendered artifacts are explicitly present."
+      ],
+      "required_for": [
+        "visual_ai_grounding",
+        "preview_mapping"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "object_registry",
+      "missing_items": [
+        "objects/object_registry.json"
+      ],
+      "notes": [
+        "Object registry is a generated index, not source-of-truth."
+      ],
+      "required_for": [
+        "cross_resource_navigation"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "interface_graph",
+      "missing_items": [
+        "objects/interface_graph.json"
+      ],
+      "notes": [
+        "Interface graph is generated from structured context and mappings."
+      ],
+      "required_for": [
+        "interface_reasoning",
+        "cae_boundary_mapping"
+      ],
+      "resources": [],
+      "status": "missing"
+    },
+    {
+      "category": "patch_proposals",
+      "missing_items": [],
+      "notes": [
+        "Patch proposal absence is acceptable unless a modification task is active."
+      ],
+      "required_for": [
+        "structured_modification_proposals"
+      ],
+      "resources": [],
+      "status": "not_applicable"
+    }
+  ],
+  "claim_policy": {
+    "aieng_core_executes_external_tools": false,
+    "best_effort_conversion": true,
+    "do_not_infer_missing_information": true,
+    "external_tools_execute": true,
+    "missingness_explicit": true,
+    "unsupported_is_not_false": true
+  },
+  "conversion_mode": "best_effort",
+  "format_version": "0.1.0",
+  "generated_at_utc": "2026-05-13T00:26:15Z",
+  "model_id": "definition_flange_001",
+  "next_recommended_actions": [
+    {
+      "action": "run_extract_topology_or_emit_topology_map",
+      "category": "topology",
+      "reason": "Stable topology IDs are needed for grounded feature and patch references."
+    },
+    {
+      "action": "provide_protected_regions",
+      "category": "protected_regions",
+      "reason": "Modification proposals should not assume which regions may be edited."
+    },
+    {
+      "action": "write_mesh_handoff_contract",
+      "category": "mesh_handoff_contract",
+      "reason": "External meshing handoff should be explicit and schema-validated before importing mesh evidence."
+    },
+    {
+      "action": "write_evidence_scaffold",
+      "category": "evidence_ledger",
+      "reason": "Claims should be traceable to evidence or explicitly unsupported."
+    },
+    {
+      "action": "record_external_tool_trace_when_tools_run",
+      "category": "provenance_trace",
+      "reason": "External CAD/CAE execution should be auditable after handoff."
+    }
+  ],
+  "real_geometry_extraction": false,
+  "report_id": "completeness_001",
+  "source_artifacts": [],
+  "source_mode": "definition"
+}

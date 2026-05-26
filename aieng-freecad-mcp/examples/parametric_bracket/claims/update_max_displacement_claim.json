@@ -1,0 +1,14 @@
+{
+  "claim_id": "claim_max_displacement_under_limit",
+  "evidence_ids": [],
+  "decision_criteria": [
+    {
+      "metric_name": "max_displacement_mm",
+      "operator": "<=",
+      "threshold": 2.0,
+      "unit": "mm"
+    }
+  ],
+  "mode": "evaluate",
+  "dry_run": false
+}

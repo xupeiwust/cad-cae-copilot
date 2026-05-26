@@ -1,0 +1,198 @@
+model_id: definition_simple_bracket
+label: Definition-sourced parametric bracket concept
+description: >
+  A structured semantic definition for a generated mechanical bracket concept.
+  This file intentionally contains no imported STEP geometry, but it carries
+  enough dimensional intent, feature relationships, constraints, material data,
+  manufacturing assumptions, and simulation intent for downstream CAD/CAE tools
+  to generate and validate geometry in a future phase.
+provenance:
+  source: hand_authored_reference_definition
+  authoring_method: deterministic_example_fixture
+  material_data_source: typical_public_datasheet_values
+  parameter_basis: representative_bracket_concept_not_measured_geometry
+  created_for: generated_model_mode_validation
+coordinate_system:
+  type: cartesian
+  handedness: right
+  units:
+    length: mm
+    angle: deg
+  origin: [0, 0, 0]
+  axes:
+    x: [1, 0, 0]
+    y: [0, 1, 0]
+    z: [0, 0, 1]
+material:
+  name: Al6061-T6
+  source: typical_public_datasheet_values
+  properties:
+    youngs_modulus_mpa: 69000
+    poisson_ratio: 0.33
+    density_kg_m3: 2700
+    yield_strength_mpa: 276
+assumptions:
+  - Origin is at the center of the base plate mid-plane.
+  - Base plate lies in the XY plane and thickness is along the Z axis.
+  - Mounting holes are through-holes normal to the base plate.
+  - Load interface is a semantic region on the positive X side of the bracket.
+  - All dimensions are representative concept values, not measured CAD evidence.
+known_limitations:
+  - No STEP geometry has been generated from this definition.
+  - No topology map, mesh, solver result, tolerance stack, or manufacturing check exists.
+  - Feature parameters are semantic design intent and require downstream CAD generation.
+  - Stress and mass targets are requirements only; they are not validated outcomes.
+design_requirements:
+  mass_target:
+    objective: reduce_mass_without_changing_mounting_interface
+    target_reduction_percent: 15
+    protected_feature_ids:
+      - feat_hole_pattern_001
+  structural_targets:
+    max_von_mises_stress_mpa: 120
+    max_tip_displacement_mm: 0.5
+  protected_interfaces:
+    - feat_hole_pattern_001
+  editable_parameters:
+    - feat_base_plate_001.length_mm
+    - feat_base_plate_001.width_mm
+    - feat_base_plate_001.thickness_mm
+    - feat_lightening_pocket_001.depth_mm
+    - feat_rib_001.thickness_mm
+manufacturing:
+  process: cnc_machining
+  stock_material_form: plate
+  minimum_wall_thickness_mm: 3
+  minimum_hole_edge_distance_mm: 12
+  preferred_internal_corner_radius_mm: 2
+  notes:
+    - Preserve tool access to all pockets.
+    - Avoid sharp internal corners in generated geometry.
+simulation:
+  type: static_structural
+  fixed:
+    - feat_hole_pattern_001
+  loads:
+    - target: feat_load_interface_001
+      type: force
+      value_n: 500
+      direction: [1, 0, 0]
+      application: distributed_over_interface_region
+  requested_outputs:
+    - von_mises_stress
+    - displacement
+    - factor_of_safety_estimate
+features:
+  - feature_id: feat_base_plate_001
+    type: base_plate
+    name: Base plate definition
+    parameters:
+      length_mm: 120
+      width_mm: 80
+      thickness_mm: 8
+      corner_radius_mm: 4
+      local_frame:
+        origin_mm: [0, 0, 0]
+        normal: [0, 0, 1]
+    intent:
+      role: primary_structural_base
+      generation_hint: rectangular_plate_with_rounded_corners
+  - feature_id: feat_hole_pattern_001
+    type: mounting_hole_pattern
+    name: Mounting hole pattern definition
+    parameters:
+      count: 4
+      diameter_mm: 10
+      pitch_x_mm: 90
+      pitch_y_mm: 50
+      through: true
+      axis: [0, 0, 1]
+      hole_centers_mm:
+        - [-45, -25, 0]
+        - [45, -25, 0]
+        - [45, 25, 0]
+        - [-45, 25, 0]
+    intent:
+      role: protected_mounting_interface
+      generation_hint: four_through_holes_on_base_plate
+    relationships:
+      - type: located_on
+        source_feature_id: feat_hole_pattern_001
+        target_feature_id: feat_base_plate_001
+        reason: Mounting holes are cut through the base plate.
+  - feature_id: feat_load_interface_001
+    type: interface_face
+    name: Load interface definition
+    parameters:
+      nominal_area_mm2: 400
+      center_mm: [55, 0, 8]
+      size_mm: [20, 20]
+      normal: [1, 0, 0]
+    intent:
+      role: load_application_region
+      generation_hint: semantic_load_patch_on_positive_x_side
+    relationships:
+      - type: supported_by
+        source_feature_id: feat_load_interface_001
+        target_feature_id: feat_base_plate_001
+        reason: Load interface is defined relative to the base plate.
+  - feature_id: feat_rib_001
+    type: rib
+    name: Stiffening rib definition
+    parameters:
+      length_mm: 60
+      height_mm: 25
+      thickness_mm: 5
+      centerline_start_mm: [-30, 0, 8]
+      centerline_end_mm: [30, 0, 8]
+    intent:
+      role: stiffness_improvement_candidate
+      generation_hint: centered_longitudinal_rib
+    relationships:
+      - type: stiffens
+        source_feature_id: feat_rib_001
+        target_feature_id: feat_base_plate_001
+        reason: Rib increases bending stiffness between mount and load interface.
+  - feature_id: feat_lightening_pocket_001
+    type: unknown_feature
+    name: Candidate lightening pocket definition
+    parameters:
+      length_mm: 50
+      width_mm: 24
+      depth_mm: 3
+      center_mm: [0, 0, 8]
+      minimum_remaining_wall_mm: 5
+    intent:
+      role: mass_reduction_candidate
+      generation_hint: shallow_pocket_avoiding_holes_and_rib
+    relationships:
+      - type: removes_material_from
+        source_feature_id: feat_lightening_pocket_001
+        target_feature_id: feat_base_plate_001
+        reason: Pocket is an optional semantic mass-reduction feature.
+constraints:
+  - id: con_protect_mounting_001
+    type: protect_geometry
+    target: feat_hole_pattern_001
+    reason: Mounting pattern must remain unchanged.
+  - id: con_static_target_001
+    type: simulation_target
+    target: sim_static_001
+    reason: Definition includes a target for future static analysis.
+    metric: max_von_mises_stress_mpa
+    operator: <=
+    value: 120
+  - id: con_min_wall_001
+    type: manufacturing_rule
+    target: feat_lightening_pocket_001
+    reason: Maintain machinable and structurally plausible wall thickness.
+    parameter: minimum_remaining_wall_mm
+    operator: ">="
+    value: 5
+  - id: con_max_displacement_001
+    type: simulation_target
+    target: sim_static_001
+    reason: Definition includes a displacement target for future static analysis.
+    metric: max_tip_displacement_mm
+    operator: <=
+    value: 0.5

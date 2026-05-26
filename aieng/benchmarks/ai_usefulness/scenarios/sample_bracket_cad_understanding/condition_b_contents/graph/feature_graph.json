@@ -1,0 +1,106 @@
+{
+  "features": [
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Parameters were lifted from FreeCAD property values for proposals only. The reference converter does NOT regenerate geometry; an external FreeCAD scripted-rebuild adapter would be required to execute edits.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_plate",
+      "name": "Base plate",
+      "parameter_confidence": "medium",
+      "parameter_source": "converter_extracted",
+      "parameters": {
+        "Height": 10.0,
+        "Length": 100.0,
+        "Width": 50.0
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "freecad_name_heuristic",
+        "source_object": "Plate",
+        "source_type": "Part::Box",
+        "uncertainty_note": "Feature type was inferred from FCStd object name/type, not from confirmed CAD feature semantics."
+      },
+      "type": "base_plate",
+      "writeback_strategy": "none"
+    },
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Parameters were lifted from FreeCAD property values for proposals only. The reference converter does NOT regenerate geometry; an external FreeCAD scripted-rebuild adapter would be required to execute edits.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_mountinghole_1",
+      "name": "MountingHole_1",
+      "parameter_confidence": "medium",
+      "parameter_source": "converter_extracted",
+      "parameters": {
+        "Depth": 10.0,
+        "Diameter": 6.0
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "freecad_name_heuristic",
+        "source_object": "MountingHole_1",
+        "source_type": "PartDesign::Hole",
+        "uncertainty_note": "Feature type was inferred from FCStd object name/type, not from confirmed CAD feature semantics."
+      },
+      "type": "mounting_hole",
+      "writeback_strategy": "none"
+    },
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Parameters were lifted from FreeCAD property values for proposals only. The reference converter does NOT regenerate geometry; an external FreeCAD scripted-rebuild adapter would be required to execute edits.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_mountinghole_2",
+      "name": "MountingHole_2",
+      "parameter_confidence": "medium",
+      "parameter_source": "converter_extracted",
+      "parameters": {
+        "Depth": 10.0,
+        "Diameter": 6.0
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "freecad_name_heuristic",
+        "source_object": "MountingHole_2",
+        "source_type": "PartDesign::Hole",
+        "uncertainty_note": "Feature type was inferred from FCStd object name/type, not from confirmed CAD feature semantics."
+      },
+      "type": "mounting_hole",
+      "writeback_strategy": "none"
+    },
+    {
+      "editability": "proposal_allowed",
+      "editability_reason": "Parameters were lifted from FreeCAD property values for proposals only. The reference converter does NOT regenerate geometry; an external FreeCAD scripted-rebuild adapter would be required to execute edits.",
+      "editable": true,
+      "geometry_refs": {},
+      "id": "feat_flange_top",
+      "name": "Flange_Top",
+      "parameter_confidence": "medium",
+      "parameter_source": "converter_extracted",
+      "parameters": {
+        "Length": 40.0,
+        "Width": 20.0
+      },
+      "recognition": {
+        "confidence": "medium",
+        "method": "freecad_name_heuristic",
+        "source_object": "Flange_Top",
+        "source_type": "PartDesign::Pad",
+        "uncertainty_note": "Feature type was inferred from FCStd object name/type, not from confirmed CAD feature semantics."
+      },
+      "type": "flange",
+      "writeback_strategy": "none"
+    }
+  ],
+  "format_version": "0.1.0",
+  "metadata": {
+    "converter_id": "freecad_reference",
+    "notes": [
+      "All feature candidates are heuristic. Confirmation requires CAD feature tree access (runtime mode) or engineer review."
+    ],
+    "recognition_method": "freecad_name_heuristic",
+    "source_mode": "converter"
+  }
+}

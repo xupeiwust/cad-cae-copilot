@@ -1,0 +1,25 @@
+{
+  "claim_advancement": "none",
+  "current_geometry_revision": 2,
+  "evidence_index_entry": {
+    "exists": true,
+    "id": "displacement_summary",
+    "kind": "field",
+    "path": "results/fields/displacement.summary.json",
+    "role": "displacement_extrema",
+    "supports": [
+      "claim_proposal_review"
+    ]
+  },
+  "evidence_role": "displacement_extrema",
+  "exists": true,
+  "in_evidence_index": true,
+  "last_validated_geometry_revision": 2,
+  "manifest_category": "field_summary",
+  "manifest_kind": "field",
+  "path": "results/fields/displacement.summary.json",
+  "requires_revalidation": false,
+  "schema_version": "0.1",
+  "usable_for_claim_proposal": true,
+  "warnings": []
+}

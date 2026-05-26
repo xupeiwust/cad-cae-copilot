@@ -1,0 +1,22 @@
+# Phase 10B explicit CAE mapping fixture.
+# This example maps FIXED_HOLES to interface_id iface_feat_hole_pattern_001.
+# Generate objects/interface_graph.json first with:
+#   aieng build-interface-graph <package.aieng> --overwrite
+
+mappings:
+  - cae_entity: FIXED_HOLES
+    maps_to:
+      feature_id: feat_hole_pattern_001
+      interface_id: iface_feat_hole_pattern_001
+    mapping_method: user_provided
+    confidence: high
+    notes:
+      - User confirms FIXED_HOLES corresponds to the protected mounting hole pattern.
+
+  - cae_entity: LOAD_FACE
+    maps_to:
+      feature_id: feat_base_plate_001
+    mapping_method: user_provided
+    confidence: high
+    notes:
+      - User confirms LOAD_FACE corresponds to the load application region.

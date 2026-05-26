@@ -1,0 +1,37 @@
+{
+  "checks": [
+    {
+      "id": "evidence_paths_exist",
+      "message": "All 1 evidence-indexed path(s) confirmed present.",
+      "status": "ok"
+    },
+    {
+      "id": "audit_artifact_references",
+      "message": "No audit log present; no artifact references to check.",
+      "status": "ok"
+    },
+    {
+      "details": {
+        "current_geometry_revision": 1,
+        "last_validated_geometry_revision": 1
+      },
+      "id": "revalidation_status_consistency",
+      "message": "Revalidation status is consistent.",
+      "status": "ok"
+    },
+    {
+      "id": "claim_map_absent",
+      "message": "No claim map files present; claim non-advancement contract maintained.",
+      "status": "ok"
+    },
+    {
+      "details": {
+        "proposal_count": 1
+      },
+      "id": "claim_proposals",
+      "message": "1 claim proposal(s) present; all well-formed.",
+      "status": "ok"
+    }
+  ],
+  "rollup": "ok"
+}

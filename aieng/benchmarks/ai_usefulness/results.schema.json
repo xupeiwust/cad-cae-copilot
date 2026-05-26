@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aieng.dev/schemas/ai-usefulness-benchmark-results.schema.json",
+  "title": "AI Usefulness Benchmark Result",
+  "description": "Structured record for a single AI usefulness benchmark run (Phase 21). Scores AI performance with and without a .aieng package across four tracks and seven dimensions.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "timestamp_utc",
+    "benchmark_scenario",
+    "track",
+    "question_set_path",
+    "rubric_path",
+    "provider",
+    "model",
+    "package_path",
+    "raw_source_path",
+    "excluded_capabilities",
+    "condition_a_files",
+    "condition_b_files",
+    "condition_a_scores",
+    "condition_b_scores",
+    "warnings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run_[0-9]{8}T[0-9]{6}Z$"
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z$"
+    },
+    "benchmark_scenario": {
+      "type": "string",
+      "const": "ai_usefulness_v1"
+    },
+    "track": {
+      "type": "string",
+      "enum": [
+        "cad_understanding",
+        "cad_reconstruction",
+        "fem_preprocessing",
+        "cae_deck_understanding"
+      ]
+    },
+    "question_set_path": {"type": "string"},
+    "rubric_path": {"type": "string"},
+    "provider": {"type": "string"},
+    "model": {"type": "string"},
+    "evaluator": {"type": "string"},
+    "package_path": {
+      "type": "string",
+      "description": "Path to the .aieng package used as Condition B input."
+    },
+    "raw_source_path": {
+      "type": "string",
+      "description": "Path to the raw CAD/CAE source file used as Condition A input."
+    },
+    "excluded_capabilities": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "condition_a_files": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "description": "Files provided to the AI in Condition A (raw source only)."
+    },
+    "condition_b_files": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "description": "Files provided to the AI in Condition B (.aieng package resources)."
+    },
+    "condition_a_scores": {"$ref": "#/$defs/DimensionScores"},
+    "condition_b_scores": {"$ref": "#/$defs/DimensionScores"},
+    "summary": {"type": "string"},
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "$defs": {
+    "DimensionScores": {
+      "type": "object",
+      "required": [
+        "geometry_understanding_score",
+        "feature_identification_score",
+        "referenceability_score",
+        "missingness_honesty_score",
+        "hallucination_count",
+        "hallucination_penalty",
+        "task_success_score",
+        "total_score"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "geometry_understanding_score": {
+          "type": "integer",
+          "enum": [0, 1, 2],
+          "description": "0=absent/incorrect, 1=partial, 2=correct and grounded."
+        },
+        "feature_identification_score": {
+          "type": "integer",
+          "enum": [0, 1, 2]
+        },
+        "referenceability_score": {
+          "type": "integer",
+          "enum": [0, 1, 2]
+        },
+        "missingness_honesty_score": {
+          "type": "integer",
+          "enum": [0, 1, 2]
+        },
+        "preprocessing_readiness_score": {
+          "type": "integer",
+          "enum": [0, 1, 2],
+          "description": "Track C (FEM preprocessing) only. Omit for other tracks."
+        },
+        "hallucination_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of distinct fabricated facts."
+        },
+        "hallucination_penalty": {
+          "type": "integer",
+          "maximum": 0,
+          "description": "Penalty applied: -1 per hallucination instance. Must equal -hallucination_count."
+        },
+        "task_success_score": {
+          "type": "integer",
+          "enum": [0, 1]
+        },
+        "total_score": {
+          "type": "integer",
+          "description": "Sum of all positive dimensions plus hallucination_penalty."
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$comment": "Phase 21: AI usefulness benchmark results schema. benchmark_scenario must be ai_usefulness_v1. Scores recorded separately for Condition A (without .aieng) and Condition B (with .aieng); delta = B.total_score - A.total_score."
+}

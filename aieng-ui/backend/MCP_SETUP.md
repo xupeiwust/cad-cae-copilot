@@ -1,0 +1,258 @@
+# Connecting Claude Code (or any MCP client) to the aieng workbench
+
+This backend exposes its runtime tool registry as an **MCP server** so external
+agents can drive the workbench using their own harness — no need to reimplement
+the LLM tool-calling loop or context management.
+
+> **New to the workbench?** After connecting, call `aieng.agent_readme` to receive
+> the full [AGENTS.md](AGENTS.md) guide in-band, or read it directly in this directory.
+> It covers tool taxonomy, workflow patterns, pointer syntax (`@face:`, `@feature:`, …),
+> and approval-gated operations.
+
+## What gets exposed
+
+Every tool registered via `runtime.register_tool()` is surfaced. That includes:
+
+- `aieng.inspect_package` / `aieng.agent_context` — read-only project inspection
+- `aieng.convert`, `aieng.validate`, `aieng.refresh_semantics`
+- `cae.apply_setup_patch`, `cae.prepare_solver_run`, `cae.generate_solver_input`
+- `cae.run_solver` ⚠️ approval-gated
+- `cae.extract_solver_results`, `cae.extract_field_regions`
+- `postprocess.generate_computed_metrics`, `postprocess.refresh_cae_summary`
+- `cad.edit_parameter` ⚠️ approval-gated
+- …and the remaining runtime tools listed by `python -c "from app import runtime; from app.app_factory import create_app; create_app(); print('\n'.join(runtime.registered_tool_names()))"`.
+
+Tools listed in `app/runtime_tool_schemas.py:TOOL_SCHEMAS` carry curated JSON
+schemas so the agent constructs valid calls on the first try. Other tools fall
+back to a permissive `{"type": "object"}` schema.
+
+## Running the server
+
+### stdio (default; what Claude Code expects)
+
+```powershell
+# from aieng-ui/backend/
+python -m app.mcp_server
+```
+
+The process talks JSON-RPC over stdin/stdout. **Do not** run it in an
+interactive shell expecting to type into it — Claude Code spawns it as a
+subprocess and pipes the protocol frames itself.
+
+Logs go to stderr only (stdout is the protocol wire).
+
+### HTTP / SSE (for debugging or multi-client setups)
+
+```powershell
+python -m app.mcp_server --http --port 8765
+```
+
+Then point an MCP HTTP client at `http://127.0.0.1:8765/sse`.
+
+## Wiring into Claude Code
+
+Add the following to `~/.claude/mcp.json` (global) or `<project>/.claude/mcp.json`
+(per-workspace). Replace the absolute paths with the ones on your machine.
+
+### Windows / PowerShell
+
+```json
+{
+  "mcpServers": {
+    "aieng-workbench": {
+      "command": "C:\\Users\\RL_Carla\\anaconda3\\envs\\aieng311\\python.exe",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "C:\\Users\\RL_Carla\\Desktop\\workspace_aieng\\aieng-ui\\backend",
+      "env": {
+        "AIENG_BACKEND_URL": "http://127.0.0.1:8000"
+      }
+    }
+  }
+}
+```
+
+> **Note on Python:** Use the `aieng311` conda environment — it has build123d installed.
+> System Python (`C:\Python314\`) does NOT have build123d; using it will cause
+> `cad.execute_build123d` to return `build123d_unavailable`.
+
+> **`AIENG_BACKEND_URL` (Phase 2 — live UI):** when set, the MCP server forwards
+> every tool call to the *running* FastAPI backend's `/api/agent/invoke-tool`
+> endpoint instead of executing in-process. This is what lets the React
+> workbench show **live agent activity** — when Claude Code drives a CAD build,
+> the build animation appears in the viewer in real time and the model refreshes
+> on completion. If the backend is down, the MCP server silently falls back to
+> in-process execution (no live UI, but the call still works). Omit this var if
+> you only use Claude Code headless and don't care about the UI.
+
+### macOS / Linux
+
+```json
+{
+  "mcpServers": {
+    "aieng-workbench": {
+      "command": "python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "/path/to/workspace_aieng/aieng-ui/backend",
+      "env": {
+        "AIENG_BACKEND_URL": "http://127.0.0.1:8000"
+      }
+    }
+  }
+}
+```
+
+If you use a conda env (the workspace memory mentions `aieng311`), make
+`command` point at that env's Python instead of the system one — e.g.
+`"command": "C:\\Users\\RL_Carla\\anaconda3\\envs\\aieng311\\python.exe"`.
+
+## Per-agent config quick reference
+
+Different agents discover MCP servers from different files. All of them are
+checked into this repo so a fresh session needs no manual wiring:
+
+| Agent | Config it reads | Status in this repo |
+|-------|-----------------|---------------------|
+| Claude Code | `.mcp.json` (project root) | ✅ committed |
+| VS Code / GitHub Copilot | `.vscode/mcp.json` | ✅ committed |
+| OpenAI Codex | `~/.codex/config.toml` `[mcp_servers.*]` (global) | add the block below |
+| Cursor / Cline | `.vscode/mcp.json` or their own settings | reuses VS Code config |
+
+Every agent also reads the workspace-root `AGENTS.md` (Codex/Cursor natively;
+Claude Code via `CLAUDE.md` `@import`; Copilot via `.github/copilot-instructions.md`).
+
+### Codex (`~/.codex/config.toml`)
+
+Codex uses TOML, not JSON, and its MCP config is global (not per-project). Add:
+
+```toml
+[mcp_servers.aieng-workbench]
+command = "C:\\Users\\RL_Carla\\anaconda3\\envs\\aieng311\\python.exe"
+args = ["-m", "app.mcp_server"]
+cwd = "C:\\Users\\RL_Carla\\Desktop\\workspace_aieng\\aieng-ui\\backend"
+
+[mcp_servers.aieng-workbench.env]
+AIENG_BACKEND_URL = "http://127.0.0.1:8000"
+```
+
+Codex reads the project-root `AGENTS.md` automatically when the workspace is
+trusted, so it gets the full guide on its own.
+
+### Verifying the connection
+
+After editing the config, restart Claude Code. Then ask:
+
+> List the tools available from the aieng-workbench MCP server.
+
+Claude Code should enumerate the registered tools. A second smoke test:
+
+> Use aieng-workbench to inspect the project with id `<your-project-id>`.
+
+This should fire `aieng.inspect_package` and return the semantic summary.
+
+## CAD modelling without an API key (agent writes the code)
+
+The backend's built-in text-to-CAD flow (`/generate-cad-stream`) calls Claude
+with `ANTHROPIC_API_KEY` to write build123d code. **You don't need that when
+Claude Code is the agent** — Claude Code writes the build123d code itself using
+its own subscription, and the framework just executes it.
+
+The enabling tool is **`cad.execute_build123d`** (approval-gated):
+
+- Input: `{ project_id, code, mode?, write_files?, timeout?, thumbnail? }`
+- `code` is a full build123d script that binds the model to a variable named
+  `result` and **omits export calls** (the runner adds `export_step` /
+  `export_stl` / `export_gltf`).
+- **Name parts**: set `.label` on shapes and combine with `Compound` — labels become
+  named parts in `topology_map.json` / `feature_graph.json` you can reference later.
+- **`mode`**: `replace` (default) or `append`. In append the previous model is exposed
+  as `previous_result`; your code adds to it and still reassigns `result`.
+- The tool runs the code in a sandboxed subprocess, writes `geometry/source.py`,
+  `generated.step`, `preview.stl/.glb`, `topology_map.json`, `feature_graph.json`,
+  and sets the project to `viewer_ready_glb`.
+- **Returns**: a rendered PNG thumbnail (image content block) plus `named_parts`,
+  `parts_added`, `mode`, `used_base`, topology summary, and a preview URL.
+
+Companion read-only tool **`cad.get_source`** returns the accumulated source and
+`{named_parts, has_base}` — call it before an incremental edit to decide replace vs
+append and see which named parts already exist.
+
+### Example session in Claude Code (incremental, named parts)
+
+> Using aieng-workbench, build a quadcopter for project `6bdf0813f7c6`: start with the
+> central body, then add the four motor pods.
+
+Step 1 — `cad.get_source` shows `has_base: false`, so build the base with `mode: "replace"`:
+
+```python
+from build123d import *
+body = Box(80, 80, 15); body.label = "fuselage"
+result = Compound(children=[body])
+```
+
+Step 2 — `mode: "append"` adds onto `previous_result`, naming each new part:
+
+```python
+from build123d import *
+pods = []
+for i, (x, y) in enumerate([(40, 40), (-40, 40), (40, -40), (-40, -40)]):
+    p = Cylinder(6, 20); p.label = f"motor_pod_{i+1}"
+    pods.append(p.translate((x, y, 0)))
+result = Compound(children=[previous_result, *pods])
+```
+
+Approve each call when prompted. The response's `parts_added` confirms exactly what each
+step introduced, and the thumbnail lets you verify the shape before continuing. The model
+is written to the package and the React workbench viewer updates automatically.
+
+> **Note on the live build animation:** the in-UI step-by-step build animation
+> (`CadProgressPanel`) only fires for generations that go through the backend
+> SSE endpoint. When Claude Code drives generation via this MCP tool, you see
+> the result after execution, not a live in-UI build. Bridging MCP-driven
+> execution events back to the live UI is a planned follow-up (Phase 2 + B2).
+
+## Approval-gated tools
+
+`cae.run_solver` and `cad.edit_parameter` are flagged with `requires_approval=true`
+in the registry. The MCP server prepends `[APPROVAL REQUIRED]` to their
+descriptions so Claude Code's approval UX clearly surfaces the side effect to
+the human operator before invocation.
+
+These tools do **not** currently block at the MCP-server level — the agent
+client is responsible for asking the human first. If you need the server to
+hard-block, set the env var `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` (not yet
+implemented; tracked as a follow-up).
+
+## How tool calls reach the workbench
+
+```text
+Claude Code
+   │ (stdio JSON-RPC: tools/call)
+   ▼
+mcp_server.py:_make_handler(name)
+   │
+   ▼
+runtime.invoke_tool(name, args)
+   │
+   ▼
+the same closure registered in app_factory.create_app()
+   │
+   ▼
+package on disk / runtime state / etc.
+```
+
+This means the FastAPI HTTP backend does **not** need to be running for Claude
+Code to use the workbench — the MCP server boots its own in-process copy of
+the runtime registry. Run both concurrently if you also want the React UI to
+stay live.
+
+## Adding a JSON schema to a new tool
+
+1. Add an entry to `app/runtime_tool_schemas.py:TOOL_SCHEMAS`.
+2. At the registration call in `app_factory.py`, pass
+   `input_schema=_schema("<tool.name>")`.
+3. Run `pytest tests/test_mcp_server.py::test_high_frequency_tools_carry_curated_schema`
+   to confirm it's surfaced.
+
+The curated-schema approach is intentional: auto-deriving schemas from handler
+signatures gives low-quality output because tool handlers all have the same
+`(inp: dict, ctx: dict)` signature.

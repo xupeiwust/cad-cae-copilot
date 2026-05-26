@@ -1,0 +1,123 @@
+﻿# AI Understanding Benchmark Scaffold
+
+This directory defines a manual benchmark scaffold for evaluating the core `.aieng` thesis:
+
+> `.aieng` should make engineering models more understandable to a general AI without requiring specialized training, RAG, MCP tools, skills, plugins, or LLM fine-tuning.
+
+## Purpose
+
+The benchmark is designed to compare what a general AI can understand from two different inputs:
+
+1. **Raw CAD/CAE-like input**: a raw STEP/B-rep/CAE-like text resource, such as `examples/bracket.step`.
+2. **`.aieng` package input**: the generated package contents from the reference bracket demo, including `README_FOR_AI.md`, `manifest.json`, topology, feature, constraint, simulation, protected-region, summary, and patch proposal resources.
+
+The goal is not to measure CAD kernel performance, solver accuracy, or manufacturing validity. The goal is to test whether structured `.aieng` resources improve engineering understanding before any external tool execution.
+
+## What is being compared
+
+### Raw STEP/B-rep input
+
+The raw-input condition gives the AI only the STEP/B-rep/CAE-like file content. In the current demo, this is `examples/bracket.step`, a small STEP-like fixture. A future benchmark can replace it with a real STEP/B-rep/CAE file, but the comparison principle stays the same.
+
+### `.aieng` package input
+
+The `.aieng` condition gives the AI the generated package contents. For the current reference demo, the most relevant files are:
+
+- `README_FOR_AI.md`
+- `manifest.json`
+- `geometry/topology_map.json`
+- `graph/feature_graph.json`
+- `graph/constraints.json`
+- `simulation/setup.yaml`
+- `ai/protected_regions.json`
+- `ai/summary.md`
+- `ai/patches/patch_0001.json`
+- `simulation/cae_imports/parsed_materials.json`
+- `simulation/cae_imports/parsed_boundary_conditions.json`
+- `simulation/cae_imports/parsed_loads.json`
+- `simulation/cae_mapping.json`
+- `objects/interface_graph.json`
+- `objects/object_registry.json`
+
+## Why external augmentation is excluded
+
+The benchmark intentionally excludes external augmentation such as:
+
+- RAG;
+- MCP tools;
+- skills;
+- plugins;
+- CAD tool calls;
+- solver calls;
+- LLM fine-tuning;
+- specialized CAD/CAE training.
+
+These approaches can be useful later, but they should not be prerequisites for basic engineering understanding. The benchmark asks whether the file/package itself carries enough semantics for a general AI to understand the model before calling tools.
+
+## Relation to the core position
+
+Most AI-for-CAD/CAE approaches adapt AI to existing CAD/CAE files. `.aieng` takes the opposite approach: adapt CAD/CAE data to AI.
+
+This benchmark scaffold operationalizes that position. It checks whether a general AI can better answer identity, feature, constraint, simulation-intent, validation-state, and modification-proposal questions when reading `.aieng` structured resources instead of raw CAD/CAE-like text alone.
+
+## Files in this benchmark scaffold
+
+- [`questions.md`](questions.md): benchmark questions grouped by engineering-understanding category.
+- [`raw_step_expected_limitations.md`](raw_step_expected_limitations.md): expected limitations for raw STEP/B-rep/CAE-like input.
+- [`aieng_expected_capabilities.md`](aieng_expected_capabilities.md): expected capabilities when reading generated `.aieng` package contents.
+- [`scoring_rubric.md`](scoring_rubric.md): simple 0-2 scoring rubric.
+- [`run_manual_benchmark.md`](run_manual_benchmark.md): manual procedure for running the comparison.
+
+## Agent handoff benchmark (Phase 14D)
+
+A second benchmark scaffold is available at [`handoff/`](handoff/). It tests a different aspect of the `.aieng` thesis:
+
+> Given a package with task spec, external tool requirements, evidence index, and claim map, can a general AI produce a correct, bounded external CAD/CAE handoff plan without fabricating execution evidence or violating the execution boundary?
+
+The handoff benchmark does not compare raw STEP vs. `.aieng`. It evaluates a single fully-prepared Phase 14C package against expected behaviors. It uses 8 categories and a 0/1/2 scale for a maximum score of 16.
+
+See [`handoff/README.md`](handoff/README.md) for details.
+
+## Manual benchmark run package
+
+A self-contained manual benchmark run package for the bracket reference scenario is available at:
+
+- [`benchmark_runs/bracket_001_manual/`](../benchmark_runs/bracket_001_manual/)
+
+It includes step-by-step instructions, questions, input specifications for both conditions, a scoring sheet, and expected observations. Start with [`instructions.md`](../benchmark_runs/bracket_001_manual/instructions.md).
+
+An optional real-geometry benchmark scaffold is also available at:
+
+- [`benchmark_runs/real_bracket_001/`](../benchmark_runs/real_bracket_001/)
+
+This scaffold uses `examples/real_bracket.step` as Condition A and `build/real_bracket_001.aieng` as Condition B, including topology, AAG, and semantic resources generated by `scripts/run_real_step_demo.py`.
+
+A Phase 18C-min semantic coverage probe scaffold is available at:
+
+- [`benchmark_runs/plate_with_pattern_001/`](../benchmark_runs/plate_with_pattern_001/)
+
+This probe introduces rich and sparse Condition B variants generated from a deterministic definition fixture. It is designed to test missingness reasoning, unsupported-claim calibration, evidence-trace correctness, and external-tool-boundary correctness.
+
+## First manual run results
+
+The first manual benchmark run (Run 001) found:
+
+- **Raw STEP condition:** the AI was honest — it correctly reported all engineering details as unknown and declined to hallucinate — but it provided no actionable engineering understanding. Honesty score: 16/16. Usefulness score: 1/16.
+- **`.aieng` condition:** the AI was honest and actionable — it cited feature IDs, identified protected regions, summarized simulation intent, stated the absence of solver evidence, and proposed a structured mass-reduction modification. Honesty score: 16/16. Usefulness score: 16/16.
+
+**Key finding:** raw STEP can produce honest but non-actionable answers. `.aieng` structured resources enable answers that are both honest and actionable.
+
+This finding motivated an update to the scoring rubric, which now scores two separate dimensions: **Honesty / non-hallucination** and **Engineering understanding / usefulness**.
+
+- [`benchmark_runs/bracket_001_manual/results_run_001.md`](../benchmark_runs/bracket_001_manual/results_run_001.md) — full results record
+- [`scoring_rubric.md`](scoring_rubric.md) — updated two-dimension rubric
+
+## Second manual run results
+
+The second manual benchmark run (Run 002) tested the Phase 6A and Phase 6B additions to Condition B: `simulation/solver_deck.inp` and `validation/status.yaml`.
+
+**Key finding:** when `validation/status.yaml` and `simulation/solver_deck.inp` were explicitly provided, the AI cited `solver_mesh_status` field names verbatim, quoted all six `claim_policy.forbidden_claims` entries by name, described the solver deck scaffold precisely (header strings, missing sections, scaffold warnings), and listed concrete next steps from the deck. Usefulness increased from 15/18 to 18/18 after a supplement providing the two missed files.
+
+**Caveat:** the initial Condition B response did not read the two new files; a supplement was required. This identified a presentation procedure gap: when many files are provided at once, the AI may skip files near the end. A sequential one-file-at-a-time procedure with explicit confirmation is recommended for future runs.
+
+- [`benchmark_runs/bracket_001_manual/results_run_002.md`](../benchmark_runs/bracket_001_manual/results_run_002.md) — full results record

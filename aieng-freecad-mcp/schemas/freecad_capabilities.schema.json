@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aieng.dev/schemas/freecad_mcp/freecad_capabilities.schema.json",
+  "title": "FreeCAD MCP Capabilities",
+  "type": "object",
+  "required": [
+    "freecad_available",
+    "headless_supported",
+    "supported_operations",
+    "unsupported_operations"
+  ],
+  "properties": {
+    "freecad_available": { "type": "boolean" },
+    "freecad_version": { "type": ["string", "null"] },
+    "headless_supported": { "type": "boolean" },
+    "workbenches": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "solvers": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "meshers": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "supported_operations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "unsupported_operations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

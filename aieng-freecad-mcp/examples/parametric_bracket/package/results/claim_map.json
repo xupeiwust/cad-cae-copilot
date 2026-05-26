@@ -1,0 +1,28 @@
+{
+  "claims": [
+    {
+      "id": "claim_mass_under_500g",
+      "description": "Total mass of bracket must be under 500g",
+      "status": "unsupported",
+      "criteria": {
+        "max_mass_g": 500
+      }
+    },
+    {
+      "id": "claim_stress_under_yield",
+      "description": "Maximum von Mises stress must be under yield strength",
+      "status": "unsupported",
+      "criteria": {
+        "safety_factor": 1.5
+      }
+    },
+    {
+      "id": "claim_max_displacement_under_limit",
+      "description": "Maximum displacement under static load must be <= 2.0 mm",
+      "status": "unsupported",
+      "criteria": {
+        "max_displacement_mm": 2.0
+      }
+    }
+  ]
+}

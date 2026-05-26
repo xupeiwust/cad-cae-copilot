@@ -1,0 +1,54 @@
+{
+  "claim_policy": {
+    "aieng_core_generates_mesh_evidence": false,
+    "aieng_core_generates_solver_evidence": false,
+    "aieng_core_modifies_cad_geometry": false,
+    "external_tools_execute": true
+  },
+  "evidence_index_id": "evidence_index_001",
+  "evidence_items": [
+    {
+      "artifact": {
+        "kind": "yaml",
+        "notes": "Structured agent task contract written by aieng write-task-spec.",
+        "path": "task/task_spec.yaml"
+      },
+      "claim_support": [
+        "claim_task_defined_001"
+      ],
+      "evidence_id": "ev_task_spec_001",
+      "evidence_type": "task_spec",
+      "notes": "Task specification produced by aieng core from user intent and package state.",
+      "producer": {
+        "kind": "aieng_core"
+      },
+      "verification": {
+        "notes": "task/task_spec.yaml present in package; schema validated by aieng validate.",
+        "status": "schema_validated"
+      }
+    },
+    {
+      "artifact": {
+        "kind": "json",
+        "notes": "Structured external tool handoff contract written by aieng write-external-tool-requirements.",
+        "path": "task/external_tool_requirements.json"
+      },
+      "claim_support": [
+        "claim_handoff_defined_001"
+      ],
+      "evidence_id": "ev_handoff_001",
+      "evidence_type": "external_tool_requirements",
+      "notes": "Handoff contract produced by aieng core from package state.",
+      "producer": {
+        "kind": "aieng_core"
+      },
+      "verification": {
+        "notes": "task/external_tool_requirements.json present in package; schema validated by aieng validate.",
+        "status": "schema_validated"
+      }
+    }
+  ],
+  "format_version": "0.1.0",
+  "source_handoff_id": "handoff_001",
+  "source_task_id": "task_001"
+}

@@ -1,0 +1,14 @@
+{
+  "claim_advancement": "none",
+  "claim_id": "claim_bracket_displacement_ok",
+  "created_at": "2026-01-01T00:00:00+00:00",
+  "created_by_tool": "claims.propose_update",
+  "proposal_id": "proposal-001",
+  "proposed_status": "supported",
+  "rationale": "Displacement summary is present for human/agent review.",
+  "schema_version": "0.1",
+  "status": "proposed",
+  "supporting_evidence": [
+    "results/fields/displacement.summary.json"
+  ]
+}

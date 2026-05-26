@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "aieng-workbench": {
+      "command": "C:\\Users\\RL_Carla\\anaconda3\\envs\\aieng311\\python.exe",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "aieng-ui/backend",
+      "env": {
+        "AIENG_BACKEND_URL": "http://127.0.0.1:8000"
+      }
+    }
+  }
+}

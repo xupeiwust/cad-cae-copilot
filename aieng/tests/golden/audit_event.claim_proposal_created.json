@@ -1,0 +1,19 @@
+{
+  "artifacts_written": [
+    "claims/proposals/proposal-001.json"
+  ],
+  "claim_advancement": "none",
+  "event_id": "event-001",
+  "event_type": "claim_proposal_created",
+  "evidence_created": [],
+  "geometry_revision": 1,
+  "revalidation_status": "fresh",
+  "schema_version": "0.1",
+  "state_changes": {
+    "claim_id": "claim_bracket_displacement_ok",
+    "proposed_status": "supported"
+  },
+  "status": "completed",
+  "timestamp": "2026-01-01T00:00:00+00:00",
+  "tool": "claims.propose_update"
+}

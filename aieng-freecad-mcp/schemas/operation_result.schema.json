@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aieng.dev/schemas/freecad_mcp/operation_result.schema.json",
+  "title": "FreeCAD MCP Operation Result",
+  "description": "Alias schema for operation results. Prefer tool_result.schema.json as the canonical mutating tool result schema.",
+  "allOf": [
+    { "$ref": "tool_result.schema.json" }
+  ]
+}

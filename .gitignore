@@ -1,0 +1,73 @@
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# ── Virtual environments & embedded interpreters ─────────
+# .conda/ holds full embedded conda envs (aieng/.conda, aieng-freecad-mcp/.conda
+# are ~167 MB each) — never commit these.
+.venv/
+venv/
+env/
+ENV/
+.conda/
+
+# ── Caches ───────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ── Build / dist output ──────────────────────────────────
+build/
+dist/
+dist-ssr/
+site/
+*.tsbuildinfo
+
+# ── Node / frontend ──────────────────────────────────────
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+.turbo/
+.parcel-cache/
+coverage/
+
+# ── Logs & runtime ───────────────────────────────────────
+*.log
+logs/
+.runtime-logs/
+
+# ── Runtime data (generated projects, not source) ────────
+aieng-ui/data/projects/
+aieng-ui/data/runtime/
+
+# ── Env / local secrets ──────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+
+# ── OS / editor ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+
+# ── VS Code: keep shared MCP + extension config, ignore rest ─
+.vscode/*
+!.vscode/mcp.json
+!.vscode/extensions.json
+
+# ── Claude Code local config (onboarding lives in CLAUDE.md / AGENTS.md) ─
+.claude/

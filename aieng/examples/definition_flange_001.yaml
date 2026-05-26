@@ -1,0 +1,154 @@
+model_id: definition_flange_001
+label: Definition-sourced pipe flange coverage probe
+description: >
+  Coverage-probe fixture for benchmark Phase 18C-min. Represents a circular pipe
+  flange with bolt-hole pattern and pipe bore. Intentionally focuses on stable IDs,
+  protection rules, and evidence boundaries rather than geometric realism.
+provenance:
+  source: hand_authored_benchmark_probe
+  authoring_method: deterministic_fixture
+coordinate_system:
+  type: cartesian
+  handedness: right
+  units:
+    length: mm
+    angle: deg
+  origin: [0, 0, 0]
+  axes:
+    x: [1, 0, 0]
+    y: [0, 1, 0]
+    z: [0, 0, 1]
+material:
+  name: SS316L
+  source: typical_public_datasheet_values
+  properties:
+    youngs_modulus_mpa: 193000
+    poisson_ratio: 0.27
+    density_kg_m3: 7990
+    yield_strength_mpa: 170
+assumptions:
+  - Flange is represented semantically; no CAD topology exists in this probe.
+  - Bolt-hole pattern and pipe bore are the protected interfaces.
+  - Flange outer ring is the primary candidate for mass reduction.
+known_limitations:
+  - No imported STEP geometry.
+  - No solver result evidence attached by default.
+  - Feature parameters are semantic intent only.
+design_requirements:
+  mass_target:
+    objective: reduce_flange_ring_mass_without_changing_interfaces
+    target_reduction_percent: 10
+    protected_feature_ids:
+      - feat_bolt_hole_pattern_001
+      - feat_pipe_bore_001
+  structural_targets:
+    max_von_mises_stress_mpa: 120
+  protected_interfaces:
+    - feat_bolt_hole_pattern_001
+    - feat_pipe_bore_001
+simulation:
+  type: static_structural
+  fixed:
+    - feat_bolt_hole_pattern_001
+  loads:
+    - target: feat_pipe_bore_001
+      type: pressure
+      value_n: 11781
+      direction: [0, 0, 1]
+      application: distributed_pressure_1_5_mpa_on_bore_area_7854mm2
+features:
+  - feature_id: feat_flange_body_001
+    type: base_plate
+    name: Flange body disc
+    parameters:
+      outer_diameter_mm: 200
+      thickness_mm: 25
+      shape: circular_disc
+    intent:
+      role: structural_base_candidate
+      generation_hint: circular_disc
+  - feature_id: feat_pipe_bore_001
+    type: boss
+    name: Pipe bore through-hole
+    parameters:
+      diameter_mm: 100
+      depth_mm: 25
+      through: true
+      axis: [0, 0, 1]
+      center_mm: [0, 0, 12.5]
+    intent:
+      role: pipe_interface_protected
+      generation_hint: central_through_bore
+    relationships:
+      - type: located_on
+        source_feature_id: feat_pipe_bore_001
+        target_feature_id: feat_flange_body_001
+        reason: Central bore is part of flange body.
+  - feature_id: feat_bolt_hole_pattern_001
+    type: mounting_hole_pattern
+    name: Bolt-hole mounting pattern
+    parameters:
+      count: 8
+      diameter_mm: 20
+      pitch_circle_diameter_mm: 160
+      through: true
+      axis: [0, 0, 1]
+      distribution: equal_angular
+    intent:
+      role: mounting_interface_candidate
+      generation_hint: eight_through_holes_pcd_160
+    relationships:
+      - type: located_on
+        source_feature_id: feat_bolt_hole_pattern_001
+        target_feature_id: feat_flange_body_001
+        reason: Bolt holes are on the flange face.
+  - feature_id: feat_raised_face_001
+    type: interface_face
+    name: Raised sealing face
+    parameters:
+      nominal_area_mm2: 3140
+      center_mm: [0, 0, 25]
+      normal: [0, 0, 1]
+      inner_diameter_mm: 100
+      outer_diameter_mm: 130
+    intent:
+      role: sealing_interface_candidate
+      generation_hint: annular_raised_face
+    relationships:
+      - type: located_on
+        source_feature_id: feat_raised_face_001
+        target_feature_id: feat_flange_body_001
+        reason: Raised face is on the top surface of the flange.
+  - feature_id: feat_lightening_pocket_001
+    type: unknown_feature
+    name: Lightening pocket candidate
+    parameters:
+      candidate_region: flange_outer_ring_between_bolt_holes
+      notes: Candidate region for mass reduction; not yet validated.
+    intent:
+      role: mass_reduction_candidate
+      generation_hint: pockets_between_bolt_holes
+    relationships:
+      - type: adjacent_to
+        source_feature_id: feat_lightening_pocket_001
+        target_feature_id: feat_bolt_hole_pattern_001
+        reason: Pocket region is between the bolt holes.
+constraints:
+  - id: con_protect_bolt_holes_001
+    type: protect_geometry
+    target: feat_bolt_hole_pattern_001
+    reason: Preserve bolt-hole mounting interface; no change to PCD, diameter, or count.
+  - id: con_protect_bore_001
+    type: protect_geometry
+    target: feat_pipe_bore_001
+    reason: Preserve pipe bore for flow and sealing function.
+  - id: con_protect_raised_face_001
+    type: preserve_interface
+    target: feat_raised_face_001
+    reason: Raised sealing face geometry must not be modified.
+  - id: con_static_target_001
+    type: simulation_target
+    target: sim_static_001
+    reason: Keep stress below target after mass reduction modifications.
+    metric: max_von_mises_stress_mpa
+    operator: <=

@@ -1,0 +1,33 @@
+{
+  "created_by": {
+    "converter_id": "freecad_reference",
+    "converter_version": "0.1.0",
+    "created_at": "2026-05-14T01:44:11Z",
+    "source_system": "FreeCAD",
+    "tool": "aieng 0.1.0"
+  },
+  "format_version": "0.1.0",
+  "model_id": "condition_b",
+  "resources": {
+    "graph": {
+      "feature_graph": "graph/feature_graph.json"
+    },
+    "objects": {
+      "object_registry": "objects/object_registry.json"
+    },
+    "provenance": {
+      "conversion_manifest": "provenance/conversion_manifest.json",
+      "converter_capabilities": "provenance/converter_capabilities.json"
+    },
+    "validation": {
+      "completeness_report": "validation/completeness_report.json"
+    }
+  },
+  "source_mode": "converter",
+  "units": {
+    "force": "N",
+    "length": "mm",
+    "mass": "kg",
+    "stress": "MPa"
+  }
+}

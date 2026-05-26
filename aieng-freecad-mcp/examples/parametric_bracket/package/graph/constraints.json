@@ -1,0 +1,16 @@
+{
+  "protected_regions": [
+    {
+      "name": "mounting_zone",
+      "description": "Mounting hole positions must remain fixed for compatibility",
+      "features": ["feat_mounting_holes_001"]
+    }
+  ],
+  "design_rules": [
+    {
+      "name": "min_wall_thickness",
+      "value_mm": 2.0,
+      "applies_to": ["feat_base_plate_001"]
+    }
+  ]
+}

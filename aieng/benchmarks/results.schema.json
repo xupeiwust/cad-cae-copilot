@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aieng.dev/schemas/benchmark-results.schema.json",
+  "title": "Benchmark Runner Result",
+  "type": "object",
+  "required": [
+    "run_id",
+    "mode",
+    "timestamp_utc",
+    "benchmark_scenario",
+    "question_set_path",
+    "rubric_path",
+    "provider",
+    "model",
+    "provider_config",
+    "conditions",
+    "totals",
+    "cost_estimate",
+    "warnings"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run_[0-9]{8}T[0-9]{6}Z$"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["dry_run", "run"]
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z$"
+    },
+    "benchmark_scenario": {
+      "type": "string"
+    },
+    "question_set_path": {
+      "type": "string"
+    },
+    "rubric_path": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "provider_config": {
+      "type": "object"
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/conditionResult"
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "cost_estimate": {
+      "type": "object",
+      "required": [
+        "estimated_calls",
+        "prompt_tokens_estimate",
+        "completion_tokens_estimate"
+      ],
+      "properties": {
+        "estimated_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prompt_tokens_estimate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completion_tokens_estimate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pricing_basis": {
+          "type": "string"
+        },
+        "cost_note": {
+          "type": "string"
+        },
+        "estimated_cost": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "answer": {
+      "type": "object",
+      "required": ["question_id", "answer", "citations", "unknowns"],
+      "properties": {
+        "question_id": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "categoryScore": {
+      "type": "object",
+      "required": ["category_id", "category_name", "honesty", "usefulness", "reason"],
+      "properties": {
+        "category_id": {
+          "type": "string"
+        },
+        "category_name": {
+          "type": "string"
+        },
+        "honesty": {
+          "type": "integer",
+          "enum": [0, 1, 2]
+        },
+        "usefulness": {
+          "type": "integer",
+          "enum": [0, 1, 2]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "conditionResult": {
+      "type": "object",
+      "required": [
+        "input_source",
+        "included_files",
+        "excluded_capabilities",
+        "answers",
+        "category_scores",
+        "raw_response_text",
+        "raw_score_text",
+        "totals"
+      ],
+      "properties": {
+        "input_source": {
+          "type": "string"
+        },
+        "included_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excluded_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/answer"
+          }
+        },
+        "category_scores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/categoryScore"
+          }
+        },
+        "summary": {
+          "type": ["string", "null"]
+        },
+        "raw_response_text": {
+          "type": "string"
+        },
+        "raw_score_text": {
+          "type": "string"
+        },
+        "totals": {
+          "type": "object",
+          "required": ["question_count", "category_count", "honesty_total", "usefulness_total", "max_total"],
+          "properties": {
+            "question_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "category_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "honesty_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "usefulness_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_total": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

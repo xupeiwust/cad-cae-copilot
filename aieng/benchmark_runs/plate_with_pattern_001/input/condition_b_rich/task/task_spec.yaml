@@ -1,0 +1,28 @@
+task_id: task_001
+format_version: 0.1.0
+intent: Reduce mass by 12 percent while preserving the hole pattern interface.
+mode: proposal_only
+input_refs:
+  package: self
+required_outputs:
+- patch_proposal
+forbidden_claims:
+- solver_validated
+- mesh_validated
+- safe_to_manufacture
+- geometry_modified
+allowed_external_tools:
+- cad_kernel
+- cae_preprocessor
+- mesher
+- solver
+evidence_required_before_acceptance:
+- geometry_validity
+- protected_region_integrity
+- mesh_evidence_from_external_cae
+- solver_result_from_external_cae
+claim_policy:
+  no_solver_run_claim: true
+  no_mesh_generation_claim: true
+  no_geometry_modification_claim: true
+  external_tools_execute: true

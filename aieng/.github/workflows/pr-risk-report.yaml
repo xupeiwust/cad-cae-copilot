@@ -1,0 +1,203 @@
+name: PR Risk Report
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  risk-report:
+    name: Analyze PR Risk
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate PR Risk Report
+        id: risk
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          # Basic stats
+          CHANGED_FILES=$(git diff --name-only "$BASE" "$HEAD" | wc -l)
+          INSERTIONS=$(git diff --stat "$BASE" "$HEAD" | tail -1 | grep -oP '\d+(?= insertion)' || echo 0)
+          DELETIONS=$(git diff --stat "$BASE" "$HEAD" | tail -1 | grep -oP '\d+(?= deletion)' || echo 0)
+
+          # File breakdown by type
+          PY_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '\.py$' | wc -l)
+          YAML_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '\.yaml$\|\.yml$' | wc -l)
+          MD_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '\.md$' | wc -l)
+          JSON_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '\.json$' | wc -l)
+          OTHER_FILES=$((CHANGED_FILES - PY_FILES - YAML_FILES - MD_FILES - JSON_FILES))
+
+          # Critical path detection
+          CORE_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '^src/aieng/' | wc -l)
+          TEST_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '^tests/' | wc -l)
+          BENCH_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '^benchmarks/' | wc -l)
+          WORKFLOW_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '^\.github/workflows/' | wc -l)
+          SCHEMA_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '^schemas/' | wc -l)
+          DOC_FILES=$(git diff --name-only "$BASE" "$HEAD" | grep '^docs/' | wc -l)
+
+          # Per-file stats
+          FILE_DETAILS=$(git diff --stat "$BASE" "$HEAD" | grep '|' | sort -t'|' -k2 -rn | head -20)
+
+          # Risk scoring (0-100)
+          RISK_SCORE=0
+
+          # Size factor (0-30)
+          if [ "$CHANGED_FILES" -gt 50 ]; then
+            RISK_SCORE=$((RISK_SCORE + 30))
+          elif [ "$CHANGED_FILES" -gt 20 ]; then
+            RISK_SCORE=$((RISK_SCORE + 20))
+          elif [ "$CHANGED_FILES" -gt 10 ]; then
+            RISK_SCORE=$((RISK_SCORE + 10))
+          elif [ "$CHANGED_FILES" -gt 5 ]; then
+            RISK_SCORE=$((RISK_SCORE + 5))
+          fi
+
+          # Core code factor (0-35)
+          if [ "$CORE_FILES" -gt 20 ]; then
+            RISK_SCORE=$((RISK_SCORE + 35))
+          elif [ "$CORE_FILES" -gt 10 ]; then
+            RISK_SCORE=$((RISK_SCORE + 25))
+          elif [ "$CORE_FILES" -gt 5 ]; then
+            RISK_SCORE=$((RISK_SCORE + 15))
+          elif [ "$CORE_FILES" -gt 0 ]; then
+            RISK_SCORE=$((RISK_SCORE + 8))
+          fi
+
+          # Test coverage factor (0-15) - more risk if core changes without tests
+          if [ "$CORE_FILES" -gt 0 ] && [ "$TEST_FILES" -eq 0 ]; then
+            RISK_SCORE=$((RISK_SCORE + 15))
+          elif [ "$CORE_FILES" -gt 0 ] && [ "$TEST_FILES" -lt 3 ]; then
+            RISK_SCORE=$((RISK_SCORE + 8))
+          fi
+
+          # Schema changes (0-10)
+          if [ "$SCHEMA_FILES" -gt 0 ]; then
+            RISK_SCORE=$((RISK_SCORE + 10))
+          fi
+
+          # Workflow changes (0-10)
+          if [ "$WORKFLOW_FILES" -gt 0 ]; then
+            RISK_SCORE=$((RISK_SCORE + 10))
+          fi
+
+          # Cap at 100
+          if [ "$RISK_SCORE" -gt 100 ]; then
+            RISK_SCORE=100
+          fi
+
+          # Risk level
+          if [ "$RISK_SCORE" -ge 70 ]; then
+            RISK_LEVEL="🔴 High"
+            RISK_LABEL="high"
+          elif [ "$RISK_SCORE" -ge 40 ]; then
+            RISK_LEVEL="🟡 Medium"
+            RISK_LABEL="medium"
+          else
+            RISK_LEVEL="🟢 Low"
+            RISK_LABEL="low"
+          fi
+
+          # Build report
+          REPORT="## PR Risk Report
+
+          | Metric | Value |
+          |--------|-------|
+          | **Risk Score** | **$RISK_LEVEL** ($RISK_SCORE/100) |
+          | Files Changed | $CHANGED_FILES |
+          | Lines Added | $INSERTIONS |
+          | Lines Removed | $DELETIONS |
+          | Net Change | $((INSERTIONS - DELETIONS)) |
+
+          ### Impact by Area
+
+          | Area | Files | Notes |
+          |------|-------|-------|
+          | Core Source (src/aieng/) | $CORE_FILES | ${CORE_FILES:+⚠️} |
+          | Tests (tests/) | $TEST_FILES | ${TEST_FILES:+✅} |
+          | Benchmarks (benchmarks/) | $BENCH_FILES | |
+          | Schemas (schemas/) | $SCHEMA_FILES | ${SCHEMA_FILES:+⚠️} |
+          | CI/CD (.github/workflows/) | $WORKFLOW_FILES | ${WORKFLOW_FILES:+⚠️} |
+          | Documentation (docs/) | $DOC_FILES | |
+
+          ### File Type Breakdown
+
+          - Python (.py): $PY_FILES
+          - YAML (.yaml/.yml): $YAML_FILES
+          - Markdown (.md): $MD_FILES
+          - JSON (.json): $JSON_FILES
+          - Other: $OTHER_FILES
+
+          ### Top Changed Files (by lines)
+
+          \`\`\`
+          $FILE_DETAILS
+          \`\`\`
+
+          ### Warnings
+
+          $(if [ "$CORE_FILES" -gt 0 ] && [ "$TEST_FILES" -eq 0 ]; then echo "- ⚠️ Core source files changed without corresponding test updates"; fi)
+          $(if [ "$SCHEMA_FILES" -gt 0 ]; then echo "- ⚠️ Schema changes detected — verify backward compatibility"; fi)
+          $(if [ "$WORKFLOW_FILES" -gt 0 ]; then echo "- ⚠️ CI workflow changes — verify actions still pass"; fi)
+          $(if [ "$CHANGED_FILES" -gt 30 ]; then echo "- ⚠️ Large PR ($CHANGED_FILES files) — consider splitting into smaller changes"; fi)
+          $(if [ "$RISK_SCORE" -lt 40 ] && [ "$CORE_FILES" -eq 0 ] && [ "$SCHEMA_FILES" -eq 0 ] && [ "$WORKFLOW_FILES" -eq 0 ]; then echo "- ✅ Low risk — docs/tests/benchmarks only"; fi)
+          "
+
+          # Write to file for comment step
+          echo "$REPORT" > pr-risk-report.md
+
+          # Also set outputs
+          echo "score=$RISK_SCORE" >> "$GITHUB_OUTPUT"
+          echo "level=$RISK_LABEL" >> "$GITHUB_OUTPUT"
+          echo "files=$CHANGED_FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Comment PR Risk Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('pr-risk-report.md', 'utf8');
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const botMarker = '## PR Risk Report';
+            const existingComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes(botMarker)
+            );
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                comment_id: existingComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report,
+              });
+              console.log('Updated existing risk report comment');
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report,
+              });
+              console.log('Created new risk report comment');
+            }
+
+      - name: Upload Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-risk-report
+          path: pr-risk-report.md
+          retention-days: 30

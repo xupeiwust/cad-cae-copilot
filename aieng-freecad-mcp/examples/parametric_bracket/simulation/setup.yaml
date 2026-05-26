@@ -1,0 +1,36 @@
+analysis_type: static_structural
+solver_mode: surrogate_static
+
+material:
+  name: Aluminum 6061-T6
+  elastic_modulus_mpa: 68900
+  poisson_ratio: 0.33
+  density_kg_m3: 2700
+  yield_strength_mpa: 276
+
+mesh:
+  target_size_mm: 2.0
+  element_type: tet4
+  refinement_regions: []
+
+boundary_conditions:
+  - name: fixed_mounting_holes
+    target: mounting_holes
+    constraint_type: fixed
+
+loads:
+  - name: center_load
+    target: load_face
+    load_type: force
+    magnitude_n: 500
+    direction: -Z
+
+acceptance_criteria:
+  max_von_mises_stress_mpa: 200
+  max_displacement_mm: 2.0
+
+assumptions:
+  - Linear static analysis
+  - Small deformation
+  - Isotropic material
+  - Uniform thickness

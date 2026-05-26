@@ -1,0 +1,11 @@
+{
+  "patch_id": "patch_reject_protected_hole_edit",
+  "operations": [
+    {
+      "operation": "modify_parameter",
+      "target_feature_id": "feat_mounting_holes_001",
+      "parameter_name": "diameter_mm",
+      "new_value": 8.0
+    }
+  ]
+}

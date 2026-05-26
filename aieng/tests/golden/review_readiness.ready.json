@@ -1,0 +1,31 @@
+{
+  "checks": [
+    {
+      "id": "supporting_evidence_present",
+      "message": "1 supporting evidence path(s) declared.",
+      "status": "ok"
+    },
+    {
+      "id": "no_missing_evidence",
+      "message": "All declared evidence paths are resolvable.",
+      "status": "ok"
+    },
+    {
+      "id": "stale_evidence",
+      "message": "No stale evidence detected.",
+      "status": "ok"
+    },
+    {
+      "id": "proposal_status_reviewable",
+      "message": "Proposal status 'proposed' is reviewable.",
+      "status": "ok"
+    },
+    {
+      "id": "claim_map_not_advanced",
+      "message": "No claim map files present; claim non-advancement contract maintained.",
+      "status": "ok"
+    }
+  ],
+  "claim_advancement": "none",
+  "status": "ready"
+}

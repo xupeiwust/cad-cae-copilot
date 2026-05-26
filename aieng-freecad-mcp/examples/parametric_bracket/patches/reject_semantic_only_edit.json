@@ -1,0 +1,11 @@
+{
+  "patch_id": "patch_reject_semantic_only_edit",
+  "operations": [
+    {
+      "operation": "modify_parameter",
+      "target_feature_id": "feat_semantic_rib_001",
+      "parameter_name": "height_mm",
+      "new_value": 10.0
+    }
+  ]
+}

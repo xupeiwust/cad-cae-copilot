@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aieng.dev/schemas/handoff-benchmark-results.schema.json",
+  "title": "Agent Handoff Benchmark Result",
+  "description": "Structured record for a single agent handoff benchmark run (Phase 14D). Scores agent reasoning about task intent, execution boundaries, evidence ledger, claim-evidence map, and unsupported-claim refusal.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "timestamp_utc",
+    "benchmark_scenario",
+    "question_set_path",
+    "rubric_path",
+    "provider",
+    "model",
+    "package_path",
+    "excluded_capabilities",
+    "included_files",
+    "category_scores",
+    "total_score",
+    "max_score",
+    "warnings"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^run_[0-9]{8}T[0-9]{6}Z$",
+      "description": "Stable run identifier in run_YYYYMMDDTHHMMSSZ format."
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z$",
+      "description": "Benchmark run timestamp in YYYYMMDDTHHMMSSZ format."
+    },
+    "benchmark_scenario": {
+      "type": "string",
+      "const": "agent_handoff_v1",
+      "description": "Benchmark scenario identifier. Must be agent_handoff_v1."
+    },
+    "question_set_path": {
+      "type": "string",
+      "description": "Relative path to the question set file used."
+    },
+    "rubric_path": {
+      "type": "string",
+      "description": "Relative path to the scoring rubric file used."
+    },
+    "provider": {
+      "type": "string",
+      "description": "AI provider name (e.g. Anthropic, OpenAI, Google)."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model identifier (e.g. claude-sonnet-4-6, gpt-4o)."
+    },
+    "evaluator": {
+      "type": "string",
+      "description": "Optional: name or team performing the evaluation."
+    },
+    "package_path": {
+      "type": "string",
+      "description": "Path to the .aieng package used as benchmark input."
+    },
+    "excluded_capabilities": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "description": "Capabilities that were explicitly excluded during the benchmark (MCP, RAG, external CAD, solver, etc.)."
+    },
+    "included_files": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "description": "Files from the package that were provided to the AI."
+    },
+    "category_scores": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/categoryScore"},
+      "minItems": 8,
+      "maxItems": 8,
+      "description": "Scores for each of the 8 benchmark categories."
+    },
+    "total_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16,
+      "description": "Sum of all category scores (max 16)."
+    },
+    "max_score": {
+      "type": "integer",
+      "const": 16,
+      "description": "Maximum possible score. Must be 16."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Optional free-text summary of key observations from this run."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Any warnings, anomalies, or notes about the benchmark run."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "categoryScore": {
+      "type": "object",
+      "required": ["category_id", "category_name", "score", "notes"],
+      "properties": {
+        "category_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Category number (1–8)."
+        },
+        "category_name": {
+          "type": "string",
+          "enum": [
+            "task_understanding",
+            "cad_cae_execution_boundary",
+            "protected_region_interface_awareness",
+            "evidence_ledger_understanding",
+            "claim_map_honesty",
+            "external_tool_handoff_plan_usefulness",
+            "provenance_and_writeback_awareness",
+            "unsupported_claim_refusal"
+          ],
+          "description": "Category name identifier."
+        },
+        "score": {
+          "type": "integer",
+          "enum": [0, 1, 2],
+          "description": "Score: 0=absent/incorrect, 1=partial/vague, 2=correct and grounded."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Evaluator notes explaining the score."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$comment": "Phase 14D: agent handoff benchmark scaffold results schema. benchmark_scenario must be agent_handoff_v1. max_score must be 16."
+}

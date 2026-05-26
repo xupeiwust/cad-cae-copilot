@@ -1,0 +1,116 @@
+# Design targets for bracket v2 mass-reduction study.
+# These are requirements / design intent, not solver results.
+# Pass/fail comparisons require evidence from computed_metrics.json or feature_graph.json.
+# This file does NOT certify engineering validity.
+#
+# Format: 0.1.1 — backward-compatible with 0.1.0.
+# Legacy required fields (id/metric/operator/value) are present.
+# Modern descriptive fields (target_id/target_type/description/comparator/threshold/priority)
+# are included for clarity and future-proofing.
+
+format_version: "0.1.1"
+target_set_id: "bracket_v2_mass_reduction"
+source_task_id: "task_bracket_002"
+
+provenance:
+  author: "lead_engineer"
+  created_at: "2026-05-17T10:00:00Z"
+  source_document: "PRD-2026-047"
+  rationale: "Customer requirement from thermal-mechanical review"
+
+claim_policy:
+  targets_are_acceptance_criteria: true
+  compliance_requires_evidence: true
+  physical_correctness_not_claimed: true
+
+targets:
+  - id: "mass_reduce_10pct"
+    metric: "mass_reduction_percent"
+    operator: "reduce_by_at_least"
+    value: 10.0
+    unit: "percent"
+    target_id: "mass_reduce_10pct"
+    target_type: "mass_reduction_target"
+    description: "Reduce component mass by at least 10% relative to baseline"
+    comparator: "reduce_by_at_least"
+    threshold: 10.0
+    priority: "high"
+    scope: "global"
+    baseline_ref: "results/computed_metrics.json#/load_cases/0/metrics/component_mass_kg"
+    notes: "Baseline mass from v1.4 design review"
+
+  - id: "safety_factor_min"
+    metric: "minimum_safety_factor"
+    operator: ">="
+    value: 1.5
+    unit: "dimensionless"
+    target_id: "safety_factor_min"
+    target_type: "minimum_safety_factor"
+    description: "Minimum safety factor under design load case"
+    comparator: ">="
+    threshold: 1.5
+    priority: "critical"
+    scope: "load_case_001"
+    evidence_refs:
+      - "results/computed_metrics.json#/load_cases/0/metrics/minimum_safety_factor"
+
+  - id: "displacement_limit"
+    metric: "max_displacement"
+    operator: "<="
+    value: 0.25
+    unit: "mm"
+    target_id: "displacement_limit"
+    target_type: "maximum_displacement"
+    description: "Maximum allowable displacement at mounting face"
+    comparator: "<="
+    threshold: 0.25
+    priority: "high"
+    scope: "load_case_001"
+    notes: "Measured at interface node set per CAE mapping"
+
+  - id: "stress_limit"
+    metric: "max_von_mises_stress"
+    operator: "<="
+    value: 350.0
+    unit: "MPa"
+    target_id: "stress_limit"
+    target_type: "maximum_von_mises_stress"
+    description: "Allowable von Mises stress for Al-6061-T6"
+    comparator: "<="
+    threshold: 350.0
+    priority: "high"
+    scope: "global"
+
+  - id: "preserve_mounting_holes"
+    metric: "preserved_interface"
+    operator: "preserve"
+    value: 1
+    target_id: "preserve_mounting_holes"
+    target_type: "preserved_interface"
+    description: "Mounting hole pattern must remain unchanged"
+    comparator: "preserve"
+    priority: "critical"
+    scope: "feature_graph"
+    protected_features:
+      - feature_id: "hole_m4_001"
+        feature_type: "circular_hole"
+        interface_role: "mounting"
+      - feature_id: "hole_m4_002"
+        feature_type: "circular_hole"
+        interface_role: "mounting"
+    evidence_refs:
+      - "graph/feature_graph.json#/features"
+
+  - id: "safety_over_mass"
+    metric: "objective_priority"
+    operator: "priority"
+    value: 1
+    target_id: "safety_over_mass"
+    target_type: "objective_priority"
+    description: "If safety factor and mass targets conflict, preserve safety factor"
+    comparator: "priority"
+    priority: "critical"
+    scope: "policy"
+    objective_order:
+      - "safety_factor_min"
+      - "mass_reduce_10pct"

@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Discussion / Question
+    url: https://github.com/your-org/aieng/discussions
+    about: Ask questions or discuss ideas in Discussions
+  - name: Architecture Questions
+    url: https://github.com/your-org/aieng/discussions/categories/architecture
+    about: Discuss project design and gate implementation

@@ -1,0 +1,19 @@
+allowed_operations:
+  - cad_set_parameter
+  - cad_inspect_object
+  - cad_get_mass_properties
+  - cad_export_step
+  - cad_export_fcstd
+  - cad_recompute_document
+  - aieng_parse_patch
+  - aieng_execute_patch
+
+forbidden_claims:
+  - automatic_validation
+  - automatic_safety
+  - manufacturing_acceptance
+
+target_outputs:
+  - modified_geometry_step
+  - evidence_index
+  - tool_trace

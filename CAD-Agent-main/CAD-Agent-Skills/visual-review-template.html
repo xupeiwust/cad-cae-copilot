@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en" data-template="cadquery-visual-review-v1">
+<head>
+  <meta charset="utf-8">
+  <meta name="cadquery-visual-review-template" content="cadquery-visual-review-v1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{STAGE_NAME}} Visual Review</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #111318;
+      --panel: #1a1d24;
+      --text: #e8eaf0;
+      --muted: #a5adba;
+      --border: #343946;
+      --pass: #52c41a;
+      --fail: #ff7875;
+      --warn: #fadb14;
+    }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header, main {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+    }
+    h1, h2, h3 {
+      margin: 0 0 12px;
+      line-height: 1.2;
+    }
+    p {
+      color: var(--muted);
+      margin: 0 0 12px;
+    }
+    a {
+      color: #91caff;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      margin-right: 8px;
+      font-size: 13px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .view img {
+      width: 100%;
+      min-height: 180px;
+      object-fit: contain;
+      background: #05070a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .status-pass { color: var(--pass); }
+    .status-fail { color: var(--fail); }
+    .status-warn { color: var(--warn); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    td, th {
+      border-bottom: 1px solid var(--border);
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    #viewer {
+      width: 100%;
+      height: 520px;
+      background: #05070a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    code {
+      background: #05070a;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{STAGE_NAME}} Visual Review</h1>
+    <span class="badge">quality: {{QUALITY_LEVEL}}</span>
+    <span class="badge">source: {{SOURCE_FILE}}</span>
+    <span class="badge">generated: {{GENERATED_AT}}</span>
+    <p>{{SUMMARY}}</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Review Artifacts</h2>
+      <p>
+        <a href="./geometry_facts.json">geometry_facts.json</a> |
+        <a href="./cad_refs.json">cad_refs.json</a> |
+        <a href="./phase_gate.json">phase_gate.json</a> |
+        <a href="./review_packet.json">review_packet.json</a> |
+        <a href="./preflight_review.md">preflight_review.md</a> |
+        <a href="./review_packet.md">review_packet.md</a> |
+        <a href="./{{STAGE_NAME}}.step">STEP</a> |
+        <a href="./{{STAGE_NAME}}.stl">STL</a>
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>Required Views</h2>
+      <div class="grid">
+        <figure class="view">
+          <img src="./render_views/front.png" alt="front view">
+          <figcaption>Front</figcaption>
+        </figure>
+        <figure class="view">
+          <img src="./render_views/side.png" alt="side view">
+          <figcaption>Side</figcaption>
+        </figure>
+        <figure class="view">
+          <img src="./render_views/top.png" alt="top view">
+          <figcaption>Top</figcaption>
+        </figure>
+        <figure class="view">
+          <img src="./render_views/iso.png" alt="isometric view">
+          <figcaption>Iso</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Diagnostic Views</h2>
+      <div class="grid">
+        <figure class="view">
+          <img src="./render_views/wire_iso.png" alt="wireframe isometric view">
+          <figcaption>Wire Iso</figcaption>
+        </figure>
+        <figure class="view">
+          <img src="./render_views/section.png" alt="section view">
+          <figcaption>Section</figcaption>
+        </figure>
+        <figure class="view">
+          <img src="./render_views/detail_contact_sheet.png" alt="detail contact sheet">
+          <figcaption>Detail Contact Sheet</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Findings</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Status</th>
+            <th>Evidence</th>
+            <th>Repair Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Silhouette</td>
+            <td class="{{SILHOUETTE_STATUS_CLASS}}">{{SILHOUETTE_STATUS}}</td>
+            <td>{{SILHOUETTE_EVIDENCE}}</td>
+            <td>{{SILHOUETTE_REPAIR}}</td>
+          </tr>
+          <tr>
+            <td>Proportion</td>
+            <td class="{{PROPORTION_STATUS_CLASS}}">{{PROPORTION_STATUS}}</td>
+            <td>{{PROPORTION_EVIDENCE}}</td>
+            <td>{{PROPORTION_REPAIR}}</td>
+          </tr>
+          <tr>
+            <td>Surface Continuity</td>
+            <td class="{{SURFACE_STATUS_CLASS}}">{{SURFACE_STATUS}}</td>
+            <td>{{SURFACE_EVIDENCE}}</td>
+            <td>{{SURFACE_REPAIR}}</td>
+          </tr>
+          <tr>
+            <td>Detail Hierarchy</td>
+            <td class="{{DETAIL_STATUS_CLASS}}">{{DETAIL_STATUS}}</td>
+            <td>{{DETAIL_EVIDENCE}}</td>
+            <td>{{DETAIL_REPAIR}}</td>
+          </tr>
+          <tr>
+            <td>Manufacturing Plausibility</td>
+            <td class="{{MANUFACTURING_STATUS_CLASS}}">{{MANUFACTURING_STATUS}}</td>
+            <td>{{MANUFACTURING_EVIDENCE}}</td>
+            <td>{{MANUFACTURING_REPAIR}}</td>
+          </tr>
+          <tr>
+            <td>Reference Alignment</td>
+            <td class="{{REFERENCE_STATUS_CLASS}}">{{REFERENCE_STATUS}}</td>
+            <td>{{REFERENCE_EVIDENCE}}</td>
+            <td>{{REFERENCE_REPAIR}}</td>
+          </tr>
+          <tr>
+            <td>Phase Gate</td>
+            <td class="{{GATE_STATUS_CLASS}}">{{GATE_STATUS}}</td>
+            <td>{{GATE_EVIDENCE}}</td>
+            <td>{{GATE_REPAIR}}</td>
+          </tr>
+          <tr>
+            <td>Primitive / Surface Strategy</td>
+            <td class="{{PRIMITIVE_STATUS_CLASS}}">{{PRIMITIVE_STATUS}}</td>
+            <td>{{PRIMITIVE_EVIDENCE}}</td>
+            <td>{{PRIMITIVE_REPAIR}}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Visual Defect Audit</h2>
+      <p>Hard-fail defects from <code>visual-defects.md</code>. Any visible failure blocks export-ready.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Defect</th>
+            <th>Status</th>
+            <th>Image Evidence</th>
+            <th>Repair Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Interpenetration</td><td class="{{INTERPENETRATION_STATUS_CLASS}}">{{INTERPENETRATION_STATUS}}</td><td>{{INTERPENETRATION_EVIDENCE}}</td><td>{{INTERPENETRATION_REPAIR}}</td></tr>
+          <tr><td>Floating Geometry</td><td class="{{FLOATING_STATUS_CLASS}}">{{FLOATING_STATUS}}</td><td>{{FLOATING_EVIDENCE}}</td><td>{{FLOATING_REPAIR}}</td></tr>
+          <tr><td>Disconnected Components</td><td class="{{DISCONNECTED_STATUS_CLASS}}">{{DISCONNECTED_STATUS}}</td><td>{{DISCONNECTED_EVIDENCE}}</td><td>{{DISCONNECTED_REPAIR}}</td></tr>
+          <tr><td>Misalignment</td><td class="{{MISALIGNMENT_STATUS_CLASS}}">{{MISALIGNMENT_STATUS}}</td><td>{{MISALIGNMENT_EVIDENCE}}</td><td>{{MISALIGNMENT_REPAIR}}</td></tr>
+          <tr><td>Bad Contact</td><td class="{{BAD_CONTACT_STATUS_CLASS}}">{{BAD_CONTACT_STATUS}}</td><td>{{BAD_CONTACT_EVIDENCE}}</td><td>{{BAD_CONTACT_REPAIR}}</td></tr>
+          <tr><td>Coplanar Overlap</td><td class="{{COPLANAR_STATUS_CLASS}}">{{COPLANAR_STATUS}}</td><td>{{COPLANAR_EVIDENCE}}</td><td>{{COPLANAR_REPAIR}}</td></tr>
+          <tr><td>Impossible Assembly</td><td class="{{IMPOSSIBLE_ASSEMBLY_STATUS_CLASS}}">{{IMPOSSIBLE_ASSEMBLY_STATUS}}</td><td>{{IMPOSSIBLE_ASSEMBLY_EVIDENCE}}</td><td>{{IMPOSSIBLE_ASSEMBLY_REPAIR}}</td></tr>
+          <tr><td>Occluded Feature</td><td class="{{OCCLUDED_STATUS_CLASS}}">{{OCCLUDED_STATUS}}</td><td>{{OCCLUDED_EVIDENCE}}</td><td>{{OCCLUDED_REPAIR}}</td></tr>
+          <tr><td>Scale Mismatch</td><td class="{{SCALE_STATUS_CLASS}}">{{SCALE_STATUS}}</td><td>{{SCALE_EVIDENCE}}</td><td>{{SCALE_REPAIR}}</td></tr>
+          <tr><td>View Inconsistency</td><td class="{{VIEW_INCONSISTENCY_STATUS_CLASS}}">{{VIEW_INCONSISTENCY_STATUS}}</td><td>{{VIEW_INCONSISTENCY_EVIDENCE}}</td><td>{{VIEW_INCONSISTENCY_REPAIR}}</td></tr>
+          <tr><td>Decorative Required Feature</td><td class="{{DECORATIVE_STATUS_CLASS}}">{{DECORATIVE_STATUS}}</td><td>{{DECORATIVE_EVIDENCE}}</td><td>{{DECORATIVE_REPAIR}}</td></tr>
+          <tr><td>Reference Mismatch</td><td class="{{REFERENCE_MISMATCH_STATUS_CLASS}}">{{REFERENCE_MISMATCH_STATUS}}</td><td>{{REFERENCE_MISMATCH_EVIDENCE}}</td><td>{{REFERENCE_MISMATCH_REPAIR}}</td></tr>
+          <tr><td>Unresolved Gate</td><td class="{{UNRESOLVED_GATE_STATUS_CLASS}}">{{UNRESOLVED_GATE_STATUS}}</td><td>{{UNRESOLVED_GATE_EVIDENCE}}</td><td>{{UNRESOLVED_GATE_REPAIR}}</td></tr>
+          <tr><td>Primitive Stack Overuse</td><td class="{{PRIMITIVE_STACK_STATUS_CLASS}}">{{PRIMITIVE_STACK_STATUS}}</td><td>{{PRIMITIVE_STACK_EVIDENCE}}</td><td>{{PRIMITIVE_STACK_REPAIR}}</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Interactive Three.js Viewer</h2>
+      <p>
+        Use this for human inspection. If relative STL auto-loading is blocked by browser security,
+        choose the generated STL file manually. Screenshots remain the stable review evidence.
+      </p>
+      <p>
+        <input id="fileInput" type="file" accept=".stl">
+        <button id="loadRelative">Try loading ./{{STAGE_NAME}}.stl</button>
+      </p>
+      <div id="viewer"></div>
+    </section>
+  </main>
+
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+    import { STLLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/STLLoader.js";
+
+    const container = document.getElementById("viewer");
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05070a);
+
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 10000);
+    camera.position.set(180, 160, 140);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x202030, 2.0));
+    const key = new THREE.DirectionalLight(0xffffff, 1.2);
+    key.position.set(120, 180, 160);
+    scene.add(key);
+
+    const grid = new THREE.GridHelper(300, 20, 0x334155, 0x1f2937);
+    scene.add(grid);
+
+    const loader = new STLLoader();
+    let currentMesh = null;
+
+    function frameObject(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      camera.position.copy(center).add(new THREE.Vector3(maxDim * 1.6, maxDim * 1.3, maxDim * 1.2));
+      camera.near = maxDim / 100;
+      camera.far = maxDim * 100;
+      camera.updateProjectionMatrix();
+      controls.target.copy(center);
+      controls.update();
+    }
+
+    function setGeometry(geometry) {
+      if (currentMesh) {
+        scene.remove(currentMesh);
+        currentMesh.geometry.dispose();
+      }
+      geometry.computeVertexNormals();
+      currentMesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({ color: 0x9cc9ff, roughness: 0.55, metalness: 0.05 })
+      );
+      scene.add(currentMesh);
+      frameObject(currentMesh);
+    }
+
+    document.getElementById("fileInput").addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => setGeometry(loader.parse(reader.result));
+      reader.readAsArrayBuffer(file);
+    });
+
+    document.getElementById("loadRelative").addEventListener("click", async () => {
+      const response = await fetch("./{{STAGE_NAME}}.stl");
+      const buffer = await response.arrayBuffer();
+      setGeometry(loader.parse(buffer));
+    });
+
+    function animate() {
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+  </script>
+</body>
+</html>

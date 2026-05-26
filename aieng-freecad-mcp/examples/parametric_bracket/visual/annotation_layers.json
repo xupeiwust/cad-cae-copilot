@@ -1,0 +1,11 @@
+{
+  "layers": [
+    {
+      "layer_id": "anno_load_direction",
+      "name": "Load Direction",
+      "target": "iface_load_001",
+      "direction": "-Z",
+      "magnitude_n": 500
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+# Deterministic rubric for diagnose_broken_cae_setup.
+#
+# A real LLM-graded rubric arrives later. For Phase 30's first slice we
+# score by substring matching against named criteria so the harness has a
+# reliable, reproducible score and a zero-API-cost smoke test.
+#
+# Each criterion's `patterns` list is checked case-insensitively against the
+# model output. A criterion is "hit" when at least one of its patterns matches.
+# The criterion's weight contributes to the final score (0..1).
+
+scenario_id: diagnose_broken_cae_setup
+rubric_type: deterministic_substring
+version: "0.2"
+
+# Per-trial token budget for the token-efficiency scorer. A trial at or
+# under this budget scores 1.0; a trial at 2x the budget scores 0.5. The
+# benchmark therefore distinguishes "correct" from "correct but expensive".
+# Calibrated from the first Kimi run on this scenario: Condition A used
+# 1,016 tokens (well under), Condition B used 6,272 tokens (well over).
+efficiency:
+  token_budget: 2000
+  description: >-
+    Min(1.0, token_budget / total_tokens_used). Treats correctness and
+    cost as orthogonal axes so the benchmark can report "B is correct
+    but expensive" rather than collapsing both into a single verdict.
+
+criteria:
+  - id: names_undefined_material
+    description: Identifies the specific undefined material name.
+    weight: 0.5
+    patterns:
+      - "aluminum6061"
+      - "aluminium6061"  # spelling tolerance
+  - id: identifies_reference_mismatch
+    description: Identifies that the load case references a material not defined in materials.
+    weight: 0.4
+    patterns:
+      - "undefined material"
+      - "not defined"
+      - "missing material"
+      - "no such material"
+      - "reference"  # weak; combined with anti-hallucination guards
+  - id: scoped_diagnosis
+    description: Stays scoped to the diagnosis (does not invent unrelated defects).
+    weight: 0.1
+    patterns:
+      - "load case"
+      - "load_case"
+
+# Anti-hallucination guards: presence of any of these strings in the model
+# output deducts from the score because they indicate invented defects.
+hallucination_penalties:
+  - pattern: "mesh is missing"
+    penalty: 0.25
+  - pattern: "solver settings are missing"
+    penalty: 0.25
+  - pattern: "geometry is missing"
+    penalty: 0.25
+
+# Score interpretation:
+#   correct: total >= 0.6  AND  no hallucination penalties applied
+#   partial: 0.3 <= total < 0.6  OR  total >= 0.6 with penalties
+#   incorrect: total < 0.3

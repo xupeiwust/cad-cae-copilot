@@ -71,3 +71,7 @@ Thumbs.db
 
 # ── Claude Code local config (onboarding lives in CLAUDE.md / AGENTS.md) ─
 .claude/
+
+# Local agent memory / workbook
+AGENT_WORKBOOK.md
+

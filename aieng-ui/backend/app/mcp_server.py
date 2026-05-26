@@ -37,8 +37,29 @@ import urllib.request
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
+from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadata
+from pydantic import ConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+class _PassthroughArgModel(ArgModelBase):
+    """Arg model that accepts any fields and forwards them all as kwargs.
+
+    Our tool handlers use a generic ``def _handler(**kwargs)`` signature. FastMCP
+    derives each tool's argument model from that signature, which yields a model
+    requiring a single field literally named ``kwargs`` — so a client sending the
+    real fields (project_id, code, mode, …) fails validation and the call never
+    reaches the handler. We replace the derived model with this passthrough one:
+    no required fields, extras allowed, and ``model_dump_one_level`` returns every
+    provided field so the handler receives them as kwargs. The advertised JSON
+    schema (curated, set on ``tool.parameters``) is unaffected.
+    """
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+
+    def model_dump_one_level(self) -> dict[str, Any]:
+        return dict(self.__pydantic_extra__ or {})
 
 # When set, tool calls are forwarded to the running FastAPI backend's
 # /api/agent/invoke-tool endpoint instead of executing in-process. This is what
@@ -201,12 +222,16 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
             structured_output=False,
             annotations=None,
         )
-        # FastMCP versions vary in how they accept JSON Schema overrides;
-        # write the schema directly into the registered Tool so MCP clients
-        # see the curated shape rather than the inferred ``**kwargs`` blob.
+        # Override two things on the registered Tool:
+        #  - parameters: advertise the curated JSON schema (what clients construct
+        #    calls from) instead of the inferred ``**kwargs`` blob.
+        #  - fn_metadata: validate/dispatch through a passthrough arg model so the
+        #    real fields actually reach the handler. Without this, FastMCP validates
+        #    against the ``**kwargs``-derived model and rejects every real call.
         tool_obj = mcp._tool_manager._tools.get(tool_name)  # type: ignore[attr-defined]
         if tool_obj is not None:
             tool_obj.parameters = input_schema
+            tool_obj.fn_metadata = FuncMetadata(arg_model=_PassthroughArgModel)
 
     return mcp
 

@@ -83,6 +83,41 @@ def test_non_approval_tool_has_no_approval_marker(mcp_server) -> None:
     assert "[APPROVAL REQUIRED]" not in tools["aieng.inspect_package"].description
 
 
+# ── FastMCP call_tool dispatch (real client path) ─────────────────────────────
+
+def test_mcp_call_tool_forwards_all_fields(monkeypatch) -> None:
+    """Driving a tool through FastMCP's call_tool must deliver ALL provided fields
+    (project_id, code, mode, arbitrary extras) to the handler.
+
+    Regression guard: the handlers use a generic ``**kwargs`` signature, so FastMCP
+    would otherwise validate against a model requiring a ``kwargs`` field and reject
+    every real call (e.g. mode=append silently never reached execute_build123d_code).
+    """
+    import asyncio
+
+    import app.mcp_server as ms
+
+    captured: dict[str, Any] = {}
+
+    def _probe(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        captured.update(inp)
+        return {"status": "ok"}
+
+    _rt.register_tool(
+        "test.echo_args",
+        _probe,
+        description="probe",
+        input_schema={"type": "object", "properties": {"project_id": {"type": "string"}}, "additionalProperties": True},
+    )
+    try:
+        monkeypatch.setattr(ms, "_BACKEND_URL", "")  # force in-process dispatch
+        mcp = ms._build_mcp_server()
+        asyncio.run(mcp.call_tool("test.echo_args", {"project_id": "p1", "mode": "append", "custom": 42}))
+        assert captured == {"project_id": "p1", "mode": "append", "custom": 42}
+    finally:
+        _rt._REGISTRY.pop("test.echo_args", None)
+
+
 # ── invoke_tool dispatch ──────────────────────────────────────────────────────
 
 def test_invoke_tool_dispatches_to_handler() -> None:

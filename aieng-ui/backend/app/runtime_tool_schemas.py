@@ -153,6 +153,40 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
+    "cad.get_named_part_bbox": {
+        "type": "object",
+        "required": ["project_id", "part_name"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "part_name": {
+                "type": "string",
+                "description": "Exact named-part label from geometry/topology_map.json, e.g. 'thigh_L'.",
+            },
+        },
+        "additionalProperties": True,
+    },
+    "cad.refine": {
+        "type": "object",
+        "required": ["project_id", "feedback"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "feedback": {
+                "type": "string",
+                "description": "Natural-language change request, e.g. 'move thigh_L down by 20mm'.",
+            },
+            "write_files": {
+                "type": "boolean",
+                "description": "Write refined geometry/source/topology artifacts back into the package (default true).",
+            },
+            "timeout": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 600,
+                "description": "Subprocess timeout in seconds for the refined build123d execution (default 60).",
+            },
+        },
+        "additionalProperties": True,
+    },
 
     # ── CAD edit (approval-gated) ────────────────────────────────────────────
     "cad.edit_parameter": {

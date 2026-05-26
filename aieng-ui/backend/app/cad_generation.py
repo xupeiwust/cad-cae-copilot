@@ -32,7 +32,28 @@ _RUNNER_TEMPLATE = """\
 import sys
 import json
 from pathlib import Path
+import build123d as _aieng_build123d
 from build123d import *
+
+# Compatibility shim for agent-authored code. In build123d, `Compound([a, b])`
+# can create a compound whose `.children` are empty, losing `.label` names that
+# downstream MCP tools rely on. Prefer `Compound(children=[...])`, but preserve
+# labels for the common positional-list form too. Patch the module before the
+# generated code runs so a later `from build123d import *` in that code imports
+# the shim as well.
+_AIENG_ORIGINAL_COMPOUND = Compound
+
+
+class Compound(_AIENG_ORIGINAL_COMPOUND):
+    def __new__(cls, *args, **kwargs):
+        if "children" not in kwargs and len(args) == 1:
+            candidate = args[0]
+            if isinstance(candidate, (list, tuple)) or type(candidate).__name__ == "ShapeList":
+                return _AIENG_ORIGINAL_COMPOUND(children=list(candidate), **kwargs)
+        return _AIENG_ORIGINAL_COMPOUND(*args, **kwargs)
+
+
+_aieng_build123d.Compound = Compound
 
 # ---- aieng generated code ----
 __AIENG_GENERATED_CODE__
@@ -208,6 +229,71 @@ def _check_code_contract(code: str) -> str | None:
     return None
 
 
+def _load_stl_triangles(stl_bytes: bytes) -> tuple[Any, Any] | tuple[None, None]:
+    """Best-effort STL loader returning (triangles, normals) as numpy arrays.
+
+    Prefers trimesh when installed, but falls back to a tiny local ASCII/binary
+    STL parser so thumbnail rendering still works in minimal environments.
+    """
+    import struct
+
+    import numpy as np
+
+    try:
+        import io
+        import trimesh
+
+        mesh = trimesh.load(io.BytesIO(stl_bytes), file_type="stl", force="mesh")
+        if mesh.is_empty or len(mesh.faces) == 0:
+            return None, None
+        verts = np.asarray(mesh.vertices)
+        triangles = verts[np.asarray(mesh.faces)]
+        normals = np.asarray(mesh.face_normals)
+        return triangles, normals
+    except Exception:
+        pass
+
+    stripped = stl_bytes.lstrip()
+    if stripped[:5].lower() == b"solid" and b"facet" in stripped:
+        text = stl_bytes.decode("utf-8", errors="ignore")
+        vertex_matches = re.findall(
+            r"vertex\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)",
+            text,
+        )
+        if len(vertex_matches) >= 3 and len(vertex_matches) % 3 == 0:
+            verts = np.asarray([[float(x), float(y), float(z)] for x, y, z in vertex_matches], dtype=float)
+            triangles = verts.reshape((-1, 3, 3))
+            edge1 = triangles[:, 1] - triangles[:, 0]
+            edge2 = triangles[:, 2] - triangles[:, 0]
+            normals = np.cross(edge1, edge2)
+            norms = np.linalg.norm(normals, axis=1, keepdims=True)
+            normals = normals / np.where(norms == 0, 1.0, norms)
+            return triangles, normals
+
+    if len(stl_bytes) >= 84:
+        tri_count = struct.unpack("<I", stl_bytes[80:84])[0]
+        expected = 84 + tri_count * 50
+        if tri_count > 0 and expected <= len(stl_bytes):
+            triangles: list[list[list[float]]] = []
+            normals: list[list[float]] = []
+            offset = 84
+            for _ in range(tri_count):
+                nx, ny, nz = struct.unpack("<3f", stl_bytes[offset:offset + 12])
+                offset += 12
+                tri = []
+                for _ in range(3):
+                    vx, vy, vz = struct.unpack("<3f", stl_bytes[offset:offset + 12])
+                    offset += 12
+                    tri.append([vx, vy, vz])
+                offset += 2  # attribute byte count
+                triangles.append(tri)
+                normals.append([nx, ny, nz])
+            if triangles:
+                return np.asarray(triangles, dtype=float), np.asarray(normals, dtype=float)
+
+    return None, None
+
+
 def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
     """Render an STL mesh to a base64-encoded PNG thumbnail (headless).
 
@@ -226,22 +312,20 @@ def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
         import io
 
         import numpy as np
-        import trimesh
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-        mesh = trimesh.load(io.BytesIO(stl_bytes), file_type="stl", force="mesh")
-        if mesh.is_empty or len(mesh.faces) == 0:
+        triangles, normals = _load_stl_triangles(stl_bytes)
+        if triangles is None or normals is None or len(triangles) == 0:
             return None
 
-        verts = np.asarray(mesh.vertices)
-        triangles = verts[np.asarray(mesh.faces)]
+        verts = np.asarray(triangles).reshape((-1, 3))
 
         # Simple Lambert shading so the form reads clearly (not photorealism).
-        normals = np.asarray(mesh.face_normals)
+        normals = np.asarray(normals, dtype=float)
         light = np.array([0.3, 0.4, 0.85])
         light = light / np.linalg.norm(light)
         intensity = np.clip(normals @ light, 0.18, 1.0)
@@ -368,6 +452,15 @@ def _named_parts_from_feature_graph(feature_graph: dict[str, Any]) -> list[str]:
         f["name"]
         for f in (feature_graph or {}).get("features", [])
         if f.get("type") == "named_part" and f.get("name")
+    ]
+
+
+def _available_named_parts_from_topology(topology_map: dict[str, Any]) -> list[str]:
+    """Return all named solid/body labels in topology order."""
+    return [
+        str(entity["name"])
+        for entity in (topology_map or {}).get("entities", [])
+        if entity.get("type") == "solid" and entity.get("name")
     ]
 
 
@@ -1367,10 +1460,14 @@ def refine_cad_generation(
         raise HTTPException(status_code=404, detail=".aieng package not found")
 
     existing_code: str | None = None
+    prior_named_parts: list[str] = []
     try:
         with zipfile.ZipFile(package_path, "r") as zf:
             if "geometry/source.py" in zf.namelist():
                 existing_code = zf.read("geometry/source.py").decode()
+            if "graph/feature_graph.json" in zf.namelist():
+                prior_fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+                prior_named_parts = _named_parts_from_feature_graph(prior_fg)
     except Exception:
         pass
 
@@ -1389,6 +1486,8 @@ def refine_cad_generation(
         raise HTTPException(status_code=422, detail=f"Refined CAD execution failed: {exc}")
 
     feature_graph = _topology_to_feature_graph(topo)
+    named_parts = _named_parts_from_feature_graph(feature_graph)
+    parts_added = [part for part in named_parts if part not in prior_named_parts]
 
     written: list[str] = []
     if write_files:
@@ -1422,11 +1521,15 @@ def refine_cad_generation(
     face_count = sum(1 for e in topo.get("entities", []) if e.get("type") == "face")
 
     return {
+        "status": "ok",
         "schema_version": "0.1",
         "project_id": project_id,
+        "mode": "refine",
         "feedback": feedback,
         "backend": "build123d",
         "refined_code": refined_code,
+        "named_parts": named_parts,
+        "parts_added": parts_added,
         "topology_summary": {
             "face_count": face_count,
             "feature_count": len(feature_graph.get("features", [])),
@@ -1438,6 +1541,77 @@ def refine_cad_generation(
         "preview_url": f"/api/projects/{project_id}/cad-preview",
         "preview_format": "glb" if glb_bytes else "stl",
         "warnings": [],
+    }
+
+
+def get_named_part_bbox(
+    settings: Any,
+    project_id: str,
+    part_name: str,
+) -> dict[str, Any]:
+    """Return bbox + center for a named solid from geometry/topology_map.json."""
+    from .project_io import get_project, resolve_project_path
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+
+    package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if package_path is None or not package_path.exists():
+        return {"status": "error", "code": "package_not_found", "message": ".aieng package not found"}
+
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            if "geometry/topology_map.json" not in zf.namelist():
+                return {
+                    "status": "error",
+                    "code": "topology_missing",
+                    "message": "geometry/topology_map.json not found in package",
+                    "available_parts": [],
+                }
+            topology_map = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+    except Exception as exc:
+        return {"status": "error", "code": "topology_read_failed", "message": f"{exc}"}
+
+    available_parts = _available_named_parts_from_topology(topology_map)
+    entities = topology_map.get("entities", []) if isinstance(topology_map, dict) else []
+    target = next(
+        (
+            entity
+            for entity in entities
+            if entity.get("type") == "solid" and entity.get("name") == part_name
+        ),
+        None,
+    )
+    if target is None:
+        return {
+            "status": "error",
+            "message": f"part '{part_name}' not found",
+            "available_parts": available_parts,
+        }
+
+    bbox = target.get("bounding_box")
+    if not isinstance(bbox, list) or len(bbox) != 6:
+        return {
+            "status": "error",
+            "code": "bbox_missing",
+            "message": f"part '{part_name}' does not have a valid bounding_box",
+            "available_parts": available_parts,
+        }
+
+    center = [
+        round((float(bbox[0]) + float(bbox[3])) / 2, 4),
+        round((float(bbox[1]) + float(bbox[4])) / 2, 4),
+        round((float(bbox[2]) + float(bbox[5])) / 2, 4),
+    ]
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "part_name": part_name,
+        "bounding_box": bbox,
+        "center": center,
+        "available_parts": available_parts,
     }
 
 

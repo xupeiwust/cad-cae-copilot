@@ -485,6 +485,24 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
     ),
     (
         [
+            "named part bbox", "part bbox", "bounding box of part", "part center",
+            "named part center", "center of part",
+            "零件包围盒", "零件中心", "部件包围盒",
+        ],
+        "cad.get_named_part_bbox",
+        "Read bbox and center of a named CAD part from topology_map",
+    ),
+    (
+        [
+            "refine cad", "refine geometry", "feedback driven cad edit",
+            "edit build123d via feedback", "update model from feedback",
+            "细化cad", "根据反馈修改cad", "修改几何",
+        ],
+        "cad.refine",
+        "Refine existing build123d CAD using natural-language feedback",
+    ),
+    (
+        [
             "edit cad parameter", "change cad parameter", "update cad parameter",
             "modify cad parameter", "set cad parameter", "apply cad edit",
             "修改cad参数", "编辑cad参数", "更新cad参数",

@@ -18,6 +18,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     _sync_main_symbols()
     active_settings = settings or Settings.from_env()
     ensure_dirs(active_settings)
+    server_started_at = datetime.now(timezone.utc).isoformat()
     app = FastAPI(title="aieng-platform")
     app.state.settings = active_settings
     app.add_middleware(
@@ -31,7 +32,17 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok"}
+        tool_names = _rt.registered_tool_names()
+        cad_tool_names = [name for name in tool_names if name.startswith("cad.")]
+        return {
+            "status": "ok",
+            "pid": os.getpid(),
+            "started_at": server_started_at,
+            "python_executable": sys.executable,
+            "app_root": str(APP_ROOT),
+            "runtime_tool_count": len(tool_names),
+            "cad_tool_count": len(cad_tool_names),
+        }
 
     @app.get("/api/runtime")
     def runtime() -> dict[str, Any]:
@@ -3994,8 +4005,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "no LLM API key needed. "
             "Code contract: bind the final model to a variable named `result`; omit all export calls "
             "(the runner adds export_step/export_stl/export_gltf automatically). "
-            "Name parts by setting `.label` on shapes and combining with Compound — labels become "
-            "named parts in topology_map/feature_graph you can reference later. "
+            "Name parts by setting `.label` on shapes and combining with `Compound(children=[...])` — "
+            "labels become named parts in topology_map/feature_graph you can reference later. "
+            "The runner also accepts legacy `Compound([...])` and preserves child labels. "
             "Use mode='append' to build incrementally: the previous model is exposed as `previous_result` "
             "and your code adds to it (still reassigning `result`). "
             "Returns a rendered thumbnail image so you can visually verify the geometry, plus "
@@ -4023,6 +4035,60 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "state summary {source, named_parts, has_base}. Call this before cad.execute_build123d "
             "to decide replace vs append, see which named parts already exist, and avoid "
             "re-adding prior logic. has_base=true means append mode is available."
+        ),
+    )
+
+    def _tool_cad_get_named_part_bbox(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        part_name = inp.get("part_name")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        if not part_name:
+            return {"status": "error", "code": "missing_part_name", "message": "part_name is required."}
+        return _cg.get_named_part_bbox(active_settings, str(project_id), str(part_name))
+
+    _rt.register_tool(
+        "cad.get_named_part_bbox",
+        _tool_cad_get_named_part_bbox,
+        input_schema=_schema("cad.get_named_part_bbox"),
+        description=(
+            "Read-only: look up a named part by its exact topology_map label and return "
+            "its bounding_box plus derived center point. Useful for grounded follow-up "
+            "instructions like moving or resizing one named component."
+        ),
+    )
+
+    def _tool_cad_refine(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        if not str(inp.get("feedback") or "").strip():
+            return {"status": "error", "code": "missing_feedback", "message": "feedback is required."}
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            return {
+                "status": "error",
+                "message": "ANTHROPIC_API_KEY not configured; cad.refine requires LLM access",
+            }
+        try:
+            return _cg.refine_cad_generation(active_settings, str(project_id), dict(inp))
+        except HTTPException as exc:
+            return {"status": "error", "message": str(exc.detail)}
+        except Exception as exc:
+            return {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+
+    _rt.register_tool(
+        "cad.refine",
+        _tool_cad_refine,
+        requires_approval=True,
+        input_schema=_schema("cad.refine"),
+        description=(
+            "[APPROVAL REQUIRED] Refine the existing build123d model from natural-language feedback. "
+            "Reads geometry/source.py, asks Claude to edit the code, re-executes it, and writes updated "
+            "geometry/topology/preview artifacts back into the .aieng package."
         ),
     )
 

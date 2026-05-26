@@ -186,7 +186,19 @@ Use this path for the v0.28 public-facing Copilot MVP demo. The demo is determin
    npm run dev
    ```
 
-   On Windows PowerShell, activate `backend\.venv` before running `uvicorn`.
+   On Windows PowerShell, prefer the guarded launcher from the `aieng-ui` repo root:
+
+   ```powershell
+   .\scripts\backend.ps1
+   ```
+
+   It refuses to start if port `8000` already has a listener, preventing stale
+   backend processes from serving old MCP tools. To intentionally replace an
+   existing local backend, run:
+
+   ```powershell
+   .\scripts\backend.ps1 -Force
+   ```
 
 6. Open the Vite URL, usually `http://localhost:5173`, then open **Copilot Loop** and run:
 

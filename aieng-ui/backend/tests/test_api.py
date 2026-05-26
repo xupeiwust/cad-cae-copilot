@@ -60,7 +60,11 @@ def test_health_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    data = response.json()
+    assert data["status"] == "ok"
+    assert isinstance(data["pid"], int)
+    assert data["python_executable"]
+    assert data["runtime_tool_count"] >= 0
 
 
 def test_field_descriptor_endpoint_returns_synthetic_contract(tmp_path: Path) -> None:

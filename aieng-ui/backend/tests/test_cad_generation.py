@@ -322,6 +322,25 @@ def test_execute_build123d_captures_part_labels(tmp_path: Path) -> None:
     assert sorted(f["name"] for f in named) == ["fuselage", "motor_pod_FL"]
 
 
+def test_execute_build123d_preserves_labels_with_positional_compound_list(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "named-positional-compound")
+    code = (
+        "from build123d import *\n"
+        "body = Box(40, 40, 10); body.label = 'base_plate'\n"
+        "dome = Sphere(8); dome.label = 'dome_head'\n"
+        "result = Compound([body, dome])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+    assert out["named_parts"] == ["base_plate", "dome_head"]
+    named = [f for f in out["feature_graph"]["features"] if f["type"] == "named_part"]
+    assert sorted(f["name"] for f in named) == ["base_plate", "dome_head"]
+
+
 def test_execute_build123d_append_preserves_prior_parts(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import execute_build123d_code
@@ -635,10 +654,133 @@ def test_refine_cad_endpoint_success(tmp_path: Path) -> None:
 
     assert resp.status_code == 200
     data = resp.json()
+    assert data["status"] == "ok"
+    assert data["mode"] == "refine"
     assert data["refined_code"] == _REFINED_CODE
     assert data["preview_format"] == "glb"
     assert "geometry/preview.stl" in data["written_artifacts"]
     assert "geometry/preview.glb" in data["written_artifacts"]
+
+
+def test_get_named_part_bbox_found_and_not_found(tmp_path: Path) -> None:
+    from app import runtime as _rt
+    from app.main import default_project, project_dir, save_project
+
+    settings = _make_settings(tmp_path)
+    create_app(settings)
+    project = save_project(settings, default_project("bbox"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "bbox.aieng"
+    with zipfile.ZipFile(pkg_path, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+        zf.writestr(
+            "geometry/topology_map.json",
+            json.dumps(
+                {
+                    "entities": [
+                        {
+                            "id": "body_001",
+                            "type": "solid",
+                            "name": "thigh_L",
+                            "bounding_box": [-50, -18, -130, -10, 18, -40],
+                        },
+                        {
+                            "id": "body_002",
+                            "type": "solid",
+                            "name": "torso",
+                            "bounding_box": [-30, -20, -40, 30, 20, 40],
+                        },
+                    ]
+                }
+            ),
+        )
+    project["aieng_file"] = "bbox.aieng"
+    save_project(settings, project)
+
+    found = _rt.invoke_tool("cad.get_named_part_bbox", {"project_id": project_id, "part_name": "thigh_L"})
+    assert found["status"] == "ok"
+    assert found["bounding_box"] == [-50, -18, -130, -10, 18, -40]
+    assert found["center"] == [-30.0, 0.0, -85.0]
+    assert found["available_parts"] == ["thigh_L", "torso"]
+
+    missing = _rt.invoke_tool("cad.get_named_part_bbox", {"project_id": project_id, "part_name": "thigh_R"})
+    assert missing["status"] == "error"
+    assert missing["message"] == "part 'thigh_R' not found"
+    assert missing["available_parts"] == ["thigh_L", "torso"]
+
+
+def test_cad_refine_tool_uses_server_env_key_and_mocked_refinement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import runtime as _rt
+    from app.main import default_project, project_dir, save_project
+    from app.project_io import get_project, resolve_project_path
+
+    settings = _make_settings(tmp_path)
+    create_app(settings)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-from-env")
+
+    project = save_project(settings, default_project("refine-tool"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "tool_refine.aieng"
+    with zipfile.ZipFile(pkg_path, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+        zf.writestr("geometry/source.py", _SAMPLE_CODE)
+        zf.writestr(
+            "graph/feature_graph.json",
+            json.dumps({"features": [{"type": "named_part", "name": "torso"}]}),
+        )
+    project["aieng_file"] = "tool_refine.aieng"
+    save_project(settings, project)
+
+    refined_code = (
+        "from build123d import *\n"
+        "torso = Box(10, 10, 10); torso.label = 'torso'\n"
+        "leg = Box(10, 10, 20); leg.label = 'thigh_L'\n"
+        "result = Compound(children=[torso, leg])\n"
+    )
+    topo = {
+        "entities": [
+            {"id": "body_001", "type": "solid", "name": "torso", "bounding_box": [0, 0, 0, 10, 10, 10]},
+            {"id": "body_002", "type": "solid", "name": "thigh_L", "bounding_box": [0, 0, -20, 10, 10, 0]},
+            {"id": "face_001", "type": "face", "body_id": "body_001", "surface_type": "plane", "bounding_box": [0, 0, 0, 10, 10, 0]},
+        ]
+    }
+
+    with (
+        patch("app.cad_generation.Build123dBackend.can_generate", return_value=True),
+        patch("app.cad_generation.call_claude_for_build123d_refinement", return_value=refined_code) as refine_mock,
+        patch("app.cad_generation._execute_build123d_code", return_value=(_FAKE_STEP, _FAKE_STL, _FAKE_GLB, topo)),
+    ):
+        out = _rt.invoke_tool(
+            "cad.refine",
+            {"project_id": project_id, "feedback": "move thigh_L down by 20mm", "write_files": True, "timeout": 60},
+        )
+
+    assert out["status"] == "ok"
+    assert out["mode"] == "refine"
+    assert out["named_parts"] == ["torso", "thigh_L"]
+    assert out["parts_added"] == ["thigh_L"]
+    assert out["topology_summary"]["bounding_box"] == [0, 0, 0, 10, 10, 10]
+    refine_mock.assert_called_once()
+    assert refine_mock.call_args.kwargs["api_key"] is None
+
+    project = get_project(settings, project_id)
+    resolved = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    assert resolved is not None and resolved.exists()
+
+
+def test_cad_refine_tool_requires_server_env_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import runtime as _rt
+
+    settings = _make_settings(tmp_path)
+    create_app(settings)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    out = _rt.invoke_tool("cad.refine", {"project_id": "proj_123", "feedback": "make the torso narrower"})
+    assert out["status"] == "error"
+    assert out["message"] == "ANTHROPIC_API_KEY not configured; cad.refine requires LLM access"
 
 
 # ── execute_build123d_code (agent-supplied code, no LLM) ──────────────────────

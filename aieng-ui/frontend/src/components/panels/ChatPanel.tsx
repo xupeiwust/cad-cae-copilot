@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
 import { PointerText } from "../PointerText";
 import { ActionIcon, JsonDisclosure } from "../common";
+import { ApprovalCard } from "../agent/ApprovalCard";
+import { AgentPlanCard } from "../agent/AgentPlanCard";
+import { AgentResultCard } from "../agent/AgentResultCard";
 import { isLowRiskArtifactPath } from "../../appUtils";
 import type { ChatConnection, ProjectRecord, RuntimeRun } from "../../types";
 
@@ -205,19 +208,13 @@ export function ChatPanel({
 
               <p><PointerText text={entry.body} /></p>
 
-              {entry.cadResult ? (
-                <div className="chat-cad-result">
-                  <div className="chat-cad-stats">
-                    <span>{entry.cadResult.face_count} faces</span>
-                    <span>{entry.cadResult.feature_count} features</span>
-                    <span>preview updated</span>
-                  </div>
-                  <details>
-                    <summary>View generated code</summary>
-                    <pre className="chat-cad-code">{entry.cadResult.code}</pre>
-                  </details>
-                </div>
-              ) : null}
+              <AgentResultCard
+                cadResult={entry.cadResult}
+                heatmapActive={heatmapActive}
+                heatmapRange={heatmapRange}
+                onViewHeatmap={onViewHeatmap}
+                simulationResult={entry.simulationResult}
+              />
 
               {entry.targetResult ? (
                 <div className="chat-target-result">
@@ -261,128 +258,6 @@ export function ChatPanel({
                 </div>
               ) : null}
 
-              {entry.simulationResult ? (
-                <div className={`chat-sim-result${entry.simulationResult.status === "success" ? "" : " chat-sim-result-error"}`}>
-                  {entry.simulationResult.status === "success" ? (
-                    <>
-                      <div className="chat-sim-stats">
-                        {entry.simulationResult.von_mises_max_mpa != null ? (
-                          <span>σ<sub>max</sub> {(entry.simulationResult.von_mises_max_mpa as number).toFixed(1)} MPa</span>
-                        ) : null}
-                        {entry.simulationResult.displacement_max_mm != null ? (
-                          <span>u<sub>max</sub> {(entry.simulationResult.displacement_max_mm as number).toFixed(3)} mm</span>
-                        ) : null}
-                        {entry.simulationResult.verdict?.fos?.fos != null ? (
-                          <span className={`chat-fos-badge chat-fos-${entry.simulationResult.verdict.fos.rating}`}>
-                            FoS {entry.simulationResult.verdict.fos.fos.toFixed(2)}
-                          </span>
-                        ) : null}
-                        {entry.simulationResult.node_count != null ? (
-                          <span>{entry.simulationResult.node_count.toLocaleString()} nodes</span>
-                        ) : null}
-                        {entry.simulationResult.mesh_size_mm != null ? (
-                          <span>mesh {entry.simulationResult.mesh_size_mm} mm</span>
-                        ) : null}
-                      </div>
-                      <div className="chat-heatmap-row">
-                        <button
-                          type="button"
-                          className={`chat-heatmap-btn${heatmapActive ? " active" : ""}`}
-                          onClick={onViewHeatmap}
-                        >
-                          {heatmapActive ? "View Model" : "View Stress Heatmap"}
-                        </button>
-                        {heatmapActive ? (
-                          <div className="chat-heatmap-colorbar">
-                            <span className="chat-heatmap-colorbar-label">
-                              {heatmapRange ? `${heatmapRange.min.toFixed(0)} MPa` : "low"}
-                            </span>
-                            <div className="chat-heatmap-colorbar-strip" />
-                            <span className="chat-heatmap-colorbar-label">
-                              {heatmapRange ? `${heatmapRange.max.toFixed(0)} MPa` : "high"}
-                            </span>
-                          </div>
-                        ) : null}
-                      </div>
-                    </>
-                  ) : entry.simulationResult.status === "tools_unavailable" ? (
-                    <p className="chat-sim-missing">
-                      Tools not installed: {entry.simulationResult.missing_tools?.join(", ")}
-                    </p>
-                  ) : (
-                    <>
-                      <p className="chat-sim-missing">
-                        Solver error (code {entry.simulationResult.returncode ?? "?"})
-                      </p>
-                      {entry.simulationResult.diagnosis?.length ? (
-                        <ul className="chat-sim-diagnosis">
-                          {entry.simulationResult.diagnosis.map((d, i) => (
-                            <li key={i}>{d}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </>
-                  )}
-                  {entry.simulationResult.written_artifacts?.length ? (
-                    <div className="chat-preprocess-files">
-                      {entry.simulationResult.written_artifacts.map((f) => (
-                        <span key={f} className="chat-preprocess-file">{f}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {(entry.simulationResult.warnings?.length ?? 0) > 0 ? (
-                    <details>
-                      <summary>{entry.simulationResult.warnings!.length} warning{entry.simulationResult.warnings!.length !== 1 ? "s" : ""}</summary>
-                      <ul className="chat-preprocess-warnings">
-                        {entry.simulationResult.warnings!.map((w, i) => (
-                          <li key={i}>{w}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
-
-                  {entry.simulationResult.verdict && entry.simulationResult.verdict.overall !== "no_targets" ? (
-                    <div className={`chat-verdict chat-verdict-${entry.simulationResult.verdict.overall}`}>
-                      <div className="chat-verdict-header">
-                        <span className="chat-verdict-badge">
-                          {entry.simulationResult.verdict.overall === "pass" ? "PASS" :
-                           entry.simulationResult.verdict.overall === "fail" ? "FAIL" :
-                           entry.simulationResult.verdict.overall === "partial" ? "PARTIAL" : "UNKNOWN"}
-                        </span>
-                        <span className="chat-verdict-counts">
-                          {entry.simulationResult.verdict.pass_count} passed · {entry.simulationResult.verdict.fail_count} failed
-                        </span>
-                      </div>
-                      {entry.simulationResult.verdict.items.filter((i) => i.status !== "not_evaluated").map((item) => (
-                        <div key={item.target_id} className={`chat-verdict-item chat-verdict-item-${item.status}`}>
-                          <span className="chat-verdict-item-label">{item.label}</span>
-                          <span className="chat-verdict-item-values">
-                            {item.actual_value != null ? item.actual_value.toFixed(2) : "—"}
-                            {item.unit ? ` ${item.unit}` : ""}
-                            {" "}
-                            {item.operator} {item.threshold != null ? item.threshold : "—"}
-                            {item.unit ? ` ${item.unit}` : ""}
-                          </span>
-                          <span className={`chat-verdict-item-status status-${item.status === "pass" ? "done" : item.status === "fail" ? "error" : "active"}`}>
-                            {item.status}
-                          </span>
-                        </div>
-                      ))}
-                      {entry.simulationResult.verdict.suggestions.length > 0 ? (
-                        <details className="chat-verdict-suggestions">
-                          <summary>Suggestions ({entry.simulationResult.verdict.suggestions.length})</summary>
-                          <ul>
-                            {entry.simulationResult.verdict.suggestions.map((s, i) => (
-                              <li key={i}>{s}</li>
-                            ))}
-                          </ul>
-                        </details>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
               {entry.advisoryItems?.length ? (
                 <div className="chat-advisory-card">
                   <div className="chat-advisory-header">Engineering Advisory</div>
@@ -395,19 +270,7 @@ export function ChatPanel({
               ) : null}
 
               {entry.plan?.length ? (
-                <div className="chat-plan-list">
-                  {entry.plan.map((step, index) => (
-                    <div
-                      key={`${step.tool}-${index}`}
-                      className={`chat-plan-item status-${
-                        step.status === "failed" ? "error" : step.status === "done" ? "done" : "active"
-                      }`}
-                    >
-                      <strong>{step.tool}</strong>
-                      <span>{step.description}</span>
-                    </div>
-                  ))}
-                </div>
+                <AgentPlanCard steps={entry.plan} />
               ) : null}
 
               {entry.errors?.length ? (
@@ -480,6 +343,7 @@ export function ChatPanel({
           <div className="chat-progress-card chat-cad-progress">
             <div className="chat-progress-spinner" />
             <div className="chat-progress-text">
+              <span className="chat-progress-title">Agent is generating CAD</span>
               <span className="chat-progress-step">
                 {cadGenerationProgress.activeStage ?? (cadGenerationProgress.fatalError ? "error" : "done")}
               </span>
@@ -503,22 +367,12 @@ export function ChatPanel({
         ) : null}
 
         {lastRuntimeRun?.status === "awaiting_approval" ? (
-          <div className="chat-approval-card">
-            <span>
-              Approval required —{" "}
-              {lastRuntimeRun.plan[lastRuntimeRun.pending_step_index ?? 0]?.name ?? "tool"}
-            </span>
-            <div className="chat-approval-actions">
-              <button disabled={chatBusy} onClick={() => void approveRun()}>
-                <ActionIcon name="approve" />
-                Approve
-              </button>
-              <button disabled={chatBusy} className="ghost-button" onClick={() => void rejectRun()}>
-                <ActionIcon name="reject" />
-                Reject
-              </button>
-            </div>
-          </div>
+          <ApprovalCard
+            busy={chatBusy}
+            run={lastRuntimeRun}
+            onApprove={() => void approveRun()}
+            onReject={() => void rejectRun()}
+          />
         ) : null}
 
         {simulationPending ? (

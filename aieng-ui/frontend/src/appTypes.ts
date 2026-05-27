@@ -84,12 +84,49 @@ export type ChatHistoryItem = {
 
 export type ViewerLoadState = "idle" | "loading" | "ready" | "error";
 export type ControlPaneMode = "project" | "agent" | "cae" | "recommend" | "copilot" | "chat" | "pilot";
+export type WorkbenchPaneMode = "agent" | "project" | "debug";
 
 export type PickedFace = {
   pointer: string;
   label: string;
   surface_type: string;
   roles: string[];
+};
+
+export type PickedEdge = {
+  pointer: string;
+  label: string;
+  curve_type?: string;
+  roles: string[];
+};
+
+export type AgentTurnStatus =
+  | "draft"
+  | "planning"
+  | "planned"
+  | "awaiting_approval"
+  | "running"
+  | "completed"
+  | "failed"
+  | "rejected";
+
+export type SelectedGeometryContext = {
+  pointers: string[];
+  faces: PickedFace[];
+  highlightedFaceIds: string[];
+};
+
+export type AgentTurn = {
+  id: string;
+  userMessage: string;
+  createdAt: string;
+  status: AgentTurnStatus;
+  projectId: string | null;
+  selectedGeometry?: SelectedGeometryContext;
+  plan?: ChatHistoryItem["plan"];
+  runId?: string;
+  summary?: string;
+  errors?: string[];
 };
 
 export type BrepFaceEntity = {

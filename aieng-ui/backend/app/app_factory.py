@@ -115,6 +115,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
             project_summary = agent_context.build_agent_context(active_settings, str(project_id))
         patch_json = data.get("patch_json") if isinstance(data.get("patch_json"), dict) else None
+        selected_geometry = agent_engine.sanitize_selected_geometry(data.get("selected_geometry"))
         return agent_engine.build_agent_plan(
             settings=active_settings,
             message=message,
@@ -123,6 +124,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             runtime_tools=_rt.registered_tools_info(),
             capabilities=agent_workbench.list_capabilities(active_settings),
             llm_config=agent_engine.sanitize_llm_config(data.get("llm_config")),
+            selected_geometry=selected_geometry,
             patch_json=patch_json,
             dry_run=bool(data.get("dry_run", False)),
         )
@@ -152,6 +154,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 "mode": agent_plan.get("mode"),
                 "warnings": agent_plan.get("warnings") or [],
                 "errors": agent_plan.get("errors") or [],
+                "selected_geometry": agent_plan.get("selected_geometry"),
             },
         }
         if isinstance(data.get("llm_config"), dict):

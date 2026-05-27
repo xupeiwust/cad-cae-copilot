@@ -1,0 +1,14 @@
+[mcp_servers.aieng-workbench]
+args = [
+    "run",
+    "-n",
+    "aieng311",
+    "--no-capture-output",
+    "python",
+    "-m",
+    "app.mcp_server",
+]
+command = "conda"
+
+[mcp_servers.aieng-workbench.env]
+AIENG_BACKEND_URL = "http://127.0.0.1:8000"

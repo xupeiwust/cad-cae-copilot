@@ -2,14 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
 import {
+  AI_FIRST_WORKBENCH_ENABLED,
   BASE_STAGES,
   CONTROL_PANE_MODES,
   DEFAULT_CHAT_CONNECTIONS,
   DEFAULT_LLM_CONFIG,
   EMPTY_CAE_FIELDS,
   LLM_CONFIG_STORAGE_KEY,
+  WORKBENCH_PANE_MODES,
 } from "./appConstants";
-import type { BrepGraphSnapshot, CadGenerationProgress, ChatHistoryItem, ControlPaneMode, Notice, PickedFace, StageItem, StageState } from "./appTypes";
+import type { BrepGraphSnapshot, CadGenerationProgress, ChatHistoryItem, ControlPaneMode, Notice, PickedFace, SelectedGeometryContext, StageItem, StageState, WorkbenchPaneMode } from "./appTypes";
 import type { PointerToken } from "./components/PointerText";
 import type { AgentActivityEvent } from "./appUtils";
 import {
@@ -34,13 +36,16 @@ import {
   summarizeAssistantReply,
   withAssetVersion,
 } from "./appUtils";
-import { ActionIcon, ControlPaneIcon, NoticeCenter } from "./components/common";
+import { NoticeCenter } from "./components/common";
 import { PointerProvider } from "./components/PointerText";
 import { ViewerPane } from "./components/ViewerPane";
+import { WorkbenchRightRail, type WorkbenchRightRailModeId } from "./components/WorkbenchRightRail";
+import { SelectionInspectorCard } from "./components/agent/SelectionInspectorCard";
 import { AgentPanel } from "./components/panels/AgentPanel";
 import { CaePanel } from "./components/panels/CaePanel";
 import { ChatPanel } from "./components/panels/ChatPanel";
 import { CopilotLoopPanel } from "./components/panels/CopilotLoopPanel";
+import { DebugPanel } from "./components/panels/DebugPanel";
 import { IntentPlannerCard } from "./components/panels/IntentPlannerCard";
 import { ProjectPanel } from "./components/panels/ProjectPanel";
 import { RecommendationsPanel } from "./components/panels/RecommendationsPanel";
@@ -122,6 +127,7 @@ export default function App() {
   const [chatConnections, setChatConnections] = useState<ChatConnection[]>(DEFAULT_CHAT_CONNECTIONS);
   const [selectedChatConnectionId, setSelectedChatConnectionId] = useState<string>("llm-api");
   const [controlPaneMode, setControlPaneMode] = useState<ControlPaneMode>("chat");
+  const [workbenchPaneMode, setWorkbenchPaneMode] = useState<WorkbenchPaneMode>("agent");
   const [agentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
   const [artifactViewerPath, setArtifactViewerPath] = useState("");
@@ -208,6 +214,29 @@ export default function App() {
     () => capabilities.filter((item) => item.available && item.source === "aieng-ui-runtime" && item.name.startsWith("mcp.")).length,
     [capabilities],
   );
+  const activeControlPaneModes = AI_FIRST_WORKBENCH_ENABLED
+    ? WORKBENCH_PANE_MODES
+    : CONTROL_PANE_MODES;
+  const activeControlPaneMode = AI_FIRST_WORKBENCH_ENABLED ? workbenchPaneMode : controlPaneMode;
+  const activeControlPaneModeDetail =
+    activeControlPaneModes.find((mode) => mode.id === activeControlPaneMode)?.detail ??
+    CONTROL_PANE_MODES.find((mode) => mode.id === controlPaneMode)?.detail;
+  const showAgentWorkbench = AI_FIRST_WORKBENCH_ENABLED && workbenchPaneMode === "agent";
+  const showProjectPanel = AI_FIRST_WORKBENCH_ENABLED ? workbenchPaneMode === "project" : controlPaneMode === "project";
+  const showDebugPanel = AI_FIRST_WORKBENCH_ENABLED && workbenchPaneMode === "debug";
+  const showLegacyAgentPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "agent";
+  const showLegacyCaePanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "cae";
+  const showRecommendationsPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "recommend";
+  const showCopilotLoopPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "copilot";
+  const showIntentPlannerPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "pilot";
+  const showChatPanel = showAgentWorkbench || (!AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "chat");
+  function handleControlPaneModeChange(mode: WorkbenchRightRailModeId) {
+    if (AI_FIRST_WORKBENCH_ENABLED) {
+      setWorkbenchPaneMode(mode as WorkbenchPaneMode);
+      return;
+    }
+    setControlPaneMode(mode as ControlPaneMode);
+  }
 
   useEffect(() => {
     if (!notice) return;
@@ -864,7 +893,7 @@ export default function App() {
           {
             id: createChatId(),
             role: "assistant",
-            body: "CAD generated — preview updated",
+            body: "Agent generated CAD — preview updated",
             createdAt: new Date().toISOString(),
             cadResult: { face_count: topo.face_count, feature_count: topo.feature_count, code },
           },
@@ -882,7 +911,7 @@ export default function App() {
           {
             id: createChatId(),
             role: "assistant",
-            body: "CAD refined — preview updated",
+            body: "Agent refined CAD — preview updated",
             createdAt: new Date().toISOString(),
             cadResult: { face_count: topo.face_count, feature_count: topo.feature_count, code },
           },
@@ -1034,6 +1063,30 @@ export default function App() {
     }
   }
 
+  function selectedGeometryContext(): SelectedGeometryContext | null {
+    if (!pickedFaces.length) return null;
+    return {
+      pointers: pickedFaces.map((face) => face.pointer),
+      faces: pickedFaces,
+      highlightedFaceIds: Array.from(highlightedFaceIds),
+    };
+  }
+
+  function withSelectedGeometryPrompt(prompt: string) {
+    if (prompt.includes("\n\nSelected geometry:\n")) return prompt;
+    const context = selectedGeometryContext();
+    if (!context) return prompt;
+    const faceLines = context.faces.map((face) => {
+      const roles = face.roles.length ? face.roles.join(", ") : "unknown";
+      return `- ${face.pointer} ${face.surface_type || "unknown"} roles: ${roles} label: ${face.label}`;
+    });
+    return `User request:\n${prompt}\n\nSelected geometry:\n${faceLines.join("\n")}`;
+  }
+
+  function agentPayloadGeometry() {
+    return selectedGeometryContext() ?? undefined;
+  }
+
   async function chatWithProjectContext(prompt: string) {
     if (!selectedId) {
       await runAgentChat(prompt);
@@ -1177,6 +1230,7 @@ export default function App() {
   async function sendUnified() {
     const prompt = message.trim();
     if (!prompt) return;
+    const agentPrompt = withSelectedGeometryPrompt(prompt);
 
     setChatHistory((current) => [
       ...current,
@@ -1184,7 +1238,7 @@ export default function App() {
     ]);
     setMessage("");
 
-    const plannedAction = await resolveEngineeringIntent(prompt);
+    const plannedAction = await resolveEngineeringIntent(agentPrompt);
     const cadIntent = plannedAction?.intent ?? null;
     if (cadIntent === "simulate") {
       setSimulationPending(true);
@@ -1200,42 +1254,23 @@ export default function App() {
       return;
     }
     if (cadIntent === "preprocess") {
-      await executePreprocessFromPrompt(prompt, { materialHint: plannedAction?.materialHint });
+      await createAgentPlanFromPrompt(prompt, true);
       return;
     }
     if (cadIntent === "generate" || cadIntent === "refine") {
-      await executeCadFromPrompt(prompt, cadIntent);
+      await executeCadFromPrompt(agentPrompt, cadIntent);
       return;
     }
     if (cadIntent === "change_material" || cadIntent === "refine_mesh") {
-      await executeIterationFromPrompt(prompt, cadIntent, {
-        materialHint: plannedAction?.materialHint,
-        meshSizeMm: plannedAction?.meshSizeMm,
-      });
+      await createAgentPlanFromPrompt(prompt, true);
       return;
     }
     if (cadIntent === "set_target") {
-      await executeSetTargetFromPrompt(prompt);
+      await createAgentPlanFromPrompt(prompt, true);
       return;
     }
 
-    if (selectedConnectionBlocked) {
-      setChatHistory((current) => [
-        ...current,
-        { id: createChatId(), role: "assistant", body: `${selectedChatConnection.label} requires a selected project.`, createdAt: new Date().toISOString() },
-      ]);
-      return;
-    }
-
-    if (selectedChatConnection.id === "llm-api") {
-      await chatWithProjectContext(prompt);
-      return;
-    }
-    if (selectedChatConnection.id === "mcp-bridge") {
-      await submitChat("execute", prompt, true);
-      return;
-    }
-    await submitRuntime(prompt, true);
+    await runAgentChat(prompt);
   }
 
   function addPickedFace(face: PickedFace) {
@@ -1412,7 +1447,7 @@ export default function App() {
 
   useEffect(() => {
     sidePaneRef.current?.scrollTo({ top: 0 });
-  }, [controlPaneMode]);
+  }, [controlPaneMode, workbenchPaneMode]);
 
   function appendRunToChatHistory(run: RuntimeRun) {
     const statusLabel = runtimeStatusLabel(run.status);
@@ -1590,6 +1625,7 @@ export default function App() {
       if (!skipUserMsg) setNotice({ tone: "info", title: "请输入请求", detail: "本地运行时需要一条自然语言指令。" });
       return;
     }
+    const agentPrompt = withSelectedGeometryPrompt(prompt);
     if (!skipUserMsg) {
       setChatHistory((current) => [
         ...current,
@@ -1597,7 +1633,7 @@ export default function App() {
       ]);
     }
     await runBusyTask(async () => {
-      const run = await api.startRun(prompt, selectedId ?? null);
+      const run = await api.startRun(agentPrompt, selectedId ?? null);
       setLastRuntimeRun(run);
       appendRunToChatHistory(run);
       const statusLabel = runtimeStatusLabel(run.status);
@@ -1808,25 +1844,21 @@ export default function App() {
     });
   }
 
-  async function planAgentChat() {
-    const prompt = message.trim();
-    if (!prompt) {
-      setNotice({ tone: "info", title: "请输入 Agent 目标", detail: "Agent 需要一条建模、检查或分析目标。" });
-      return;
-    }
+  async function createAgentPlanFromPrompt(prompt: string, skipUserMsg = false) {
     setAgentBusy(true);
     setNotice(null);
     try {
       const plan = await api.planAgent({
         message: prompt,
         project_id: selectedId ?? null,
+        selected_geometry: agentPayloadGeometry(),
         llm_config: llmConfig,
         dry_run: false,
       });
       setAgentPlan(plan);
       setChatHistory((current) => [
         ...current,
-        { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "plan" },
+        ...(skipUserMsg ? [] : [{ id: createChatId(), role: "user" as const, body: prompt, createdAt: new Date().toISOString(), mode: "plan" as const }]),
         {
           id: createChatId(),
           role: "assistant",
@@ -1856,6 +1888,15 @@ export default function App() {
     }
   }
 
+  async function planAgentChat() {
+    const prompt = message.trim();
+    if (!prompt) {
+      setNotice({ tone: "info", title: "请输入 Agent 目标", detail: "Agent 需要一条建模、检查或分析目标。" });
+      return;
+    }
+    await createAgentPlanFromPrompt(prompt);
+  }
+
   async function runAgentChat(promptOverride?: string) {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt && !agentPlan) {
@@ -1868,6 +1909,7 @@ export default function App() {
       const result = await api.runAgent({
         message: prompt || agentPlan?.message,
         project_id: selectedId ?? agentPlan?.project_id ?? null,
+        selected_geometry: agentPayloadGeometry(),
         llm_config: llmConfig,
         plan: agentPlan ?? undefined,
       });
@@ -1940,6 +1982,7 @@ export default function App() {
       if (!skipUserMsg) setNotice({ tone: "info", title: "请输入编排请求", detail: "聊天窗需要一条自然语言指令才能生成计划或执行。" });
       return;
     }
+    const agentPrompt = withSelectedGeometryPrompt(prompt);
 
     if (!skipUserMsg) {
       setChatHistory((current) => [
@@ -1949,7 +1992,7 @@ export default function App() {
     }
 
     await runBusyTask(async () => {
-      const result = await api.chat(selectedId, prompt, mode === "execute");
+      const result = await api.chat(selectedId, agentPrompt, mode === "execute");
       setChat(result);
       if (mode === "execute") {
         await refreshProjects(selectedId);
@@ -1973,6 +2016,101 @@ export default function App() {
         detail: mode === "execute" ? "聊天窗已执行当前请求允许的后端步骤。" : "聊天窗已生成一组可审阅的受保护步骤。",
       });
     });
+  }
+
+  function renderAgentToolsPanel() {
+    return (
+      <AgentPanel
+        busy={busy}
+        capabilities={capabilities}
+        capabilityCategory={capabilityCategory}
+        capabilityCategories={capabilityCategories}
+        capabilityQuery={capabilityQuery}
+        filteredCapabilities={filteredCapabilities}
+        selectedCapability={selectedCapability}
+        capabilityPreview={capabilityPreview}
+        workflows={workflows}
+        selectedWorkflow={selectedWorkflow}
+        benchmarkScenarios={benchmarkScenarios}
+        selectedScenarioId={selectedScenarioId}
+        benchmarkRun={benchmarkRun}
+        benchmarkBusy={benchmarkBusy}
+        llmConfig={llmConfig}
+        llmReady={llmReady}
+        summary={summary}
+        setCapabilityCategory={setCapabilityCategory}
+        setCapabilityQuery={setCapabilityQuery}
+        setSelectedCapabilityName={setSelectedCapabilityName}
+        setCapabilityPreview={setCapabilityPreview}
+        setSelectedWorkflowId={setSelectedWorkflowId}
+        setSelectedScenarioId={setSelectedScenarioId}
+        refreshAgentWorkbench={refreshAgentWorkbench}
+        previewSelectedCapability={previewSelectedCapability}
+        runSelectedWorkflow={runSelectedWorkflow}
+        runBenchmark={runBenchmark}
+      />
+    );
+  }
+
+  function renderCaePanel() {
+    return (
+      <CaePanel
+        summary={summary}
+        selectedId={selectedId}
+        caeSummary={caeSummary}
+        hasCaeContext={hasCaeContext}
+        hasCaeResultArtifacts={hasCaeResultArtifacts}
+        renderableCaeFields={renderableCaeFields}
+        selectedCaeField={selectedCaeField}
+        fieldDescriptor={fieldDescriptor}
+        caeRefreshing={caeRefreshing}
+        caeReviewReport={caeReviewReport}
+        caeReviewLoading={caeReviewLoading}
+        metricsInputPath={metricsInputPath}
+        metricsLoadCaseId={metricsLoadCaseId}
+        metricsSoftware={metricsSoftware}
+        metricsImporting={metricsImporting}
+        frdInputPath={frdInputPath}
+        frdLoadCaseId={frdLoadCaseId}
+        frdSoftware={frdSoftware}
+        frdExtracting={frdExtracting}
+        artifactViewerPath={artifactViewerPath}
+        artifactViewerData={artifactViewerData}
+        artifactViewerBusy={artifactViewerBusy}
+        setSelectedCaeField={setSelectedCaeField}
+        setMetricsInputPath={setMetricsInputPath}
+        setMetricsLoadCaseId={setMetricsLoadCaseId}
+        setMetricsSoftware={setMetricsSoftware}
+        setFrdInputPath={setFrdInputPath}
+        setFrdLoadCaseId={setFrdLoadCaseId}
+        setFrdSoftware={setFrdSoftware}
+        setArtifactViewerPath={setArtifactViewerPath}
+        refreshCaeSummary={refreshCaeSummary}
+        generateCaeReviewReport={generateCaeReviewReport}
+        importMetricsAndRefresh={importMetricsAndRefresh}
+        extractFrdAndRefresh={extractFrdAndRefresh}
+        viewArtifact={viewArtifact}
+      />
+    );
+  }
+
+  function renderRecommendationsPanel() {
+    return <RecommendationsPanel selectedId={selectedId} />;
+  }
+
+  function renderCopilotLoopPanel() {
+    return (
+      <CopilotLoopPanel
+        selectedId={selectedId}
+        onSelectProject={(projectId) => {
+          void refreshProjects(projectId);
+        }}
+      />
+    );
+  }
+
+  function renderIntentPlannerPanel() {
+    return <IntentPlannerCard selectedId={selectedId} />;
   }
 
   const pointerContextValue = useMemo(
@@ -2017,43 +2155,16 @@ export default function App() {
           onClearHighlightedFaces={clearHighlightedFaces}
         />
 
-        <aside className="side-pane" ref={sidePaneRef}>
-          <div className="control-pane-header">
-            <div>
-              <span className="control-pane-kicker">Workbench Control</span>
-              <strong>{CONTROL_PANE_MODES.find((mode) => mode.id === controlPaneMode)?.detail}</strong>
-            </div>
-            <button type="button" className="ghost-button compact-button" onClick={() => setSettingsOpen(true)}>
-              <ActionIcon name="settings" />
-              环境
-            </button>
-            <button type="button" className="ghost-button compact-button" onClick={() => setGlobalSettingsOpen(true)}>
-              <ActionIcon name="global" />
-              全局
-            </button>
-          </div>
-
-          <div className="control-pane-tabs" role="tablist" aria-label="Workbench control sections">
-            {CONTROL_PANE_MODES.map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                role="tab"
-                aria-selected={controlPaneMode === mode.id}
-                className={controlPaneMode === mode.id ? "control-pane-tab active" : "control-pane-tab"}
-                title={`${mode.label} · ${mode.detail}`}
-                onClick={() => setControlPaneMode(mode.id)}
-              >
-                <ControlPaneIcon mode={mode.id} />
-                <span className="control-pane-tab-copy">
-                  <strong>{mode.label}</strong>
-                  <span>{mode.detail}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {controlPaneMode === "project" ? (
+        <WorkbenchRightRail
+          ref={sidePaneRef}
+          activeMode={activeControlPaneMode}
+          activeModeDetail={activeControlPaneModeDetail}
+          modes={activeControlPaneModes}
+          onModeChange={handleControlPaneModeChange}
+          onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+        >
+          {showProjectPanel ? (
             <ProjectPanel
               projectName={projectName}
               onProjectNameChange={setProjectName}
@@ -2076,96 +2187,38 @@ export default function App() {
             />
           ) : null}
 
-          {controlPaneMode === "agent" ? (
-            <AgentPanel
-              busy={busy}
-              capabilities={capabilities}
-              capabilityCategory={capabilityCategory}
-              capabilityCategories={capabilityCategories}
-              capabilityQuery={capabilityQuery}
-              filteredCapabilities={filteredCapabilities}
-              selectedCapability={selectedCapability}
-              capabilityPreview={capabilityPreview}
-              workflows={workflows}
-              selectedWorkflow={selectedWorkflow}
-              benchmarkScenarios={benchmarkScenarios}
-              selectedScenarioId={selectedScenarioId}
-              benchmarkRun={benchmarkRun}
-              benchmarkBusy={benchmarkBusy}
-              llmConfig={llmConfig}
-              llmReady={llmReady}
-              summary={summary}
-              setCapabilityCategory={setCapabilityCategory}
-              setCapabilityQuery={setCapabilityQuery}
-              setSelectedCapabilityName={setSelectedCapabilityName}
-              setCapabilityPreview={setCapabilityPreview}
-              setSelectedWorkflowId={setSelectedWorkflowId}
-              setSelectedScenarioId={setSelectedScenarioId}
-              refreshAgentWorkbench={refreshAgentWorkbench}
-              previewSelectedCapability={previewSelectedCapability}
-              runSelectedWorkflow={runSelectedWorkflow}
-              runBenchmark={runBenchmark}
+          {showDebugPanel ? (
+            <DebugPanel
+              sections={[
+                { id: "tools", label: "Tools", children: renderAgentToolsPanel() },
+                { id: "cae", label: "CAE", children: renderCaePanel() },
+                { id: "recommendations", label: "Recommendations", children: renderRecommendationsPanel() },
+                { id: "loop", label: "Loop", children: renderCopilotLoopPanel() },
+                { id: "planner", label: "Planner", children: renderIntentPlannerPanel() },
+              ]}
             />
           ) : null}
 
-          {controlPaneMode === "cae" ? (
-            <CaePanel
-              summary={summary}
-              selectedId={selectedId}
-              caeSummary={caeSummary}
-              hasCaeContext={hasCaeContext}
-              hasCaeResultArtifacts={hasCaeResultArtifacts}
-              renderableCaeFields={renderableCaeFields}
-              selectedCaeField={selectedCaeField}
-              fieldDescriptor={fieldDescriptor}
-              caeRefreshing={caeRefreshing}
-              caeReviewReport={caeReviewReport}
-              caeReviewLoading={caeReviewLoading}
-              metricsInputPath={metricsInputPath}
-              metricsLoadCaseId={metricsLoadCaseId}
-              metricsSoftware={metricsSoftware}
-              metricsImporting={metricsImporting}
-              frdInputPath={frdInputPath}
-              frdLoadCaseId={frdLoadCaseId}
-              frdSoftware={frdSoftware}
-              frdExtracting={frdExtracting}
-              artifactViewerPath={artifactViewerPath}
-              artifactViewerData={artifactViewerData}
-              artifactViewerBusy={artifactViewerBusy}
-              setSelectedCaeField={setSelectedCaeField}
-              setMetricsInputPath={setMetricsInputPath}
-              setMetricsLoadCaseId={setMetricsLoadCaseId}
-              setMetricsSoftware={setMetricsSoftware}
-              setFrdInputPath={setFrdInputPath}
-              setFrdLoadCaseId={setFrdLoadCaseId}
-              setFrdSoftware={setFrdSoftware}
-              setArtifactViewerPath={setArtifactViewerPath}
-              refreshCaeSummary={refreshCaeSummary}
-              generateCaeReviewReport={generateCaeReviewReport}
-              importMetricsAndRefresh={importMetricsAndRefresh}
-              extractFrdAndRefresh={extractFrdAndRefresh}
-              viewArtifact={viewArtifact}
+          {showLegacyAgentPanel ? renderAgentToolsPanel() : null}
+
+          {showLegacyCaePanel ? renderCaePanel() : null}
+
+          {showRecommendationsPanel ? renderRecommendationsPanel() : null}
+
+          {showCopilotLoopPanel ? renderCopilotLoopPanel() : null}
+
+          {showIntentPlannerPanel ? renderIntentPlannerPanel() : null}
+
+          {showAgentWorkbench ? (
+            <SelectionInspectorCard
+              pickedFaces={pickedFaces}
+              onClear={clearPickedFaces}
+              onSetPrompt={setMessage}
+              onUseInPrompt={insertToChat}
             />
           ) : null}
 
-          {controlPaneMode === "recommend" ? (
-            <RecommendationsPanel selectedId={selectedId} />
-          ) : null}
-
-          {controlPaneMode === "copilot" ? (
-            <CopilotLoopPanel
-              selectedId={selectedId}
-              onSelectProject={(projectId) => {
-                void refreshProjects(projectId);
-              }}
-            />
-          ) : null}
-
-          {controlPaneMode === "pilot" ? (
-            <IntentPlannerCard selectedId={selectedId} />
-          ) : null}
-
-          {controlPaneMode === "chat" ? (
+          {showChatPanel ? (
             <ChatPanel
               chatConnections={chatConnections}
               selectedChatConnectionId={selectedChatConnectionId}
@@ -2195,7 +2248,8 @@ export default function App() {
               onViewHeatmap={() => void viewStressHeatmap()}
               recentPickedFaces={pickedFaces}
             />
-          ) : null}        </aside>
+          ) : null}
+        </WorkbenchRightRail>
       </div>
 
       <RuntimeSettingsDrawer

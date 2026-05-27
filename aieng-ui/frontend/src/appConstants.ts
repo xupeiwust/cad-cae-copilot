@@ -1,5 +1,5 @@
 import type { ChatConnection, LLMConfig } from "./types";
-import type { ControlPaneMode, StageItem } from "./appTypes";
+import type { ControlPaneMode, StageItem, WorkbenchPaneMode } from "./appTypes";
 
 export const BASE_STAGES: StageItem[] = [
   { key: "upload", label: "上传", detail: "将 STEP 文件放入项目", state: "idle" },
@@ -9,6 +9,7 @@ export const BASE_STAGES: StageItem[] = [
 ];
 
 export const CAD_PROVIDER_OPTIONS = [{ value: "freecad", label: "FreeCAD" }] as const;
+export const AI_FIRST_WORKBENCH_ENABLED = true;
 export const LLM_CONFIG_STORAGE_KEY = "aieng-ui.llm-config";
 export const LLM_PROVIDER_SUGGESTIONS = ["openai-compatible", "anthropic", "openai", "azure-openai"] as const;
 export const CHAT_SUGGESTIONS = [
@@ -38,6 +39,12 @@ export const CONTROL_PANE_MODES: Array<{ id: ControlPaneMode; label: string; det
   { id: "recommend", label: "推荐", detail: "修改建议和验证" },
   { id: "copilot", label: "Copilot", detail: "闭环优化" },
   { id: "pilot", label: "规划", detail: "自然语言任务规划" },
+];
+
+export const WORKBENCH_PANE_MODES: Array<{ id: WorkbenchPaneMode; label: string; detail: string }> = [
+  { id: "agent", label: "Agent", detail: "Chat, plans, approvals" },
+  { id: "project", label: "Project", detail: "Import and project facts" },
+  { id: "debug", label: "Debug", detail: "Tools and raw workflow panels" },
 ];
 
 export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [

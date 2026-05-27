@@ -1,3 +1,4 @@
+import type { SelectedGeometryContext } from "./appTypes";
 import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactResponse, BenchmarkRun, BenchmarkScenario, CadRecommendationsResponse, CaeArtifactDetection, CaePreprocessingSummary, CaeReviewReport, CaeSimulationRunSummary, CapabilityDescriptor, CapabilityPreview, ChatConnection, ChatResponse, ComputedMetricsDocument, ComputedMetricsImportPayload, ComputedMetricsResponse, CopilotLoop, CopilotLoopDemoSeedResponse, CopilotLoopDemoSmokeCheckResponse, CopilotLoopExportRequest, CopilotLoopExportResponse, CopilotLoopList, CopilotLoopReport, CopilotLoopReportDiff, DesignTarget, DesignTargetsDocument, DesignTargetsResponse, EngineeringTemplateAdoptTargetsResponse, EngineeringTemplateCadFixtureResponse, EngineeringTemplateDetail, EngineeringTemplatePreviewResponse, EngineeringTemplateSaveDraftResponse, EngineeringTemplateSummary, FreeCadAdapterPreflightResponse, FreeCadEditParameterRequest, FreeCadEditParameterResponse, FreeCadInspectionEvidenceResponse, FreeCadInspectFeaturesRequest, FreeCadInspectFeaturesResponse, IntentActionExecuteResponse, IntentObserveResponse, IntentPlan, LLMConfig, ProjectHealthCheckResponse, ProjectRecord, ProjectSummary, ReviewSupportPacketResponse, RuntimeConfig, RuntimeConfigSnapshot, RuntimeEvent, RuntimeRun, RuntimeRunSummary, RuntimeToolInfo, SolverFieldDescriptor, StructuralAdapterPreflightResponse, StructuralPreparePreviewResponse, StructuralSolverInputImportResponse, TargetComparisonResponse, WorkflowDefinition, WorkflowStep } from "./types";
 
 const API = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
@@ -62,6 +63,7 @@ export const api = {
     llm_config?: LLMConfig;
     patch_json?: Record<string, unknown> | null;
     dry_run?: boolean;
+    selected_geometry?: SelectedGeometryContext | null;
   }) =>
     request<AgentPlan>("/api/agent/plan", {
       method: "POST",
@@ -74,6 +76,7 @@ export const api = {
     llm_config?: LLMConfig;
     patch_json?: Record<string, unknown> | null;
     dry_run?: boolean;
+    selected_geometry?: SelectedGeometryContext | null;
     plan?: AgentPlan;
   }) =>
     request<AgentRunResponse>("/api/agent/runs", {

@@ -56,11 +56,22 @@ export function ViewerPane({
   brepSnapshot,
   onClearHighlightedFaces,
 }: ViewerPaneProps) {
+  const previewState = activeFieldDescriptor
+    ? `${fieldLabel(activeFieldDescriptor.field_name)} 场可视化`
+    : effectiveViewerUrl
+      ? `${effectiveViewerFormat?.toUpperCase() ?? "模型"} 预览可用`
+      : "等待生成预览";
+
   return (
-<section className="viewer-pane">
+    <section className="viewer-pane">
       <div className="viewer-header">
-        <div>
+        <div className="viewer-heading">
           <h1>AIENG Workbench</h1>
+          <div className="viewer-header-status" aria-label="当前模型状态">
+            <span>{selectedProject?.name ?? "未选择项目"}</span>
+            <span>{validationState}</span>
+            <span>{previewState}</span>
+          </div>
         </div>
         <div className="runtime-cluster">
           <div className="runtime-actions">
@@ -82,10 +93,6 @@ export function ViewerPane({
 
       <div className="viewer-toolbar">
         <div className="viewer-toolbar-block">
-          <span className="viewer-toolbar-label">当前项目</span>
-          <strong>{selectedProject?.name ?? "未选择项目"}</strong>
-        </div>
-        <div className="viewer-toolbar-block">
           <span className="viewer-toolbar-label">当前 STEP</span>
           <strong>{selectedFile?.name ?? selectedProject?.source_step ?? "未选择文件"}</strong>
         </div>
@@ -94,8 +101,12 @@ export function ViewerPane({
           <strong>{getManifestString(summary, "model_id")}</strong>
         </div>
         <div className="viewer-toolbar-block">
-          <span className="viewer-toolbar-label">校验状态</span>
-          <strong>{validationState}</strong>
+          <span className="viewer-toolbar-label">特征数</span>
+          <strong>{getDerivedNumber(summary, "feature_graph", "count")}</strong>
+        </div>
+        <div className="viewer-toolbar-block">
+          <span className="viewer-toolbar-label">拓扑实体</span>
+          <strong>{getDerivedNumber(summary, "topology", "count")}</strong>
         </div>
       </div>
 

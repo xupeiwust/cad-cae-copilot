@@ -618,6 +618,37 @@ def test_agent_plan_dry_run_without_api_key_returns_guarded_plan(tmp_path: Path)
     assert data["warnings"], "modeling requests without patch_json should explain the missing executable patch"
 
 
+def test_agent_plan_accepts_selected_geometry_context(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("agent-selection-test"))
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/api/agent/plan",
+        json={
+            "message": "Use the selected face as a load surface",
+            "project_id": project["id"],
+            "dry_run": True,
+            "selected_geometry": {
+                "pointers": ["@face:f_top_001"],
+                "faces": [
+                    {
+                        "pointer": "@face:f_top_001",
+                        "label": "top planar face",
+                        "surface_type": "plane",
+                        "roles": ["load_surface"],
+                    }
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["selected_geometry"]["pointers"] == ["@face:f_top_001"]
+    assert data["selected_geometry"]["faces"][0]["roles"] == ["load_surface"]
+
+
 def test_agent_run_without_project_completes_with_empty_safe_plan(tmp_path: Path) -> None:
     settings = _make_runtime_settings(tmp_path)
     client = TestClient(create_app(settings))

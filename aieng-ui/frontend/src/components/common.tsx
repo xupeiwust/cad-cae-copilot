@@ -1,4 +1,4 @@
-import type { ControlPaneMode, Notice } from "../appTypes";
+import type { ControlPaneMode, Notice, WorkbenchPaneMode } from "../appTypes";
 
 export function JsonDisclosure({ title, body, defaultOpen = false }: { title: string; body: string; defaultOpen?: boolean }) {
   return (
@@ -32,7 +32,7 @@ export function NoticeCenter({ notice, onDismiss }: { notice: Notice | null; onD
   );
 }
 
-export function ControlPaneIcon({ mode }: { mode: ControlPaneMode }) {
+export function ControlPaneIcon({ mode }: { mode: ControlPaneMode | WorkbenchPaneMode }) {
   if (mode === "project") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -58,6 +58,15 @@ export function ControlPaneIcon({ mode }: { mode: ControlPaneMode }) {
         <path d="M5 17.8 9 6.2l3.4 8 2.2-4.7L19 17.8" />
         <path d="M4 18h16" />
         <path d="M8 14h8" />
+      </svg>
+    );
+  }
+  if (mode === "debug") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M14.8 5.2a4 4 0 0 0 4.1 4.1l-8.4 8.4a2.2 2.2 0 0 1-3.1-3.1l8.4-8.4Z" />
+        <path d="m5.7 18.3 2 2" />
+        <path d="M4.8 5.8h5.4M7.5 3.1v5.4M17 15.5h3.2M18.6 13.9v3.2" />
       </svg>
     );
   }

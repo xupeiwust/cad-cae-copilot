@@ -17,6 +17,42 @@ def sanitize_llm_config(raw: Any) -> dict[str, Any]:
     return {str(k): v for k, v in raw.items() if k != "api_key"}
 
 
+def sanitize_selected_geometry(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    pointers = [str(item) for item in raw.get("pointers") or [] if isinstance(item, str) and item.startswith("@")]
+    faces: list[dict[str, Any]] = []
+    for item in raw.get("faces") or []:
+        if not isinstance(item, dict):
+            continue
+        pointer = item.get("pointer")
+        if not isinstance(pointer, str) or not pointer.startswith("@"):
+            continue
+        roles = [str(role) for role in item.get("roles") or [] if isinstance(role, str)]
+        faces.append(
+            {
+                "pointer": pointer,
+                "label": str(item.get("label") or pointer),
+                "surface_type": str(item.get("surface_type") or "unknown"),
+                "roles": roles,
+            }
+        )
+    highlighted = [
+        str(item)
+        for item in raw.get("highlightedFaceIds") or raw.get("highlighted_face_ids") or []
+        if isinstance(item, str)
+    ]
+    if not pointers and faces:
+        pointers = [str(face["pointer"]) for face in faces]
+    if not pointers and not faces and not highlighted:
+        return None
+    return {
+        "pointers": pointers,
+        "faces": faces,
+        "highlighted_face_ids": highlighted,
+    }
+
+
 def _inject_path(path: Path) -> tuple[str, bool]:
     candidate = str(path)
     if candidate in sys.path:
@@ -412,6 +448,7 @@ def llm_agent_plan(
     message: str,
     project_id: str | None,
     project_summary: dict[str, Any] | None,
+    selected_geometry: dict[str, Any] | None,
     runtime_tools: list[dict[str, Any]],
     capabilities: list[dict[str, Any]],
     llm_config: dict[str, Any],
@@ -447,6 +484,7 @@ def llm_agent_plan(
         {
             "user_message": message,
             "project_id": project_id,
+            "selected_geometry": selected_geometry or None,
             "project_context": _compact_context(project_summary),
             "executable_runtime_tools": executable_tools,
             "capabilities": capability_brief,
@@ -613,6 +651,7 @@ def build_agent_plan(
     runtime_tools: list[dict[str, Any]],
     capabilities: list[dict[str, Any]],
     llm_config: dict[str, Any],
+    selected_geometry: dict[str, Any] | None = None,
     patch_json: dict[str, Any] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -626,6 +665,7 @@ def build_agent_plan(
                 message=message,
                 project_id=project_id,
                 project_summary=project_summary,
+                selected_geometry=selected_geometry,
                 runtime_tools=runtime_tools,
                 capabilities=capabilities,
                 llm_config=llm_config,
@@ -663,6 +703,7 @@ def build_agent_plan(
         "mode": mode,
         "message": message,
         "project_id": project_id,
+        "selected_geometry": selected_geometry,
         "agent_context": _compact_context(project_summary),
         "action_selection": action_selector.select_actions_for_intent(
             message=message,

@@ -185,8 +185,8 @@ _export("step", result, out_step)
 _export("stl", result, out_stl)
 try:
     _export("gltf", result, out_glb, binary=True)
-except Exception:
-    pass
+except Exception as _e:
+    print(f"[runner] GLB export failed: {_e}", file=sys.stderr)
 topo = _extract_topology(result)
 out_topo.write_text(json.dumps(topo, indent=2))
 """

@@ -12,13 +12,20 @@ truth — `CLAUDE.md`, `.github/copilot-instructions.md`, and the MCP tool
 **Do NOT browse `aieng/src/` to understand what this system can do.**
 That is a legacy library with a `FakeBackend` stub that produces no real geometry.
 
-**Do NOT diagnose or operate the backend by running code** (psutil, subprocess,
-urllib, pylanceRunCodeSnippet, bash health checks). The workbench is driven
-**only** through the `aieng-workbench` MCP server tools.
+**The workbench is driven primarily through the `aieng-workbench` MCP server tools.**
+If you see `aieng.*` / `cad.*` / `cae.*` tools in your tool list, use them — they
+provide live UI events, topology feedback, and incremental modeling.
+
+**If you do NOT have these MCP tools** (e.g. Kimi Code CLI without MCP
+configuration), you are in **fallback mode**. You can still produce geometry by:
+1. Writing build123d scripts and running them through the provided runner script.
+2. Importing the resulting STEP file into the workbench with the provided importer
+   script so it appears in the UI.
+See the **Fallback mode** section below for the exact commands.
 
 If the `aieng-workbench` MCP server is not in your tool list, it is configured in
 this repo (`.mcp.json` for Claude Code, `.vscode/mcp.json` for VS Code/Copilot,
-see MCP_SETUP for Codex). Connect to it before doing anything else.
+see MCP_SETUP for Codex, and see **Kimi Code CLI** notes in the Fallback section).
 
 ---
 
@@ -70,6 +77,9 @@ and simplified consumer-product bodies.
 - Bind the final model to a variable named **`result`**.
 - Do **not** include export calls — the runner adds `export_step` / `export_stl` /
   `export_gltf` (build123d 0.10.0; exports are free functions).
+  - If you absolutely must export manually (fallback mode), use `export_gltf(result, path, binary=True)`
+    to produce a real binary GLB. Without `binary=True`, build123d writes a JSON
+text file that the frontend cannot render.
 - A `+` that yields a `ShapeList` is auto-wrapped in a `Compound`, so unions export fine.
 
 **Name your parts.** Set `.label` on shapes and combine them with a `Compound` so
@@ -334,6 +344,93 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd)
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json
 └── audit_log.jsonl          append-only action history
+```
+
+---
+
+## Fallback mode — when you do not have MCP tools
+
+Some agent clients (notably **Kimi Code CLI** in its default configuration) do not
+automatically load user-defined MCP servers. If `aieng.list_projects` is not in
+your tool list, follow this fallback path.
+
+### Environment topology (know where things are)
+
+| Service | Address | Purpose |
+|---------|---------|---------|
+| React UI | `http://localhost:5173` | The workbench front-end |
+| FastAPI backend | `http://localhost:8000` | API + MCP bridge + static assets |
+| Platform data | `aieng-ui/data/` | Projects, runtime config, logs |
+| Projects root | `aieng-ui/data/projects/` | One folder per project |
+| Conda env | `aieng311` | Where build123d / OCP live |
+
+### Running build123d without MCP
+
+Use the provided runner so exports are handled exactly like the backend does
+(including `binary=True` for GLB):
+
+```bash
+conda activate aieng311
+cd aieng-ui/backend/scripts
+python agent_build123d_runner.py my_model.py --out-dir ./output
+```
+
+Output files:
+- `output/result.step` — AP214 STEP
+- `output/result.stl` — binary STL
+- `output/result.glb` — **binary** GLB (if export succeeded)
+- `output/topology.json` — face / solid entities with labels
+
+### Registering the model in the UI without MCP
+
+After you have a STEP file (and optional preview GLB/STL), import it as a proper
+project so the React UI can display it:
+
+```bash
+conda activate aieng311
+cd aieng-ui/backend/scripts
+python agent_import_project.py ../../output/result.step \
+    --name "My Model" \
+    --preview ../../output/result.stl \
+    --project-id my_model_001
+```
+
+This atomically:
+1. Creates the `.aieng` package.
+2. Runs topology + feature-graph enrichment.
+3. Creates the project directory + `metadata.json`.
+4. Copies the preview into `viewer/`.
+5. Updates the project status to `viewer_ready_*`.
+
+Refresh the UI (`http://localhost:5173`) and the project will appear.
+
+### Kimi Code CLI specific notes
+
+Kimi Code CLI does **not** read `.mcp.json` automatically (unlike Claude Code).
+To give Kimi the workbench MCP tools, you must either:
+- Use Kimi's settings UI to add the MCP server defined in `.mcp.json`.
+- Or accept fallback mode and use the scripts above.
+
+### Direct REST API (last resort)
+
+If you need to trigger backend actions without MCP, the backend exposes standard
+HTTP endpoints. The most useful ones for agents:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/health` | GET | Backend status, tool count |
+| `/api/projects` | GET | List projects |
+| `/api/projects` | POST | Create empty project |
+| `/api/projects/{id}/upload` | POST | Upload STEP or `.aieng` |
+| `/api/projects/{id}/cad-preview` | GET | Stream GLB/STL preview |
+| `/api/projects/{id}/agent-context` | GET | Full geometry + CAE context |
+| `/api/agent/invoke-tool` | POST | Run any MCP tool by name (emits UI events) |
+
+Example — invoke a tool directly:
+```bash
+curl -X POST http://localhost:8000/api/agent/invoke-tool \
+  -H "Content-Type: application/json" \
+  -d '{"tool": "cad.execute_build123d", "input": {"project_id": "...", "code": "..."}}'
 ```
 
 ---

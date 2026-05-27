@@ -44,6 +44,29 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "cad_tool_count": len(cad_tool_names),
         }
 
+    @app.get("/api/environment")
+    def environment() -> dict[str, Any]:
+        """Return environment topology so agents can discover ports, paths, and formats."""
+        tool_names = _rt.registered_tool_names()
+        cad_tool_names = [name for name in tool_names if name.startswith("cad.")]
+        cae_tool_names = [name for name in tool_names if name.startswith("cae.")]
+        return {
+            "ui_url": "http://localhost:5173",
+            "api_url": "http://localhost:8000",
+            "data_root": str(active_settings.data_root),
+            "projects_root": str(active_settings.projects_root),
+            "aieng_root": str(active_settings.aieng_root),
+            "app_root": str(APP_ROOT),
+            "platform_root": str(active_settings.platform_root),
+            "conda_env": "aieng311",
+            "python_executable": sys.executable,
+            "supported_preview_formats": ["glb", "stl"],
+            "cad_tool_count": len(cad_tool_names),
+            "cae_tool_count": len(cae_tool_names),
+            "total_tool_count": len(tool_names),
+            "sample_tools": tool_names[:10],
+        }
+
     @app.get("/api/runtime")
     def runtime() -> dict[str, Any]:
         return runtime_status(active_settings)

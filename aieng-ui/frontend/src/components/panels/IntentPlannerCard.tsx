@@ -257,11 +257,7 @@ export function IntentPlannerCard({ selectedId }: IntentPlannerCardProps) {
     <section className="card pilot-card">
       <div className="section-heading">
         <div>
-          <h2>Intent Planner (Pilot Console)</h2>
-          <p>
-            Natural-language request → reviewable AIENG action plan. Preview-only:
-            mutating steps stay approval-gated through the existing runtime.
-          </p>
+          <h2>意图规划</h2>
         </div>
         <button
           type="button"
@@ -270,7 +266,7 @@ export function IntentPlannerCard({ selectedId }: IntentPlannerCardProps) {
           disabled={planning || !message.trim()}
         >
           <ActionIcon name="preview" />
-          {planning ? "Planning…" : "Generate plan"}
+          {planning ? "规划中..." : "生成计划"}
         </button>
       </div>
 
@@ -279,7 +275,7 @@ export function IntentPlannerCard({ selectedId }: IntentPlannerCardProps) {
           rows={4}
           value={message}
           onChange={(event) => setMessage(event.target.value)}
-          placeholder="Describe the engineering task in plain language."
+          placeholder="用自然语言描述工程任务..."
         />
         <div className="pilot-sample-row">
           {SAMPLE_PROMPTS.map((sample) => (
@@ -298,49 +294,46 @@ export function IntentPlannerCard({ selectedId }: IntentPlannerCardProps) {
 
       {!plan ? (
         <div className="summary-note summary-muted">
-          <strong>No plan yet</strong>
-          <p>
-            Enter an engineering request and click <em>Generate plan</em>. The planner is
-            heuristic-only in v0.35.1 — it will not call an LLM and will not execute any tool.
-          </p>
+          <strong>未生成计划</strong>
+          <p>输入工程请求并点击生成。规划器不会调用 LLM 或执行工具。</p>
         </div>
       ) : (
         <>
           <div className="capability-facts pilot-summary-facts">
             <div>
-              <span>Domain</span>
+              <span>领域</span>
               <strong>{plan.inferred_engineering_domain}</strong>
             </div>
             <div>
-              <span>Template</span>
+              <span>模板</span>
               <strong>{plan.inferred_template_id ?? "—"}</strong>
             </div>
             <div>
-              <span>Project</span>
+              <span>项目</span>
               <strong>{plan.project_id ?? "—"}</strong>
             </div>
             <div>
-              <span>Actions</span>
+              <span>动作</span>
               <strong>{plan.actions.length}</strong>
             </div>
             <div>
-              <span>Approvals</span>
+              <span>需审批</span>
               <strong>{plan.required_approvals.length}</strong>
             </div>
             <div>
-              <span>Mode</span>
+              <span>模式</span>
               <strong>{plan.planner_mode}</strong>
             </div>
           </div>
 
           <div className="pilot-summary-block">
-            <h3>Task summary</h3>
+            <h3>任务摘要</h3>
             <p>{plan.task_summary}</p>
           </div>
 
           {constraintEntries.length ? (
             <div className="pilot-summary-block">
-              <h3>Extracted constraints</h3>
+              <h3>提取约束</h3>
               <ul className="pilot-bullet-list">
                 {constraintEntries.map((entry, index) => (
                   <li key={`${entry.label}-${index}`}>

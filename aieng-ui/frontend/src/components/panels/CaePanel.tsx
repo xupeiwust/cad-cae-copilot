@@ -89,17 +89,14 @@ export function CaePanel({
               <section className="card">
                 <div className="section-heading">
                   <div>
-                    <h2>CAE Artifact Status</h2>
-                    <p>Honest artifact detection — no solver is executed here.</p>
+                    <h2>仿真状态</h2>
                   </div>
                 </div>
 
                 <div className="summary-note summary-primary" style={{ marginBottom: 12 }}>
-                  <strong>CAE Review Report Assistant</strong>
+                  <strong>审查报告</strong>
                   <p style={{ fontSize: 12, margin: "4px 0 8px" }}>
-                    Generate an evidence-backed review of setup readiness, result metrics, stale evidence,
-                    design-target status, and claim boundaries. This is read-only: no CAD edit, solver run,
-                    or automatic claim advancement.
+                    只读审查：检查仿真准备度、结果指标、过期证据和设计目标。
                   </p>
                   <div className="action-row">
                     <button
@@ -107,7 +104,7 @@ export function CaePanel({
                       onClick={() => void generateCaeReviewReport()}
                     >
                       <ActionIcon name="report" />
-                      {caeReviewLoading ? "Generating CAE review..." : "Generate CAE Review Report"}
+                      {caeReviewLoading ? "生成中..." : "生成报告"}
                     </button>
                     {caeReviewReport ? (
                       <span className="summary-muted" style={{ fontSize: 12 }}>
@@ -155,8 +152,7 @@ export function CaePanel({
                       ))}
                     </div>
                     <div className="cae-artifact-footer">
-                      Detected {caeSummary.artifact_detection.detected_count} / {caeSummary.artifact_detection.total_count} artifacts.
-                      Solver execution remains in external CAD/CAE software.
+                      检测到 {caeSummary.artifact_detection.detected_count} / {caeSummary.artifact_detection.total_count} 个文件。
                     </div>
                     <div className="action-row" style={{ marginTop: 10 }}>
                       <button
@@ -167,14 +163,11 @@ export function CaePanel({
                         {caeRefreshing ? "正在刷新 CAE 摘要…" : "刷新 CAE 摘要"}
                       </button>
                       <span className="summary-muted" style={{ fontSize: 12 }}>
-                        重新生成 .aieng CAE 摘要/证据文件（不执行求解器）
+                        重新生成 CAE 摘要（不执行求解器）
                       </span>
                     </div>
                     <div className="summary-note" style={{ marginTop: 12 }}>
-                      <strong>导入外部计算指标</strong>
-                      <p style={{ fontSize: 12, margin: "4px 0 8px" }}>
-                        从已有的 JSON/CSV 文件导入指标，再刷新 CAE 摘要。不执行求解器。
-                      </p>
+                      <strong>导入外部指标</strong>
                       <input
                         type="text"
                         placeholder="C:\path\to\metrics.json or metrics.csv"
@@ -209,10 +202,7 @@ export function CaePanel({
                       </div>
                     </div>
                     <div className="summary-note" style={{ marginTop: 12 }}>
-                      <strong>从 FRD 文件提取求解器结果</strong>
-                      <p style={{ fontSize: 12, margin: "4px 0 8px" }}>
-                        解析 CalculiX .frd 文件，提取节点位移和应力场极值（最大位移、最大 von Mises 应力），写入 .aieng 包并刷新结果摘要。不执行求解器。
-                      </p>
+                      <strong>提取 FRD 结果</strong>
                       <input
                         type="text"
                         placeholder="C:\path\to\job.frd"
@@ -248,15 +238,15 @@ export function CaePanel({
                     </div>
                     {caeSummary?.preprocessing_summary ? (
                       <div className="summary-note" style={{ marginTop: 10 }}>
-                        <strong>Setup / Pre-processing</strong>
+                        <strong>前处理</strong>
                         <p>{caeSummary.preprocessing_summary.llm_summary.one_line}</p>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", marginTop: 6 }}>
-                          <small>Materials: {caeSummary.preprocessing_summary.status.has_materials ? "✓" : "✗"}</small>
-                          <small>Loads: {caeSummary.preprocessing_summary.status.has_loads ? "✓" : "✗"}</small>
-                          <small>Boundary conditions: {caeSummary.preprocessing_summary.status.has_boundary_conditions ? "✓" : "✗"}</small>
-                          <small>Mesh: {caeSummary.preprocessing_summary.status.has_mesh ? "✓" : "✗"}</small>
-                          <small>Solver settings: {caeSummary.preprocessing_summary.status.has_solver_settings ? "✓" : "✗"}</small>
-                          <small>Ready for solver: <strong>{caeSummary.preprocessing_summary.status.ready_for_solver ? "yes" : "no"}</strong></small>
+                          <small>材料: {caeSummary.preprocessing_summary.status.has_materials ? "✓" : "✗"}</small>
+                          <small>载荷: {caeSummary.preprocessing_summary.status.has_loads ? "✓" : "✗"}</small>
+                          <small>边界条件: {caeSummary.preprocessing_summary.status.has_boundary_conditions ? "✓" : "✗"}</small>
+                          <small>网格: {caeSummary.preprocessing_summary.status.has_mesh ? "✓" : "✗"}</small>
+                          <small>求解器设置: {caeSummary.preprocessing_summary.status.has_solver_settings ? "✓" : "✗"}</small>
+                          <small>就绪: <strong>{caeSummary.preprocessing_summary.status.ready_for_solver ? "是" : "否"}</strong></small>
                         </div>
                         {caeSummary.preprocessing_summary.status.missing_items.length > 0 ? (
                           <div style={{ marginTop: 6 }}>
@@ -264,21 +254,21 @@ export function CaePanel({
                           </div>
                         ) : null}
                         <div style={{ marginTop: 6 }}>
-                          <small className="summary-muted">Setup readiness is artifact-based only. No solver execution.</small>
+                          <small className="summary-muted">基于文件检测，未执行求解器。</small>
                         </div>
                       </div>
                     ) : null}
                     {caeSummary?.simulation_run_summary ? (
                       <div className="summary-note" style={{ marginTop: 10 }}>
-                        <strong>Simulation Runs</strong>
+                        <strong>仿真记录</strong>
                         <p>{caeSummary.simulation_run_summary.llm_summary.one_line}</p>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", marginTop: 6 }}>
-                          <small>Runs recorded: {caeSummary.simulation_run_summary.status.has_simulation_runs ? "yes" : "no"}</small>
-                          <small>Run count: {caeSummary.simulation_run_summary.status.run_count}</small>
-                          <small>Latest: {caeSummary.simulation_run_summary.status.latest_run_id ?? "none"}</small>
-                          <small>Completed: {caeSummary.simulation_run_summary.status.has_completed_run ? "yes" : "no"}</small>
-                          <small>Converged: {caeSummary.simulation_run_summary.status.has_converged_run ? "yes" : "no"}</small>
-                          <small>Failed: {caeSummary.simulation_run_summary.status.has_failed_run ? "yes" : "no"}</small>
+                          <small>有记录: {caeSummary.simulation_run_summary.status.has_simulation_runs ? "是" : "否"}</small>
+                          <small>次数: {caeSummary.simulation_run_summary.status.run_count}</small>
+                          <small>最近: {caeSummary.simulation_run_summary.status.latest_run_id ?? "无"}</small>
+                          <small>已完成: {caeSummary.simulation_run_summary.status.has_completed_run ? "是" : "否"}</small>
+                          <small>收敛: {caeSummary.simulation_run_summary.status.has_converged_run ? "是" : "否"}</small>
+                          <small>失败: {caeSummary.simulation_run_summary.status.has_failed_run ? "是" : "否"}</small>
                         </div>
                         {caeSummary.simulation_run_summary.runs.length > 0 ? (
                           <div style={{ marginTop: 6 }}>
@@ -287,17 +277,17 @@ export function CaePanel({
                         ) : null}
                         {caeSummary.simulation_run_summary.status.warnings.length > 0 ? (
                           <div style={{ marginTop: 6 }}>
-                            <small><strong>Warnings:</strong> {caeSummary.simulation_run_summary.status.warnings.length}</small>
+                            <small><strong>警告:</strong> {caeSummary.simulation_run_summary.status.warnings.length}</small>
                           </div>
                         ) : null}
                         <div style={{ marginTop: 6 }}>
-                          <small className="summary-muted">Simulation run status is metadata-based only. Solver execution remains external.</small>
+                          <small className="summary-muted">仅基于元数据，未执行求解器。</small>
                         </div>
                       </div>
                     ) : null}
                     {caeSummary?.result_summary ? (
                       <div className="summary-note" style={{ marginTop: 10 }}>
-                        <strong>Results / Post-processing</strong>
+                        <strong>后处理</strong>
                         <p>{caeSummary.result_summary.llm_summary.one_line}</p>
                         {caeSummary.result_summary.source.solver !== "external_or_unknown" ? (
                           <small>Solver: {caeSummary.result_summary.source.solver}</small>
@@ -345,7 +335,7 @@ export function CaePanel({
                         ) : null}
                         {caeSummary.result_summary.design_target_comparisons?.present ? (
                           <div style={{ marginTop: 10 }}>
-                            <small><strong>Design Targets — Artifact-level comparison</strong></small>
+                            <small><strong>设计目标对比</strong></small>
                             {caeSummary.result_summary.design_target_comparisons.summary ? (
                               <div style={{ marginTop: 4 }}>
                                 <small>
@@ -361,10 +351,10 @@ export function CaePanel({
                               <table style={{ marginTop: 6, fontSize: "0.85em", width: "100%", borderCollapse: "collapse" }}>
                                 <thead>
                                   <tr style={{ borderBottom: "1px solid #ddd" }}>
-                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>Target</small></th>
-                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>Expected</small></th>
-                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>Actual</small></th>
-                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>Status</small></th>
+                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>目标</small></th>
+                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>预期</small></th>
+                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>实际</small></th>
+                                    <th style={{ textAlign: "left", padding: "2px 4px" }}><small>状态</small></th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -395,9 +385,9 @@ export function CaePanel({
                                             item.status === "fail" ? "#721c24" :
                                             item.status === "unknown" ? "#856404" : "#383d41",
                                         }}>
-                                          {item.status === "pass" ? "Meets target" :
-                                           item.status === "fail" ? "Does not meet target" :
-                                           item.status === "unknown" ? "Evidence incomplete" : "Not evaluated"}
+                                          {item.status === "pass" ? "达标" :
+                                           item.status === "fail" ? "未达标" :
+                                           item.status === "unknown" ? "证据不足" : "未评估"}
                                         </span>
                                         {item.notes ? <small style={{ display: "block", color: "#666", marginTop: 2 }}>{item.notes}</small> : null}
                                       </td>
@@ -407,12 +397,12 @@ export function CaePanel({
                               </table>
                             ) : null}
                             <div style={{ marginTop: 4 }}>
-                              <small className="summary-muted">Not an engineering certification. Claims are not advanced automatically.</small>
+                              <small className="summary-muted">非工程认证，不自动推进声明。</small>
                             </div>
                           </div>
                         ) : caeSummary.result_summary.status.has_results ? (
                           <div style={{ marginTop: 10 }}>
-                            <small className="summary-muted">No design target comparisons available. Run <code>aieng compare-design-targets &lt;package&gt; --write-summary</code> to generate them.</small>
+                            <small className="summary-muted">无设计目标对比数据。</small>
                           </div>
                         ) : null}
                         {caeSummary.result_summary.llm_summary.limitations.length ? (
@@ -427,8 +417,8 @@ export function CaePanel({
                   </>
                 ) : (
                   <div className="summary-note summary-muted">
-                    <strong>Artifact detector unavailable</strong>
-                    <p>Install or configure aieng to enable CAE artifact scanning.</p>
+                    <strong>仿真扫描不可用</strong>
+                    <p>请配置 aieng 以启用 CAE 文件扫描。</p>
                   </div>
                 )}
 
@@ -591,8 +581,7 @@ export function CaePanel({
               <section className="card">
                 <div className="section-heading">
                   <div>
-                    <h2>Artifact Inspector</h2>
-                    <p>Read-only inspection of .aieng package artifacts without opening ZIP files manually.</p>
+                    <h2>文件检查器</h2>
                   </div>
                 </div>
 

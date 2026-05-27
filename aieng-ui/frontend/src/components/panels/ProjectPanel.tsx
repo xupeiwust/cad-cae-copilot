@@ -55,7 +55,6 @@ export function ProjectPanel({
               <div className="section-heading">
                 <div>
                   <h2>导入模型</h2>
-                  <p>从这里进入工作台主流程：选 STEP、导入、生成预览并刷新语义结果。</p>
                 </div>
               </div>
 
@@ -132,7 +131,6 @@ export function ProjectPanel({
               <div className="section-heading">
                 <div>
                   <h2>当前项目</h2>
-                  <p>聚焦当前选中的项目与最近项目，方便在工作流之间快速切换。</p>
                 </div>
               </div>
 
@@ -160,7 +158,6 @@ export function ProjectPanel({
               <div className="section-heading">
                 <div>
                   <h2>高级操作</h2>
-                  <p>在主流程之外，按需手动重跑导入、预览和校验能力。</p>
                 </div>
               </div>
 
@@ -212,7 +209,6 @@ export function ProjectPanel({
               <div className="section-heading">
                 <div>
                   <h2>语义摘要</h2>
-                  <p>默认先看关键语义结论，再按需展开原始结构与集成信息。</p>
                 </div>
               </div>
 

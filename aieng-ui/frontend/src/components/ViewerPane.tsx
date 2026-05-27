@@ -60,8 +60,7 @@ export function ViewerPane({
 <section className="viewer-pane">
       <div className="viewer-header">
         <div>
-          <h1>aieng-platform Workbench</h1>
-          <p>围绕 STEP 导入、模型预览、语义核对和后续编排组织单页工作区，环境配置收拢到页内设置抽屉。</p>
+          <h1>AIENG Workbench</h1>
         </div>
         <div className="runtime-cluster">
           <div className="runtime-actions">

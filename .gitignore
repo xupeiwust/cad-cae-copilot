@@ -75,3 +75,5 @@ Thumbs.db
 # Local agent memory / workbook
 AGENT_WORKBOOK.md
 
+aieng-ui/frontend/package-lock.json
+refer/CAD-Agent/

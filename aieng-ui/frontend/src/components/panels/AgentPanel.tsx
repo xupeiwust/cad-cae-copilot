@@ -70,8 +70,7 @@ export function AgentPanel({
       <section className="card agent-workbench-card">
               <div className="section-heading">
                 <div>
-                  <h2>Capability Browser</h2>
-                  <p>统一查看 runtime、MCP、.aieng 包工具和 benchmark 能力，先看副作用，再决定是否进入流程。</p>
+                  <h2>工具列表</h2>
                 </div>
                 <button className="ghost-button" type="button" disabled={busy} onClick={() => void refreshAgentWorkbench()}>
                   <ActionIcon name="refresh" />
@@ -83,14 +82,14 @@ export function AgentPanel({
                 <select value={capabilityCategory} onChange={(event) => setCapabilityCategory(event.target.value)}>
                   {capabilityCategories.map((category) => (
                     <option key={category} value={category}>
-                      {category === "all" ? "all categories" : category}
+                      {category === "all" ? "全部" : category}
                     </option>
                   ))}
                 </select>
                 <input
                   value={capabilityQuery}
                   onChange={(event) => setCapabilityQuery(event.target.value)}
-                  placeholder="搜索 tool / source / purpose"
+                  placeholder="搜索工具..."
                 />
               </div>
 
@@ -121,18 +120,18 @@ export function AgentPanel({
                           <span>{selectedCapability.purpose}</span>
                         </div>
                         <small className={selectedCapability.available ? "capability-available" : "capability-missing"}>
-                          {selectedCapability.available ? "available" : "unavailable"}
+                          {selectedCapability.available ? "可用" : "不可用"}
                         </small>
                       </div>
                       <div className="capability-facts">
-                        <div><span>Mutability</span><strong>{mutabilityLabel(selectedCapability)}</strong></div>
-                        <div><span>Dry-run</span><strong>{selectedCapability.dry_run_support}</strong></div>
-                        <div><span>Runtime</span><strong>{selectedCapability.runtime_requirements.join(", ") || "none"}</strong></div>
-                        <div><span>Inputs</span><strong>{selectedCapability.required_inputs.length} required</strong></div>
+                        <div><span>可变性</span><strong>{mutabilityLabel(selectedCapability)}</strong></div>
+                        <div><span>预演</span><strong>{selectedCapability.dry_run_support}</strong></div>
+                        <div><span>运行时</span><strong>{selectedCapability.runtime_requirements.join(", ") || "无"}</strong></div>
+                        <div><span>输入</span><strong>{selectedCapability.required_inputs.length} 个必填</strong></div>
                       </div>
                       {selectedCapability.unavailable_reason ? (
                         <div className="summary-note summary-muted">
-                          <strong>Capability gap</strong>
+                          <strong>不可用原因</strong>
                           <p>{selectedCapability.unavailable_reason}</p>
                         </div>
                       ) : null}
@@ -146,21 +145,21 @@ export function AgentPanel({
                       <div className="action-row">
                         <button disabled={busy} onClick={() => void previewSelectedCapability(false)}>
                           <ActionIcon name="preview" />
-                          Preview
+                          预览
                         </button>
                         <button className="ghost-button" disabled={busy} onClick={() => void previewSelectedCapability(true)}>
                           <ActionIcon name="validate" />
-                          Preview as approved
+                          以审批模式预览
                         </button>
                       </div>
                       {capabilityPreview ? (
-                        <JsonDisclosure title="查看 capability preview" body={jsonBlock(capabilityPreview)} defaultOpen />
+                        <JsonDisclosure title="查看能力预览" body={jsonBlock(capabilityPreview)} defaultOpen />
                       ) : null}
                     </>
                   ) : (
                     <div className="summary-note summary-muted">
                       <strong>暂无能力</strong>
-                      <p>后端未返回 capability registry。请检查 aieng 和 freecad-mcp 路径配置。</p>
+                      <p>后端未返回能力列表。请检查配置。</p>
                     </div>
                   )}
                 </div>
@@ -170,8 +169,7 @@ export function AgentPanel({
             <section className="card">
               <div className="section-heading">
                 <div>
-                  <h2>Agent Flow Panel</h2>
-                  <p>把一组工具、LLM、benchmark、审批和 artifact 步骤作为可审计 workflow 运行。</p>
+                  <h2>工作流</h2>
                 </div>
               </div>
 
@@ -204,13 +202,13 @@ export function AgentPanel({
                   <div className="action-row">
                     <button disabled={busy || !selectedWorkflow} onClick={() => void runSelectedWorkflow()}>
                       <ActionIcon name="run" />
-                      运行选中工作流
+                      运行
                     </button>
                   </div>
                 </>
               ) : (
                 <div className="summary-note summary-muted">
-                  <strong>暂无 workflow</strong>
+                  <strong>暂无工作流</strong>
                   <p>后端未返回工作流定义。</p>
                 </div>
               )}
@@ -219,8 +217,7 @@ export function AgentPanel({
             <section className="card">
               <div className="section-heading">
                 <div>
-                  <h2>Benchmark Panel</h2>
-                  <p>复用环境设置中的同一份 Provider 配置，支持 dry-run 估算和真实 LLM A/B 运行。</p>
+                  <h2>基准测试</h2>
                 </div>
               </div>
 
@@ -244,21 +241,21 @@ export function AgentPanel({
               <div className="action-row runtime-config-actions">
                 <button disabled={benchmarkBusy || !selectedScenarioId} onClick={() => void runBenchmark(true)}>
                   <ActionIcon name="test" />
-                  Dry-run / 成本估算
+                  成本估算
                 </button>
                 <button className="ghost-button" disabled={benchmarkBusy || !selectedScenarioId} onClick={() => void runBenchmark(false)}>
                   <ActionIcon name="run" />
-                  真实运行 benchmark
+                  运行
                 </button>
               </div>
 
               {benchmarkRun ? (
                 <div className="benchmark-result">
                   <div className="capability-facts">
-                    <div><span>Run</span><strong>{benchmarkRun.run_id}</strong></div>
-                    <div><span>Status</span><strong>{benchmarkRun.status}</strong></div>
-                    <div><span>Mode</span><strong>{benchmarkRun.dry_run ? "dry-run" : "run"}</strong></div>
-                    <div><span>Result</span><strong>{benchmarkRun.result_path ?? "-"}</strong></div>
+                    <div><span>运行</span><strong>{benchmarkRun.run_id}</strong></div>
+                    <div><span>状态</span><strong>{benchmarkRun.status}</strong></div>
+                    <div><span>模式</span><strong>{benchmarkRun.dry_run ? "预演" : "运行"}</strong></div>
+                    <div><span>结果</span><strong>{benchmarkRun.result_path ?? "-"}</strong></div>
                   </div>
                   {benchmarkRun.warnings.length ? (
                     <div className="side-effect-list">
@@ -273,24 +270,23 @@ export function AgentPanel({
             <section className="card">
               <div className="section-heading">
                 <div>
-                  <h2>Semantic Map</h2>
-                  <p>把 .aieng 资源按可用、缺失和证据链状态压缩成一个扫描视图。</p>
+                  <h2>语义地图</h2>
                 </div>
               </div>
               <div className="semantic-map-grid">
                 {[
-                  ["manifest", Boolean(summary?.manifest)],
-                  ["feature_graph", Boolean(summary?.feature_graph)],
-                  ["topology", Boolean(summary?.topology)],
-                  ["constraints", Boolean(summary?.constraints)],
-                  ["validation", Boolean(summary?.validation)],
-                  ["ai_summary", Boolean(summary?.ai_summary)],
-                  ["cae_context", Boolean(summary?.cae?.present)],
-                  ["result_summary", Boolean(summary?.cae?.result_summary)],
+                  ["清单", Boolean(summary?.manifest)],
+                  ["特征图", Boolean(summary?.feature_graph)],
+                  ["拓扑", Boolean(summary?.topology)],
+                  ["约束", Boolean(summary?.constraints)],
+                  ["校验", Boolean(summary?.validation)],
+                  ["AI摘要", Boolean(summary?.ai_summary)],
+                  ["仿真", Boolean(summary?.cae?.present)],
+                  ["结果", Boolean(summary?.cae?.result_summary)],
                 ].map(([label, present]) => (
                   <div key={String(label)} className={present ? "semantic-map-item present" : "semantic-map-item missing"}>
                     <span>{String(label)}</span>
-                    <strong>{present ? "present" : "missing"}</strong>
+                    <strong>{present ? "有" : "无"}</strong>
                   </div>
                 ))}
               </div>

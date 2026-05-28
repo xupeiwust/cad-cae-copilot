@@ -71,6 +71,17 @@ Rules:
    `.color = Color(r, g, b)` (RGB in 0..1) so the part is visually distinguishable
    in the rendered thumbnail and the GLB viewer. Combine parts with
    `Compound(children=[part1, part2, ...])`.
+8. INDUSTRIAL DESIGN MODE — when the description names a real product,
+   character, or vehicle, or asks for something "designed/smooth/rounded":
+   - Do NOT stack `Box(...)` to imitate curves on visible exterior forms.
+   - Build tapered/curved bodies with `loft` between two sketches at
+     different Z (e.g. truck cab, helmet, fuselage).
+   - Use `revolve` for axisymmetric bodies (bottles, bell housings).
+   - Use `sweep` along a `BuildLine` path for pipes, handles, exhausts.
+   - Apply `fillet` aggressively (radius 5-20mm) on visible edges, LAST.
+   - Mirror symmetric parts with `mirror(part, about=Plane.YZ)`.
+   For purely mechanical brackets/fixtures/prototypes, primitive stacking
+   is fine — this rule is for visible exterior forms only.
 """
 
 

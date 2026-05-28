@@ -150,6 +150,114 @@ with BuildPart() as bp:
 result = bp.part
 ```
 
+### Industrial Design Mode — escape primitive stacking
+
+For **complex visible exterior forms** (named characters, vehicles, consumer
+products, electronics, anything where shape recognizability matters), `Box +
+Cylinder` stacking caps the result at "high-quality pixel art." To produce
+something that reads as designed rather than assembled, switch into
+**industrial design mode**: build from a skeleton, generate solids by lofting
+or sweeping between profiles, apply large fillets, and add details only after
+the silhouette is correct.
+
+**Activate when:** the user names a real product, character, or vehicle, or
+says "make it look like a …" / "designed" / "smooth" / "rounded." Skip when
+the user asks for mechanical brackets, fixtures, prototypes, or massing
+studies — primitive stacking is fine there.
+
+**Workflow:**
+
+1. Plan landmarks (anchor Z heights, half-widths) as **named constants**.
+   This lets later iterations adjust proportions in one place.
+2. Build silhouette + skeleton first; verify the 4-view contact sheet reads
+   correctly before adding detail.
+3. Replace tapered or curved bodies with `loft` / `sweep` / `revolve` —
+   **not** stacked boxes that imitate curves.
+4. Apply `fillet` aggressively (radius 5–20mm) on visible edges. Apply LAST,
+   after all booleans.
+5. Mirror symmetric parts with `mirror(part, about=Plane.YZ)` — half the
+   code, guaranteed symmetry.
+
+**Hard rule:** if your iteration script is mostly `Box(...) + .moved(...)`
+calls for a visible character/vehicle/product, stop and replace the major
+exterior masses with one of the curve patterns below.
+
+### Curve patterns — copy + adapt
+
+**Tapered body via loft** (truck cabs, helmet crowns, conical housings):
+```python
+from build123d import *
+with BuildPart() as bp:
+    with BuildSketch(Plane.XY.offset(0)) as s1:
+        RectangleRounded(200, 100, radius=10)
+    with BuildSketch(Plane.XY.offset(100)) as s2:
+        RectangleRounded(170, 90, radius=14)
+    loft()  # smooth taper between the two sketches
+result = bp.part
+```
+
+**Revolved profile** (bottles, vases, bell housings, axisymmetric parts):
+```python
+from build123d import *
+with BuildPart() as bp:
+    with BuildSketch(Plane.XZ) as s:
+        with BuildLine() as l:
+            Spline((0, 0), (30, 20), (40, 50), (35, 80), (40, 110))
+            Line((40, 110), (0, 110))
+            Line((0, 110), (0, 0))
+        make_face()
+    revolve(axis=Axis.Z)
+result = bp.part
+```
+
+**Swept profile along a 3D path** (exhaust pipes, handles, cable routing):
+```python
+from build123d import *
+with BuildLine() as path:
+    Spline((0, 0, 0), (0, 20, 50), (0, 40, 100), (0, 30, 130))
+with BuildPart() as bp:
+    with BuildSketch(Plane(origin=path.line @ 0, z_dir=path.line % 0)) as prof:
+        Circle(8)
+    sweep(path=path.line)
+result = bp.part
+```
+
+**Aggressive fillet for designed feel** — apply LAST, after all booleans:
+```python
+from build123d import *
+with BuildPart() as bp:
+    Box(100, 60, 40)
+    fillet(bp.edges().filter_by(Axis.Z), radius=12)       # vertical edges
+    fillet(bp.edges().group_by(Axis.Z)[-1], radius=4)     # top edges
+result = bp.part
+```
+
+**Mirror for symmetric parts** — build one half, mirror the other:
+```python
+from build123d import *
+left_arm = Box(40, 60, 100).moved(Location((-110, 0, 200)))
+left_arm.label = "left_arm"
+right_arm = mirror(left_arm, about=Plane.YZ)
+right_arm.label = "right_arm"
+result = Compound(children=[left_arm, right_arm])
+```
+
+**Named landmarks** — define proportions once, reference them everywhere:
+```python
+from build123d import *
+# Landmarks (mm) — change here, the whole body re-proportions
+HIP_Z, SHOULDER_Z = 232, 392
+HIP_HALF, SHOULDER_HALF = 55, 150
+
+with BuildPart() as bp:
+    with BuildSketch(Plane.XY.offset(HIP_Z + 30)) as base:
+        Rectangle(HIP_HALF * 2 + 20, 90)
+    with BuildSketch(Plane.XY.offset(SHOULDER_Z)) as top:
+        Rectangle(SHOULDER_HALF * 2, 80)
+    loft()
+result = bp.part
+```
+
 ### Structural FEA (CalculiX)
 
 Linear static analysis pipeline — see workflow C below.
@@ -471,6 +579,7 @@ curl -X POST http://localhost:8000/api/agent/invoke-tool \
 | Judging geometry from one view (iso) only | Inspect all 4 views in the contact sheet (front/side/top/iso) — alignment errors hide in iso |
 | Monochrome parts → can't tell which is which | Set `.color = Color(r,g,b)` on each labelled part |
 | Building straight to finish without review | After each step, list 3–5 fail-first objections by view + part, then decide next iteration |
+| Stacking `Box(...)` for a character/vehicle/product | Switch to Industrial Design Mode — use `loft`/`sweep`/`revolve` + aggressive `fillet` for visible exterior forms |
 
 ---
 

@@ -186,6 +186,7 @@ def build_action_prompt(
         "For new CAD, call cad.get_source first when a project may already have a model; otherwise propose cad.execute_build123d with mode replace and final build123d bound to result.",
         "When writing build123d code, label semantic parts AND set `.color = Color(r,g,b)` on each part (RGB 0..1), then combine in a Compound — labels expose named parts in topology, colors render in the multi-view thumbnail and the GLB the user sees.",
         "After cad.execute_build123d returns its 2x2 contact-sheet image (front/side/top/iso), inspect all four views — alignment errors hide in iso but show clearly in front/side. Then list 3-5 fail-first objections (specific to a view + part) before deciding the next iteration.",
+        "Industrial Design Mode: for visible exterior forms (characters, vehicles, consumer products), don't stack Box() to fake curves — use loft between two sketches for tapered bodies, revolve for axisymmetric, sweep along a path for pipes/handles, and aggressive fillet (5-20mm) on visible edges applied LAST. Primitive stacking is OK for brackets, fixtures, prototypes.",
         "Use selected @face: and @edge: pointers for CAE setup when available; ask one concise question if a required support or load face is ambiguous.",
         "For preprocessing, prefer cae.apply_setup_patch; the Workbench will run solver preflight after safe setup patches.",
         "For solver execution, request cae.run_solver only after preflight/input generation is ready; the Workbench will postprocess solver results after approval.",

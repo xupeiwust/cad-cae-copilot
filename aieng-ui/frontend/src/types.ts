@@ -1161,6 +1161,10 @@ export type LLMConfig = {
   output_price_per_million_tokens?: number | null;
 };
 
+export type LocalAgentConfig = {
+  preferredAdapterId: string | null;
+};
+
 export type BenchmarkScenario = {
   id: string;
   name: string;
@@ -1248,12 +1252,13 @@ export type AutopilotApproval = {
 
 export type AutopilotRunState = {
   run_id: string;
-  status: "running" | "awaiting_approval" | "completed" | "failed" | "cancelled" | "blocked" | string;
+  status: "running" | "awaiting_approval" | "completed" | "failed" | "cancelled" | "blocked" | "chatting" | string;
   message: string;
   project_id?: string | null;
   adapter_id: string;
   mode: "assist" | "autopilot" | "full_agent" | string;
   dry_run: boolean;
+  llm_config?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   observations: AutopilotObservation[];

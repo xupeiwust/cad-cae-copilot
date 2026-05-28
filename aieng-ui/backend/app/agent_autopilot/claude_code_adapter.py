@@ -20,12 +20,21 @@ from .schema import AdapterInvocationResult, LocalAgentCapability
 
 
 def _run_claude_step(cmd: list[str], prompt: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.update({
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+        "NO_COLOR": "1",
+    })
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
     )
     try:
         stdout, stderr = proc.communicate(input=prompt, timeout=timeout_seconds)

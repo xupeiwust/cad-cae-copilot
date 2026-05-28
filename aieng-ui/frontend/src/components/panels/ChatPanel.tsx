@@ -1,14 +1,76 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
+import { MarkdownText } from "../MarkdownText";
 import { PointerText } from "../PointerText";
 import { ActionIcon, JsonDisclosure } from "../common";
 import { ApprovalCard } from "../agent/ApprovalCard";
 import { AgentPlanCard } from "../agent/AgentPlanCard";
 import { AgentResultCard } from "../agent/AgentResultCard";
 import { isLowRiskArtifactPath } from "../../appUtils";
-import type { ChatConnection, ProjectRecord, RuntimeRun } from "../../types";
+import type { AutopilotObservation, AutopilotRunState, ChatConnection, ProjectRecord, RuntimeRun } from "../../types";
 
 type SimulationProgress = { step: string; message: string };
+
+const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
+
+function formatElapsed(createdAt: string | undefined, nowMs: number): string {
+  if (!createdAt) return "0:00";
+  const startMs = Date.parse(createdAt);
+  if (!Number.isFinite(startMs)) return "0:00";
+  const total = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function statusLabel(status: string): string {
+  return status.replace(/_/g, " ");
+}
+
+function observationToolName(obs: AutopilotObservation): string | null {
+  const toolName = obs.data?.tool_name;
+  return typeof toolName === "string" && toolName ? toolName : null;
+}
+
+function currentAutopilotActivity(run: AutopilotRunState): { title: string; detail: string; tone: string } {
+  const agentLabel = run.adapter_id === "llm-api" ? "LLM agent" : "local agent";
+  if (run.status === "awaiting_approval" && run.pending_approval) {
+    return {
+      title: "Waiting for approval",
+      detail: `${run.pending_approval.tool_name}: ${run.pending_approval.explanation}`,
+      tone: "approval",
+    };
+  }
+  if (run.status === "completed") {
+    return { title: "Completed", detail: `The ${agentLabel} finished this turn.`, tone: "done" };
+  }
+  if (run.status === "failed") {
+    return { title: "Failed", detail: run.errors[0] || `The ${agentLabel} stopped with an error.`, tone: "error" };
+  }
+  if (run.status === "cancelled") {
+    return { title: "Cancelled", detail: "The local agent run was cancelled.", tone: "idle" };
+  }
+  if (run.status === "blocked") {
+    const latest = run.observations[run.observations.length - 1];
+    return { title: "Blocked", detail: latest?.summary || "The local agent needs more information.", tone: "approval" };
+  }
+  if (run.status === "chatting") {
+    const latest = run.observations[run.observations.length - 1];
+    return { title: "Ready for follow-up", detail: latest?.summary || `The ${agentLabel} is waiting for your reply.`, tone: "done" };
+  }
+  const latest =
+    [...run.observations].reverse().find((obs) => obs.kind === "agent_activity") ??
+    run.observations[run.observations.length - 1];
+  return {
+    title: "Working",
+    detail: latest?.summary || `Starting ${agentLabel} run.`,
+    tone: "running",
+  };
+}
+
+function autopilotCardTitle(run: AutopilotRunState): string {
+  return run.adapter_id === "llm-api" ? "LLM Agent" : "Local Agent";
+}
 
 type ChatPanelProps = {
   chatConnections: ChatConnection[];
@@ -78,13 +140,25 @@ export function ChatPanel({
   const [acOpen, setAcOpen] = useState(false);
   const [acQuery, setAcQuery] = useState("");
   const [acIndex, setAcIndex] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const acCursorRef = useRef<{ start: number; end: number } | null>(null);
+
+  useEffect(() => {
+    const hasActiveAutopilot = chatHistory.some((entry) =>
+      entry.autopilotRun && ACTIVE_AUTOPILOT_STATUSES.has(entry.autopilotRun.status),
+    );
+    if (!hasActiveAutopilot) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [chatHistory]);
 
   const acMatches = recentPickedFaces.filter((f) =>
     f.pointer.toLowerCase().includes(acQuery.toLowerCase()) ||
     f.label.toLowerCase().includes(acQuery.toLowerCase()),
   );
+  const selectedConnection = chatConnections.find((conn) => conn.id === selectedChatConnectionId);
 
   function openAutocomplete(cursorStart: number, query: string) {
     if (recentPickedFaces.length === 0) return;
@@ -174,7 +248,13 @@ export function ChatPanel({
   return (
     <section className="card agent-console-card">
       <div className="chat-header">
-        <strong>Engineering Agent</strong>
+        <div className="chat-agent-identity">
+          <span className={`chat-agent-orb ${chatBusy ? "active" : ""}`} aria-hidden="true" />
+          <div>
+            <strong>Engineering Agent</strong>
+            <span>{selectedConnection?.label ?? "Agent"} · {selectedConnection?.status ?? "ready"}</span>
+          </div>
+        </div>
         <div className="chat-header-controls">
           <select
             className="chat-connection-select"
@@ -212,7 +292,7 @@ export function ChatPanel({
                 ) : null}
               </header>
 
-              <p><PointerText text={entry.body} /></p>
+              <MarkdownText text={entry.body} />
 
               <AgentResultCard
                 cadResult={entry.cadResult}
@@ -280,14 +360,32 @@ export function ChatPanel({
               ) : null}
 
               {entry.autopilotRun ? (
-                <div className="autopilot-run-card">
+                <div className={`autopilot-run-card autopilot-run-${entry.autopilotRun.status}`}>
                   <div className="autopilot-run-header">
-                    <span>Local Agent</span>
-                    <code>{entry.autopilotRun.status}</code>
+                    <span className="autopilot-run-title">
+                      {ACTIVE_AUTOPILOT_STATUSES.has(entry.autopilotRun.status) ? (
+                        <span className="autopilot-live-dot" aria-hidden="true" />
+                      ) : null}
+                      {autopilotCardTitle(entry.autopilotRun)}
+                    </span>
+                    <code>{statusLabel(entry.autopilotRun.status)}</code>
                   </div>
+                  {(() => {
+                    const activity = currentAutopilotActivity(entry.autopilotRun!);
+                    return (
+                      <div className={`autopilot-current autopilot-current-${activity.tone}`}>
+                        <div>
+                          <strong>{activity.title}</strong>
+                          <span><PointerText text={activity.detail} /></span>
+                        </div>
+                        <time>{formatElapsed(entry.autopilotRun!.created_at, nowMs)}</time>
+                      </div>
+                    );
+                  })()}
                   <div className="autopilot-run-meta">
                     <span>{entry.autopilotRun.adapter_id}</span>
                     <span>{entry.autopilotRun.steps.length} step{entry.autopilotRun.steps.length === 1 ? "" : "s"}</span>
+                    <span>{entry.autopilotRun.observations.length} event{entry.autopilotRun.observations.length === 1 ? "" : "s"}</span>
                     {entry.autopilotRun.pending_approval ? (
                       <span>{entry.autopilotRun.pending_approval.level}</span>
                     ) : null}
@@ -312,12 +410,27 @@ export function ChatPanel({
                       </div>
                     </div>
                   ) : null}
+                  {ACTIVE_AUTOPILOT_STATUSES.has(entry.autopilotRun.status) && !entry.autopilotRun.pending_approval ? (
+                    <div className="autopilot-inline-actions">
+                      <button
+                        disabled={chatBusy && entry.autopilotRun.status !== "running"}
+                        className="ghost-button"
+                        onClick={() => cancelAutopilot(entry.autopilotRun!.run_id)}
+                      >
+                        <ActionIcon name="reject" />
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
                   {entry.autopilotRun.observations.length ? (
                     <ul className="autopilot-observation-list">
-                      {entry.autopilotRun.observations.slice(-4).map((obs) => (
-                        <li key={obs.id}>
-                          <span>{obs.kind}</span>
-                          <PointerText text={obs.summary} />
+                      {entry.autopilotRun.observations.slice(-6).map((obs) => (
+                        <li key={obs.id} className={`autopilot-observation-${obs.kind}`}>
+                          <span>{obs.kind.replace(/_/g, " ")}</span>
+                          <div>
+                            <PointerText text={obs.summary} />
+                            {observationToolName(obs) ? <code>{observationToolName(obs)}</code> : null}
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -477,6 +590,7 @@ export function ChatPanel({
           disabled={chatBusy || !message.trim()}
           onClick={() => void sendUnified()}
         >
+          <ActionIcon name="send" />
           {sendLabel}
         </button>
       </div>

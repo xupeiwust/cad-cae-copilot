@@ -483,6 +483,28 @@ export function parseBrepGraphSnapshot(raw: unknown): BrepGraphSnapshot {
   const faces: Record<string, BrepFaceEntity> = {};
   const groups: Record<string, BrepSelectionGroup> = {};
   const featureFaces: Record<string, string[]> = {};
+  const numberList = (value: unknown): number[] | null => {
+    if (Array.isArray(value)) {
+      const nums = value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+      return nums.length === value.length ? nums : null;
+    }
+    if (typeof value === "string") {
+      const parts = value
+        .trim()
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .map((item) => Number(item));
+      return parts.length > 0 && parts.every((item) => Number.isFinite(item)) ? parts : null;
+    }
+    return null;
+  };
+  const stringList = (value: unknown): string[] => {
+    if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+    if (typeof value === "string") {
+      return value.split(/[,\s]+/).map((item) => item.trim()).filter(Boolean);
+    }
+    return [];
+  };
   if (!raw || typeof raw !== "object") return { faces, groups, featureFaces };
   const root = raw as Record<string, unknown>;
   const graph = (root.brep_graph ?? root) as Record<string, unknown>;
@@ -499,10 +521,10 @@ export function parseBrepGraphSnapshot(raw: unknown): BrepGraphSnapshot {
       surface_type: typeof face.surface_type === "string" ? face.surface_type : undefined,
       area_mm2: typeof face.area_mm2 === "number" ? face.area_mm2 : null,
       radius_mm: typeof face.radius_mm === "number" ? face.radius_mm : null,
-      normal: Array.isArray(face.normal) ? (face.normal as number[]) : null,
-      center: Array.isArray(face.center) ? (face.center as number[]) : null,
-      bounding_box: Array.isArray(face.bounding_box) ? (face.bounding_box as number[]) : undefined,
-      roles: Array.isArray(face.roles) ? (face.roles as string[]) : [],
+      normal: numberList(face.normal),
+      center: numberList(face.center),
+      bounding_box: numberList(face.bounding_box) ?? undefined,
+      roles: stringList(face.roles),
     };
   }
   const groupList = Array.isArray(graph.selection_groups) ? graph.selection_groups : [];
@@ -511,7 +533,7 @@ export function parseBrepGraphSnapshot(raw: unknown): BrepGraphSnapshot {
     const group = g as Record<string, unknown>;
     const id = typeof group.id === "string" ? group.id : undefined;
     if (!id) continue;
-    const members = Array.isArray(group.members) ? (group.members as unknown[]).filter((m): m is string => typeof m === "string") : [];
+    const members = stringList(group.members);
     groups[id] = {
       id,
       label: typeof group.label === "string" ? group.label : undefined,

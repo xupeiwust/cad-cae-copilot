@@ -7,8 +7,10 @@ import {
   CONTROL_PANE_MODES,
   DEFAULT_CHAT_CONNECTIONS,
   DEFAULT_LLM_CONFIG,
+  DEFAULT_LOCAL_AGENT_CONFIG,
   EMPTY_CAE_FIELDS,
   LLM_CONFIG_STORAGE_KEY,
+  LOCAL_AGENT_CONFIG_STORAGE_KEY,
   WORKBENCH_PANE_MODES,
 } from "./appConstants";
 import type { BrepGraphSnapshot, CadGenerationProgress, ChatHistoryItem, ControlPaneMode, Notice, PickedFace, SelectedGeometryContext, StageItem, StageState, WorkbenchPaneMode } from "./appTypes";
@@ -63,6 +65,8 @@ import type {
   ChatResponse,
   CaeReviewReport,
   LLMConfig,
+  LocalAgentCapability,
+  LocalAgentConfig,
   ProjectRecord,
   ProjectSummary,
   RuntimeConfig,
@@ -102,14 +106,19 @@ function mergeLocalAgentCapabilities(
 }
 
 function summarizeAutopilotRun(run: AutopilotRunState): string {
+  const agentLabel = run.adapter_id === "llm-api" ? "LLM Agent" : "Local Agent";
   if (run.status === "awaiting_approval" && run.pending_approval) {
-    return `Local Agent paused for approval: ${run.pending_approval.tool_name}. ${run.pending_approval.explanation}`;
+    return `${agentLabel} paused for approval: ${run.pending_approval.tool_name}. ${run.pending_approval.explanation}`;
   }
   if (run.final_message) return run.final_message;
   const latest = run.observations[run.observations.length - 1];
   if (latest?.summary) return latest.summary;
   if (run.errors.length) return run.errors[0];
-  return `Local Agent run ${run.status}.`;
+  return `${agentLabel} run ${run.status}.`;
+}
+
+function autopilotAgentLabel(run?: AutopilotRunState | null): string {
+  return run?.adapter_id === "llm-api" ? "LLM Agent" : "Local Agent";
 }
 
 export default function App() {
@@ -156,6 +165,7 @@ export default function App() {
   const [benchmarkRun, setBenchmarkRun] = useState<BenchmarkRun | null>(null);
   const [benchmarkBusy, setBenchmarkBusy] = useState(false);
   const [llmConfig, setLlmConfig] = useState<LLMConfig>(DEFAULT_LLM_CONFIG);
+  const [localAgentConfig, setLocalAgentConfig] = useState<LocalAgentConfig>(DEFAULT_LOCAL_AGENT_CONFIG);
   const [chatConnections, setChatConnections] = useState<ChatConnection[]>(DEFAULT_CHAT_CONNECTIONS);
   const [selectedChatConnectionId, setSelectedChatConnectionId] = useState<string>("llm-api");
   const [controlPaneMode, setControlPaneMode] = useState<ControlPaneMode>("chat");
@@ -167,6 +177,7 @@ export default function App() {
   const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const sidePaneRef = useRef<HTMLElement | null>(null);
+  const autopilotPollTimerRef = useRef<number | null>(null);
   const [cadPreviewUrl, setCadPreviewUrl] = useState<string | null>(null);
   const [cadPreviewFormat, setCadPreviewFormat] = useState<string | null>(null);
   const [cadGenerating, setCadGenerating] = useState(false);
@@ -300,6 +311,25 @@ export default function App() {
     }
   }, [llmConfig]);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_AGENT_CONFIG_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<LocalAgentConfig>;
+      setLocalAgentConfig({ preferredAdapterId: parsed.preferredAdapterId ?? null });
+    } catch {
+      // Keep defaults on malformed cache.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LOCAL_AGENT_CONFIG_STORAGE_KEY, JSON.stringify(localAgentConfig));
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [localAgentConfig]);
+
   function buildFallbackSummary(project: ProjectRecord, runtimeSnapshot: RuntimeConfigSnapshot | null = runtime): ProjectSummary {
     return {
       project,
@@ -406,7 +436,12 @@ export default function App() {
     if (!selectedId) return;
     void (async () => {
       try {
-        const raw = await api.getBrepGraph(selectedId);
+        let raw: Record<string, unknown>;
+        try {
+          raw = await api.getBrepGraph(selectedId);
+        } catch {
+          raw = await api.buildBrepGraph(selectedId);
+        }
         if (cancelled) return;
         const snap = parseBrepGraphSnapshot(raw);
         setBrepSnapshot(snap);
@@ -425,6 +460,8 @@ export default function App() {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => () => stopAutopilotPoll(), []);
 
   // Phase 2: subscribe to the live agent-activity SSE stream. When an external
   // agent (Claude Code/Codex/Copilot) drives a CAD build through the MCP →
@@ -465,6 +502,45 @@ export default function App() {
             createdAt: new Date().toISOString(),
           },
         ]);
+        return;
+      }
+
+      // Autopilot SSE updates — bypass project filtering because they carry run_id.
+      if (event.type === "autopilot_update") {
+        const ae = event as unknown as Record<string, unknown>;
+        const runId = ae.run_id as string;
+        const status = ae.status as string;
+        void (async () => {
+          try {
+            const run = await api.getAutopilotRun(runId);
+            setChatHistory((current) => {
+              const index = current.findIndex((item) => item.autopilotRun?.run_id === runId);
+              if (index === -1) return current;
+              const updated = [...current];
+              updated[index] = {
+                ...updated[index],
+                autopilotRun: run,
+                errors: run.errors,
+                body: summarizeAutopilotRun(run),
+              };
+              return updated;
+            });
+            if (run.status === "chatting") {
+              stopAutopilotPoll();
+              setAgentBusy(false);
+            } else if (run.status !== "running") {
+              stopAutopilotPoll();
+              setAgentBusy(false);
+              setNotice({
+                tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
+                title: `${autopilotAgentLabel(run)} — ${run.status}`,
+                detail: summarizeAutopilotRun(run),
+              });
+            }
+          } catch {
+            // Ignore refresh failures; next SSE or poll will retry.
+          }
+        })();
         return;
       }
 
@@ -1266,13 +1342,26 @@ export default function App() {
   async function sendUnified() {
     const prompt = message.trim();
     if (!prompt) return;
-    if (selectedChatConnection.id === "local-agent") {
+    if (selectedChatConnection.id === "local-agent" || selectedChatConnection.id === "llm-api") {
+      const chattingRun = chatHistory
+        .slice()
+        .reverse()
+        .find((item) => item.autopilotRun?.status === "chatting")?.autopilotRun;
+      if (chattingRun) {
+        setChatHistory((current) => [
+          ...current,
+          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+        ]);
+        setMessage("");
+        await updateAutopilotRun(chattingRun.run_id, "approve", prompt);
+        return;
+      }
       setChatHistory((current) => [
         ...current,
         { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
       ]);
       setMessage("");
-      await runLocalAgentAutopilot(prompt, true);
+      await runAutopilotAgent(prompt, true);
       return;
     }
     const agentPrompt = withSelectedGeometryPrompt(prompt);
@@ -1323,6 +1412,14 @@ export default function App() {
       const filtered = prev.filter((f) => f.pointer !== face.pointer);
       return [face, ...filtered].slice(0, 10);
     });
+    const faceId = face.pointer.startsWith("@face:") ? face.pointer.slice("@face:".length) : null;
+    if (faceId) {
+      setHighlightedFaceIds((prev) => {
+        const next = new Set(prev);
+        next.add(faceId);
+        return next;
+      });
+    }
   }
 
   function clearPickedFaces() {
@@ -1982,17 +2079,77 @@ export default function App() {
     }
   }
 
-  async function runLocalAgentAutopilot(promptOverride?: string, skipUserMsg = false) {
+  async function probeLocalAgents() {
+    const result = await api.listLocalAgentCapabilities().catch(() => ({ adapters: [] as LocalAgentCapability[], available: [] as LocalAgentCapability[] }));
+    setChatConnections((current) => mergeLocalAgentCapabilities(current, result.adapters));
+    return result;
+  }
+
+  function stopAutopilotPoll() {
+    if (autopilotPollTimerRef.current !== null) {
+      window.clearTimeout(autopilotPollTimerRef.current);
+      autopilotPollTimerRef.current = null;
+    }
+  }
+
+  async function pollAutopilotRun(runId: string) {
+    stopAutopilotPoll();
+    const poll = async () => {
+      try {
+        const run = await api.getAutopilotRun(runId);
+        setChatHistory((current) => {
+          const index = current.findIndex((item) => item.autopilotRun?.run_id === runId);
+          if (index === -1) return current;
+          const updated = [...current];
+          updated[index] = {
+            ...updated[index],
+            autopilotRun: run,
+            errors: run.errors,
+            body: summarizeAutopilotRun(run),
+          };
+          return updated;
+        });
+
+        if (run.status === "running") {
+          autopilotPollTimerRef.current = window.setTimeout(poll, 3000);
+        } else {
+          autopilotPollTimerRef.current = null;
+          setAgentBusy(false);
+          setNotice({
+            tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
+            title: `${autopilotAgentLabel(run)} — ${run.status}`,
+            detail: summarizeAutopilotRun(run),
+          });
+        }
+      } catch (err) {
+        autopilotPollTimerRef.current = null;
+        setAgentBusy(false);
+        const detail = err instanceof Error ? err.message : String(err);
+        setNotice({ tone: "error", title: "Agent poll failed", detail });
+      }
+    };
+    autopilotPollTimerRef.current = window.setTimeout(poll, 3000);
+  }
+
+  async function runAutopilotAgent(promptOverride?: string, skipUserMsg = false) {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) {
-      if (!promptOverride) setNotice({ tone: "info", title: "请输入 Local Agent 目标", detail: "Local Agent 需要一条建模、检查或分析目标。" });
+      if (!promptOverride) setNotice({ tone: "info", title: "请输入 Agent 目标", detail: "Agent 需要一条建模、检查或分析目标。" });
       return;
     }
+    const isLlmApi = selectedChatConnection.id === "llm-api";
     const adapters = selectedChatConnection.adapters ?? [];
-    const preferredAdapter =
-      adapters.find((item) => item.adapter_id === "claude-code" && item.status === "available") ??
-      adapters.find((item) => item.status === "available");
-    if (!preferredAdapter) {
+    const userPreferredId = localAgentConfig.preferredAdapterId;
+    let preferredAdapter: LocalAgentCapability | undefined;
+    if (!isLlmApi && userPreferredId) {
+      preferredAdapter = adapters.find((item) => item.adapter_id === userPreferredId && item.status === "available");
+    }
+    if (!isLlmApi && !preferredAdapter) {
+      preferredAdapter =
+        adapters.find((item) => item.adapter_id === "claude-code" && item.status === "available") ??
+        adapters.find((item) => item.status === "available");
+    }
+    if (!isLlmApi && !preferredAdapter) {
       const diagnostic = adapters[0]?.diagnostic || "未检测到可用的 Claude Code 或 Codex CLI 非交互 JSON 模式。";
       setNotice({ tone: "info", title: "Local Agent 不可用", detail: diagnostic });
       if (!skipUserMsg) {
@@ -2007,6 +2164,9 @@ export default function App() {
       ]);
       return;
     }
+    const adapterId = isLlmApi ? "llm-api" : preferredAdapter!.adapter_id;
+    const agentLabel = isLlmApi ? "LLM Agent" : "Local Agent";
+    stopAutopilotPoll();
     setAgentBusy(true);
     setNotice(null);
     try {
@@ -2014,7 +2174,8 @@ export default function App() {
         message: prompt,
         project_id: selectedId ?? null,
         selected_geometry: agentPayloadGeometry(),
-        adapter_id: preferredAdapter.adapter_id,
+        adapter_id: adapterId,
+        ...(isLlmApi ? { llm_config: llmConfig } : {}),
         mode: "autopilot",
         dry_run: false,
       });
@@ -2036,29 +2197,33 @@ export default function App() {
           errors: result.errors,
         },
       ]);
-      setNotice({
-        tone: result.status === "completed" ? "success" : result.status === "awaiting_approval" ? "info" : "error",
-        title: `Local Agent — ${result.status}`,
-        detail: summarizeAutopilotRun(result),
-      });
+      if (result.status === "running") {
+        void pollAutopilotRun(result.run_id);
+      } else {
+        setAgentBusy(false);
+        setNotice({
+          tone: result.status === "completed" ? "success" : result.status === "awaiting_approval" ? "info" : "error",
+          title: `${agentLabel} — ${result.status}`,
+          detail: summarizeAutopilotRun(result),
+        });
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "Local Agent run failed", detail });
+      setNotice({ tone: "error", title: `${agentLabel} run failed`, detail });
       setChatHistory((current) => [
         ...current,
-        { id: createChatId(), role: "assistant", body: `Local Agent error: ${detail}`, createdAt: new Date().toISOString(), mode: "runtime" },
+        { id: createChatId(), role: "assistant", body: `${agentLabel} error: ${detail}`, createdAt: new Date().toISOString(), mode: "runtime" },
       ]);
-    } finally {
       setAgentBusy(false);
     }
   }
 
-  async function updateAutopilotRun(runId: string, action: "approve" | "reject" | "cancel") {
+  async function updateAutopilotRun(runId: string, action: "approve" | "reject" | "cancel", userMessage?: string) {
     setAgentBusy(true);
     try {
       const result = action === "cancel"
         ? await api.cancelAutopilot(runId)
-        : await api.continueAutopilot(runId, action === "approve");
+        : await api.continueAutopilot(runId, action === "approve", userMessage || null);
       setChatHistory((current) => current.map((entry) => (
         entry.autopilotRun?.run_id === runId
           ? {
@@ -2069,15 +2234,19 @@ export default function App() {
             }
           : entry
       )));
-      setNotice({
-        tone: result.status === "completed" ? "success" : result.status === "cancelled" ? "info" : "error",
-        title: `Local Agent — ${result.status}`,
-        detail: summarizeAutopilotRun(result),
-      });
+      if (result.status === "running") {
+        void pollAutopilotRun(runId);
+      } else {
+        setAgentBusy(false);
+        setNotice({
+          tone: result.status === "completed" ? "success" : result.status === "cancelled" ? "info" : "error",
+          title: `${autopilotAgentLabel(result)} — ${result.status}`,
+          detail: summarizeAutopilotRun(result),
+        });
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "Local Agent update failed", detail });
-    } finally {
+      setNotice({ tone: "error", title: "Agent update failed", detail });
       setAgentBusy(false);
     }
   }
@@ -2088,11 +2257,11 @@ export default function App() {
       return;
     }
     if (selectedChatConnection.id === "llm-api") {
-      await planAgentChat();
+      await runAutopilotAgent();
       return;
     }
     if (selectedChatConnection.id === "local-agent") {
-      await runLocalAgentAutopilot();
+      await runAutopilotAgent();
       return;
     }
     if (selectedChatConnection.id === "mcp-bridge") {
@@ -2113,11 +2282,11 @@ export default function App() {
       return;
     }
     if (selectedChatConnection.id === "llm-api") {
-      await runAgentChat();
+      await runAutopilotAgent();
       return;
     }
     if (selectedChatConnection.id === "local-agent") {
-      await runLocalAgentAutopilot();
+      await runAutopilotAgent();
       return;
     }
     if (selectedChatConnection.id === "mcp-bridge") {
@@ -2433,6 +2602,10 @@ export default function App() {
         onTest={() => void runRuntimeTask("test", () => api.testRuntimeConfig(runtimeDraft!))}
         onSave={() => void runRuntimeTask("save", () => api.updateRuntimeConfig(runtimeDraft!))}
         onRestore={restoreRuntimeDefaults}
+        localAgentConfig={localAgentConfig}
+        localAdapters={selectedChatConnection.adapters ?? []}
+        onLocalAgentChange={(key, value) => setLocalAgentConfig((prev) => ({ ...prev, [key]: value }))}
+        onProbeLocalAgents={() => void probeLocalAgents()}
       />
       <GlobalSettingsDrawer open={globalSettingsOpen} onClose={() => setGlobalSettingsOpen(false)} />
     </PointerProvider>

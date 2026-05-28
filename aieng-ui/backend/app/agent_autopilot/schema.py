@@ -35,8 +35,13 @@ class AutopilotPause(StrictModel):
     reason: str = Field(min_length=1)
 
 
+class AutopilotChat(StrictModel):
+    type: Literal["chat"] = "chat"
+    message: str = Field(min_length=1)
+
+
 AutopilotAction = Annotated[
-    AutopilotToolCall | AutopilotAskUser | AutopilotFinal | AutopilotPause,
+    AutopilotToolCall | AutopilotAskUser | AutopilotFinal | AutopilotPause | AutopilotChat,
     Field(discriminator="type"),
 ]
 
@@ -60,12 +65,12 @@ class AutopilotAgentAction(StrictModel):
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "type": {"type": "string", "enum": ["tool_call", "ask_user", "final", "pause"]},
-                        "tool_name": {"type": ["string", "null"]},
+                        "type": {"type": "string", "enum": ["tool_call", "ask_user", "final", "pause", "chat"]},
+                        "tool_name": {"type": "string"},
                         "input_json": {"type": "string"},
-                        "question": {"type": ["string", "null"]},
-                        "message": {"type": ["string", "null"]},
-                        "reason": {"type": ["string", "null"]},
+                        "question": {"type": "string"},
+                        "message": {"type": "string"},
+                        "reason": {"type": "string"},
                     },
                     "required": ["type", "tool_name", "input_json", "question", "message", "reason"],
                 },
@@ -82,6 +87,7 @@ class AutopilotObservation(StrictModel):
         "tool_error",
         "policy_block",
         "approval_required",
+        "agent_activity",
         "user_message",
         "final",
     ]
@@ -113,6 +119,7 @@ class AutopilotRunRequest(StrictModel):
     adapter_id: str = "fake"
     mode: Literal["assist", "autopilot", "full_agent"] = "autopilot"
     selected_geometry: dict[str, Any] = Field(default_factory=dict)
+    llm_config: dict[str, Any] = Field(default_factory=dict)
     dry_run: bool = True
     max_steps: int = Field(default=6, ge=1, le=20)
     fake_actions: list[dict[str, Any]] | None = None
@@ -127,6 +134,7 @@ class AutopilotRunState(StrictModel):
         "failed",
         "cancelled",
         "blocked",
+        "chatting",
     ]
     message: str
     project_id: str | None = None
@@ -134,6 +142,7 @@ class AutopilotRunState(StrictModel):
     mode: Literal["assist", "autopilot", "full_agent"] = "autopilot"
     dry_run: bool = True
     selected_geometry: dict[str, Any] = Field(default_factory=dict)
+    llm_config: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
     observations: list[AutopilotObservation] = Field(default_factory=list)

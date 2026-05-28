@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.agent_autopilot.schema import AutopilotAgentAction
+from app.agent_autopilot.schema import AutopilotAgentAction, AutopilotRunRequest
 
 
 def test_agent_action_accepts_supported_action_types() -> None:
@@ -31,3 +31,15 @@ def test_agent_action_json_schema_serializes() -> None:
     schema = AutopilotAgentAction.json_schema_for_adapter()
     assert schema["type"] == "object"
     assert "action" in schema["properties"]
+
+
+def test_autopilot_request_accepts_llm_config() -> None:
+    request = AutopilotRunRequest.model_validate(
+        {
+            "message": "explain the model",
+            "adapter_id": "llm-api",
+            "llm_config": {"provider": "openai-compatible", "model": "demo"},
+        }
+    )
+    assert request.adapter_id == "llm-api"
+    assert request.llm_config["model"] == "demo"

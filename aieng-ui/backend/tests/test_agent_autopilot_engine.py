@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.agent_autopilot.engine import AutopilotEngine
-from app.agent_autopilot.schema import AutopilotRunRequest
+from app.agent_autopilot.schema import AdapterInvocationResult, AutopilotAgentAction, AutopilotRunRequest
 from app.agent_autopilot.store import AutopilotStore
 
 
@@ -93,6 +93,49 @@ def test_engine_executes_auto_allowed_tool_when_not_dry_run(tmp_path: Path) -> N
     assert state.status == "completed"
     assert calls == [("aieng.agent_context", {"project_id": "p1"})]
     assert any(obs.data.get("dry_run") is False for obs in state.observations)
+
+
+def test_engine_bootstraps_project_context_before_real_adapter_step(tmp_path: Path) -> None:
+    class CapturingAdapter:
+        adapter_id = "spy"
+        label = "Spy"
+
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300):  # type: ignore[no-untyped-def]
+            self.prompts.append(prompt)
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(
+                    {"action": {"type": "final", "message": "Model explained."}, "done": True}
+                ),
+            )
+
+    calls = []
+    adapter = CapturingAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"spy": adapter},
+        tool_executor=lambda name, inp: calls.append((name, inp)) or {
+            "schema_version": "0.1",
+            "project_id": inp["project_id"],
+            "project": {"name": "Schenkel"},
+            "agent_brief": {"part_summary": "A plate with holes."},
+        },
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="解释一下这个模型",
+            project_id="p1",
+            adapter_id="spy",
+            dry_run=False,
+        )
+    )
+    assert state.status == "completed"
+    assert calls == [("aieng.agent_context", {"project_id": "p1"})]
+    assert "Loaded initial project context" in adapter.prompts[0]
 
 
 def test_engine_continue_executes_approved_pending_tool(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ from .schema import AdapterInvocationResult, AutopilotAgentAction, LocalAgentCap
 
 
 DEFAULT_PROBE_TIMEOUT_SECONDS = 3
-DEFAULT_STEP_TIMEOUT_SECONDS = 120
+DEFAULT_STEP_TIMEOUT_SECONDS = 300
 
 
 class LocalAgentAdapter(Protocol):
@@ -107,6 +107,8 @@ def parse_action_json(text: str) -> AutopilotAgentAction:
             payload["action"] = {"type": "final", "message": action.get("message") or ""}
         elif action_type == "pause":
             payload["action"] = {"type": "pause", "reason": action.get("reason") or ""}
+        elif action_type == "chat":
+            payload["action"] = {"type": "chat", "message": action.get("message") or ""}
     return AutopilotAgentAction.model_validate(payload)
 
 

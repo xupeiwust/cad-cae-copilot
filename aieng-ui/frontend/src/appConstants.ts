@@ -11,6 +11,7 @@ export const BASE_STAGES: StageItem[] = [
 export const CAD_PROVIDER_OPTIONS = [{ value: "freecad", label: "FreeCAD" }] as const;
 export const AI_FIRST_WORKBENCH_ENABLED = true;
 export const LLM_CONFIG_STORAGE_KEY = "aieng-ui.llm-config";
+export const LOCAL_AGENT_CONFIG_STORAGE_KEY = "aieng-ui.local-agent-config";
 export const LLM_PROVIDER_SUGGESTIONS = ["openai-compatible", "anthropic", "openai", "azure-openai"] as const;
 export const CHAT_SUGGESTIONS = [
   "总结当前模型的语义和主要风险",
@@ -28,6 +29,9 @@ export const DEFAULT_LLM_CONFIG: LLMConfig = {
   max_output_tokens: 8192,
   input_price_per_million_tokens: null,
   output_price_per_million_tokens: null,
+};
+export const DEFAULT_LOCAL_AGENT_CONFIG = {
+  preferredAdapterId: null as string | null,
 };
 export const EMPTY_CAE_FIELDS: string[] = [];
 

@@ -9,7 +9,7 @@ import {
 import type { Notice } from "../../appTypes";
 import { getLlmProviderLabel } from "../../appUtils";
 import { useI18n, type Language } from "../../i18n";
-import type { LLMConfig, RuntimeConfig, RuntimeConfigSnapshot } from "../../types";
+import type { LLMConfig, LocalAgentCapability, LocalAgentConfig, RuntimeConfig, RuntimeConfigSnapshot } from "../../types";
 import { ActionIcon } from "../common";
 
 type LlmProviderSettingsProps = {
@@ -226,6 +226,10 @@ type RuntimeSettingsDrawerProps = {
   onTest(): void;
   onSave(): void;
   onRestore(): void;
+  localAgentConfig?: LocalAgentConfig;
+  localAdapters?: LocalAgentCapability[];
+  onLocalAgentChange?(key: keyof LocalAgentConfig, value: LocalAgentConfig[typeof key]): void;
+  onProbeLocalAgents?(): void;
 };
 
 export function RuntimeSettingsDrawer({
@@ -249,6 +253,10 @@ export function RuntimeSettingsDrawer({
   onTest,
   onSave,
   onRestore,
+  localAgentConfig,
+  localAdapters,
+  onLocalAgentChange,
+  onProbeLocalAgents,
 }: RuntimeSettingsDrawerProps) {
   if (!open) return null;
 
@@ -327,6 +335,72 @@ export function RuntimeSettingsDrawer({
             onRestore={onLlmRestore}
             onTestResult={onLlmTestResult}
           />
+
+          <section className="drawer-section">
+            <div className="drawer-section-heading">
+              <div>
+                <h3>Local Agent</h3>
+                <p>选择本地 Agent 使用的 CLI 工具。需要先安装 Claude Code 或 Codex CLI 并确保其在 PATH 中。</p>
+              </div>
+              <div className={`llm-readiness-pill ${localAdapters?.some((a) => a.status === "available") ? "ready" : "degraded"}`}>
+                {localAdapters?.some((a) => a.status === "available") ? "可用" : "未就绪"}
+              </div>
+            </div>
+
+            {localAdapters?.length ? (
+              <>
+                <div className="runtime-config-grid">
+                  <label className="form-field runtime-config-span">
+                    <span>Preferred Adapter</span>
+                    <select
+                      value={localAgentConfig?.preferredAdapterId ?? ""}
+                      onChange={(e) => onLocalAgentChange?.("preferredAdapterId", e.target.value || null)}
+                    >
+                      <option value="">自动选择</option>
+                      {localAdapters.map((adapter) => (
+                        <option key={adapter.adapter_id} value={adapter.adapter_id}>
+                          {adapter.label} {adapter.status === "available" ? "(可用)" : `(${adapter.status})`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="local-agent-adapter-list">
+                  {localAdapters.map((adapter) => (
+                    <div key={adapter.adapter_id} className={`local-agent-adapter-item ${adapter.status}`}>
+                      <div className="local-agent-adapter-head">
+                        <strong>{adapter.label}</strong>
+                        <span className={`local-agent-status ${adapter.status}`}>{adapter.status}</span>
+                      </div>
+                      <div className="local-agent-adapter-meta">
+                        {adapter.command_path ? <code>{adapter.command_path}</code> : <code>{adapter.command}</code>}
+                        {adapter.version ? <span>v{adapter.version}</span> : null}
+                        {adapter.supports_json ? <span className="local-agent-badge">JSON</span> : null}
+                        {adapter.supports_json_schema ? <span className="local-agent-badge">Schema</span> : null}
+                        {adapter.supports_non_interactive ? <span className="local-agent-badge">Non-interactive</span> : null}
+                      </div>
+                      {adapter.diagnostic ? (
+                        <p className="local-agent-adapter-diagnostic">{adapter.diagnostic}</p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="summary-note summary-muted">
+                <strong>未探测到 Local Agent</strong>
+                <p>请确保 Claude Code (<code>claude</code>) 或 Codex CLI (<code>codex</code>) 已安装并在 PATH 中。</p>
+              </div>
+            )}
+
+            <div className="action-row runtime-config-actions">
+              <button type="button" className="ghost-button" onClick={() => onProbeLocalAgents?.()}>
+                <ActionIcon name="test" />
+                测试连通性
+              </button>
+            </div>
+          </section>
 
           <section className="drawer-section">
             <div className="drawer-section-heading">

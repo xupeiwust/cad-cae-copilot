@@ -5,7 +5,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 import { api } from "../api";
-import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
+import type { BrepFaceEntity, BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { fieldLabel, resolveAssetFormat } from "../appUtils";
 import type { SolverFieldDescriptor } from "../types";
 import { CadProgressPanel } from "./CadProgressPanel";
@@ -268,6 +268,101 @@ function fitCameraToObject(
   return true;
 }
 
+function disposeHighlightObject(child: THREE.Object3D) {
+  if (child instanceof THREE.Mesh) {
+    child.geometry.dispose();
+    if (Array.isArray(child.material)) {
+      for (const material of child.material) material.dispose();
+    } else {
+      child.material.dispose();
+    }
+  }
+}
+
+function createFaceHighlightMesh(object: THREE.Object3D, face: BrepFaceEntity): THREE.Mesh | null {
+  const bbox = face.bounding_box;
+  if (!bbox || bbox.length !== 6) return null;
+  const min = new THREE.Vector3(bbox[0], bbox[1], bbox[2]);
+  const max = new THREE.Vector3(bbox[3], bbox[4], bbox[5]);
+  const size = new THREE.Vector3().subVectors(max, min);
+  const diagonal = Math.max(size.length(), 1e-3);
+  const pad = Math.max(diagonal * 0.015, 1e-4);
+  const paddedMin = min.clone().subScalar(pad);
+  const paddedMax = max.clone().addScalar(pad);
+  const center = face.center && face.center.length === 3
+    ? new THREE.Vector3(face.center[0], face.center[1], face.center[2])
+    : new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5);
+  const faceNormal = face.normal && face.normal.length === 3
+    ? new THREE.Vector3(face.normal[0], face.normal[1], face.normal[2]).normalize()
+    : null;
+  const planarSurface = (face.surface_type ?? "").toLowerCase().includes("plane");
+  const planeTolerance = Math.max(diagonal * 0.04, 0.15);
+  const positions: number[] = [];
+  const v0 = new THREE.Vector3();
+  const v1 = new THREE.Vector3();
+  const v2 = new THREE.Vector3();
+  const centroid = new THREE.Vector3();
+  const triangleNormal = new THREE.Vector3();
+  const edge = new THREE.Vector3();
+
+  object.updateMatrixWorld(true);
+  object.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+    const geo = node.geometry as THREE.BufferGeometry;
+    const pos = geo.attributes.position;
+    if (!pos) return;
+    const index = geo.index;
+    const triCount = index ? Math.floor(index.count / 3) : Math.floor(pos.count / 3);
+    for (let tri = 0; tri < triCount; tri++) {
+      const i0 = index ? index.getX(tri * 3) : tri * 3;
+      const i1 = index ? index.getX(tri * 3 + 1) : tri * 3 + 1;
+      const i2 = index ? index.getX(tri * 3 + 2) : tri * 3 + 2;
+      v0.set(pos.getX(i0), pos.getY(i0), pos.getZ(i0)).applyMatrix4(node.matrixWorld);
+      v1.set(pos.getX(i1), pos.getY(i1), pos.getZ(i1)).applyMatrix4(node.matrixWorld);
+      v2.set(pos.getX(i2), pos.getY(i2), pos.getZ(i2)).applyMatrix4(node.matrixWorld);
+      centroid.copy(v0).add(v1).add(v2).multiplyScalar(1 / 3);
+      if (
+        centroid.x < paddedMin.x || centroid.x > paddedMax.x ||
+        centroid.y < paddedMin.y || centroid.y > paddedMax.y ||
+        centroid.z < paddedMin.z || centroid.z > paddedMax.z
+      ) {
+        continue;
+      }
+      if (planarSurface && faceNormal) {
+        triangleNormal.subVectors(v1, v0).cross(edge.subVectors(v2, v0)).normalize();
+        const normalAligned = Math.abs(triangleNormal.dot(faceNormal)) > 0.72;
+        const closeToPlane = Math.abs(centroid.clone().sub(center).dot(faceNormal)) <= planeTolerance;
+        if (!normalAligned || !closeToPlane) continue;
+      }
+      const offset = faceNormal ? faceNormal.clone().multiplyScalar(Math.max(diagonal * 0.0025, 0.02)) : new THREE.Vector3();
+      positions.push(
+        v0.x + offset.x, v0.y + offset.y, v0.z + offset.z,
+        v1.x + offset.x, v1.y + offset.y, v1.z + offset.z,
+        v2.x + offset.x, v2.y + offset.y, v2.z + offset.z,
+      );
+    }
+  });
+
+  if (positions.length < 9) return null;
+  const highlightGeometry = new THREE.BufferGeometry();
+  highlightGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  highlightGeometry.computeVertexNormals();
+  const highlightMaterial = new THREE.MeshBasicMaterial({
+    color: 0xfacc15,
+    transparent: true,
+    opacity: 0.62,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -6,
+    polygonOffsetUnits: -6,
+  });
+  const mesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
+  mesh.renderOrder = 1000;
+  return mesh;
+}
+
 export function ModelViewer({
   assetUrl,
   assetFormat,
@@ -301,6 +396,8 @@ export function ModelViewer({
   // Scene refs shared between the asset-loading effect and the highlight effect.
   const sceneRef = useRef<THREE.Scene | null>(null);
   const highlightGroupRef = useRef<THREE.Group | null>(null);
+  const objectRef = useRef<THREE.Object3D | null>(null);
+  const [objectReadyKey, setObjectReadyKey] = useState(0);
   const [viewerState, setViewerState] = useState<{ status: ViewerLoadState; detail: string }>({
     status: "idle",
     detail: "等待生成预览资产",
@@ -375,6 +472,7 @@ export function ModelViewer({
     const attachObject = (nextObject: THREE.Object3D) => {
       if (object3d) scene.remove(object3d);
       object3d = nextObject;
+      objectRef.current = nextObject;
       if (fieldDescriptor?.basis === "y_normalized") {
         applyYNormalizedColors(nextObject, fieldDescriptor.colormap);
       } else if (
@@ -420,6 +518,7 @@ export function ModelViewer({
       } else {
         setSafeViewerState("ready", `真实预览资产已加载${fieldNote}`);
       }
+      setObjectReadyKey((current) => current + 1);
     };
 
     if (assetUrl && resolvedFormat) {
@@ -478,7 +577,8 @@ export function ModelViewer({
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
-      const intersects = raycaster.intersectObjects(object3d.children, true);
+      const pickTargets = object3d instanceof THREE.Mesh ? [object3d] : object3d.children;
+      const intersects = raycaster.intersectObjects(pickTargets, true);
       if (intersects.length === 0) {
         setTooltipFace(null);
         return;
@@ -494,9 +594,7 @@ export function ModelViewer({
               surface_type: (data.surface_type as string) || "unknown",
               roles: Array.isArray(data.roles) ? (data.roles as string[]) : [],
             };
-            if (event.shiftKey) {
-              onAddPickedFace(face);
-            }
+            onAddPickedFace(face);
             setTooltipFace(face);
           }
         })
@@ -527,14 +625,12 @@ export function ModelViewer({
       host.innerHTML = "";
       sceneRef.current = null;
       highlightGroupRef.current = null;
+      objectRef.current = null;
     };
   }, [assetFormat, assetUrl, fieldDescriptorKey]);
 
-  // Highlight effect: paints overlay markers (wireframe bbox + center sphere)
-  // for each face_id in highlightedFaceIds. The GLB pipeline exports a single
-  // merged mesh ([cad_generation.py]) so true per-face material change is not
-  // possible without instrumenting the export — overlays achieve the same goal
-  // visually without touching the asset pipeline.
+  // Highlight effect: extracts displayed mesh triangles whose centroids match
+  // the selected B-Rep face metadata, then paints a translucent face overlay.
   useEffect(() => {
     const group = highlightGroupRef.current;
     if (!group) return;
@@ -542,60 +638,19 @@ export function ModelViewer({
     while (group.children.length > 0) {
       const child = group.children.pop()!;
       group.remove(child);
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
-        if (Array.isArray(child.material)) {
-          for (const m of child.material) m.dispose();
-        } else {
-          child.material.dispose();
-        }
-      } else if (child instanceof THREE.LineSegments || child instanceof THREE.Box3Helper) {
-        (child as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material }).geometry?.dispose();
-        (child as THREE.Object3D & { material?: THREE.Material }).material?.dispose();
-      }
+      disposeHighlightObject(child);
     }
     if (!brepSnapshot || highlightedFaceIds.size === 0) return;
 
-    const HIGHLIGHT_COLOR = 0xfacc15; // amber/yellow
+    const object = objectRef.current;
+    if (!object) return;
     for (const faceId of highlightedFaceIds) {
       const face = brepSnapshot.faces[faceId];
       if (!face) continue;
-      const bbox = face.bounding_box;
-      if (bbox && bbox.length === 6) {
-        const min = new THREE.Vector3(bbox[0], bbox[1], bbox[2]);
-        const max = new THREE.Vector3(bbox[3], bbox[4], bbox[5]);
-        // Inflate slightly so the wireframe doesn't z-fight with the mesh.
-        const size = new THREE.Vector3().subVectors(max, min);
-        const diagonal = Math.max(size.length(), 1e-3);
-        const inflate = diagonal * 0.02;
-        min.subScalar(inflate);
-        max.addScalar(inflate);
-        const helper = new THREE.Box3Helper(new THREE.Box3(min, max), HIGHLIGHT_COLOR);
-        // Make line material slightly thicker via depthTest=false so the box
-        // is visible even when occluded behind the mesh.
-        const mat = (helper as unknown as { material: THREE.LineBasicMaterial }).material;
-        mat.depthTest = false;
-        mat.transparent = true;
-        mat.opacity = 0.95;
-        helper.renderOrder = 999;
-        group.add(helper);
-      }
-      const center = face.center;
-      if (center && center.length === 3) {
-        const refSize = bbox && bbox.length === 6
-          ? Math.max(bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2])
-          : 1;
-        const sphereRadius = Math.max(refSize * 0.04, 0.5);
-        const sphere = new THREE.Mesh(
-          new THREE.SphereGeometry(sphereRadius, 16, 12),
-          new THREE.MeshBasicMaterial({ color: HIGHLIGHT_COLOR, transparent: true, opacity: 0.85, depthTest: false }),
-        );
-        sphere.position.set(center[0], center[1], center[2]);
-        sphere.renderOrder = 1000;
-        group.add(sphere);
-      }
+      const highlightMesh = createFaceHighlightMesh(object, face);
+      if (highlightMesh) group.add(highlightMesh);
     }
-  }, [highlightedFaceIds, brepSnapshot]);
+  }, [highlightedFaceIds, brepSnapshot, objectReadyKey]);
 
   return (
     <div className="viewer-canvas-shell">

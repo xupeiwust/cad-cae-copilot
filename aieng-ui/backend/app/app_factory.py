@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 
 def _sync_main_symbols() -> None:
     """Refresh globals from app.main so legacy monkeypatch points still work."""
@@ -205,16 +207,25 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except Exception:
             pass
 
-    @app.post("/api/agent/autopilot/runs")
-    def create_agent_autopilot_run(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        from .agent_autopilot.engine import AutopilotEngine
-        from .agent_autopilot.schema import AutopilotRunRequest
+    def _start_autopilot_worker(target: Callable[[], None]) -> None:
+        import threading
 
-        data = payload or {}
-        try:
-            request = AutopilotRunRequest.model_validate(data)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"invalid autopilot request: {exc}") from exc
+        thread = threading.Thread(target=target, name="aieng-autopilot-worker", daemon=True)
+        thread.start()
+
+    def _autopilot_adapters(llm_config: dict[str, Any] | None = None) -> dict[str, Any]:
+        from .agent_autopilot.adapters import adapter_registry
+
+        adapters = adapter_registry()
+        if llm_config:
+            from .agent_autopilot.llm_api_adapter import LlmApiAdapter
+
+            adapters["llm-api"] = LlmApiAdapter(active_settings, llm_config)
+        return adapters
+
+    def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
+        from .agent_autopilot.engine import AutopilotEngine
+
         agent_context_snapshot = None
         if request.project_id:
             try:
@@ -223,9 +234,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 agent_context_snapshot = agent_context.build_agent_context(active_settings, request.project_id)
             except Exception as exc:
                 agent_context_snapshot = {"error": str(exc)}
-        engine = AutopilotEngine(
+        return AutopilotEngine(
             store=_autopilot_store(),
             runtime_tools=_rt.list_tools_for_mcp(),
+            adapters=_autopilot_adapters(request.llm_config),
             agent_context=agent_context_snapshot,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
@@ -233,13 +245,71 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 {"project_id": request.project_id, "workflow_id": "agent_autopilot"},
             ),
         )
-        state = engine.start(request)
+
+    @app.post("/api/agent/autopilot/runs")
+    def create_agent_autopilot_run(
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from .agent_autopilot.engine import AutopilotEngine
+        from .agent_autopilot.schema import AutopilotObservation, AutopilotRunRequest, AutopilotRunState
+
+        data = payload or {}
+        if isinstance(data.get("llm_config"), dict):
+            data = {**data, "llm_config": agent_engine.sanitize_llm_config(data.get("llm_config"))}
+        try:
+            request = AutopilotRunRequest.model_validate(data)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"invalid autopilot request: {exc}") from exc
+
+        # Fast-path: create initial state without building agent_context (that can be slow).
+        store = _autopilot_store()
+        state = AutopilotRunState(
+            run_id=uuid.uuid4().hex[:12],
+            status="running",
+            message=request.message,
+            project_id=request.project_id,
+            adapter_id=request.adapter_id,
+            mode=request.mode,
+            dry_run=request.dry_run,
+            selected_geometry=request.selected_geometry,
+            llm_config=request.llm_config,
+        )
+        state.observations.append(
+            AutopilotObservation(
+                id=uuid.uuid4().hex[:12],
+                kind="context",
+                summary="Autopilot run started.",
+                data={
+                    "project_id": request.project_id,
+                    "selected_geometry": request.selected_geometry,
+                },
+            )
+        )
+        store.save(state)
         _write_autopilot_audit(state.project_id, "agent_autopilot_started", {
             "run_id": state.run_id,
             "adapter_id": state.adapter_id,
             "status": state.status,
-            "step_count": len(state.steps),
+            "step_count": 0,
         })
+
+        def _run_in_background() -> None:
+            try:
+                full_engine = _build_autopilot_engine(request)
+                final_state = full_engine.start(request, run_id=state.run_id)
+                _write_autopilot_audit(final_state.project_id, "agent_autopilot_finished", {
+                    "run_id": final_state.run_id,
+                    "adapter_id": final_state.adapter_id,
+                    "status": final_state.status,
+                    "step_count": len(final_state.steps),
+                })
+            except Exception as exc:
+                loaded = store.load(state.run_id)
+                loaded.status = "failed"
+                loaded.errors.append(str(exc))
+                store.save(loaded)
+
+        _start_autopilot_worker(_run_in_background)
         return state.model_dump()
 
     @app.get("/api/agent/autopilot/runs/{run_id}")
@@ -253,35 +323,64 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.post("/api/agent/autopilot/runs/{run_id}/continue")
-    def continue_agent_autopilot_run(run_id: str, payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+    def continue_agent_autopilot_run(
+        run_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
         from .agent_autopilot.engine import AutopilotEngine
 
         data = payload or {}
         approved = bool(data.get("approved", True))
+        user_message = data.get("user_message") if isinstance(data.get("user_message"), str) else None
         store = _autopilot_store()
         try:
             current = store.load(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        # If already in a terminal state, return as-is
+        if current.status in ("completed", "failed", "cancelled"):
+            return current.model_dump()
+
+        # For chatting mode with user_message, append it and transition to running.
+        if current.status == "chatting" and user_message:
+            current.status = "running"
+            current.updated_at = now_iso()
+            store.save(current)
+        elif current.status == "awaiting_approval":
+            # Update status to running immediately so the client sees the transition
+            current.status = "running"
+            current.pending_approval = None
+            current.updated_at = now_iso()
+            store.save(current)
+
         engine = AutopilotEngine(
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
+            adapters=_autopilot_adapters(current.llm_config),
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
                 {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
             ),
         )
-        try:
-            state = engine.continue_run(run_id, approved=approved)
-            _write_autopilot_audit(state.project_id, "agent_autopilot_approval", {
-                "run_id": state.run_id,
-                "approved": approved,
-                "status": state.status,
-            })
-            return state.model_dump()
-        except ValueError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        def _run_continue_in_background() -> None:
+            try:
+                state = engine.continue_run(run_id, approved=approved, user_message=user_message)
+                _write_autopilot_audit(state.project_id, "agent_autopilot_approval", {
+                    "run_id": state.run_id,
+                    "approved": approved,
+                    "status": state.status,
+                })
+            except Exception as exc:
+                loaded = store.load(run_id)
+                loaded.status = "failed"
+                loaded.errors.append(str(exc))
+                store.save(loaded)
+
+        _start_autopilot_worker(_run_continue_in_background)
+        return current.model_dump()
 
     @app.post("/api/agent/autopilot/runs/{run_id}/cancel")
     def cancel_agent_autopilot_run(run_id: str) -> dict[str, Any]:

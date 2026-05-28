@@ -3,20 +3,34 @@ import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactRespons
 
 const API = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    headers: {
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
+async function request<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const timeoutMs = init?.timeoutMs ?? 30000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `HTTP ${response.status}`);
+  try {
+    const response = await fetch(`${API}${path}`, {
+      headers: {
+        ...(init?.headers ?? {}),
+      },
+      ...init,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+
+    return response.json() as Promise<T>;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-
-  return response.json() as Promise<T>;
 }
 
 export const api = {
@@ -92,6 +106,7 @@ export const api = {
     project_id?: string | null;
     adapter_id?: string;
     selected_geometry?: SelectedGeometryContext | null;
+    llm_config?: LLMConfig;
     mode?: "assist" | "autopilot" | "full_agent";
     dry_run?: boolean;
   }) =>
@@ -99,13 +114,17 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      timeoutMs: 300000,
     }),
-  continueAutopilot: (runId: string, approved: boolean) =>
+  continueAutopilot: (runId: string, approved: boolean, userMessage?: string | null) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/continue`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved }),
+      body: JSON.stringify({ approved, user_message: userMessage ?? undefined }),
+      timeoutMs: 300000,
     }),
+  getAutopilotRun: (runId: string) =>
+    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}`),
   cancelAutopilot: (runId: string) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/cancel`, {
       method: "POST",
@@ -403,6 +422,12 @@ export const api = {
     }),
   getBrepGraph: (projectId: string) =>
     request<Record<string, unknown>>(`/api/projects/${projectId}/brep-graph`),
+  buildBrepGraph: (projectId: string) =>
+    request<Record<string, unknown>>(`/api/projects/${projectId}/brep-graph/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }),
   runSimulation: (projectId: string, body: Record<string, unknown>) =>
     request<Record<string, unknown>>(`/api/projects/${projectId}/run-simulation`, {
       method: "POST",

@@ -66,6 +66,11 @@ Rules:
    If using direct construction, the last line MUST be: result = <your_shape>
 5. Do NOT call show_all(), show(), export_step(), or any visualization/export function.
 6. Respond with ONLY the Python code — no markdown fences, no explanation.
+7. When the model has multiple distinct parts, label and color each one:
+   set `.label = "name"` so it appears as a named part in topology, and set
+   `.color = Color(r, g, b)` (RGB in 0..1) so the part is visually distinguishable
+   in the rendered thumbnail and the GLB viewer. Combine parts with
+   `Compound(children=[part1, part2, ...])`.
 """
 
 

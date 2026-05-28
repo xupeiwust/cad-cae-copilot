@@ -114,6 +114,10 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "`fl = Cylinder(3, 30); fl.label = 'motor_pod_FL'; "
                     "result = Compound(children=[body, fl])` — labels appear as named "
                     "parts in topology_map and feature_graph. "
+                    "Also set `.color = Color(r, g, b)` (RGB in 0..1) on each part — "
+                    "colors render in the multi-view thumbnail AND travel through to "
+                    "the GLB that the UI viewer shows, so a user looking at the model "
+                    "sees the colors you assigned. "
                     "In mode=append, the previous model is available as `previous_result`."
                 ),
             },
@@ -142,8 +146,12 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "thumbnail": {
                 "type": "boolean",
                 "description": (
-                    "Return a rendered PNG thumbnail of the result so you can visually "
-                    "verify the geometry (default true). The MCP client receives it as an "
+                    "Return a rendered PNG so you can visually verify the geometry "
+                    "(default true). The image is a 2x2 contact sheet with four "
+                    "labelled views: front, side, top, iso — each catches problems "
+                    "the others hide (alignment in front, depth in side, layout in "
+                    "top, overall form in iso). Per-part `.color` values applied to "
+                    "build123d shapes are honored. The MCP client receives this as an "
                     "image content block. Set false to skip rendering."
                 ),
             },

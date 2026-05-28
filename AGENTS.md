@@ -86,10 +86,19 @@ text file that the frontend cannot render.
 each part gets a semantic ID you can reference later (instead of anonymous
 `body_001`). Labels appear as named parts in `topology_map.json` and as
 `named_part` features in `feature_graph.json`.
+
+**Color your parts.** Set `.color = Color(r, g, b)` (RGB in 0..1) on each part.
+Colors flow through to **both** the agent thumbnail (so you can visually tell
+parts apart) **and** the GLB the UI viewer displays. Parts without a `.color`
+get a cycling palette in the thumbnail; in the UI they appear default-grey.
+Use color to make part boundaries readable and to encode design intent
+(e.g. red structural, blue moving, silver mechanical).
 ```python
 from build123d import *
 body = Box(40, 40, 10); body.label = "fuselage"
+body.color = Color(0.78, 0.15, 0.15)   # red
 fl = Cylinder(3, 30); fl.label = "motor_pod_FL"
+fl.color = Color(0.20, 0.30, 0.65)     # blue
 result = Compound(children=[body, fl])
 ```
 
@@ -107,9 +116,22 @@ arm = Cylinder(3, 30); arm.label = "motor_pod_FR"
 result = Compound(children=[previous_result, arm])
 ```
 
-**Visual feedback:** `cad.execute_build123d` returns a rendered PNG thumbnail as an
-image content block (disable with `{"thumbnail": false}`). **Look at it** to verify
-the shape and feature placement before continuing — don't judge from face counts alone.
+**Visual feedback (multi-view contact sheet).** `cad.execute_build123d` returns a
+single PNG with **four labelled views in a 2×2 grid: front, side, top, iso**.
+The image arrives as an MCP image content block (disable with `{"thumbnail": false}`).
+**Look at all four views** — each catches problems the others hide:
+- **front** — wrong proportions (e.g. arms reaching to feet), left/right symmetry
+- **side** — overhangs, depth, parts sticking out forward/back
+- **top** — layout in the XY plane, parts hidden behind others in front view
+- **iso** — overall 3D form
+
+Don't judge from face counts or bounding boxes — actually look at the views.
+
+**Iterate using fail-first review.** Before adding more parts, list 3–5 reasons
+the current build does **not** look like the target object (specific to view +
+specific part), then list what's right. Decide the next iteration from the
+failures, not from a preset plan. This works much better than building straight
+through to the finish.
 
 **Response summary fields** (text-side feedback, useful when your client drops the image):
 `named_parts` (all named parts now in the model), `parts_added` (what this step added),
@@ -446,6 +468,9 @@ curl -X POST http://localhost:8000/api/agent/invoke-tool \
 | `cae.run_solver` without preflight | Call `cae.prepare_solver_run` first |
 | Referencing stale artifacts after an edit | `aieng.refresh_semantics` then regenerate |
 | Raw face indices instead of `@face:id` | Use pointer IDs from `aieng.agent_context` |
+| Judging geometry from one view (iso) only | Inspect all 4 views in the contact sheet (front/side/top/iso) — alignment errors hide in iso |
+| Monochrome parts → can't tell which is which | Set `.color = Color(r,g,b)` on each labelled part |
+| Building straight to finish without review | After each step, list 3–5 fail-first objections by view + part, then decide next iteration |
 
 ---
 

@@ -182,7 +182,72 @@ def _export(kind, obj, path, **kwargs):
 
 
 _export("step", result, out_step)
-_export("stl", result, out_stl)
+
+# Per-body STL export — concatenate into the combined STL while recording each
+# body's triangle range + color, so the thumbnail renderer can colorize parts.
+# Falls back to whole-result STL if any per-body export fails (mesh_meta empty).
+import struct as _aieng_struct
+import tempfile as _aieng_tempfile
+
+_aieng_collected = _collect_parts(result)
+_aieng_mesh_meta = {"bodies": []}
+_aieng_combined_tris: list[bytes] = []
+_aieng_combined_count = 0
+_aieng_use_combined = True
+
+def _aieng_extract_color(part):
+    # Accept build123d Color, tuple/list, or anything exposing .r/.g/.b in 0..1.
+    try:
+        c = getattr(part, "color", None)
+        if c is None:
+            return None
+        if isinstance(c, (tuple, list)) and len(c) >= 3:
+            return [float(c[0]), float(c[1]), float(c[2])]
+        if hasattr(c, "to_tuple"):
+            t = c.to_tuple()
+            return [float(t[0]), float(t[1]), float(t[2])]
+        if hasattr(c, "r") and hasattr(c, "g") and hasattr(c, "b"):
+            return [float(c.r), float(c.g), float(c.b)]
+        # Last resort: iterable of floats
+        t = tuple(c)
+        return [float(t[0]), float(t[1]), float(t[2])]
+    except Exception:
+        return None
+
+with _aieng_tempfile.TemporaryDirectory() as _aieng_td:
+    for _aieng_bi, (_aieng_pname, _aieng_ppart) in enumerate(_aieng_collected):
+        _aieng_body_id = f"body_{_aieng_bi + 1:03d}"
+        _aieng_col = _aieng_extract_color(_aieng_ppart)
+        _aieng_tris = 0
+        try:
+            _aieng_bstl = Path(_aieng_td) / (_aieng_body_id + ".stl")
+            _export("stl", _aieng_ppart, _aieng_bstl)
+            _aieng_raw = _aieng_bstl.read_bytes()
+            if len(_aieng_raw) >= 84:
+                _aieng_tris = _aieng_struct.unpack("<I", _aieng_raw[80:84])[0]
+                _aieng_combined_tris.append(_aieng_raw[84:84 + _aieng_tris * 50])
+                _aieng_combined_count += _aieng_tris
+        except Exception as _aieng_ee:
+            print(f"[runner] per-body STL export failed for {_aieng_body_id}: {_aieng_ee}", file=sys.stderr)
+            _aieng_use_combined = False
+        _aieng_mesh_meta["bodies"].append({
+            "body_id": _aieng_body_id,
+            "name": _aieng_pname,
+            "color": _aieng_col,
+            "triangle_count": _aieng_tris,
+        })
+
+if _aieng_use_combined and _aieng_combined_count > 0:
+    _aieng_hdr = b"aieng-stl".ljust(80, b" ")
+    out_stl.write_bytes(_aieng_hdr + _aieng_struct.pack("<I", _aieng_combined_count) + b"".join(_aieng_combined_tris))
+else:
+    # Per-body path failed for at least one part — write whole-result STL and
+    # invalidate mesh_meta so the renderer falls back to default coloring.
+    _export("stl", result, out_stl)
+    _aieng_mesh_meta = {"bodies": []}
+
+(out_stl.with_name("mesh_meta.json")).write_text(json.dumps(_aieng_mesh_meta, indent=2))
+
 try:
     _export("gltf", result, out_glb, binary=True)
 except Exception as _e:
@@ -394,13 +459,90 @@ def _render_mesh_thumbnail_basic(triangles: Any, size: int) -> str | None:
         return None
 
 
-def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
-    """Render an STL mesh to a base64-encoded PNG thumbnail (headless).
+# Four review views: front, side, top, iso. Tiled into a 2x2 contact sheet so the
+# agent can judge silhouette + alignment + proportion at once, not just the iso.
+# (elev, azim, label) — matplotlib 3D convention.
+_REVIEW_VIEWS: tuple[tuple[float, float, str], ...] = (
+    (10.0, -90.0, "front"),
+    (10.0, 0.0, "side"),
+    (89.0, -90.0, "top"),
+    (25.0, -50.0, "iso"),
+)
 
-    Gives an agent driving CAD a visual feedback loop — it can see roughly what
-    the geometry looks like instead of judging from face counts and a bounding box
-    alone. Uses matplotlib's 3D toolkit (Agg backend) because trimesh's GL-based
+# Distinct mid-saturation palette for parts that didn't set an explicit .color.
+# Mid-value tones so Lambert shading still reads; ordered for high contrast
+# between adjacent parts.
+_DEFAULT_PART_PALETTE: tuple[tuple[float, float, float], ...] = (
+    (0.40, 0.55, 0.85),  # blue
+    (0.85, 0.40, 0.35),  # red
+    (0.40, 0.75, 0.50),  # green
+    (0.90, 0.70, 0.30),  # amber
+    (0.60, 0.45, 0.75),  # purple
+    (0.45, 0.75, 0.80),  # teal
+    (0.85, 0.55, 0.70),  # pink
+    (0.65, 0.65, 0.65),  # neutral grey
+)
+
+
+def _build_face_colors_from_mesh_meta(mesh_meta: Any) -> Any:
+    """Expand per-body colors from mesh_meta into a per-triangle RGB array.
+
+    Bodies that supplied an explicit `.color` use that RGB; bodies without a
+    color get a cycling palette entry so part boundaries are still visible.
+    Returns None when mesh_meta is missing or invalid — caller then falls back
+    to the default uniform tint inside render_mesh_thumbnail.
+    """
+    if not isinstance(mesh_meta, dict):
+        return None
+    bodies = mesh_meta.get("bodies")
+    if not isinstance(bodies, list) or not bodies:
+        return None
+    try:
+        import numpy as np
+
+        rows: list[list[float]] = []
+        palette_idx = 0
+        for body in bodies:
+            tris = int(body.get("triangle_count", 0) or 0)
+            if tris <= 0:
+                continue
+            raw_color = body.get("color")
+            if (
+                isinstance(raw_color, (list, tuple))
+                and len(raw_color) >= 3
+                and all(isinstance(x, (int, float)) for x in raw_color[:3])
+            ):
+                color = [float(raw_color[0]), float(raw_color[1]), float(raw_color[2])]
+            else:
+                color = list(_DEFAULT_PART_PALETTE[palette_idx % len(_DEFAULT_PART_PALETTE)])
+                palette_idx += 1
+            rows.extend([color] * tris)
+        if not rows:
+            return None
+        return np.asarray(rows, dtype=float)
+    except Exception:
+        return None
+
+
+def render_mesh_thumbnail(
+    stl_bytes: bytes,
+    size: int = 480,
+    face_colors: Any = None,
+) -> str | None:
+    """Render an STL mesh as a 2x2 multi-view contact sheet PNG (base64, headless).
+
+    Gives an agent driving CAD a visual feedback loop with four review angles
+    (front / side / top / iso) so silhouette and alignment can be judged at once.
+    Uses matplotlib's 3D toolkit (Agg backend) because trimesh's GL-based
     `save_image` requires pyglet/OpenGL, which is unavailable headless on Windows.
+
+    Args:
+        stl_bytes: binary STL data.
+        size: final contact-sheet edge length in pixels (each tile = size/2).
+        face_colors: optional per-triangle RGB array, shape ``(n_triangles, 3)``,
+            values in 0..1. When None, all triangles share a default blue and a
+            simple Lambert shading is applied. When provided, the colors are
+            modulated by the same Lambert term so part boundaries stay readable.
 
     Returns None on any failure — a thumbnail is best-effort and must never break
     the build.
@@ -423,32 +565,60 @@ def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
 
         verts = np.asarray(triangles).reshape((-1, 3))
 
-        # Simple Lambert shading so the form reads clearly (not photorealism).
-        normals = np.asarray(normals, dtype=float)
+        # Lambert shading so form reads clearly (not photorealism). When the
+        # caller supplied per-face colors, modulate them with the same intensity
+        # term; otherwise fall back to a default blue tint.
+        normals_arr = np.asarray(normals, dtype=float)
         light = np.array([0.3, 0.4, 0.85])
         light = light / np.linalg.norm(light)
-        intensity = np.clip(normals @ light, 0.18, 1.0)
-        base_color = np.array([0.40, 0.55, 0.85])
-        facecolors = np.clip(intensity[:, None] * base_color, 0.0, 1.0)
+        intensity = np.clip(normals_arr @ light, 0.25, 1.0)
 
-        fig = plt.figure(figsize=(size / 100, size / 100), dpi=100)
-        ax = fig.add_subplot(111, projection="3d")
-        coll = Poly3DCollection(
-            triangles, facecolors=facecolors, edgecolors=(0, 0, 0, 0.10), linewidths=0.15
-        )
-        ax.add_collection3d(coll)
+        if face_colors is not None:
+            colors_arr = np.asarray(face_colors, dtype=float)
+            if colors_arr.shape == (len(triangles), 3):
+                facecolors = np.clip(intensity[:, None] * colors_arr, 0.0, 1.0)
+            else:
+                # Length mismatch: fall back to default rather than crash.
+                base_color = np.array([0.40, 0.55, 0.85])
+                facecolors = np.clip(intensity[:, None] * base_color, 0.0, 1.0)
+        else:
+            base_color = np.array([0.40, 0.55, 0.85])
+            facecolors = np.clip(intensity[:, None] * base_color, 0.0, 1.0)
 
         mins = verts.min(axis=0)
         maxs = verts.max(axis=0)
         center = (mins + maxs) / 2
         span = float((maxs - mins).max()) / 2 or 1.0
-        ax.set_xlim(center[0] - span, center[0] + span)
-        ax.set_ylim(center[1] - span, center[1] + span)
-        ax.set_zlim(center[2] - span, center[2] + span)
-        ax.set_box_aspect((1, 1, 1))
-        ax.view_init(elev=25, azim=-50)
-        ax.set_axis_off()
-        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+        fig = plt.figure(figsize=(size / 100, size / 100), dpi=100)
+        for i, (elev, azim, label) in enumerate(_REVIEW_VIEWS):
+            ax = fig.add_subplot(2, 2, i + 1, projection="3d")
+            # Use a fresh Poly3DCollection per axis — sharing one across multiple
+            # 3D axes causes matplotlib to render only on the last one.
+            coll = Poly3DCollection(
+                triangles,
+                facecolors=facecolors,
+                edgecolors=(0, 0, 0, 0.08),
+                linewidths=0.12,
+            )
+            ax.add_collection3d(coll)
+            ax.set_xlim(center[0] - span, center[0] + span)
+            ax.set_ylim(center[1] - span, center[1] + span)
+            ax.set_zlim(center[2] - span, center[2] + span)
+            ax.set_box_aspect((1, 1, 1))
+            ax.view_init(elev=elev, azim=azim)
+            ax.set_axis_off()
+            # Tile label in the top-left corner — agent uses it to map findings
+            # to a specific view ("right shoulder misaligned in front view").
+            ax.text2D(
+                0.03, 0.95, label,
+                transform=ax.transAxes,
+                fontsize=9,
+                color=(0.15, 0.20, 0.35),
+                family="monospace",
+                weight="bold",
+            )
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
 
         buf = io.BytesIO()
         fig.savefig(buf, format="png")
@@ -665,6 +835,16 @@ def _execute_build123d_code(
             if out_topo.exists()
             else {}
         )
+        # mesh_meta.json is best-effort: when present, it carries per-body color
+        # and triangle counts for the thumbnail renderer. Stash it under a "_"-
+        # prefixed key inside topo so it travels through the existing return
+        # tuple without breaking any caller that unpacks 4 values.
+        mesh_meta_path = out_stl.with_name("mesh_meta.json")
+        if mesh_meta_path.exists():
+            try:
+                topo["_mesh_meta"] = json.loads(mesh_meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
         return step_bytes, stl_bytes, glb_bytes, topo
 
 
@@ -749,6 +929,12 @@ def _execute_build123d_code_streaming(
                 if out_topo.exists()
                 else {}
             )
+            mesh_meta_path = out_stl.with_name("mesh_meta.json")
+            if mesh_meta_path.exists():
+                try:
+                    topo["_mesh_meta"] = json.loads(mesh_meta_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
             yield {
                 "kind": "result",
                 "step_bytes": step_bytes,
@@ -1177,6 +1363,9 @@ def execute_build123d_code(
     stl_bytes = result_evt["stl_bytes"]
     glb_bytes = result_evt["glb_bytes"]
     topo = result_evt["topo"]
+    # _mesh_meta is transient (used only for thumbnail coloring) — pop it so it
+    # doesn't get written to topology_map.json on disk.
+    mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
     feature_graph = _topology_to_feature_graph(topo)
     face_count = sum(1 for e in topo.get("entities", []) if e.get("type") == "face")
     feature_count = len(feature_graph.get("features", []))
@@ -1255,10 +1444,13 @@ def execute_build123d_code(
         "preview_format": "glb" if glb_bytes else "stl",
     }
 
-    # Visual feedback loop: render a thumbnail so an agent can see the geometry,
-    # not just face/bbox numbers. Opt out with {"thumbnail": false}.
+    # Visual feedback loop: render a 4-view contact sheet so an agent can judge
+    # silhouette and alignment, not just face/bbox numbers. When per-body
+    # mesh_meta is available, colorize each part by its build123d `.color` so
+    # parts can be distinguished visually. Opt out with {"thumbnail": false}.
     if payload.get("thumbnail", True):
-        thumb = render_mesh_thumbnail(stl_bytes or b"")
+        face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
+        thumb = render_mesh_thumbnail(stl_bytes or b"", face_colors=face_colors)
         if thumb:
             result["thumbnail_png_base64"] = thumb
 

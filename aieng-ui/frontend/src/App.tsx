@@ -2013,7 +2013,7 @@ export default function App() {
       const result = await api.runAutopilot({
         message: prompt,
         project_id: selectedId ?? null,
-        selected_geometry: agentPayloadGeometry() ?? null,
+        selected_geometry: agentPayloadGeometry(),
         adapter_id: preferredAdapter.adapter_id,
         mode: "autopilot",
         dry_run: false,

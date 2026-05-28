@@ -143,8 +143,22 @@ Quick start:
   3. aieng.agent_context { project_id }  → geometry state + suggested next steps
 
 Sustainable modeling loop: cad.get_source (read state) → cad.execute_build123d
-with mode=append (build onto `previous_result`; set `.label` on parts to name them)
-→ read the returned thumbnail + named_parts/parts_added to verify, then repeat.
+with mode=append (build onto `previous_result`; set `.label` and
+`.color = Color(r,g,b)` on parts so the topology gets named parts and the
+returned thumbnail shows them in distinct colors) → read the returned 2×2
+contact-sheet thumbnail (front/side/top/iso) + named_parts/parts_added to
+verify silhouette and alignment, then repeat.
+
+Reference-driven modelling: when the target is a real product/character/
+vehicle, call cad.set_reference_image first with image_url or image_path —
+every subsequent thumbnail will tile the reference next to the four views
+so proportions can be calibrated against the truth.
+
+Engineering parts (brackets / housings / fixtures): label parts with the
+canonical types from aieng/schemas/feature_graph.schema.json (base_plate,
+mounting_hole, rib, boss, flange, ...) and call cad.critique afterwards
+for a deterministic manufacturability audit (min wall thickness, standard
+hole sizes, floating components).
 """
 
 

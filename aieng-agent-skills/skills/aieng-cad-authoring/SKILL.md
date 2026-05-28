@@ -5,6 +5,20 @@ description: create-new cad/cae authoring workflow for generating a new .aieng p
 
 # aieng-cad-authoring
 
+> **Pipeline note (2026-05):** This skill drives the legacy
+> `aieng plan` / `aieng validate-plan` / `aieng init-from-plan` CLI flow
+> that emits a primitive-first `modeling_plan.json` (create_box /
+> create_cylindrical_cut) for execution through a backend adapter.
+> The **active, recommended path** for new CAD work in this workspace
+> is the MCP tool `cad.execute_build123d` — the agent writes full
+> build123d Python directly and the workbench runs it. See the project
+> root `AGENTS.md` (sections "Industrial Design Mode" and
+> "Engineering Mode") for that workflow, plus the per-part `.color` /
+> `.label` conventions, the multi-view contact-sheet thumbnail, the
+> `cad.set_reference_image` calibration tool, and the `cad.critique`
+> manufacturability audit. Prefer that path unless you specifically
+> need the schema-bound IR pipeline this skill orchestrates.
+
 Control plane for the `.aieng` Phase 1 authoring pipeline. Translates natural-language design intent into a schema-valid `modeling_plan.json`, executes it through a backend adapter, and produces an audit-grade `.aieng` package. This skill orchestrates three CLI commands; it does not generate CAD code and does not call CAD APIs directly.
 
 Skill version: `0.1.0`. Requires an `aieng` CLI build that supports `aieng plan`, `aieng validate-plan`, `aieng init-from-plan`, `init-from-plan --no-postprocess`, and `init-from-plan --postprocess-strict`. See `references/workflow.md`.

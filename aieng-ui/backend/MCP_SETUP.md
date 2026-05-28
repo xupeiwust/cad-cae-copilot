@@ -176,17 +176,44 @@ The enabling tool is **`cad.execute_build123d`** (approval-gated):
   `export_stl` / `export_gltf`).
 - **Name parts**: set `.label` on shapes and combine with `Compound` — labels become
   named parts in `topology_map.json` / `feature_graph.json` you can reference later.
+- **Color parts**: set `.color = Color(r, g, b)` (RGB in 0..1) — colors render in
+  the agent thumbnail and travel through to the GLB the UI viewer displays.
 - **`mode`**: `replace` (default) or `append`. In append the previous model is exposed
   as `previous_result`; your code adds to it and still reassigns `result`.
 - The tool runs the code in a sandboxed subprocess, writes `geometry/source.py`,
   `generated.step`, `preview.stl/.glb`, `topology_map.json`, `feature_graph.json`,
   and sets the project to `viewer_ready_glb`.
-- **Returns**: a rendered PNG thumbnail (image content block) plus `named_parts`,
-  `parts_added`, `mode`, `used_base`, topology summary, and a preview URL.
+- **Returns**: a **2×2 multi-view PNG contact sheet** (front / side / top / iso) so
+  the agent can verify silhouette and alignment from four angles at once, plus
+  `named_parts`, `parts_added`, `mode`, `used_base`, topology summary, and a
+  preview URL. When a reference image is attached, the layout expands to 2×3
+  with the reference filling the right column.
 
 Companion read-only tool **`cad.get_source`** returns the accumulated source and
 `{named_parts, has_base}` — call it before an incremental edit to decide replace vs
 append and see which named parts already exist.
+
+### Reference image calibration (recommended for named real-world targets)
+
+When modelling a real product / character / vehicle, attach a reference image once
+with **`cad.set_reference_image`** (pass `image_url` for an HTTP fetch or
+`image_path` for a local file) BEFORE the first `cad.execute_build123d`. The image
+is decoded, downscaled to fit 800×800, and stored as `geometry/reference.png` in
+the project's `.aieng` package. Every subsequent `cad.execute_build123d` thumbnail
+then tiles the reference next to the four views so the agent can compare
+proportions against the truth instead of relying on memory.
+
+### Engineering audit (manufacturability check)
+
+For mechanical parts (brackets, housings, fixtures, manifolds), label parts with
+the canonical types from `aieng/schemas/feature_graph.schema.json` —
+`base_plate` / `mounting_hole` / `mounting_hole_pattern` / `rib` / `boss` /
+`flange` / `interface_face` / `wall` / `cover`. Then call **`cad.critique`** to
+get a deterministic engineering audit: minimum wall thickness (3mm CNC default),
+standard hole sizes, and floating-component detection. Returns a verdict
+(`passes` / `passes_with_notes` / `passes_with_warnings` / `fails_audit`) plus
+structured findings (severity, rule, affected feature, observation, suggested
+fix) and a `fail_first_objections` list of the top blocking issues.
 
 ### Example session in Claude Code (incremental, named parts)
 

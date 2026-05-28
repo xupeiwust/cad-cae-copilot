@@ -59,23 +59,34 @@ AIENG's primary geometry engine is **build123d** (OpenCASCADE Python wrapper). T
 | Topic | Key constructs | Project reference |
 |-------|---------------|-------------------|
 | **Primitives** | `Box`, `Cylinder`, `Cone`, `Sphere`, `Torus` | `AGENTS.md` build123d section |
-| **Operations** | `extrude`, `revolve`, `loft`, `sweep` | build123d docs |
+| **Operations** | `extrude`, `revolve`, `loft`, `sweep` | build123d docs + AGENTS.md "Curve patterns" |
 | **Modifications** | `fillet`, `chamfer`, `shell`, `mirror` | Benchmark models in `aieng/benchmarks/` |
 | **Boolean modes** | `Mode.ADD`, `Mode.SUBTRACT`, `Mode.INTERSECT` | `AGENTS.md` code examples |
 | **Patterns** | `PolarLocations`, `GridLocations`, `Locations` | Benchmark 02 (flange) |
 | **Labels & Compounds** | `.label`, `Compound(children=[...])` | Critical for named parts in topology |
+| **Per-part color** | `.color = Color(r, g, b)` (RGB in 0..1) | Renders in agent thumbnail + GLB viewer |
+| **Industrial Design Mode** | Loft / sweep / revolve + aggressive fillet for visible exterior forms | `AGENTS.md` "Industrial Design Mode" |
+| **Engineering Mode** | Canonical labels — `base_plate`, `mounting_hole_pattern`, `rib`, `boss`, `flange`, `interface_face` | `AGENTS.md` "Engineering Mode" |
 | **Export contract** | Bind final model to `result`; omit export calls | `AGENTS.md` "Code contract" |
+
+### Visual feedback the agent gets back
+`cad.execute_build123d` returns a **2×2 contact-sheet PNG** (front / side / top / iso) so the agent can verify silhouette and alignment from four angles at once — alignment errors hide in iso but show clearly in front/side. When a reference image is attached via `cad.set_reference_image`, the layout expands to 2×3 with the reference filling the right column. Per-part `.color` values render in every tile so parts can be distinguished at a glance.
 
 ### Hands-on exercises
 1. Reproduce benchmark 02 (circular flange) from the `text-to-cad-main` reference project using build123d in the AIENG workbench.
-2. Create a parametric bracket with labeled parts (`body`, `mounting_hole_1`, `gusset`). Verify the labels appear in `topology_map.json`.
+2. Create a parametric bracket with labeled parts (`body`, `mounting_hole_1`, `gusset`). Verify the labels appear in `topology_map.json`. Assign each part a distinct `.color` and confirm the contact sheet shows them in colour.
 3. Practice incremental modeling: create a base box in step 1 (`mode=replace`), then append a cylindrical boss in step 2 (`mode=append`).
+4. Attach a real reference image to a project with `cad.set_reference_image` (URL or local file) and rebuild a model. Compare the contact-sheet 2×3 layout against the reference for proportion calibration.
+5. Build a deliberately-flawed engineering part (rib < 3mm, hole at 9.5mm, floating bolt) and run `cad.critique` — verify the audit returns the three findings with appropriate severities.
 
 ### Checkpoints
 - [ ] Can write a 20-line build123d script that produces a valid STEP file.
 - [ ] Understands the `result` binding contract and why exports must be omitted.
 - [ ] Can use `mode=append` with `previous_result` for incremental modeling.
 - [ ] Knows why `.label` matters for downstream B-Rep graph and CAE workflows.
+- [ ] Sets `.color` on parts and recognizes them in the contact-sheet thumbnail.
+- [ ] Knows when to switch into Industrial Design Mode (visible exterior forms → loft/sweep) vs Engineering Mode (mechanical parts → canonical labels + cad.critique).
+- [ ] Uses `cad.set_reference_image` before iterating on named real-world targets.
 
 ### Comparison with CadQuery
 Our `refer/CAD-Agent/` uses CadQuery. Understand the tradeoffs:

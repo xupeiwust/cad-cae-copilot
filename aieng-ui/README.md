@@ -44,7 +44,7 @@ For the step-by-step evidence-grounded CAD/CAE Copilot loop, see
 For the issue #10 v0.26 demo acceptance path, see
 [`docs/copilot-loop-v0.26-demo-walkthrough.md`](docs/copilot-loop-v0.26-demo-walkthrough.md).
 
-27 registered runtime tools (mutation / expensive operations are approval-gated).
+32 registered runtime tools (mutation / expensive operations are approval-gated).
 Honest status semantics: `skipped`, `partial`, `error`, and `completed` are never
 conflated. Key tools listed below; full registry available via `GET /api/runtime/tools`.
 
@@ -54,6 +54,12 @@ conflated. Key tools listed below; full registry available via `GET /api/runtime
 | `aieng.refresh_semantics` | Working |
 | `aieng.generate_preview` | Working |
 | `aieng.read_audit_log` | Working |
+| `cad.execute_build123d` | Working — caller-supplied build123d Python code → STEP/STL/GLB. Returns a 2×2 multi-view contact sheet thumbnail (front/side/top/iso) with per-part colors honoured. Approval-gated. |
+| `cad.get_source` | Working — read accumulated build123d source + named_parts + has_base for incremental editing |
+| `cad.set_reference_image` | Working — attach a reference photo/drawing to a project so future thumbnails tile it side-by-side for proportion calibration |
+| `cad.critique` | Working — read-only deterministic engineering audit (min wall thickness, standard hole sizes, floating components) based on the canonical labels from `aieng/schemas/feature_graph.schema.json` |
+| `cad.refine` | Working — LLM-assisted refinement of an existing build123d model from natural-language feedback. Approval-gated. |
+| `cad.edit_parameter` | Working — FreeCAD parameter edit with honest executor selection (`auto`\|stub\|`macro`\|`rpc`). Stub mode returns `source="stub_mock"`, `status="partial"`. Approval-gated. |
 | `freecad.inspect_geometry` | Working — FreeCADCmd bridge |
 | `freecad.export_step` | Working — FreeCADCmd bridge; writes `{stem}_export.step` |
 | `postprocess.generate_computed_metrics` | Working — normalizes external metrics into `computed_metrics.json` and writes it back into the `.aieng` package |
@@ -65,7 +71,6 @@ conflated. Key tools listed below; full registry available via `GET /api/runtime
 | `cae.extract_solver_results` | Working — parses CalculiX FRD and writes `computed_metrics.json` |
 | `cae.prepare_solver_run` | Working — preflight inspection, no solver execution |
 | `cae.run_solver` | Working — external CalculiX execution adapter MVP, approval-gated |
-| `cad.edit_parameter` | Working — FreeCAD parameter edit with honest executor selection (`auto`\|stub\|`macro`\|`rpc`). Stub mode returns `source="stub_mock"`, `status="partial"`. Approval-gated. |
 | `cae.generate_mesh` | Working — geometry ZIP unpack → FreeCAD/Gmsh mesh → `.inp` → atomic write-back. Returns `error/freecad_unavailable` when FreeCAD missing. Approval-gated. |
 | `freecad.run_macro` | Skeleton, approval-gated |
 

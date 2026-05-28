@@ -291,6 +291,51 @@ def validate_aieng_file(settings: Settings, project_id: str) -> dict[str, Any]:
     return result
 
 
+def _step_to_stl_via_build123d(step_path: Path, stl_path: Path) -> dict[str, Any]:
+    """Read a STEP file with build123d and export it to STL.
+
+    Handles both pre-0.9 and 0.9+ build123d APIs so the fallback works across
+    installed versions. Returns a dict shaped like the provider response so
+    ``convert_asset`` can consume it uniformly.
+    """
+    try:
+        import build123d as b123d
+    except Exception as exc:
+        return {"status": "unavailable", "code": "build123d_missing", "message": f"build123d not installed: {exc}"}
+
+    try:
+        # build123d 0.9+ moved import_step to a module-level free function.
+        fn = getattr(b123d, "import_step", None)
+        if fn is None:
+            # Pre-0.9: class method on Shape
+            fn = getattr(getattr(b123d, "Shape", None), "import_step", None)
+        if fn is None:
+            return {"status": "error", "code": "import_step_missing", "message": "build123d has no import_step API"}
+        shape = fn(str(step_path))
+
+        stl_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # STL export: prefer module-level free function (0.9+), fall back to instance method.
+        export_fn = getattr(b123d, "export_stl", None)
+        if export_fn is not None:
+            export_fn(shape, str(stl_path))
+        else:
+            method = getattr(shape, "export_stl", None)
+            if method is not None:
+                method(str(stl_path))
+            else:
+                return {"status": "error", "code": "export_stl_missing", "message": "build123d has no export_stl API"}
+
+        return {
+            "status": "ok",
+            "provider": "build123d",
+            "object_count": 1,
+            "stl_path": str(stl_path),
+        }
+    except Exception as exc:
+        return {"status": "error", "code": "build123d_step_export_failed", "message": f"{type(exc).__name__}: {exc}"}
+
+
 def convert_asset(settings: Settings, project_id: str) -> dict[str, Any]:
     project = get_project(settings, project_id)
     source = ensure_step_source(settings, project_id, project)
@@ -302,6 +347,15 @@ def convert_asset(settings: Settings, project_id: str) -> dict[str, Any]:
     _, _, provider = resolve_provider_bundle(settings)
     preview_result = provider.export_step_preview_to_stl(step_path=source, stl_path=stl_path)
     preview_status = str(preview_result.get("status") or "error")
+
+    # Fallback to build123d/OCP when the CAD provider is unavailable (e.g. FreeCAD
+    # is not installed). build123d can read STEP and export STL directly.
+    if preview_status == "unavailable":
+        fallback = _step_to_stl_via_build123d(source, stl_path)
+        if fallback.get("status") == "ok" and stl_path.exists():
+            preview_result = fallback
+            preview_status = "ok"
+
     if preview_status != "ok" or not stl_path.exists():
         failure_status = "unavailable" if preview_status == "unavailable" else "error"
         preview_info = {

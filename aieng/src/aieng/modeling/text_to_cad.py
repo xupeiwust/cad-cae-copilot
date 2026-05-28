@@ -82,6 +82,19 @@ Rules:
    - Mirror symmetric parts with `mirror(part, about=Plane.YZ)`.
    For purely mechanical brackets/fixtures/prototypes, primitive stacking
    is fine — this rule is for visible exterior forms only.
+9. ENGINEERING MODE — when the description names a mechanical part like
+   bracket, housing, enclosure, manifold, fixture, frame, mount, flange,
+   or chassis (parts that downstream tools will manufacture or simulate):
+   - Use canonical .label names so the feature_graph tags them with
+     semantic intent: `base_plate`, `mounting_hole`, `mounting_hole_pattern`,
+     `rib`, `boss`, `flange`, `interface_face`, `wall`, `cover`.
+   - Honour manufacturing rules: minimum wall ≥ 3mm (CNC), hole-edge
+     distance ≥ 2 × hole radius, internal corner radius ≥ 2mm (use
+     `fillet`), no sharp internal corners, no undercuts unless asked.
+   - Preserve mounting interfaces — once you commit to a hole pattern,
+     don't shift it on later iterations.
+   - Pick standard hole diameters (3, 4, 5, 6, 8, 10, 12, 16, 20 mm)
+     and place holes ≥ 2× radius from any edge.
 """
 
 

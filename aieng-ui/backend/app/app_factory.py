@@ -4289,6 +4289,32 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         ),
     )
 
+    def _tool_cad_critique(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.critique(active_settings, str(project_id), inp)
+
+    _rt.register_tool(
+        "cad.critique",
+        _tool_cad_critique,
+        input_schema=_schema("cad.critique"),
+        description=(
+            "Run a deterministic engineering critique of the project geometry. Walks the "
+            "feature graph + topology bounding boxes and checks them against manufacturing "
+            "rules derived from aieng/schemas/constraints.schema.json: min wall thickness "
+            "(3mm CNC default), standard hole sizes, floating-component detection, missing "
+            "mounting interfaces on plate-like parts. Returns structured findings (severity, "
+            "category, rule, affected feature, observation, suggested fix) plus a "
+            "fail_first_objections list of the top blocking issues. Call after "
+            "cad.execute_build123d for engineering parts (brackets, housings, fixtures) "
+            "to catch manufacturability problems before user review or FEA setup. "
+            "Read-only — does not modify the package."
+        ),
+    )
+
     def _tool_cad_set_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
 

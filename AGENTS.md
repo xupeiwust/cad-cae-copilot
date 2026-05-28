@@ -273,6 +273,81 @@ with BuildPart() as bp:
 result = bp.part
 ```
 
+### Engineering Mode — well-formed mechanical parts
+
+Counterpart to Industrial Design Mode. Activate when the user names a
+**mechanical/engineering part** that downstream tools will need to
+understand — `bracket`, `housing`, `enclosure`, `manifold`, `fixture`,
+`frame`, `mount`, `flange`, `chassis`. These parts are usually destined
+for CNC/3D-printing or FEA, so structure (named features, manufacturable
+geometry, protected mounting interfaces) matters as much as silhouette.
+
+Use the **canonical feature vocabulary** from
+`aieng/schemas/feature_graph.schema.json` for part labels — the
+`_topology_to_feature_graph` heuristic in the workbench recognizes these
+names and tags them with semantic intent in the feature graph an agent
+can query later:
+
+| `.label` to use | Semantic role |
+|---|---|
+| `base_plate`, `back_plate`, `mount_plate` | Primary load-bearing flat body |
+| `mounting_hole` / `mounting_hole_pattern` | Bolted interfaces — **protected**, don't modify casually |
+| `rib`, `rib_<N>` | Stiffeners on plates / shells |
+| `boss`, `boss_<name>` | Localized features carrying threaded inserts / screws |
+| `flange` | Mating face for bolted assembly |
+| `interface_face`, `load_interface` | Where external loads or other assemblies attach |
+| `wall`, `wall_<face>` | Enclosure side walls |
+| `cover`, `lid` | Removable enclosure top |
+
+**Manufacturing rules to honor** (CNC aluminium defaults — adjust if
+the user specifies a different process):
+- Minimum wall thickness ≥ **3 mm** (CNC), ≥ **1 mm** (sheet metal), ≥ **1.5 mm** (FDM/SLA print).
+- Minimum hole-edge distance ≥ **2 × hole radius**.
+- Preferred internal corner radius ≥ **2 mm** — no sharp internal corners.
+- Through-holes prefer multiples of standard drill sizes (3, 4, 5, 6, 8, 10, 12, 16, 20 mm).
+- Avoid undercuts unless the user explicitly asks for them (machinable from one side).
+
+**Workflow:**
+1. Decompose the part into named features (base_plate + holes + ribs +
+   bosses + interfaces) **before** writing code. State each feature's
+   role explicitly in a brief plan.
+2. Build with the canonical labels above — the resulting topology and
+   feature_graph then carry engineering semantics that the user (and
+   downstream FEA tools) can introspect.
+3. Apply the manufacturing rules during sizing — pick wall thicknesses
+   and hole spacings that respect them.
+4. Once geometry is in, call `cad.critique` (engineering mode) to get a
+   deterministic audit against the same rules. The critique walks the
+   feature graph and reports violations.
+5. For parts destined for FEA, also fix mounting interfaces and load
+   surfaces explicitly (the user usually wants these `@face:` pointers
+   to drive `cae.apply_setup_patch`).
+
+Example — a CNC bracket with two named ribs and a 4-bolt mounting
+pattern (this is the same intent encoded in
+`aieng/examples/definition_simple_bracket.yaml`, expressed as code):
+```python
+from build123d import *
+
+with BuildPart() as bp:
+    Box(120, 80, 8, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    # 4 mounting holes — 10mm dia, on a 90x50 pattern, ≥ 2× r from edges
+    with Locations((45, 25, 0), (-45, 25, 0), (45, -25, 0), (-45, -25, 0)):
+        Hole(radius=5, depth=8)
+    fillet(bp.edges().filter_by(Axis.Z), radius=4)  # preferred 2mm+ corner
+base_plate = bp.part
+base_plate.label = "base_plate"
+base_plate.color = Color(0.55, 0.62, 0.70)
+
+# Named rib — fits the canonical type so feature_graph tags it as `rib`
+rib = Box(60, 5, 25, align=(Align.CENTER, Align.CENTER, Align.MIN))
+rib = rib.moved(Location((0, 0, 8)))
+rib.label = "rib_main"
+rib.color = Color(0.55, 0.62, 0.70)
+
+result = Compound(children=[base_plate, rib])
+```
+
 ### Structural FEA (CalculiX)
 
 Linear static analysis pipeline — see workflow C below.
@@ -318,6 +393,7 @@ suitable for a fixed support, pass `"faceId": "f_top_001"` in your CAE setup cal
 | `aieng.write_completeness_report` | What is missing before simulation |
 | `cae.prepare_solver_run` | Solver preflight — checks readiness, runs nothing |
 | `cad.get_source` | Accumulated build123d source + `{named_parts, has_base}` — call before an incremental edit |
+| `cad.critique` | Deterministic engineering audit (min wall, hole sizes, floating components) — call after building an engineering part |
 
 ### Geometry creation (requires approval — mutates package)
 

@@ -2180,6 +2180,303 @@ def set_reference_image(
     }
 
 
+# ── critique: deterministic engineering audit ────────────────────────────────
+
+# Canonical labels (from aieng/schemas/feature_graph.schema.json type enum)
+# that imply the part is a structural body whose wall thickness must respect
+# manufacturing minimums. Substring match against the user-supplied `.label`.
+_THIN_PART_LABELS: tuple[str, ...] = (
+    "wall", "rib", "cover", "lid", "back_plate", "base_plate",
+    "plate", "shell", "flange",
+)
+
+# Drill sizes commonly stocked — flag through-holes that aren't ~these.
+_STANDARD_HOLE_DIAMETERS_MM: tuple[float, ...] = (
+    1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0,
+    12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 27.0, 30.0,
+)
+
+
+def critique(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Run a deterministic engineering critique against the project's geometry.
+
+    Inspects the named features in graph/feature_graph.json plus the bounding
+    boxes in geometry/topology_map.json and checks them against the
+    manufacturing rules derived from aieng/schemas/constraints.schema.json
+    (min wall thickness, standard hole sizes). Returns structured findings
+    with severity, category, the affected feature/body id, what was observed,
+    and a suggested fix.
+
+    Payload (all optional):
+        mode: "auto" (default) | "engineering" | "geometry"
+            - auto: runs geometry sanity + engineering audit when the model has
+              labelled engineering features (rib/base_plate/...).
+            - engineering: forces the manufacturing audit even on un-canonical
+              labels.
+            - geometry: only basic sanity checks (component counts, sizes).
+        min_wall_mm: float, default 3.0 (CNC aluminium minimum).
+        min_corner_radius_mm: float, default 2.0.
+
+    Use this AFTER cad.execute_build123d to validate engineering parts before
+    user review or simulation handoff.
+    """
+    from .project_io import get_project, resolve_project_path
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+
+    pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if pkg_path is None or not pkg_path.exists():
+        return {
+            "status": "error",
+            "code": "no_package",
+            "message": "No .aieng package; build a model with cad.execute_build123d first.",
+        }
+
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            names = zf.namelist()
+            topo: dict[str, Any] = (
+                json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                if "geometry/topology_map.json" in names else {}
+            )
+            fg: dict[str, Any] = (
+                json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+                if "graph/feature_graph.json" in names else {}
+            )
+    except Exception as exc:
+        return {"status": "error", "code": "read_failed", "message": f"{exc}"}
+
+    mode = str(payload.get("mode", "auto"))
+    min_wall = float(payload.get("min_wall_mm", 3.0))
+    min_corner_radius = float(payload.get("min_corner_radius_mm", 2.0))
+
+    findings: list[dict[str, Any]] = []
+    finding_counter = 0
+
+    def add(severity: str, category: str, rule: str, feature: str,
+            feature_id: str | None, observation: str, fix: str) -> None:
+        nonlocal finding_counter
+        finding_counter += 1
+        findings.append({
+            "id": f"find_{finding_counter:03d}",
+            "severity": severity,
+            "category": category,
+            "rule": rule,
+            "feature": feature,
+            "feature_id": feature_id,
+            "observation": observation,
+            "suggested_fix": fix,
+        })
+
+    # ── geometry sanity (always runs) ──
+    entities = topo.get("entities", [])
+    bodies = {e["id"]: e for e in entities if e.get("type") == "solid"}
+    body_count = len(bodies)
+
+    # 1) Empty model
+    if body_count == 0:
+        return {
+            "status": "ok",
+            "project_id": project_id,
+            "mode": mode,
+            "verdict": "skipped",
+            "message": "No solids in the topology map; nothing to critique.",
+            "findings": [],
+        }
+
+    # 2) Floating geometry — a body whose nearest-neighbor gap is wildly
+    # larger than the typical part size is likely detached. Uses approximate
+    # bbox-gap (center distance minus half-sizes) rather than distance to
+    # centroid, so tall/elongated models (e.g. a humanoid) don't false-flag
+    # legitimate distant parts that are still connected through neighbors.
+    if body_count >= 2:
+        body_data: list[tuple[str, dict[str, Any], tuple[float, float, float], float]] = []
+        for body_id, b in bodies.items():
+            bb = b.get("bounding_box") or []
+            if len(bb) < 6:
+                continue
+            center = ((bb[0] + bb[3]) / 2, (bb[1] + bb[4]) / 2, (bb[2] + bb[5]) / 2)
+            size = max(bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
+            body_data.append((body_id, b, center, size))
+
+        if len(body_data) >= 2:
+            mean_size = sum(d[3] for d in body_data) / len(body_data)
+            # A gap larger than ~one typical part is suspicious. Floor at 50mm
+            # so tiny-model false positives don't dominate.
+            gap_threshold = max(mean_size, 50.0)
+
+            for body_id, b, c1, s1 in body_data:
+                # Approximate gap to the closest other body
+                min_gap = float("inf")
+                for other_id, _, c2, s2 in body_data:
+                    if other_id == body_id:
+                        continue
+                    center_dist = (
+                        (c1[0] - c2[0]) ** 2
+                        + (c1[1] - c2[1]) ** 2
+                        + (c1[2] - c2[2]) ** 2
+                    ) ** 0.5
+                    gap = center_dist - (s1 + s2) / 2.0
+                    if gap < min_gap:
+                        min_gap = gap
+
+                if min_gap > gap_threshold:
+                    add(
+                        "high", "geometry", "floating_component",
+                        b.get("name", body_id), body_id,
+                        f"{b.get('name', body_id)}: nearest other part is "
+                        f"~{min_gap:.0f}mm away (typical part size {mean_size:.0f}mm) "
+                        "— this part is disconnected from the rest of the model.",
+                        "Check the Location() / .moved() coordinates for this part; "
+                        "it may be a typo that placed it far from the body.",
+                    )
+
+    # ── engineering audit ──
+    # Run when:
+    #   - mode == "engineering" (forced), OR
+    #   - mode == "auto" AND at least one named feature has a canonical
+    #     engineering label (rib / base_plate / mounting_hole / ...).
+    features = fg.get("features", [])
+    named_features = [f for f in features if f.get("type") == "named_part"]
+
+    def _has_canonical_label(feat: dict[str, Any]) -> bool:
+        name = (feat.get("name") or "").lower()
+        canonical = (
+            "base_plate", "back_plate", "mount_plate",
+            "mounting_hole", "rib", "boss", "flange",
+            "interface_face", "load_interface",
+            "wall", "cover", "lid", "shell",
+        )
+        return any(c in name for c in canonical)
+
+    engineering_eligible = (
+        mode == "engineering"
+        or (mode == "auto" and any(_has_canonical_label(f) for f in named_features))
+    )
+
+    if engineering_eligible:
+        # 3) Wall / rib / plate thickness check
+        for feat in named_features:
+            name = feat.get("name") or ""
+            name_lower = name.lower()
+            if not any(t in name_lower for t in _THIN_PART_LABELS):
+                continue
+            geo = feat.get("geometry_refs") or {}
+            body_id = geo.get("body") if isinstance(geo, dict) else None
+            body = bodies.get(body_id) if body_id else None
+            if not body:
+                continue
+            bb = body.get("bounding_box") or []
+            if len(bb) < 6:
+                continue
+            dims = (bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
+            positive = [d for d in dims if d > 0]
+            if not positive:
+                continue
+            thinnest = min(positive)
+            if thinnest < min_wall:
+                # Walls/shells are higher-stakes than ribs (load-bearing)
+                severity = "high" if any(t in name_lower for t in ("wall", "shell", "back_plate")) else "medium"
+                add(
+                    severity, "manufacturing_rule", "min_wall_thickness",
+                    name, body_id,
+                    f"{name}: thinnest dimension is {thinnest:.2f}mm; CNC minimum is {min_wall:.1f}mm.",
+                    f"Increase the thinnest dimension of {name} to at least {min_wall:.1f}mm "
+                    f"(or downgrade target process to sheet metal / FDM and lower min_wall_mm).",
+                )
+
+        # 4) Mounting hole feature checks: standard size, count sanity
+        for feat in features:
+            if feat.get("type") not in ("mounting_hole", "mounting_hole_pattern"):
+                continue
+            params = feat.get("parameters") or {}
+            diameter = params.get("hole_diameter_mm")
+            if isinstance(diameter, (int, float)):
+                nearest = min(_STANDARD_HOLE_DIAMETERS_MM, key=lambda d: abs(d - float(diameter)))
+                # 0.3mm slop tolerates measurement rounding (e.g. 9.85→10) but
+                # flags actual non-standard picks (9.5, 7, 11) so the agent
+                # can choose a stocked drill.
+                if abs(float(diameter) - nearest) > 0.3:
+                    add(
+                        "low", "manufacturing_rule", "standard_hole_size",
+                        feat.get("name", "<unnamed>"),
+                        (feat.get("geometry_refs", {}) or {}).get("body") if isinstance(feat.get("geometry_refs"), dict) else None,
+                        f"{feat.get('name', '<unnamed>')}: hole diameter {float(diameter):.2f}mm is "
+                        f"non-standard; closest standard drill is {nearest:.1f}mm.",
+                        f"Round the hole diameter to {nearest:.1f}mm to use an off-the-shelf drill.",
+                    )
+
+        # 5) No mounting interface at all on a part that's labelled like a bracket
+        looks_like_bracket = any(
+            "bracket" in (b.get("name") or "").lower()
+            or "plate" in (b.get("name") or "").lower()
+            for b in bodies.values()
+        )
+        has_mounting = any(
+            f.get("type") in ("mounting_hole", "mounting_hole_pattern") for f in features
+        )
+        if looks_like_bracket and not has_mounting:
+            add(
+                "medium", "engineering", "missing_mounting_interface",
+                "(model)", None,
+                "Model contains a plate / bracket part but no mounting holes were detected.",
+                "Add at least one Hole() / cboreHole() / cskHole() to expose a mounting interface, "
+                "or label the holes you have so the topology heuristic picks them up.",
+            )
+
+    # ── verdict ──
+    severity_counts = {
+        "high": sum(1 for f in findings if f["severity"] == "high"),
+        "medium": sum(1 for f in findings if f["severity"] == "medium"),
+        "low": sum(1 for f in findings if f["severity"] == "low"),
+    }
+    if severity_counts["high"] > 0:
+        verdict = "fails_audit"
+    elif severity_counts["medium"] > 0:
+        verdict = "passes_with_warnings"
+    elif severity_counts["low"] > 0:
+        verdict = "passes_with_notes"
+    else:
+        verdict = "passes"
+
+    # The "fail-first" view: the highest-severity findings restated as
+    # blocking objections, so an agent driving the critique can act on the
+    # top issues without sorting the full list.
+    fail_first = [
+        f"{f['feature']}: {f['observation']}"
+        for f in findings
+        if f["severity"] in ("high", "medium")
+    ][:5]
+
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "mode": mode,
+        "verdict": verdict,
+        "summary": {
+            "findings_count": len(findings),
+            "by_severity": severity_counts,
+            "named_part_count": len(named_features),
+            "engineering_audit_run": engineering_eligible,
+        },
+        "fail_first_objections": fail_first,
+        "findings": findings,
+        "rules_applied": {
+            "min_wall_mm": min_wall,
+            "min_corner_radius_mm": min_corner_radius,
+            "standard_hole_diameters_mm": list(_STANDARD_HOLE_DIAMETERS_MM),
+        },
+        "rule_source": "aieng/schemas/constraints.schema.json (manufacturing_rule type)",
+    }
+
+
 def read_cad_source(settings: Any, project_id: str) -> dict[str, Any]:
     """Return the accumulated build123d source plus a structured state summary.
 

@@ -189,6 +189,35 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    # ── Critique: deterministic engineering audit (read-only) ───────────────
+    "cad.critique": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "mode": {
+                "type": "string",
+                "enum": ["auto", "engineering", "geometry"],
+                "description": (
+                    "auto (default): geometry sanity + engineering audit when the "
+                    "model has canonically-labelled engineering features (rib/"
+                    "base_plate/mounting_hole/...). engineering: force the "
+                    "manufacturing audit. geometry: only basic sanity checks "
+                    "(component counts, floating components)."
+                ),
+            },
+            "min_wall_mm": {
+                "type": "number",
+                "description": "Override min wall thickness rule (default 3mm = CNC aluminium).",
+            },
+            "min_corner_radius_mm": {
+                "type": "number",
+                "description": "Override min internal corner radius rule (default 2mm).",
+            },
+        },
+        "additionalProperties": True,
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.get_named_part_bbox": {

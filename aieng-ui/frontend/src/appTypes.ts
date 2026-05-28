@@ -1,4 +1,4 @@
-import type { ArtifactDiff, ChatResponse } from "./types";
+import type { ArtifactDiff, AutopilotRunState, ChatResponse } from "./types";
 
 export type StageState = "idle" | "active" | "done" | "error";
 
@@ -26,6 +26,7 @@ export type ChatHistoryItem = {
   auditLogUrl?: string | null;
   artifactPaths?: string[];
   artifactDiffs?: ArtifactDiff[];
+  autopilotRun?: AutopilotRunState;
   advisoryItems?: string[];
   cadResult?: { face_count: number; feature_count: number; code: string };
   simulationResult?: {

@@ -294,6 +294,106 @@ def _load_stl_triangles(stl_bytes: bytes) -> tuple[Any, Any] | tuple[None, None]
     return None, None
 
 
+def _encode_rgb_png(width: int, height: int, pixels: bytes) -> bytes:
+    import struct
+    import zlib
+
+    def _chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    scanlines = b"".join(
+        b"\x00" + pixels[y * width * 3 : (y + 1) * width * 3]
+        for y in range(height)
+    )
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(scanlines, 9))
+        + _chunk(b"IEND", b"")
+    )
+
+
+def _render_mesh_thumbnail_basic(triangles: Any, size: int) -> str | None:
+    """Dependency-free orthographic fallback that returns a valid PNG."""
+    try:
+        import base64
+
+        import numpy as np
+
+        tris = np.asarray(triangles, dtype=float)
+        if tris.size == 0:
+            return None
+        pts = tris[:, :, :2].reshape((-1, 2))
+        mins = pts.min(axis=0)
+        maxs = pts.max(axis=0)
+        span = float((maxs - mins).max()) or 1.0
+        margin = max(8, size // 24)
+
+        def project(point: Any) -> tuple[int, int]:
+            x = (float(point[0]) - float(mins[0])) / span
+            y = (float(point[1]) - float(mins[1])) / span
+            px = int(margin + x * (size - 2 * margin))
+            py = int(size - margin - y * (size - 2 * margin))
+            return max(0, min(size - 1, px)), max(0, min(size - 1, py))
+
+        bg = [246, 249, 252]
+        fill = [92, 128, 196]
+        edge = [27, 43, 74]
+        pixels = bytearray(bg * size * size)
+
+        def set_px(x: int, y: int, color: list[int]) -> None:
+            if 0 <= x < size and 0 <= y < size:
+                idx = (y * size + x) * 3
+                pixels[idx : idx + 3] = bytes(color)
+
+        def draw_line(a: tuple[int, int], b: tuple[int, int], color: list[int]) -> None:
+            x0, y0 = a
+            x1, y1 = b
+            dx = abs(x1 - x0)
+            dy = -abs(y1 - y0)
+            sx = 1 if x0 < x1 else -1
+            sy = 1 if y0 < y1 else -1
+            err = dx + dy
+            while True:
+                set_px(x0, y0, color)
+                if x0 == x1 and y0 == y1:
+                    break
+                e2 = 2 * err
+                if e2 >= dy:
+                    err += dy
+                    x0 += sx
+                if e2 <= dx:
+                    err += dx
+                    y0 += sy
+
+        for tri in tris:
+            p0, p1, p2 = [project(p) for p in tri]
+            min_x = max(0, min(p0[0], p1[0], p2[0]))
+            max_x = min(size - 1, max(p0[0], p1[0], p2[0]))
+            min_y = max(0, min(p0[1], p1[1], p2[1]))
+            max_y = min(size - 1, max(p0[1], p1[1], p2[1]))
+            denom = ((p1[1] - p2[1]) * (p0[0] - p2[0]) + (p2[0] - p1[0]) * (p0[1] - p2[1])) or 1
+            for y in range(min_y, max_y + 1):
+                for x in range(min_x, max_x + 1):
+                    a = ((p1[1] - p2[1]) * (x - p2[0]) + (p2[0] - p1[0]) * (y - p2[1])) / denom
+                    b = ((p2[1] - p0[1]) * (x - p2[0]) + (p0[0] - p2[0]) * (y - p2[1])) / denom
+                    c = 1 - a - b
+                    if a >= 0 and b >= 0 and c >= 0:
+                        set_px(x, y, fill)
+            draw_line(p0, p1, edge)
+            draw_line(p1, p2, edge)
+            draw_line(p2, p0, edge)
+
+        return base64.b64encode(_encode_rgb_png(size, size, bytes(pixels))).decode("ascii")
+    except Exception:
+        return None
+
+
 def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
     """Render an STL mesh to a base64-encoded PNG thumbnail (headless).
 
@@ -307,6 +407,9 @@ def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
     """
     if not stl_bytes:
         return None
+    triangles, normals = _load_stl_triangles(stl_bytes)
+    if triangles is None or normals is None or len(triangles) == 0:
+        return None
     try:
         import base64
         import io
@@ -317,10 +420,6 @@ def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-        triangles, normals = _load_stl_triangles(stl_bytes)
-        if triangles is None or normals is None or len(triangles) == 0:
-            return None
 
         verts = np.asarray(triangles).reshape((-1, 3))
 
@@ -356,7 +455,7 @@ def render_mesh_thumbnail(stl_bytes: bytes, size: int = 420) -> str | None:
         plt.close(fig)
         return base64.b64encode(buf.getvalue()).decode("ascii")
     except Exception:
-        return None
+        return _render_mesh_thumbnail_basic(triangles, size)
 
 
 def _topology_to_feature_graph(topo: dict[str, Any]) -> dict[str, Any]:

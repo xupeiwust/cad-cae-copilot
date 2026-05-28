@@ -52,6 +52,7 @@ import { RecommendationsPanel } from "./components/panels/RecommendationsPanel";
 import { GlobalSettingsDrawer, RuntimeSettingsDrawer } from "./components/settings/RuntimeSettingsDrawer";
 import type {
   AgentPlan,
+  AutopilotRunState,
   ArtifactDiff,
   ArtifactResponse,
   BenchmarkRun,
@@ -79,6 +80,37 @@ type EngineeringChatIntent =
   | "change_material"
   | "refine_mesh"
   | "set_target";
+
+function mergeLocalAgentCapabilities(
+  connections: ChatConnection[],
+  capabilities: ChatConnection["adapters"] | undefined,
+): ChatConnection[] {
+  if (!capabilities) return connections;
+  const available = capabilities.filter((item) => item.status === "available");
+  return connections.map((connection) => (
+    connection.id === "local-agent"
+      ? {
+          ...connection,
+          status: available.length ? "ready" : "blocked",
+          adapters: capabilities,
+          detail: available.length
+            ? `Available adapters: ${available.map((item) => item.label).join(", ")}.`
+            : capabilities[0]?.diagnostic || connection.detail,
+        }
+      : connection
+  ));
+}
+
+function summarizeAutopilotRun(run: AutopilotRunState): string {
+  if (run.status === "awaiting_approval" && run.pending_approval) {
+    return `Local Agent paused for approval: ${run.pending_approval.tool_name}. ${run.pending_approval.explanation}`;
+  }
+  if (run.final_message) return run.final_message;
+  const latest = run.observations[run.observations.length - 1];
+  if (latest?.summary) return latest.summary;
+  if (run.errors.length) return run.errors[0];
+  return `Local Agent run ${run.status}.`;
+}
 
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeConfigSnapshot | null>(null);
@@ -316,11 +348,12 @@ export default function App() {
       if (cancelled) return;
       setRuntime(runtimeSnapshot);
       setRuntimeDraft(runtimeSnapshot.config);
-      const [nextCapabilities, nextWorkflows, nextScenarios, nextConnections] = await Promise.all([
+      const [nextCapabilities, nextWorkflows, nextScenarios, nextConnections, localAgents] = await Promise.all([
         api.listCapabilities().catch(() => []),
         api.listWorkflows().catch(() => []),
         api.listBenchmarkScenarios().catch(() => []),
         api.listAgentConnections().catch(() => DEFAULT_CHAT_CONNECTIONS),
+        api.listLocalAgentCapabilities().catch(() => ({ adapters: [], available: [] })),
       ]);
       if (cancelled) return;
       setCapabilities(nextCapabilities);
@@ -329,7 +362,10 @@ export default function App() {
       setSelectedWorkflowId(nextWorkflows[0]?.id ?? "");
       setBenchmarkScenarios(nextScenarios);
       setSelectedScenarioId(nextScenarios[0]?.id ?? "");
-      setChatConnections(nextConnections.length ? nextConnections : DEFAULT_CHAT_CONNECTIONS);
+      setChatConnections(mergeLocalAgentCapabilities(
+        nextConnections.length ? nextConnections : DEFAULT_CHAT_CONNECTIONS,
+        localAgents.adapters,
+      ));
       const list = await api.listProjects();
       if (cancelled) return;
       setProjects(list);
@@ -1230,6 +1266,15 @@ export default function App() {
   async function sendUnified() {
     const prompt = message.trim();
     if (!prompt) return;
+    if (selectedChatConnection.id === "local-agent") {
+      setChatHistory((current) => [
+        ...current,
+        { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+      ]);
+      setMessage("");
+      await runLocalAgentAutopilot(prompt, true);
+      return;
+    }
     const agentPrompt = withSelectedGeometryPrompt(prompt);
 
     setChatHistory((current) => [
@@ -1501,16 +1546,20 @@ export default function App() {
 
   async function refreshAgentWorkbench() {
     await runBusyTask(async () => {
-      const [nextCapabilities, nextWorkflows, nextScenarios, nextConnections] = await Promise.all([
+      const [nextCapabilities, nextWorkflows, nextScenarios, nextConnections, localAgents] = await Promise.all([
         api.listCapabilities(),
         api.listWorkflows(),
         api.listBenchmarkScenarios(),
         api.listAgentConnections().catch(() => DEFAULT_CHAT_CONNECTIONS),
+        api.listLocalAgentCapabilities().catch(() => ({ adapters: [], available: [] })),
       ]);
       setCapabilities(nextCapabilities);
       setWorkflows(nextWorkflows);
       setBenchmarkScenarios(nextScenarios);
-      setChatConnections(nextConnections.length ? nextConnections : DEFAULT_CHAT_CONNECTIONS);
+      setChatConnections(mergeLocalAgentCapabilities(
+        nextConnections.length ? nextConnections : DEFAULT_CHAT_CONNECTIONS,
+        localAgents.adapters,
+      ));
       setSelectedCapabilityName((current) => current || nextCapabilities[0]?.name || "");
       setSelectedWorkflowId((current) => current || nextWorkflows[0]?.id || "");
       setSelectedScenarioId((current) => current || nextScenarios[0]?.id || "");
@@ -1933,6 +1982,106 @@ export default function App() {
     }
   }
 
+  async function runLocalAgentAutopilot(promptOverride?: string, skipUserMsg = false) {
+    const prompt = (promptOverride ?? message).trim();
+    if (!prompt) {
+      if (!promptOverride) setNotice({ tone: "info", title: "请输入 Local Agent 目标", detail: "Local Agent 需要一条建模、检查或分析目标。" });
+      return;
+    }
+    const adapters = selectedChatConnection.adapters ?? [];
+    const preferredAdapter =
+      adapters.find((item) => item.adapter_id === "claude-code" && item.status === "available") ??
+      adapters.find((item) => item.status === "available");
+    if (!preferredAdapter) {
+      const diagnostic = adapters[0]?.diagnostic || "未检测到可用的 Claude Code 或 Codex CLI 非交互 JSON 模式。";
+      setNotice({ tone: "info", title: "Local Agent 不可用", detail: diagnostic });
+      if (!skipUserMsg) {
+        setChatHistory((current) => [
+          ...current,
+          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+        ]);
+      }
+      setChatHistory((current) => [
+        ...current,
+        { id: createChatId(), role: "assistant", body: `Local Agent unavailable: ${diagnostic}`, createdAt: new Date().toISOString(), mode: "runtime" },
+      ]);
+      return;
+    }
+    setAgentBusy(true);
+    setNotice(null);
+    try {
+      const result = await api.runAutopilot({
+        message: prompt,
+        project_id: selectedId ?? null,
+        selected_geometry: agentPayloadGeometry() ?? null,
+        adapter_id: preferredAdapter.adapter_id,
+        mode: "autopilot",
+        dry_run: false,
+      });
+      if (!skipUserMsg) {
+        setChatHistory((current) => [
+          ...current,
+          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+        ]);
+      }
+      setChatHistory((current) => [
+        ...current,
+        {
+          id: createChatId(),
+          role: "assistant",
+          body: summarizeAutopilotRun(result),
+          createdAt: new Date().toISOString(),
+          mode: "runtime",
+          autopilotRun: result,
+          errors: result.errors,
+        },
+      ]);
+      setNotice({
+        tone: result.status === "completed" ? "success" : result.status === "awaiting_approval" ? "info" : "error",
+        title: `Local Agent — ${result.status}`,
+        detail: summarizeAutopilotRun(result),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setNotice({ tone: "error", title: "Local Agent run failed", detail });
+      setChatHistory((current) => [
+        ...current,
+        { id: createChatId(), role: "assistant", body: `Local Agent error: ${detail}`, createdAt: new Date().toISOString(), mode: "runtime" },
+      ]);
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  async function updateAutopilotRun(runId: string, action: "approve" | "reject" | "cancel") {
+    setAgentBusy(true);
+    try {
+      const result = action === "cancel"
+        ? await api.cancelAutopilot(runId)
+        : await api.continueAutopilot(runId, action === "approve");
+      setChatHistory((current) => current.map((entry) => (
+        entry.autopilotRun?.run_id === runId
+          ? {
+              ...entry,
+              body: summarizeAutopilotRun(result),
+              autopilotRun: result,
+              errors: result.errors,
+            }
+          : entry
+      )));
+      setNotice({
+        tone: result.status === "completed" ? "success" : result.status === "cancelled" ? "info" : "error",
+        title: `Local Agent — ${result.status}`,
+        detail: summarizeAutopilotRun(result),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setNotice({ tone: "error", title: "Local Agent update failed", detail });
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
   async function planSelectedChatConnection() {
     if (selectedConnectionBlocked) {
       setNotice({ tone: "info", title: "请选择项目", detail: `${selectedChatConnection.label} 需要当前项目上下文。` });
@@ -1940,6 +2089,10 @@ export default function App() {
     }
     if (selectedChatConnection.id === "llm-api") {
       await planAgentChat();
+      return;
+    }
+    if (selectedChatConnection.id === "local-agent") {
+      await runLocalAgentAutopilot();
       return;
     }
     if (selectedChatConnection.id === "mcp-bridge") {
@@ -1961,6 +2114,10 @@ export default function App() {
     }
     if (selectedChatConnection.id === "llm-api") {
       await runAgentChat();
+      return;
+    }
+    if (selectedChatConnection.id === "local-agent") {
+      await runLocalAgentAutopilot();
       return;
     }
     if (selectedChatConnection.id === "mcp-bridge") {
@@ -2241,6 +2398,9 @@ export default function App() {
               viewArtifact={viewArtifact}
               approveRun={approveRun}
               rejectRun={rejectRun}
+              approveAutopilot={(runId) => void updateAutopilotRun(runId, "approve")}
+              rejectAutopilot={(runId) => void updateAutopilotRun(runId, "reject")}
+              cancelAutopilot={(runId) => void updateAutopilotRun(runId, "cancel")}
               approveSimulation={() => void executeSimulation()}
               rejectSimulation={() => setSimulationPending(false)}
               heatmapActive={heatmapActive}

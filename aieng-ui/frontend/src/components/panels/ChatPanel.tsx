@@ -32,6 +32,9 @@ type ChatPanelProps = {
   viewArtifact(path: string): Promise<void>;
   approveRun(): Promise<void>;
   rejectRun(): Promise<void>;
+  approveAutopilot(runId: string): void;
+  rejectAutopilot(runId: string): void;
+  cancelAutopilot(runId: string): void;
   approveSimulation(): void;
   rejectSimulation(): void;
   heatmapActive: boolean;
@@ -62,6 +65,9 @@ export function ChatPanel({
   viewArtifact,
   approveRun,
   rejectRun,
+  approveAutopilot,
+  rejectAutopilot,
+  cancelAutopilot,
   approveSimulation,
   rejectSimulation,
   heatmapActive,
@@ -271,6 +277,52 @@ export function ChatPanel({
 
               {entry.plan?.length ? (
                 <AgentPlanCard steps={entry.plan} />
+              ) : null}
+
+              {entry.autopilotRun ? (
+                <div className="autopilot-run-card">
+                  <div className="autopilot-run-header">
+                    <span>Local Agent</span>
+                    <code>{entry.autopilotRun.status}</code>
+                  </div>
+                  <div className="autopilot-run-meta">
+                    <span>{entry.autopilotRun.adapter_id}</span>
+                    <span>{entry.autopilotRun.steps.length} step{entry.autopilotRun.steps.length === 1 ? "" : "s"}</span>
+                    {entry.autopilotRun.pending_approval ? (
+                      <span>{entry.autopilotRun.pending_approval.level}</span>
+                    ) : null}
+                  </div>
+                  {entry.autopilotRun.pending_approval ? (
+                    <div className="autopilot-approval-note">
+                      <strong>{entry.autopilotRun.pending_approval.tool_name}</strong>
+                      <span>{entry.autopilotRun.pending_approval.explanation}</span>
+                      <div className="chat-approval-actions">
+                        <button disabled={chatBusy} onClick={() => approveAutopilot(entry.autopilotRun!.run_id)}>
+                          <ActionIcon name="approve" />
+                          Approve
+                        </button>
+                        <button disabled={chatBusy} className="ghost-button" onClick={() => rejectAutopilot(entry.autopilotRun!.run_id)}>
+                          <ActionIcon name="reject" />
+                          Reject
+                        </button>
+                        <button disabled={chatBusy} className="ghost-button" onClick={() => cancelAutopilot(entry.autopilotRun!.run_id)}>
+                          <ActionIcon name="reject" />
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {entry.autopilotRun.observations.length ? (
+                    <ul className="autopilot-observation-list">
+                      {entry.autopilotRun.observations.slice(-4).map((obs) => (
+                        <li key={obs.id}>
+                          <span>{obs.kind}</span>
+                          <PointerText text={obs.summary} />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
 
               {entry.errors?.length ? (

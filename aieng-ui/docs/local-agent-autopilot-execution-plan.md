@@ -343,7 +343,7 @@ Workbench tools.
 
 #### LAA-P0-T01 - Record CLI Capability Probe Baseline
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -374,7 +374,7 @@ python -m pytest tests/test_agent_autopilot_adapters.py
 
 #### LAA-P0-T02 - Add Local Agent Capability Endpoint
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -406,7 +406,7 @@ Goal: define the structured action loop before wiring real CLI calls.
 
 #### LAA-P1-T01 - Add Autopilot Schema Models
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -440,7 +440,7 @@ python -m pytest tests/test_agent_autopilot_schema.py
 
 #### LAA-P1-T02 - Add Backend Permission Policy
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -470,7 +470,7 @@ python -m pytest tests/test_agent_autopilot_policy.py
 
 #### LAA-P1-T03 - Add Prompt Builder
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -508,7 +508,7 @@ Goal: run the loop against a fake local agent without executing real tools.
 
 #### LAA-P2-T01 - Add Run Store and Event Model
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -536,7 +536,7 @@ python -m pytest tests/test_agent_autopilot_store.py
 
 #### LAA-P2-T02 - Add Engine Step Loop With Fake Adapter
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -571,7 +571,7 @@ python -m pytest tests/test_agent_autopilot_engine.py
 
 #### LAA-P2-T03 - Add Autopilot Run API in Dry-Run Mode
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -605,7 +605,7 @@ policy and execution.
 
 #### LAA-P3-T01 - Implement Claude Code JSON Adapter
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -634,7 +634,7 @@ python -m pytest tests/test_agent_autopilot_adapters.py
 
 #### LAA-P3-T02 - Add Optional Claude Code Integration Smoke Test
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -665,7 +665,7 @@ Goal: support Codex where a safe non-interactive CLI is available.
 
 #### LAA-P4-T01 - Implement Codex Capability Probe
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -694,7 +694,7 @@ python -m pytest tests/test_agent_autopilot_adapters.py
 
 #### LAA-P4-T02 - Implement Codex Structured Adapter
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -725,7 +725,7 @@ Goal: execute safe local-agent tool calls through existing Workbench runtime.
 
 #### LAA-P5-T01 - Execute Auto-Allowed Tools
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -754,7 +754,7 @@ python -m pytest tests/test_agent_autopilot_engine.py tests/test_runtime_tools.p
 
 #### LAA-P5-T02 - Pause and Resume Approval-Gated Tool Calls
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -783,7 +783,7 @@ python -m pytest tests/test_agent_autopilot_engine.py
 
 #### LAA-P5-T03 - Add Audit Events
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -814,7 +814,7 @@ Goal: make Autopilot usable from the existing Workbench chat.
 
 #### LAA-P6-T01 - Add Local Agent Connection
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -845,7 +845,7 @@ npm run build
 
 #### LAA-P6-T02 - Route Chat Submit to Autopilot Runs
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -875,7 +875,7 @@ npm run build
 
 #### LAA-P6-T03 - Add Autopilot Step Cards
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -916,7 +916,7 @@ postprocessing can complete through Autopilot.
 
 #### LAA-P7-T01 - CAD Generation Autopilot Slice
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -946,7 +946,7 @@ python -m pytest tests/test_agent_autopilot_engine.py tests/test_cad_generation.
 
 #### LAA-P7-T02 - Natural-Language Preprocessing Slice
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -976,7 +976,7 @@ python -m pytest tests/test_agent_autopilot_engine.py tests/test_ai_preprocessin
 
 #### LAA-P7-T03 - Solver and Postprocess Slice
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -1012,7 +1012,7 @@ Goal: make future LLM agents able to continue safely.
 
 #### LAA-P8-T01 - Add Developer Handoff Notes
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -1035,7 +1035,7 @@ Verification:
 
 #### LAA-P8-T02 - Add End-to-End Demo Script
 
-Status: `TODO`
+Status: `DONE`
 
 Scope:
 
@@ -1063,29 +1063,29 @@ Update this table after each task.
 
 | Task ID | Status | Owner/session | Files changed | Verification | Notes |
 |---|---|---|---|---|---|
-| LAA-P0-T01 | TODO | | | | |
-| LAA-P0-T02 | TODO | | | | |
-| LAA-P1-T01 | TODO | | | | |
-| LAA-P1-T02 | TODO | | | | |
-| LAA-P1-T03 | TODO | | | | |
-| LAA-P2-T01 | TODO | | | | |
-| LAA-P2-T02 | TODO | | | | |
-| LAA-P2-T03 | TODO | | | | |
-| LAA-P3-T01 | TODO | | | | |
-| LAA-P3-T02 | TODO | | | | |
-| LAA-P4-T01 | TODO | | | | |
-| LAA-P4-T02 | TODO | | | | |
-| LAA-P5-T01 | TODO | | | | |
-| LAA-P5-T02 | TODO | | | | |
-| LAA-P5-T03 | TODO | | | | |
-| LAA-P6-T01 | TODO | | | | |
-| LAA-P6-T02 | TODO | | | | |
-| LAA-P6-T03 | TODO | | | | |
-| LAA-P7-T01 | TODO | | | | |
-| LAA-P7-T02 | TODO | | | | |
-| LAA-P7-T03 | TODO | | | | |
-| LAA-P8-T01 | TODO | | | | |
-| LAA-P8-T02 | TODO | | | | |
+| LAA-P0-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/adapters.py`, `claude_code_adapter.py`, `codex_cli_adapter.py`, `backend/tests/test_agent_autopilot_adapters.py` | `python -m pytest tests/test_agent_autopilot_adapters.py`; manual `claude --help`, `codex --help`, `codex exec --help` | Claude reports safe `-p` JSON/schema/tool-disable flags. Codex reports non-interactive `exec` plus schema/read-only controls. Next: keep probes short and non-interactive. |
+| LAA-P0-T02 | DONE | Codex 2026-05-28 | `backend/app/app_factory.py`, `backend/tests/test_api.py` | `python -m pytest tests/test_api.py::test_local_agent_capabilities_endpoint` | Added `GET /api/local-agents/capabilities`; missing CLIs return diagnostics instead of endpoint failure. Next: surface detailed adapter status in UI. |
+| LAA-P1-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/schema.py`, `backend/tests/test_agent_autopilot_schema.py` | `python -m pytest tests/test_agent_autopilot_schema.py` | Added strict Pydantic action/run/observation/capability models and JSON Schema export. Next: reuse schema for every adapter call. |
+| LAA-P1-T02 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/policy.py`, `backend/tests/test_agent_autopilot_policy.py` | `python -m pytest tests/test_agent_autopilot_policy.py` | Added backend-enforced tool permission levels and active-project scoping. Next: wire policy decisions into real runtime execution. |
+| LAA-P1-T03 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/prompts.py` | Included in `python -m pytest tests/test_agent_autopilot_engine.py` | Prompt builder packs objective, project, selected geometry, context, tool catalog, observations, and action schema. Next: add prompt compaction tests if histories grow. |
+| LAA-P2-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/store.py`, `backend/tests/test_agent_autopilot_store.py` | `python -m pytest tests/test_agent_autopilot_store.py` | File-backed run state under `data/agent_autopilot/runs/` with safe corrupt-file diagnostics. Next: append-only events for streaming/debugging. |
+| LAA-P2-T02 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/engine.py`, `backend/app/agent_autopilot/adapters.py`, `backend/tests/test_agent_autopilot_engine.py` | `python -m pytest tests/test_agent_autopilot_engine.py` | Fake adapter loop validates final, blocked, dry-run accepted, and approval-required actions with max-step protection. Next: execute auto-allowed tools through runtime. |
+| LAA-P2-T03 | DONE | Codex 2026-05-28 | `backend/app/app_factory.py`, `backend/tests/test_api.py` | `python -m pytest tests/test_api.py::test_agent_autopilot_run_dry_run` | Added create/get Autopilot run API for dry-run/fake-adapter flow. Next: add continue/cancel endpoints. |
+| LAA-P3-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/claude_code_adapter.py`, `backend/tests/test_agent_autopilot_adapters.py` | `python -m pytest tests/test_agent_autopilot_adapters.py`; `AIENG_RUN_LOCAL_AGENT_SMOKE=1 python -m pytest tests/test_agent_autopilot_local_smoke.py::test_claude_code_local_smoke` | Claude adapter invokes `claude -p --bare --no-session-persistence` with JSON schema, plan permission mode, disabled tools, stdin prompt input, timeout cleanup, and `structured_output` parsing. |
+| LAA-P3-T02 | DONE | Codex 2026-05-28 | `backend/tests/test_agent_autopilot_local_smoke.py`, `backend/scripts/smoke_local_agent_claude.py` | `AIENG_RUN_LOCAL_AGENT_SMOKE=1 python -m pytest tests/test_agent_autopilot_local_smoke.py::test_claude_code_local_smoke` | Added gated Claude Code smoke test/script; real local smoke passed after adding bare/no-session mode and wrapper parsing. |
+| LAA-P4-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/codex_cli_adapter.py`, `backend/tests/test_agent_autopilot_adapters.py` | `python -m pytest tests/test_agent_autopilot_adapters.py`; manual `codex exec --help` | Probe now checks root help plus `codex exec --help` for `--output-schema`, `--sandbox read-only`, and approval controls. Next: verify installed Codex behavior with a real structured smoke. |
+| LAA-P4-T02 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/codex_cli_adapter.py`, `backend/app/agent_autopilot/schema.py`, `backend/app/agent_autopilot/adapters.py`, `backend/tests/test_agent_autopilot_local_smoke.py`, `backend/scripts/smoke_local_agent_codex.py` | `AIENG_RUN_CODEX_LOCAL_AGENT_SMOKE=1 python -m pytest tests/test_agent_autopilot_local_smoke.py::test_codex_cli_local_smoke`; `python -m pytest tests/test_agent_autopilot_adapters.py` | Real Codex v0.134.0 structured smoke passed after using root `--ask-for-approval`, strict schema-compatible `input_json`, and `--output-last-message`. |
+| LAA-P5-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/engine.py`, `backend/app/app_factory.py`, `backend/tests/test_agent_autopilot_engine.py` | `python -m pytest tests/test_agent_autopilot_engine.py tests/test_runtime_tools.py` | Auto-allowed tools now execute through the injected Workbench runtime executor when `dry_run=false`; errors are recorded as observations for the next agent step. Next: broaden runtime-output summarization. |
+| LAA-P5-T02 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/engine.py`, `backend/app/app_factory.py`, `frontend/src/api.ts`, `frontend/src/App.tsx`, `frontend/src/components/panels/ChatPanel.tsx` | `python -m pytest tests/test_agent_autopilot_engine.py tests/test_api.py::test_agent_autopilot_continue_and_cancel`; `npm run build` | Pending approval calls can be approved/rejected/cancelled through backend endpoints and frontend card actions. Next: align copy with existing runtime approval wording. |
+| LAA-P5-T03 | DONE | Codex 2026-05-28 | `backend/app/app_factory.py`, `backend/tests/test_api.py` | `python -m pytest tests/test_api.py::test_agent_autopilot_writes_project_audit_events` | Start and approval/rejection write `agent_autopilot` project audit log files with run id and decision metadata. |
+| LAA-P6-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_workbench.py`, `frontend/src/appConstants.ts`, `frontend/src/api.ts`, `frontend/src/types.ts`, `frontend/src/App.tsx` | `npm run build`; `python -m pytest tests/test_api.py::test_local_agent_capabilities_endpoint` | Added `local-agent` connection, loaded `/api/local-agents/capabilities`, and merged adapter status into the dropdown. Next: refine settings/debug presentation. |
+| LAA-P6-T02 | DONE | Codex 2026-05-28 | `frontend/src/App.tsx`, `frontend/src/api.ts`, `frontend/src/appTypes.ts` | `npm run build` | Chat submit routes to `/api/agent/autopilot/runs` when Local Agent is selected and includes selected geometry/project payload. Next: wire continue/cancel once backend endpoints exist. |
+| LAA-P6-T03 | DONE | Codex 2026-05-28 | `frontend/src/components/panels/ChatPanel.tsx`, `frontend/src/style.css`, `frontend/src/App.tsx` | `npm run build` | Added Autopilot run card with status, adapter, pending approval, latest observations, and approve/reject/cancel controls. Next: polish event streaming once SSE lands. |
+| LAA-P7-T01 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/prompts.py`, `backend/app/agent_autopilot/engine.py`, `backend/tests/test_agent_autopilot_engine.py`, `backend/tests/test_agent_autopilot_prompts.py`, `backend/app/cad_generation.py` | `python -m pytest tests/test_agent_autopilot_engine.py tests/test_cad_generation.py tests/test_brep_graph.py` | CAD prompt guidance covers build123d result/labels; approval-gated CAD call feeds named-parts/topology-style output back as observation. Added dependency-free PNG fallback for headless CAD thumbnails. |
+| LAA-P7-T02 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/prompts.py`, `backend/app/agent_autopilot/engine.py`, `backend/tests/test_agent_autopilot_engine.py` | `python -m pytest tests/test_agent_autopilot_engine.py tests/test_ai_preprocessing.py tests/test_simulation_runner.py` | Selected geometry is included in prompts; safe `cae.apply_setup_patch` runs automatically and triggers `cae.prepare_solver_run` follow-up. |
+| LAA-P7-T03 | DONE | Codex 2026-05-28 | `backend/app/agent_autopilot/engine.py`, `backend/tests/test_agent_autopilot_engine.py` | `python -m pytest tests/test_agent_autopilot_engine.py tests/test_ai_preprocessing.py tests/test_simulation_runner.py`; `npm run build` | `cae.run_solver` remains approval-gated; after approval the engine runs solver-result extraction, stress field regions, and CAE summary refresh follow-ups. |
+| LAA-P8-T01 | DONE | Codex 2026-05-28 | `aieng-ui/docs/local-agent-autopilot-handoff.md`, this document | Documentation review | Added adapter configuration, env vars, debug paths, verification commands, reset instructions, and next recommended task. |
+| LAA-P8-T02 | DONE | Codex 2026-05-28 | `aieng-ui/docs/local-agent-autopilot-demo.md`, `backend/scripts/demo_local_agent_autopilot.py`, this document | `python scripts/demo_local_agent_autopilot.py --api-url http://127.0.0.1:8001 --project-id demo_autopilot`; same command with `--approve` | Added deterministic API demo script. Verified capability output, CAD approval checkpoint, and dry-run approval continuation against fresh backend on port 8001. |
 
 ## Recommended First Implementation Order
 

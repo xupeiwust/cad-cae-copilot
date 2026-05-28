@@ -178,6 +178,129 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "run": _rt.run_to_dict(run),
         }
 
+    @app.get("/api/local-agents/capabilities")
+    def get_local_agent_capabilities() -> dict[str, Any]:
+        from .agent_autopilot.adapters import probe_local_agent_capabilities
+
+        adapters = probe_local_agent_capabilities()
+        return {
+            "adapters": adapters,
+            "available": [item for item in adapters if item.get("status") == "available"],
+        }
+
+    def _autopilot_store():
+        from .agent_autopilot.store import AutopilotStore
+
+        return AutopilotStore(active_settings.data_root / "agent_autopilot" / "runs")
+
+    def _write_autopilot_audit(project_id: str | None, event: str, payload: dict[str, Any]) -> None:
+        if not project_id:
+            return
+        try:
+            write_audit_log(active_settings, project_id, "agent_autopilot", {
+                "kind": event,
+                **payload,
+                "created_at": now_iso(),
+            })
+        except Exception:
+            pass
+
+    @app.post("/api/agent/autopilot/runs")
+    def create_agent_autopilot_run(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+        from .agent_autopilot.engine import AutopilotEngine
+        from .agent_autopilot.schema import AutopilotRunRequest
+
+        data = payload or {}
+        try:
+            request = AutopilotRunRequest.model_validate(data)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"invalid autopilot request: {exc}") from exc
+        agent_context_snapshot = None
+        if request.project_id:
+            try:
+                from . import agent_context
+
+                agent_context_snapshot = agent_context.build_agent_context(active_settings, request.project_id)
+            except Exception as exc:
+                agent_context_snapshot = {"error": str(exc)}
+        engine = AutopilotEngine(
+            store=_autopilot_store(),
+            runtime_tools=_rt.list_tools_for_mcp(),
+            agent_context=agent_context_snapshot,
+            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                tool_name,
+                tool_input,
+                {"project_id": request.project_id, "workflow_id": "agent_autopilot"},
+            ),
+        )
+        state = engine.start(request)
+        _write_autopilot_audit(state.project_id, "agent_autopilot_started", {
+            "run_id": state.run_id,
+            "adapter_id": state.adapter_id,
+            "status": state.status,
+            "step_count": len(state.steps),
+        })
+        return state.model_dump()
+
+    @app.get("/api/agent/autopilot/runs/{run_id}")
+    def get_agent_autopilot_run(run_id: str) -> dict[str, Any]:
+        store = _autopilot_store()
+        try:
+            return store.load(run_id).model_dump()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/api/agent/autopilot/runs/{run_id}/continue")
+    def continue_agent_autopilot_run(run_id: str, payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+        from .agent_autopilot.engine import AutopilotEngine
+
+        data = payload or {}
+        approved = bool(data.get("approved", True))
+        store = _autopilot_store()
+        try:
+            current = store.load(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        engine = AutopilotEngine(
+            store=store,
+            runtime_tools=_rt.list_tools_for_mcp(),
+            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                tool_name,
+                tool_input,
+                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+            ),
+        )
+        try:
+            state = engine.continue_run(run_id, approved=approved)
+            _write_autopilot_audit(state.project_id, "agent_autopilot_approval", {
+                "run_id": state.run_id,
+                "approved": approved,
+                "status": state.status,
+            })
+            return state.model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.post("/api/agent/autopilot/runs/{run_id}/cancel")
+    def cancel_agent_autopilot_run(run_id: str) -> dict[str, Any]:
+        from .agent_autopilot.engine import AutopilotEngine
+
+        store = _autopilot_store()
+        engine = AutopilotEngine(store=store, runtime_tools=_rt.list_tools_for_mcp())
+        try:
+            state = engine.cancel_run(run_id)
+            _write_autopilot_audit(state.project_id, "agent_autopilot_cancelled", {
+                "run_id": state.run_id,
+                "status": state.status,
+            })
+            return state.model_dump()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     @app.get("/api/agent/connections")
     def list_agent_connections() -> list[dict[str, Any]]:
         return agent_workbench.list_chat_connections(active_settings)

@@ -1539,6 +1539,80 @@ input[type="file"] {
   background: rgba(217, 164, 65, 0.1);
 }
 
+.autopilot-run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  background: rgba(8, 20, 36, 0.62);
+}
+
+.autopilot-run-header,
+.autopilot-run-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.autopilot-run-header span {
+  color: #eaf6ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.autopilot-run-header code,
+.autopilot-run-meta span {
+  padding: 2px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  color: #9fb1cc;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.autopilot-approval-note {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-left: 3px solid #d9a441;
+  background: rgba(217, 164, 65, 0.08);
+  color: #f8e7b4;
+}
+
+.autopilot-approval-note strong,
+.autopilot-approval-note span {
+  overflow-wrap: anywhere;
+}
+
+.autopilot-observation-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.autopilot-observation-list li {
+  display: grid;
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: #dbeafe;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.autopilot-observation-list li > span:first-child {
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .agent-plan-step-head {
   display: flex;
   align-items: center;

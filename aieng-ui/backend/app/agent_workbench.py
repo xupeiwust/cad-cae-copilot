@@ -410,6 +410,16 @@ def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
     local_status = "ready" if runtime_tools else "blocked"
     mcp_registry_available = any(cap.get("available") for cap in mcp_caps)
     mcp_status = "ready" if executable_mcp_tools else "degraded" if mcp_registry_available else "blocked"
+    try:
+        from .agent_autopilot.adapters import probe_local_agent_capabilities
+
+        local_agent_caps = probe_local_agent_capabilities()
+    except Exception:
+        local_agent_caps = []
+    local_agent_available = [
+        cap for cap in local_agent_caps
+        if cap.get("status") == "available"
+    ]
 
     return [
         {
@@ -423,6 +433,19 @@ def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
             "supports_execution": True,
             "approval_gated": True,
             "tool_count": len(runtime_tools),
+        },
+        {
+            "id": "local-agent",
+            "label": "Local Agent",
+            "transport": "agent-cli-bridge",
+            "status": "ready" if local_agent_available else "blocked",
+            "detail": "Uses a local Claude Code or Codex CLI agent as an autonomous planner/executor through Workbench approvals.",
+            "requires_project": False,
+            "supports_llm": True,
+            "supports_execution": True,
+            "approval_gated": True,
+            "tool_count": len(runtime_tools),
+            "adapters": local_agent_caps,
         },
         {
             "id": "local-runtime",

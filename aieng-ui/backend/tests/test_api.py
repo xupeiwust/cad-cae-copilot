@@ -9938,3 +9938,123 @@ def test_demo_smoke_check_fails_on_certification_language(monkeypatch, tmp_path:
     assert "certified safe" in cert_check["summary"]
 
     monkeypatch.setattr(cl, "_CLAIM_BOUNDARY_EXPORT_NOTE", original_note)
+
+
+def test_local_agent_capabilities_endpoint(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    resp = client.get("/api/local-agents/capabilities")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "adapters" in data
+    assert {item["adapter_id"] for item in data["adapters"]} >= {"claude-code", "codex-cli"}
+
+
+def test_agent_autopilot_run_dry_run(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "inspect the active project",
+            "adapter_id": "fake",
+            "fake_actions": [
+                {"action": {"type": "final", "message": "Dry run done."}, "done": True}
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "completed"
+    assert data["final_message"] == "Dry run done."
+
+    get_resp = client.get(f"/api/agent/autopilot/runs/{data['run_id']}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["run_id"] == data["run_id"]
+
+
+def test_agent_autopilot_continue_and_cancel(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "make a simple part",
+            "project_id": "p1",
+            "adapter_id": "fake",
+            "fake_actions": [
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    }
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    run = resp.json()
+    assert run["status"] == "awaiting_approval"
+
+    continued = client.post(f"/api/agent/autopilot/runs/{run['run_id']}/continue", json={"approved": True})
+    assert continued.status_code == 200
+    assert continued.json()["status"] == "completed"
+
+    second = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "pause",
+            "adapter_id": "fake",
+            "fake_actions": [{"action": {"type": "pause", "reason": "manual stop"}}],
+        },
+    )
+    assert second.status_code == 200
+    cancelled = client.post(f"/api/agent/autopilot/runs/{second.json()['run_id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+
+
+def test_agent_autopilot_writes_project_audit_events(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("audit-autopilot"))
+    client = TestClient(create_app(settings))
+
+    start = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "request approval",
+            "project_id": project["id"],
+            "adapter_id": "fake",
+            "fake_actions": [
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": project["id"], "code": "result = None"},
+                    }
+                }
+            ],
+        },
+    )
+    assert start.status_code == 200
+    run_id = start.json()["run_id"]
+
+    reject = client.post(f"/api/agent/autopilot/runs/{run_id}/continue", json={"approved": False})
+    assert reject.status_code == 200
+
+    log_dir = project_dir(settings, project["id"]) / "logs"
+    payloads = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in log_dir.glob("agent_autopilot_*.json")
+    ]
+    kinds = {payload["kind"] for payload in payloads}
+    assert {"agent_autopilot_started", "agent_autopilot_approval"} <= kinds
+    approval = next(payload for payload in payloads if payload["kind"] == "agent_autopilot_approval")
+    assert approval["run_id"] == run_id
+    assert approval["approved"] is False

@@ -1214,6 +1214,61 @@ export type AgentRunResponse = {
   run: RuntimeRun;
 };
 
+export type LocalAgentCapability = {
+  adapter_id: string;
+  label: string;
+  status: "available" | "blocked" | "missing" | "error" | string;
+  command: string;
+  command_path?: string | null;
+  version?: string | null;
+  supports_non_interactive: boolean;
+  supports_json: boolean;
+  supports_json_schema: boolean;
+  supports_tool_disable: boolean;
+  diagnostic: string;
+  probe_duration_ms: number;
+};
+
+export type AutopilotObservation = {
+  id: string;
+  kind: string;
+  summary: string;
+  data: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AutopilotApproval = {
+  id: string;
+  tool_name: string;
+  input: Record<string, unknown>;
+  level: string;
+  explanation: string;
+  created_at: string;
+};
+
+export type AutopilotRunState = {
+  run_id: string;
+  status: "running" | "awaiting_approval" | "completed" | "failed" | "cancelled" | "blocked" | string;
+  message: string;
+  project_id?: string | null;
+  adapter_id: string;
+  mode: "assist" | "autopilot" | "full_agent" | string;
+  dry_run: boolean;
+  created_at: string;
+  updated_at: string;
+  observations: AutopilotObservation[];
+  steps: Array<{
+    index: number;
+    adapter_id: string;
+    action: Record<string, unknown>;
+    policy?: Record<string, unknown> | null;
+    created_at: string;
+  }>;
+  pending_approval?: AutopilotApproval | null;
+  final_message?: string | null;
+  errors: string[];
+};
+
 export type ChatConnection = {
   id: "llm-api" | "local-runtime" | "mcp-bridge" | "freecad-desktop" | string;
   label: string;
@@ -1226,6 +1281,7 @@ export type ChatConnection = {
   approval_gated: boolean;
   tool_count: number;
   registry_count?: number;
+  adapters?: LocalAgentCapability[];
 };
 
 export type ChatStep = {

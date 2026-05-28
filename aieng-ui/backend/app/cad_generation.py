@@ -528,21 +528,28 @@ def render_mesh_thumbnail(
     stl_bytes: bytes,
     size: int = 480,
     face_colors: Any = None,
+    reference_image_bytes: bytes | None = None,
 ) -> str | None:
-    """Render an STL mesh as a 2x2 multi-view contact sheet PNG (base64, headless).
+    """Render an STL mesh as a multi-view contact sheet PNG (base64, headless).
 
     Gives an agent driving CAD a visual feedback loop with four review angles
     (front / side / top / iso) so silhouette and alignment can be judged at once.
+    When ``reference_image_bytes`` is supplied, the contact sheet expands to a
+    2x3 layout with the reference image in the rightmost column spanning both
+    rows — the agent compares its build against the reference at every iteration.
+
     Uses matplotlib's 3D toolkit (Agg backend) because trimesh's GL-based
-    `save_image` requires pyglet/OpenGL, which is unavailable headless on Windows.
+    ``save_image`` requires pyglet/OpenGL, which is unavailable headless on Windows.
 
     Args:
         stl_bytes: binary STL data.
-        size: final contact-sheet edge length in pixels (each tile = size/2).
+        size: final contact-sheet edge length in pixels.
         face_colors: optional per-triangle RGB array, shape ``(n_triangles, 3)``,
             values in 0..1. When None, all triangles share a default blue and a
             simple Lambert shading is applied. When provided, the colors are
             modulated by the same Lambert term so part boundaries stay readable.
+        reference_image_bytes: optional encoded image (PNG/JPEG) to display in
+            the rightmost column for side-by-side comparison. Decoded via PIL.
 
     Returns None on any failure — a thumbnail is best-effort and must never break
     the build.
@@ -561,6 +568,7 @@ def render_mesh_thumbnail(
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        from matplotlib.gridspec import GridSpec
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
         verts = np.asarray(triangles).reshape((-1, 3))
@@ -590,9 +598,33 @@ def render_mesh_thumbnail(
         center = (mins + maxs) / 2
         span = float((maxs - mins).max()) / 2 or 1.0
 
-        fig = plt.figure(figsize=(size / 100, size / 100), dpi=100)
+        # Try to decode the reference image first; if it fails, fall back to the
+        # plain 2x2 layout rather than crashing the build.
+        ref_image = None
+        if reference_image_bytes:
+            try:
+                from PIL import Image
+
+                ref_image = np.asarray(Image.open(io.BytesIO(reference_image_bytes)).convert("RGB"))
+            except Exception:
+                ref_image = None
+
+        has_ref = ref_image is not None
+
+        # Layout: 2x2 without reference, 2x3 with reference (last column = ref).
+        # Wider figure when reference is present so each tile keeps roughly its
+        # original size instead of squeezing.
+        if has_ref:
+            fig_w, fig_h = (size * 1.5) / 100, size / 100
+            gs = GridSpec(2, 3, figure=plt.figure(figsize=(fig_w, fig_h), dpi=100))
+            fig = plt.gcf()
+        else:
+            fig = plt.figure(figsize=(size / 100, size / 100), dpi=100)
+            gs = GridSpec(2, 2, figure=fig)
+
         for i, (elev, azim, label) in enumerate(_REVIEW_VIEWS):
-            ax = fig.add_subplot(2, 2, i + 1, projection="3d")
+            row, col = divmod(i, 2)
+            ax = fig.add_subplot(gs[row, col], projection="3d")
             # Use a fresh Poly3DCollection per axis — sharing one across multiple
             # 3D axes causes matplotlib to render only on the last one.
             coll = Poly3DCollection(
@@ -618,6 +650,21 @@ def render_mesh_thumbnail(
                 family="monospace",
                 weight="bold",
             )
+
+        if has_ref:
+            ax_ref = fig.add_subplot(gs[:, 2])
+            ax_ref.imshow(ref_image)
+            ax_ref.set_axis_off()
+            ax_ref.text(
+                0.03, 0.97, "reference",
+                transform=ax_ref.transAxes,
+                fontsize=10,
+                color=(0.6, 0.15, 0.15),  # red so it pops vs the blue view labels
+                family="monospace",
+                weight="bold",
+                verticalalignment="top",
+            )
+
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
 
         buf = io.BytesIO()
@@ -1447,10 +1494,25 @@ def execute_build123d_code(
     # Visual feedback loop: render a 4-view contact sheet so an agent can judge
     # silhouette and alignment, not just face/bbox numbers. When per-body
     # mesh_meta is available, colorize each part by its build123d `.color` so
-    # parts can be distinguished visually. Opt out with {"thumbnail": false}.
+    # parts can be distinguished visually. When a reference image is attached
+    # to the project, tile it next to the views for side-by-side comparison.
+    # Opt out with {"thumbnail": false}.
     if payload.get("thumbnail", True):
         face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
-        thumb = render_mesh_thumbnail(stl_bytes or b"", face_colors=face_colors)
+        # Resolve the project package via `project.get("aieng_file")` — after a
+        # write_files run, that pointer is up-to-date; before any build it
+        # already points at the package set by cad.set_reference_image.
+        ref_aieng_file = project.get("aieng_file")
+        ref_pkg = (
+            resolve_project_path(settings, project_id, ref_aieng_file)
+            if ref_aieng_file else None
+        )
+        ref_bytes = _read_reference_image_bytes(ref_pkg)
+        thumb = render_mesh_thumbnail(
+            stl_bytes or b"",
+            face_colors=face_colors,
+            reference_image_bytes=ref_bytes,
+        )
         if thumb:
             result["thumbnail_png_base64"] = thumb
 
@@ -1944,6 +2006,179 @@ def _mark_cae_mapping_stale(pkg_path: Path) -> None:
 
 
 # ── CAD source readback ──────────────────────────────────────────────────────
+
+def _read_reference_image_bytes(pkg_path: Path | None) -> bytes | None:
+    """Read geometry/reference.png from a project package, if present.
+
+    Returns the raw PNG bytes for rendering. None when no package, no
+    reference set, or any read error — best-effort, never blocks the build.
+    """
+    if pkg_path is None or not pkg_path.exists():
+        return None
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            if "geometry/reference.png" in zf.namelist():
+                return zf.read("geometry/reference.png")
+    except Exception:
+        return None
+    return None
+
+
+def set_reference_image(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach a reference image to a project for side-by-side thumbnails.
+
+    The image (from URL or local path) is decoded, downscaled to fit within
+    800x800 to keep the package small, re-encoded as PNG, and stored as
+    geometry/reference.png plus geometry/reference.json metadata in the
+    project's .aieng package. Subsequent cad.execute_build123d thumbnails
+    will tile the reference in a rightmost column for visual comparison.
+
+    Payload keys (one of image_url / image_path is required):
+        image_url:   HTTP(S) URL to fetch (timeout 15s)
+        image_path:  local file path
+        description: optional caption stored in reference.json
+    """
+    from .project_io import get_project, resolve_project_path
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+
+    image_url = payload.get("image_url")
+    image_path_str = payload.get("image_path")
+    description = (payload.get("description") or "").strip()
+
+    if not image_url and not image_path_str:
+        return {
+            "status": "error",
+            "code": "missing_input",
+            "message": "Provide either image_url (HTTP/HTTPS) or image_path (local file).",
+        }
+
+    # Fetch raw image bytes
+    raw_bytes: bytes
+    source_descriptor: str
+    try:
+        if image_url:
+            import urllib.request
+
+            # Identifying UA — Wikimedia and others reject generic urllib UAs.
+            req = urllib.request.Request(
+                image_url,
+                headers={
+                    "User-Agent": (
+                        "aieng-workbench/1.0 (CAD reference fetch; "
+                        "https://github.com/armpro24-blip/workspace_aieng)"
+                    ),
+                    "Accept": "image/*",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                raw_bytes = resp.read()
+            source_descriptor = f"url:{image_url}"
+        else:
+            p = Path(image_path_str)
+            if not p.exists():
+                return {
+                    "status": "error",
+                    "code": "file_not_found",
+                    "message": f"Local file not found: {image_path_str}",
+                }
+            raw_bytes = p.read_bytes()
+            source_descriptor = f"path:{p.name}"
+    except Exception as exc:
+        return {
+            "status": "error",
+            "code": "fetch_failed",
+            "message": f"Could not load reference image: {exc}",
+        }
+
+    # Decode, downscale, re-encode as PNG so the package stays compact
+    try:
+        from PIL import Image
+        import io as _io
+
+        img = Image.open(_io.BytesIO(raw_bytes)).convert("RGB")
+        max_dim = 800
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        png_bytes = buf.getvalue()
+        width, height = img.size
+    except Exception as exc:
+        return {
+            "status": "error",
+            "code": "invalid_image",
+            "message": f"Image decode/resize failed: {exc}",
+        }
+
+    # Resolve / create the package
+    existing_pkg = project.get("aieng_file")
+    pkg_path = resolve_project_path(settings, project_id, existing_pkg) if existing_pkg else None
+    if pkg_path is None:
+        from .main import project_dir, save_project as _save_project
+
+        pkg_name = f"{project_id}.aieng"
+        pkg_path = project_dir(settings, project_id) / pkg_name
+        project["aieng_file"] = pkg_name
+        _save_project(settings, project)
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    reference_meta = {
+        "source": source_descriptor,
+        "description": description,
+        "width": width,
+        "height": height,
+        "byte_size": len(png_bytes),
+    }
+    artifacts: dict[str, bytes] = {
+        "geometry/reference.png": png_bytes,
+        "geometry/reference.json": json.dumps(reference_meta, indent=2).encode(),
+    }
+
+    # Merge into existing zip if present; otherwise create a minimal package
+    if pkg_path.exists():
+        tmp = pkg_path.with_suffix(".tmp.aieng")
+        try:
+            with (
+                zipfile.ZipFile(pkg_path, "r") as src,
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+            ):
+                for item in src.infolist():
+                    if item.filename not in artifacts:
+                        dst.writestr(item, src.read(item.filename))
+                for name, data in artifacts.items():
+                    dst.writestr(name, data)
+            tmp.replace(pkg_path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+    else:
+        with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("manifest.json", json.dumps({"schema_version": "0.1"}))
+            for name, data in artifacts.items():
+                zf.writestr(name, data)
+
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "source": source_descriptor,
+        "description": description,
+        "width": width,
+        "height": height,
+        "byte_size_kb": round(len(png_bytes) / 1024, 1),
+        "message": (
+            "Reference image attached. Future cad.execute_build123d thumbnails "
+            "will include it in a right-hand column for side-by-side comparison."
+        ),
+    }
+
 
 def read_cad_source(settings: Any, project_id: str) -> dict[str, Any]:
     """Return the accumulated build123d source plus a structured state summary.

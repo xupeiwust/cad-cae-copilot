@@ -118,7 +118,10 @@ result = Compound(children=[previous_result, arm])
 
 **Visual feedback (multi-view contact sheet).** `cad.execute_build123d` returns a
 single PNG with **four labelled views in a 2×2 grid: front, side, top, iso**.
-The image arrives as an MCP image content block (disable with `{"thumbnail": false}`).
+If a reference image is attached to the project (see "Reference image
+calibration" below) the layout becomes 2×3 with the reference filling the
+rightmost column for side-by-side comparison. The image arrives as an MCP
+image content block (disable with `{"thumbnail": false}`).
 **Look at all four views** — each catches problems the others hide:
 - **front** — wrong proportions (e.g. arms reaching to feet), left/right symmetry
 - **side** — overhangs, depth, parts sticking out forward/back
@@ -132,6 +135,18 @@ the current build does **not** look like the target object (specific to view +
 specific part), then list what's right. Decide the next iteration from the
 failures, not from a preset plan. This works much better than building straight
 through to the finish.
+
+**Reference image calibration.** When the user names a real product, character,
+or vehicle, attach a reference image once with `cad.set_reference_image`
+(pass `image_url` for HTTP fetch or `image_path` for a local file). The
+reference is stored in the project's `.aieng` package and every subsequent
+`cad.execute_build123d` thumbnail tiles it next to the 4 views, so you compare
+proportions against the real reference instead of relying on memory.
+Set the reference **before** starting iteration if you have one — that way
+even the first build is calibrated. Without a reference you're guessing
+proportions; with one, fail-first review can cite specific mismatches like
+"forearm tapers wrong: reference shows widening toward the wrist, my build
+narrows."
 
 **Response summary fields** (text-side feedback, useful when your client drops the image):
 `named_parts` (all named parts now in the model), `parts_added` (what this step added),
@@ -310,6 +325,7 @@ suitable for a fixed support, pass `"faceId": "f_top_001"` in your CAE setup cal
 |------|---------|
 | `cad.execute_build123d` | Run caller-supplied build123d code to create/replace geometry (mode=replace\|append) |
 | `cad.edit_parameter` | Parametric edit of an existing feature (currently returns unavailable) |
+| `cad.set_reference_image` | Attach a reference photo/drawing to a project so future thumbnails include it side-by-side for proportion calibration |
 
 Before an incremental edit, call **`cad.get_source`** (read-only) to see the current
 accumulated script, which named parts already exist, and whether `has_base` (append
@@ -370,14 +386,18 @@ Read the geometry summary, note any `@artifact:` tokens marked stale, check
 
 ### B — CAD generation from scratch
 ```
-1. cad.get_source         { project_id }                (is there already a base?)
-2. cad.execute_build123d  { project_id, code }          [APPROVAL REQUIRED] (mode=replace, default)
-3. (inspect the returned thumbnail + named_parts to confirm the shape is right)
+1. cad.get_source            { project_id }                                (is there already a base?)
+2. cad.set_reference_image   { project_id, image_url }                     (only when modelling a real product/character — sets a reference for every future thumbnail)
+3. cad.execute_build123d     { project_id, code }                          [APPROVAL REQUIRED] (mode=replace, default)
+4. (inspect the returned thumbnail + named_parts to confirm the shape is right)
 ```
-Set `.label` on each part in your build123d code and combine with `Compound` so the
-result carries semantic names (see the build123d section above). After step 2 the
-project is `viewer_ready_glb` and the web preview is current — no separate
-`generate_preview` call needed for agent-built geometry.
+Set `.label` and `.color` on each part in your build123d code and combine with
+`Compound` so the result carries semantic names + readable colors (see the
+build123d section above). After step 3 the project is `viewer_ready_glb` and
+the web preview is current — no separate `generate_preview` call needed for
+agent-built geometry. Step 2 is optional but **strongly recommended** for any
+named real-world target: it pins a reference image into the project so every
+build's thumbnail shows your model next to the truth.
 
 ### B2 — Incremental modeling (the sustainable loop)
 ```

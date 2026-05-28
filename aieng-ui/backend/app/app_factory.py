@@ -4289,6 +4289,29 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         ),
     )
 
+    def _tool_cad_set_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.set_reference_image(active_settings, str(project_id), inp)
+
+    _rt.register_tool(
+        "cad.set_reference_image",
+        _tool_cad_set_reference_image,
+        input_schema=_schema("cad.set_reference_image"),
+        description=(
+            "Attach a reference image (real-world photo, drawing, or render) to a project so "
+            "subsequent cad.execute_build123d thumbnails include it in a right-hand column for "
+            "side-by-side comparison. Pass image_url (HTTP/HTTPS) or image_path (local file). "
+            "The image is downscaled to 800x800 max and stored as geometry/reference.png in the "
+            ".aieng package — set once, used by every future build. Use this when the user names "
+            "a real product/character/vehicle and supplies a picture, or when you want the agent "
+            "to calibrate proportions against an actual reference instead of memory."
+        ),
+    )
+
     def _tool_cad_get_named_part_bbox(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
 

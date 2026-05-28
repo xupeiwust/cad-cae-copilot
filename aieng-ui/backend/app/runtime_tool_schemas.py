@@ -159,6 +159,36 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    # ── Reference image attach (per-project, used by thumbnails) ─────────────
+    "cad.set_reference_image": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "image_url": {
+                "type": "string",
+                "description": (
+                    "HTTP(S) URL of a reference image (jpg/png/webp). Fetched "
+                    "server-side, downscaled to fit 800x800, and stored as "
+                    "geometry/reference.png in the .aieng package. Either "
+                    "image_url or image_path is required."
+                ),
+            },
+            "image_path": {
+                "type": "string",
+                "description": (
+                    "Local file path to a reference image. Use when the image "
+                    "is on the workbench host, e.g. /tmp/optimus_ref.jpg."
+                ),
+            },
+            "description": {
+                "type": "string",
+                "description": "Short caption for the reference, stored in geometry/reference.json.",
+            },
+        },
+        "additionalProperties": True,
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.get_named_part_bbox": {

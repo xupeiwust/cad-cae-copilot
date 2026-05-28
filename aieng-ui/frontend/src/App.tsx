@@ -15,7 +15,7 @@ import {
 } from "./appConstants";
 import type { BrepGraphSnapshot, CadGenerationProgress, ChatHistoryItem, ControlPaneMode, Notice, PickedFace, SelectedGeometryContext, StageItem, StageState, WorkbenchPaneMode } from "./appTypes";
 import type { PointerToken } from "./components/PointerText";
-import type { AgentActivityEvent } from "./appUtils";
+import type { AgentActivityEvent, LiveSyncStatus } from "./appUtils";
 import {
   createChatId,
   extractArtifactPaths,
@@ -178,6 +178,9 @@ export default function App() {
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const sidePaneRef = useRef<HTMLElement | null>(null);
   const autopilotPollTimerRef = useRef<number | null>(null);
+  const [liveSyncStatus, setLiveSyncStatus] = useState<LiveSyncStatus>("connecting");
+  const [liveSyncDetail, setLiveSyncDetail] = useState("Connecting to backend activity stream...");
+  const [liveSyncLastEventAt, setLiveSyncLastEventAt] = useState<string | null>(null);
   const [cadPreviewUrl, setCadPreviewUrl] = useState<string | null>(null);
   const [cadPreviewFormat, setCadPreviewFormat] = useState<string | null>(null);
   const [cadGenerating, setCadGenerating] = useState(false);
@@ -370,6 +373,11 @@ export default function App() {
     }
   }
 
+  function refreshViewerAsset(projectId: string, previewUrl?: string | null, previewFormat?: string | null) {
+    setCadPreviewUrl(`${previewUrl || `/api/projects/${projectId}/cad-preview`}${previewUrl?.includes("?") ? "&" : "?"}ts=${Date.now()}`);
+    setCadPreviewFormat(previewFormat ?? "glb");
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -471,6 +479,10 @@ export default function App() {
   useEffect(() => {
     const url = `${api.base}/api/agent-activity/stream`;
     const source = new EventSource(url);
+    source.onopen = () => {
+      setLiveSyncStatus("live");
+      setLiveSyncDetail("Live updates connected");
+    };
     source.onmessage = (msg) => {
       let event: AgentActivityEvent;
       try {
@@ -478,7 +490,12 @@ export default function App() {
       } catch {
         return;
       }
-      if (event.type === "connected") return;
+      setLiveSyncLastEventAt(new Date().toISOString());
+      if (event.type === "connected") {
+        setLiveSyncStatus("live");
+        setLiveSyncDetail("Live updates connected");
+        return;
+      }
 
       const current = selectedIdRef.current;
       const isBuildDone =
@@ -486,6 +503,8 @@ export default function App() {
         event.tool === "cad.execute_build123d" &&
         event.status === "ok" &&
         Boolean(event.project_id);
+      const isProjectChange = event.type === "project_changed" && Boolean(event.project_id);
+      const isViewerAssetChange = event.type === "viewer_asset_changed" && Boolean(event.project_id);
       const isForCurrent = !event.project_id || !current || event.project_id === current;
 
       // Agent built a model in a DIFFERENT project than the one on screen: don't
@@ -549,20 +568,41 @@ export default function App() {
 
       setCadGenerationProgress((prev) => applyAgentActivityEvent(prev, event));
 
-      if (isBuildDone) {
+      if (isViewerAssetChange && event.project_id) {
+        refreshViewerAsset(event.project_id, event.preview_url, event.preview_format);
+      }
+
+      if ((isProjectChange || isViewerAssetChange) && event.project_id) {
+        void refreshProjects(event.project_id);
+      }
+
+      if (isBuildDone && event.project_id) {
         // Build for the current project: refresh the viewer in place.
-        setCadPreviewUrl(`/api/projects/${event.project_id}/cad-preview?ts=${Date.now()}`);
-        setCadPreviewFormat(event.preview_format ?? "glb");
+        refreshViewerAsset(event.project_id, event.preview_url, event.preview_format);
         void refreshProjects(event.project_id);
         window.setTimeout(() => setCadGenerationProgress(null), 1500);
       }
     };
     source.onerror = () => {
-      // EventSource auto-reconnects; nothing to do. A persistent failure just
-      // means live agent activity won't show (the build still completes).
+      setLiveSyncStatus((current) => (current === "live" ? "reconnecting" : current === "polling" ? "polling" : "reconnecting"));
+      setLiveSyncDetail("Live stream disconnected; browser will auto-reconnect and polling fallback is active.");
     };
     return () => source.close();
   }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    if (liveSyncStatus === "live") return;
+    const shouldPoll = liveSyncStatus === "reconnecting" || liveSyncStatus === "polling" || agentBusy || Boolean(cadGenerationProgress);
+    if (!shouldPoll) return;
+    setLiveSyncStatus("polling");
+    setLiveSyncDetail("Live stream unavailable; polling project state every 2.5s.");
+    const timer = window.setInterval(() => {
+      const current = selectedIdRef.current;
+      if (current) void refreshProjects(current);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [agentBusy, cadGenerationProgress, liveSyncStatus, selectedId]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -2516,11 +2556,11 @@ export default function App() {
           {showDebugPanel ? (
             <DebugPanel
               sections={[
-                { id: "tools", label: "Tools", children: renderAgentToolsPanel() },
-                { id: "cae", label: "CAE", children: renderCaePanel() },
-                { id: "recommendations", label: "Recommendations", children: renderRecommendationsPanel() },
-                { id: "loop", label: "Loop", children: renderCopilotLoopPanel() },
-                { id: "planner", label: "Planner", children: renderIntentPlannerPanel() },
+                { id: "tools", label: "Capabilities", children: renderAgentToolsPanel() },
+                { id: "cae", label: "Simulation", children: renderCaePanel() },
+                { id: "recommendations", label: "Design advice", children: renderRecommendationsPanel() },
+                { id: "loop", label: "Optimization", children: renderCopilotLoopPanel() },
+                { id: "planner", label: "Intent planner", children: renderIntentPlannerPanel() },
               ]}
             />
           ) : null}
@@ -2576,6 +2616,9 @@ export default function App() {
               heatmapRange={heatmapRange}
               onViewHeatmap={() => void viewStressHeatmap()}
               recentPickedFaces={pickedFaces}
+              liveSyncStatus={liveSyncStatus}
+              liveSyncDetail={liveSyncDetail}
+              liveSyncLastEventAt={liveSyncLastEventAt}
             />
           ) : null}
         </WorkbenchRightRail>

@@ -972,6 +972,41 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             api_key=p.get("api_key"),
         )
 
+    def _publish_project_live_change(
+        *,
+        project_id: str | None,
+        source: str,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Notify browser clients that project metadata/artifacts may be stale."""
+        if not project_id:
+            return
+        try:
+            from . import agent_activity
+
+            status = result.get("status", "ok") if isinstance(result, dict) else "ok"
+            preview_url = result.get("preview_url") if isinstance(result, dict) else None
+            preview_format = result.get("preview_format") if isinstance(result, dict) else None
+            agent_activity.publish({
+                "type": "project_changed",
+                "project_id": project_id,
+                "source": source,
+                "status": status,
+                "preview_url": preview_url,
+                "preview_format": preview_format,
+            })
+            if status == "ok" and preview_url:
+                agent_activity.publish({
+                    "type": "viewer_asset_changed",
+                    "project_id": project_id,
+                    "source": source,
+                    "preview_url": preview_url,
+                    "preview_format": preview_format,
+                })
+        except Exception:
+            # Live UI sync must never make a successful backend write fail.
+            return
+
     @app.post("/api/projects/{project_id}/generate-cad")
     def generate_cad_endpoint(
         project_id: str,
@@ -992,9 +1027,11 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         """
         from . import cad_generation
 
-        return cad_generation.run_cad_generation(
+        result = cad_generation.run_cad_generation(
             active_settings, project_id, payload or {}
         )
+        _publish_project_live_change(project_id=project_id, source="generate-cad", result=result)
+        return result
 
     @app.post("/api/projects/{project_id}/generate-cad-stream")
     def generate_cad_stream_endpoint(
@@ -1124,17 +1161,60 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             result = {"status": "error", "code": "tool_exception", "message": f"{type(exc).__name__}: {exc}"}
 
         status = result.get("status", "ok") if isinstance(result, dict) else "ok"
+        preview_url = result.get("preview_url") if isinstance(result, dict) else None
+        preview_format = result.get("preview_format") if isinstance(result, dict) else None
         agent_activity.publish({
             "type": "tool_completed",
             "call_id": call_id,
             "tool": tool,
             "project_id": project_id,
             "status": status,
-            "preview_url": result.get("preview_url") if isinstance(result, dict) else None,
-            "preview_format": result.get("preview_format") if isinstance(result, dict) else None,
+            "preview_url": preview_url,
+            "preview_format": preview_format,
             "topology_summary": result.get("topology_summary") if isinstance(result, dict) else None,
             "message": result.get("message") if isinstance(result, dict) else None,
         })
+        project_change_tools = {
+            "cad.execute_build123d",
+            "cad.refine",
+            "cad.edit_parameter",
+            "cad.set_reference_image",
+            "aieng.convert",
+            "aieng.generate_preview",
+            "aieng.refresh_semantics",
+            "aieng.update_validation_status",
+            "aieng.write_completeness_report",
+            "aieng.write_evidence_scaffold",
+            "cae.apply_setup_patch",
+            "cae.generate_solver_input",
+            "cae.write_mesh_handoff",
+            "cae.import_solver_evidence",
+            "cae.extract_solver_results",
+            "cae.extract_field_regions",
+            "postprocess.generate_computed_metrics",
+            "postprocess.refresh_cae_summary",
+        }
+        if project_id and status == "ok" and (preview_url or tool in project_change_tools):
+            agent_activity.publish({
+                "type": "project_changed",
+                "call_id": call_id,
+                "tool": tool,
+                "project_id": project_id,
+                "source": "agent.invoke_tool",
+                "status": status,
+                "preview_url": preview_url,
+                "preview_format": preview_format,
+            })
+            if preview_url:
+                agent_activity.publish({
+                    "type": "viewer_asset_changed",
+                    "call_id": call_id,
+                    "tool": tool,
+                    "project_id": project_id,
+                    "source": "agent.invoke_tool",
+                    "preview_url": preview_url,
+                    "preview_format": preview_format,
+                })
         return result
 
     @app.post("/api/projects/{project_id}/refine-cad")
@@ -1154,9 +1234,11 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         """
         from . import cad_generation
 
-        return cad_generation.refine_cad_generation(
+        result = cad_generation.refine_cad_generation(
             active_settings, project_id, payload or {}
         )
+        _publish_project_live_change(project_id=project_id, source="refine-cad", result=result)
+        return result
 
     @app.get("/api/projects/{project_id}/health-check")
     def get_project_health_check(project_id: str) -> dict[str, Any]:

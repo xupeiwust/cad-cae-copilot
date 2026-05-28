@@ -46,9 +46,9 @@ export const CONTROL_PANE_MODES: Array<{ id: ControlPaneMode; label: string; det
 ];
 
 export const WORKBENCH_PANE_MODES: Array<{ id: WorkbenchPaneMode; label: string; detail: string }> = [
-  { id: "agent", label: "Agent", detail: "Chat, plans, approvals" },
-  { id: "project", label: "Project", detail: "Import and project facts" },
-  { id: "debug", label: "Debug", detail: "Tools and raw workflow panels" },
+  { id: "agent", label: "Build", detail: "Chat and current task" },
+  { id: "project", label: "Files", detail: "Projects and imports" },
+  { id: "debug", label: "Advanced", detail: "Diagnostics and expert tools" },
 ];
 
 export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [

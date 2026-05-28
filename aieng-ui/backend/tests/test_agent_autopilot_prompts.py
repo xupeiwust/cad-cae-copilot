@@ -51,4 +51,39 @@ def test_action_prompt_compacts_large_agent_context_observation() -> None:
     )
     assert "Schenkel" in prompt
     assert "face adjacency" in prompt
-    assert len(prompt) < 18000
+    assert "CAD BRIEF GATE" in prompt
+    assert len(prompt) < 17000
+
+
+def test_action_prompt_compacts_cad_critique_observation() -> None:
+    prompt = build_action_prompt(
+        objective="improve bracket",
+        project_id="p1",
+        selected_geometry={},
+        agent_context={},
+        runtime_tools=[
+            {"name": "cad.critique", "description": "critique", "input_schema": {"type": "object"}},
+        ],
+        observations=[
+            {
+                "kind": "tool_result",
+                "summary": "Executed Autopilot follow-up: cad.critique",
+                "data": {
+                    "tool_name": "cad.critique",
+                    "output": {
+                        "status": "ok",
+                        "mode": "engineering",
+                        "fail_first_objections": ["hole edge distance too small"],
+                        "findings": [
+                            {"severity": "high", "observation": f"finding {idx}", "details": "x" * 1000}
+                            for idx in range(20)
+                        ],
+                    },
+                },
+            }
+        ],
+    )
+    assert "hole edge distance too small" in prompt
+    assert "finding_count" in prompt
+    assert "finding 19" not in prompt
+    assert len(prompt) < 9000

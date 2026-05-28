@@ -187,6 +187,8 @@ def test_invoke_cad_execute_publishes_build_progress(tmp_path: Path) -> None:
     assert "tool_started" in types
     assert "cad_build_progress" in types
     assert "tool_completed" in types
+    assert "project_changed" in types
+    assert "viewer_asset_changed" in types
 
     # tool_started carries the agent-written code preview.
     started = next(e for e in events if e["type"] == "tool_started")
@@ -204,6 +206,11 @@ def test_invoke_cad_execute_publishes_build_progress(tmp_path: Path) -> None:
     assert completed["status"] == "ok"
     assert completed["preview_url"] == f"/api/projects/{project_id}/cad-preview"
     assert completed["topology_summary"]["face_count"] == 1
+    changed = next(e for e in events if e["type"] == "project_changed")
+    assert changed["project_id"] == project_id
+    assert changed["preview_url"] == f"/api/projects/{project_id}/cad-preview"
+    viewer_changed = next(e for e in events if e["type"] == "viewer_asset_changed")
+    assert viewer_changed["preview_format"] == "glb"
 
 
 def test_invoke_cad_execute_missing_project(tmp_path: Path) -> None:

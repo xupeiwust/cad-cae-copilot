@@ -14,6 +14,7 @@ CORE_TOOL_ORDER = [
     "cad.get_source",
     "cad.execute_build123d",
     "cad.edit_parameter",
+    "cad.critique",
     "cae.apply_setup_patch",
     "cae.prepare_solver_run",
     "cae.generate_solver_input",
@@ -113,7 +114,7 @@ def _compact_tool_output(output: Any) -> Any:
                 "face_count": brep.get("face_count"),
                 "edge_count": brep.get("edge_count"),
                 "selection_group_count": brep.get("selection_group_count"),
-                "digest": _truncate_text(str(brep.get("digest") or ""), 4000),
+                "digest": _truncate_text(str(brep.get("digest") or ""), 2500),
             },
             "cae": {
                 "present": cae.get("present"),
@@ -124,6 +125,27 @@ def _compact_tool_output(output: Any) -> Any:
             },
             "design_targets": output.get("design_targets"),
             "warnings": output.get("warnings"),
+        }
+    if {"findings", "fail_first_objections"}.intersection(output):
+        findings = output.get("findings") if isinstance(output.get("findings"), list) else []
+        top_findings = []
+        for finding in findings[:5]:
+            if not isinstance(finding, dict):
+                top_findings.append(_truncate_text(str(finding), 240))
+                continue
+            top_findings.append({
+                key: _truncate_text(str(finding.get(key) or ""), 240)
+                for key in ("severity", "category", "rule", "affected_feature", "observation", "suggested_fix")
+                if finding.get(key) is not None
+            })
+        return {
+            "status": output.get("status"),
+            "mode": output.get("mode"),
+            "summary": output.get("summary"),
+            "verdict": output.get("verdict"),
+            "fail_first_objections": output.get("fail_first_objections"),
+            "finding_count": len(findings),
+            "top_findings": top_findings,
         }
     return _json_safe_truncate(output, 8000)
 
@@ -180,24 +202,23 @@ def build_action_prompt(
     observations: list[dict[str, Any]],
 ) -> str:
     operating_rules = [
-        "You are NOT given a full static context dump. If you need model details, call aieng.agent_context first.",
-        "Do not guess topology, dimensions, materials, or stress results. Retrieve them via tools before answering.",
-        "For simple greetings or meta questions, use 'chat'. For anything requiring factual model data, use 'tool_call'.",
-        "For new CAD, call cad.get_source first when a project may already have a model; otherwise propose cad.execute_build123d with mode replace and final build123d bound to result.",
-        "When writing build123d code, label semantic parts AND set `.color = Color(r,g,b)` on each part (RGB 0..1), then combine in a Compound — labels expose named parts in topology, colors render in the multi-view thumbnail and the GLB the user sees.",
-        "After cad.execute_build123d returns its 2x2 contact-sheet image (front/side/top/iso), inspect all four views — alignment errors hide in iso but show clearly in front/side. Then list 3-5 fail-first objections (specific to a view + part) before deciding the next iteration.",
-        "Industrial Design Mode: for visible exterior forms (characters, vehicles, consumer products), don't stack Box() to fake curves — use loft between two sketches for tapered bodies, revolve for axisymmetric, sweep along a path for pipes/handles, and aggressive fillet (5-20mm) on visible edges applied LAST. Primitive stacking is OK for brackets, fixtures, prototypes.",
-        "When modelling a named real product/character/vehicle and the user supplies (or you can search for) a reference image, call cad.set_reference_image with image_url or image_path BEFORE the first cad.execute_build123d. Subsequent thumbnails will then tile the reference next to the 4 views so proportions can be calibrated against the truth instead of memory.",
-        "Engineering Mode: for mechanical parts (bracket, housing, enclosure, manifold, fixture, frame, mount, flange, chassis), use canonical .label names — base_plate, mounting_hole_pattern, rib, boss, flange, interface_face — so the feature graph tags features semantically. Honour CNC manufacturing rules: minimum wall ≥ 3mm, hole-edge distance ≥ 2× radius, internal corner radius ≥ 2mm. After modelling, call cad.critique to get a deterministic audit against these rules.",
-        "Use selected @face: and @edge: pointers for CAE setup when available; ask one concise question if a required support or load face is ambiguous.",
-        "For preprocessing, prefer cae.apply_setup_patch; the Workbench will run solver preflight after safe setup patches.",
-        "For solver execution, request cae.run_solver only after preflight/input generation is ready; the Workbench will postprocess solver results after approval.",
-        "CAD mutation and solver execution are approval-gated by policy; explain the side effect in user_message when requesting them.",
-        "If the provided JSON schema uses action.input_json instead of action.input, encode tool input as a JSON object string.",
-        "For final or chat actions, action.message must contain the complete user-facing answer. Do not leave it empty.",
-        "For unused string fields in the flattened action schema, use an empty string rather than null.",
-        "When exact counts are available in derived_counts or metrics fields, report those exact values instead of recounting from prose.",
+        "TOKEN BUDGET: be concise. Do not paste long source/context unless needed; prefer compact named parameters and brief validation notes.",
+        "Retrieve facts before claims: use aieng.agent_context for model details; do not guess topology, dimensions, materials, or results.",
+        "For greetings/meta questions use chat. For factual model work use tool_call.",
+        "CAD BRIEF GATE: before cad.execute_build123d, internally form a compact brief: model, units/origin, key dimensions, features, labels, validation targets, assumptions. Put a <=900 char summary in user_message when requesting approval.",
+        "For new CAD call cad.get_source first unless clearly starting empty. Then propose cad.execute_build123d with result bound to final geometry.",
+        "CAD SOURCE STYLE: named parameters first; semantic .label and .color on each part; Compound(children=[...]); closed solids; no export/show calls.",
+        "Mechanical parts: use canonical labels base_plate, mounting_hole_pattern, rib, boss, flange, interface_face, wall, cover; honor min wall >=3mm, hole-edge >=2x radius, internal radius >=2mm where practical.",
+        "Visible products/vehicles/characters: use loft/revolve/sweep + mirror + final fillets; avoid Box stacking for exterior curves.",
+        "After cad.execute_build123d, review named_parts/parts_added and thumbnail if provided. State 3-5 fail-first visual/geometric objections before further CAD edits.",
+        "If cad.critique output is present, treat fail_first_objections as blockers before finalizing engineering parts.",
+        "CAE setup: use selected @face:/@edge:/@group: pointers when available; ask one concise question only if required support/load face is ambiguous.",
+        "cae.apply_setup_patch is followed by solver preflight; cae.run_solver only after preflight/input are ready and requires confirmation.",
+        "CAD mutation and solver execution are approval-gated; user_message must explain side effects and include the compact CAD brief/plan for CAD actions.",
+        "Schema note: if action.input_json is required, encode tool input as a JSON object string; unused flattened string fields should be empty strings, not null.",
+        "Final/chat messages must be complete and report only checks that actually ran. Use exact counts from tool outputs when available.",
     ]
+
     payload = {
         "objective": objective,
         "active_project_id": project_id,

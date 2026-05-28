@@ -25,6 +25,9 @@ Web workbench and FastAPI service for the `.aieng` engineering platform.
 - **Simulation runner** — Gmsh meshing → CalculiX solve → FRD parse → atomic write-back, with SSE streaming progress and post-processing verdict vs. design targets
 - **Stress heatmap generator** — per-node Von Mises stress colormap as binary GLB from CalculiX FRD results
 - **Contextual engineering chat** — Claude-powered chat grounded in live project state (geometry, FEA setup, simulation results, design targets)
+- **Local Agent Autopilot quality gate** ? external agents return one JSON action at a time; CAD actions use a compact brief gate, semantic labels/colors, approval-gated build123d execution, and automatic read-only `cad.critique` follow-up where registered.
+- **Live project sync** ? the backend publishes `project_changed` / `viewer_asset_changed` events through `/api/agent-activity/stream`; the React workbench refreshes project metadata and viewer assets automatically, with a visible Live/Polling/Reconnecting status and polling fallback.
+- **Product-mode UI shell** ? the right rail defaults to `Build`, `Files`, and `Advanced`; technical model metrics and agent run internals remain available under details panels instead of dominating the first screen.
 
 ## Role in the vertical CAE MVP
 
@@ -38,6 +41,8 @@ Web workbench and FastAPI service for the `.aieng` engineering platform.
 - The schema-version drift warning surfaced through the `aieng_bridge` to the chat panel.
 
 External agents (Claude Code, Codex, MCP clients) reach the workbench through `aieng_freecad_mcp`. For the reproducible end-to-end demo see [`docs/quickstart-vertical-cae-demo.md`](docs/quickstart-vertical-cae-demo.md).
+
+When `AIENG_BACKEND_URL` points MCP calls at the running FastAPI backend, external-agent mutations emit live UI events. The viewer refreshes on CAD preview changes without a manual browser reload; if the SSE stream drops, the UI shows `Polling` / `Reconnecting` and refreshes the active project periodically until the stream recovers.
 
 For the step-by-step evidence-grounded CAD/CAE Copilot loop, see
 [`docs/closed-loop-copilot-stepper.md`](docs/closed-loop-copilot-stepper.md).

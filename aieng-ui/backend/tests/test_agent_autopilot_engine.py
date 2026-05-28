@@ -195,6 +195,40 @@ def test_engine_rejects_pending_approval_without_execution(tmp_path: Path) -> No
     assert not calls
 
 
+def test_cad_generation_runs_readonly_critique_followup_when_registered(tmp_path: Path) -> None:
+    calls = []
+    runtime_tools = RUNTIME_TOOLS + [
+        {"name": "cad.critique", "description": "critique", "input_schema": {"type": "object"}},
+    ]
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=runtime_tools,
+        tool_executor=lambda name, inp: calls.append((name, inp)) or {"status": "ok"},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="make cad",
+            project_id="p1",
+            dry_run=False,
+            fake_actions=[
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    }
+                },
+            ],
+        )
+    )
+    resumed = engine.continue_run(state.run_id, approved=True)
+    assert resumed.status == "completed"
+    assert calls == [
+        ("cad.execute_build123d", {"project_id": "p1", "code": "result = None"}),
+        ("cad.critique", {"project_id": "p1", "mode": "auto"}),
+    ]
+
+
 def test_cad_generation_slice_feeds_topology_observation_after_approval(tmp_path: Path) -> None:
     calls = []
 

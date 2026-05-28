@@ -82,14 +82,17 @@ wiring **if you have a conda env named `aieng311`** with build123d installed. It
 > env to `aieng311`, edit the `-n aieng311` argument, or point `command` directly at
 > that interpreter, e.g. `"command": "C:\\path\\to\\envs\\myenv\\python.exe", "args": ["-m", "app.mcp_server"]`.
 
-> **`AIENG_BACKEND_URL` (Phase 2 — live UI):** when set, the MCP server forwards
-> every tool call to the *running* FastAPI backend's `/api/agent/invoke-tool`
-> endpoint instead of executing in-process. This is what lets the React
-> workbench show **live agent activity** — when Claude Code drives a CAD build,
-> the build animation appears in the viewer in real time and the model refreshes
-> on completion. If the backend is down, the MCP server silently falls back to
-> in-process execution (no live UI, but the call still works). Omit this var if
-> you only use Claude Code headless and don't care about the UI.
+> **`AIENG_BACKEND_URL` (live UI):** when set, the MCP server forwards every tool
+> call to the *running* FastAPI backend's `/api/agent/invoke-tool` endpoint
+> instead of executing in-process. This lets the React workbench show **live
+> agent activity**. CAD builds stream progress, `project_changed` refreshes
+> project metadata, and `viewer_asset_changed` refreshes the GLB/STL viewer URL
+> with a cache-busting version token. The Chat header shows `Live`,
+> `Reconnecting`, or `Polling`; during stream failure the frontend polls the
+> selected project until SSE reconnects. If the backend is down, the MCP server
+> falls back to in-process execution (no live UI, but the call still works).
+> Omit this var only for headless use where the UI does not need to track agent
+> actions.
 
 ### macOS / Linux
 
@@ -202,6 +205,16 @@ is decoded, downscaled to fit 800×800, and stored as `geometry/reference.png` i
 the project's `.aieng` package. Every subsequent `cad.execute_build123d` thumbnail
 then tiles the reference next to the four views so the agent can compare
 proportions against the truth instead of relying on memory.
+
+### Autopilot CAD quality gate
+
+The Local Agent Autopilot prompt is intentionally token-light: it asks the agent
+to form a compact CAD brief before requesting `cad.execute_build123d`, then put
+only a short approval summary in `user_message`. After an approved CAD mutation,
+the backend runs read-only `cad.critique` automatically when registered and
+compacts findings to the top blockers before feeding them back to the agent. This
+keeps modeling iterations grounded without carrying full topology/audit payloads
+through every prompt.
 
 ### Engineering audit (manufacturability check)
 

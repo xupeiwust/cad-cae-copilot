@@ -38,7 +38,7 @@ export const WorkbenchRightRail = forwardRef<HTMLElement, WorkbenchRightRailProp
       <aside className="side-pane" ref={ref}>
         <div className="control-pane-header">
           <div>
-            <span className="control-pane-kicker">Workbench Control</span>
+            <span className="control-pane-kicker">AI Workbench</span>
             <strong>{activeModeDetail}</strong>
           </div>
           <button type="button" className="ghost-button compact-button" onClick={onOpenSettings}>

@@ -91,23 +91,26 @@ export function ViewerPane({
         </div>
       </div>
 
-      <div className="viewer-toolbar">
-        <div className="viewer-toolbar-block">
-          <span className="viewer-toolbar-label">当前 STEP</span>
-          <strong>{selectedFile?.name ?? selectedProject?.source_step ?? "未选择文件"}</strong>
+      <div className="viewer-summary-strip">
+        <div className="viewer-summary-main">
+          <span className="viewer-toolbar-label">Current model</span>
+          <strong>{selectedProject?.name ?? selectedFile?.name ?? "No project selected"}</strong>
+          <small>{previewState}</small>
         </div>
-        <div className="viewer-toolbar-block">
-          <span className="viewer-toolbar-label">模型 ID</span>
-          <strong>{getManifestString(summary, "model_id")}</strong>
+        <div className="viewer-summary-status">
+          <span>{validationState}</span>
+          <span>{selectedProject?.updated_at ? `Updated ${formatTime(selectedProject.updated_at)}` : "No update yet"}</span>
         </div>
-        <div className="viewer-toolbar-block">
-          <span className="viewer-toolbar-label">特征数</span>
-          <strong>{getDerivedNumber(summary, "feature_graph", "count")}</strong>
-        </div>
-        <div className="viewer-toolbar-block">
-          <span className="viewer-toolbar-label">拓扑实体</span>
-          <strong>{getDerivedNumber(summary, "topology", "count")}</strong>
-        </div>
+        <details className="viewer-technical-details">
+          <summary>Model details</summary>
+          <div className="viewer-technical-grid">
+            <div><span>STEP</span><strong>{selectedFile?.name ?? selectedProject?.source_step ?? "None"}</strong></div>
+            <div><span>Model ID</span><strong>{getManifestString(summary, "model_id")}</strong></div>
+            <div><span>Features</span><strong>{getDerivedNumber(summary, "feature_graph", "count")}</strong></div>
+            <div><span>Topology</span><strong>{getDerivedNumber(summary, "topology", "count")}</strong></div>
+            <div><span>Package files</span><strong>{summary?.members?.length ?? 0}</strong></div>
+          </div>
+        </details>
       </div>
 
       <div className="viewer-stage-shell">
@@ -137,12 +140,6 @@ export function ViewerPane({
         />
       </div>
 
-      <div className="viewer-insights">
-        <div className="insight-card"><span>特征数</span><strong>{getDerivedNumber(summary, "feature_graph", "count")}</strong></div>
-        <div className="insight-card"><span>拓扑实体</span><strong>{getDerivedNumber(summary, "topology", "count")}</strong></div>
-        <div className="insight-card"><span>资源成员</span><strong>{summary?.members?.length ?? 0}</strong></div>
-        <div className="insight-card"><span>最近更新</span><strong>{formatTime(selectedProject?.updated_at)}</strong></div>
-      </div>
     </section>
   );
 }

@@ -33,6 +33,8 @@ AUTO_READ_TOOLS = {
     "aieng.validate",
     "aieng.write_completeness_report",
     "cad.get_source",
+    "cad.get_named_part_bbox",
+    "cad.critique",
 }
 
 AUTO_PREVIEW_TOOLS = {

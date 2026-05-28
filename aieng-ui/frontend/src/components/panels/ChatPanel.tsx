@@ -6,7 +6,7 @@ import { ActionIcon, JsonDisclosure } from "../common";
 import { ApprovalCard } from "../agent/ApprovalCard";
 import { AgentPlanCard } from "../agent/AgentPlanCard";
 import { AgentResultCard } from "../agent/AgentResultCard";
-import { isLowRiskArtifactPath } from "../../appUtils";
+import { isLowRiskArtifactPath, type LiveSyncStatus } from "../../appUtils";
 import type { AutopilotObservation, AutopilotRunState, ChatConnection, ProjectRecord, RuntimeRun } from "../../types";
 
 type SimulationProgress = { step: string; message: string };
@@ -24,7 +24,16 @@ function formatElapsed(createdAt: string | undefined, nowMs: number): string {
 }
 
 function statusLabel(status: string): string {
-  return status.replace(/_/g, " ");
+  switch (status) {
+    case "running": return "Working";
+    case "awaiting_approval": return "Needs approval";
+    case "completed": return "Done";
+    case "failed": return "Failed";
+    case "blocked": return "Blocked";
+    case "cancelled": return "Cancelled";
+    case "chatting": return "Ready";
+    default: return status.replace(/_/g, " ");
+  }
 }
 
 function observationToolName(obs: AutopilotObservation): string | null {
@@ -103,6 +112,9 @@ type ChatPanelProps = {
   heatmapRange: { min: number; max: number } | null;
   onViewHeatmap(): void;
   recentPickedFaces: PickedFace[];
+  liveSyncStatus: LiveSyncStatus;
+  liveSyncDetail: string;
+  liveSyncLastEventAt: string | null;
 };
 
 export function ChatPanel({
@@ -136,6 +148,9 @@ export function ChatPanel({
   heatmapRange,
   onViewHeatmap,
   recentPickedFaces,
+  liveSyncStatus,
+  liveSyncDetail,
+  liveSyncLastEventAt,
 }: ChatPanelProps) {
   const [acOpen, setAcOpen] = useState(false);
   const [acQuery, setAcQuery] = useState("");
@@ -244,6 +259,18 @@ export function ChatPanel({
   const sendLabel = chatBusy
     ? cadGenerating ? "Generating…" : "Thinking…"
     : "Send";
+  const liveSyncLabel = liveSyncStatus === "live"
+    ? "Live"
+    : liveSyncStatus === "polling"
+      ? "Polling"
+      : liveSyncStatus === "reconnecting"
+        ? "Reconnecting"
+        : liveSyncStatus === "offline"
+          ? "Offline"
+          : "Connecting";
+  const liveSyncTitle = liveSyncLastEventAt
+    ? `${liveSyncDetail} Last event: ${new Date(liveSyncLastEventAt).toLocaleTimeString()}`
+    : liveSyncDetail;
 
   return (
     <section className="card agent-console-card">
@@ -267,6 +294,10 @@ export function ChatPanel({
               </option>
             ))}
           </select>
+          <span className={`live-sync-pill live-sync-${liveSyncStatus}`} title={liveSyncTitle}>
+            <span className="live-sync-dot" aria-hidden="true" />
+            {liveSyncLabel}
+          </span>
           <button
             type="button"
             className="ghost-button icon-only-button"
@@ -382,18 +413,11 @@ export function ChatPanel({
                       </div>
                     );
                   })()}
-                  <div className="autopilot-run-meta">
-                    <span>{entry.autopilotRun.adapter_id}</span>
-                    <span>{entry.autopilotRun.steps.length} step{entry.autopilotRun.steps.length === 1 ? "" : "s"}</span>
-                    <span>{entry.autopilotRun.observations.length} event{entry.autopilotRun.observations.length === 1 ? "" : "s"}</span>
-                    {entry.autopilotRun.pending_approval ? (
-                      <span>{entry.autopilotRun.pending_approval.level}</span>
-                    ) : null}
-                  </div>
                   {entry.autopilotRun.pending_approval ? (
                     <div className="autopilot-approval-note">
-                      <strong>{entry.autopilotRun.pending_approval.tool_name}</strong>
+                      <strong>Review before applying changes</strong>
                       <span>{entry.autopilotRun.pending_approval.explanation}</span>
+                      <code>{entry.autopilotRun.pending_approval.tool_name}</code>
                       <div className="chat-approval-actions">
                         <button disabled={chatBusy} onClick={() => approveAutopilot(entry.autopilotRun!.run_id)}>
                           <ActionIcon name="approve" />
@@ -422,19 +446,30 @@ export function ChatPanel({
                       </button>
                     </div>
                   ) : null}
-                  {entry.autopilotRun.observations.length ? (
-                    <ul className="autopilot-observation-list">
-                      {entry.autopilotRun.observations.slice(-6).map((obs) => (
-                        <li key={obs.id} className={`autopilot-observation-${obs.kind}`}>
-                          <span>{obs.kind.replace(/_/g, " ")}</span>
-                          <div>
-                            <PointerText text={obs.summary} />
-                            {observationToolName(obs) ? <code>{observationToolName(obs)}</code> : null}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
+                  <details className="autopilot-details">
+                    <summary>Run details</summary>
+                    <div className="autopilot-run-meta">
+                      <span>{entry.autopilotRun.adapter_id}</span>
+                      <span>{entry.autopilotRun.steps.length} step{entry.autopilotRun.steps.length === 1 ? "" : "s"}</span>
+                      <span>{entry.autopilotRun.observations.length} event{entry.autopilotRun.observations.length === 1 ? "" : "s"}</span>
+                      {entry.autopilotRun.pending_approval ? (
+                        <span>{entry.autopilotRun.pending_approval.level}</span>
+                      ) : null}
+                    </div>
+                    {entry.autopilotRun.observations.length ? (
+                      <ul className="autopilot-observation-list">
+                        {entry.autopilotRun.observations.slice(-4).map((obs) => (
+                          <li key={obs.id} className={`autopilot-observation-${obs.kind}`}>
+                            <span>{obs.kind.replace(/_/g, " ")}</span>
+                            <div>
+                              <PointerText text={obs.summary} />
+                              {observationToolName(obs) ? <code>{observationToolName(obs)}</code> : null}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </details>
                 </div>
               ) : null}
 

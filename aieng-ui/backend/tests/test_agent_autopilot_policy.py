@@ -4,6 +4,7 @@ from app.agent_autopilot.policy import classify_known_tool, evaluate_tool_call
 RUNTIME_TOOLS = [
     {"name": "aieng.agent_context"},
     {"name": "cad.execute_build123d"},
+    {"name": "cad.critique"},
     {"name": "cae.run_solver"},
     {"name": "cae.apply_setup_patch"},
 ]
@@ -12,6 +13,7 @@ RUNTIME_TOOLS = [
 def test_policy_classifies_expected_permission_levels() -> None:
     assert classify_known_tool("aieng.agent_context") == "auto_read"
     assert classify_known_tool("cad.execute_build123d") == "approval_mutation"
+    assert classify_known_tool("cad.critique") == "auto_read"
     assert classify_known_tool("cae.run_solver") == "explicit_confirm"
     assert classify_known_tool("no.such.tool") == "blocked"
 

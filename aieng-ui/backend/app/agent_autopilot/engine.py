@@ -327,7 +327,11 @@ class AutopilotEngine:
         if not project_id:
             return
         followups: list[tuple[str, dict[str, Any]]] = []
-        if tool_name == "cae.apply_setup_patch":
+        if tool_name == "cad.execute_build123d":
+            # CAD critique is deterministic/read-only and keeps later agent prompts
+            # compact by surfacing only blocking manufacturability objections.
+            followups.append(("cad.critique", {"project_id": project_id, "mode": "auto"}))
+        elif tool_name == "cae.apply_setup_patch":
             followups.append(("cae.prepare_solver_run", {"project_id": project_id}))
         elif tool_name == "cae.run_solver":
             run_id = tool_input.get("runId") or tool_input.get("run_id")

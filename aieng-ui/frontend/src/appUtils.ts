@@ -380,7 +380,7 @@ export function applyCadProgressEvent(
 // ── agent activity (Phase 2: external agents drive the workbench) ────────────
 
 export type AgentActivityEvent = {
-  type: string;            // tool_started | cad_build_progress | tool_completed | connected
+  type: string;            // connected | tool_* | project_changed | viewer_asset_changed
   call_id?: string;
   tool?: string;
   project_id?: string | null;
@@ -391,8 +391,11 @@ export type AgentActivityEvent = {
   preview_url?: string | null;
   preview_format?: string | null;
   topology_summary?: { face_count?: number; feature_count?: number } | null;
+  source?: string | null;
   message?: string | null;
 };
+
+export type LiveSyncStatus = "connecting" | "live" | "reconnecting" | "polling" | "offline";
 
 /**
  * Fold a live agent-activity event into a CadGenerationProgress so the existing

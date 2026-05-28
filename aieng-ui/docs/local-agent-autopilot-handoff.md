@@ -20,6 +20,14 @@ The local agent never receives permission to call Workbench tools directly. It
 returns one JSON action at a time; the backend validates the action, applies
 policy, and executes only Workbench runtime tools.
 
+Current CAD behavior:
+
+- Before `cad.execute_build123d`, the Autopilot prompt requires a compact CAD brief: units/origin, key dimensions, features, semantic labels, validation targets, and assumptions.
+- CAD source is expected to use named parameters, `.label`, `.color`, and `Compound(children=[...])`; exports remain the runner's responsibility.
+- `cad.execute_build123d` remains approval-gated. After approval and successful execution, the engine automatically runs read-only `cad.critique` when the tool is registered.
+- Critique observations are compacted before being sent back to the local agent so prompt growth stays bounded.
+- The React UI shows a product-facing Agent card by default; raw adapter, step, event, and observation details are folded under `Run details`.
+
 ## Adapter Configuration
 
 Environment variables:
@@ -98,6 +106,12 @@ Frontend:
 cd aieng-ui/frontend
 npm run build
 ```
+
+Live UI sync:
+
+- `/api/agent-activity/stream` emits `project_changed` and `viewer_asset_changed` events for project-mutating tools and CAD preview writes.
+- The frontend shows `Live`, `Reconnecting`, or `Polling` in the Chat header. During stream failure or active agent work, it polls the selected project every 2.5s as a fallback.
+- Manual browser refresh should not be required after `cad.execute_build123d`, `/generate-cad`, or `/refine-cad` when the backend is running and `AIENG_BACKEND_URL` is set.
 
 ## Known Gaps
 

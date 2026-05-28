@@ -18,7 +18,11 @@ export function DebugPanel({ sections }: { sections: DebugPanelSection[] }) {
 
   return (
     <section className="debug-panel">
-      <div className="debug-panel-tabs" role="tablist" aria-label="Debug workbench sections">
+      <div className="advanced-panel-intro">
+        <strong>Advanced workspace</strong>
+        <span>Diagnostics, simulation utilities, and experimental workflows are kept here so the main build view stays focused.</span>
+      </div>
+      <div className="debug-panel-tabs" role="tablist" aria-label="Advanced workbench sections">
         {sections.map((section) => (
           <button
             key={section.id}

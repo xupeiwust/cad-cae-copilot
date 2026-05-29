@@ -998,6 +998,39 @@ def _named_parts_from_feature_graph(feature_graph: dict[str, Any]) -> list[str]:
     ]
 
 
+def _slim_feature_graph_for_response(feature_graph: dict[str, Any]) -> dict[str, Any]:
+    """Return a token-lean copy of the feature graph for tool responses.
+
+    The full graph (with every per-feature BREP face id) is persisted to
+    ``graph/feature_graph.json`` and is reachable via aieng.agent_context /
+    aieng.inspect_package. Echoing all of those face ids back on *every* build is
+    the dominant token cost of a cad.execute_build123d response, and the agent
+    never needs the raw face lists to decide the next step. This keeps what the
+    agent actually uses — feature id/type/name, editable ``parameters``, intent,
+    and the ``body`` ref — and collapses each ``geometry_refs.faces`` array to a
+    ``face_count``. Does not mutate the input.
+    """
+    if not isinstance(feature_graph, dict):
+        return feature_graph
+    slim: dict[str, Any] = {k: v for k, v in feature_graph.items() if k != "features"}
+    slim_features: list[Any] = []
+    for feat in feature_graph.get("features", []) or []:
+        if not isinstance(feat, dict):
+            slim_features.append(feat)
+            continue
+        new_feat = {k: v for k, v in feat.items() if k != "geometry_refs"}
+        refs = feat.get("geometry_refs")
+        if isinstance(refs, dict):
+            slim_refs = {k: v for k, v in refs.items() if k != "faces"}
+            faces = refs.get("faces")
+            if isinstance(faces, list):
+                slim_refs["face_count"] = len(faces)
+            new_feat["geometry_refs"] = slim_refs
+        slim_features.append(new_feat)
+    slim["features"] = slim_features
+    return slim
+
+
 def _available_named_parts_from_topology(topology_map: dict[str, Any]) -> list[str]:
     """Return all named solid/body labels in topology order."""
     return [
@@ -1185,7 +1218,18 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
                 "status": status,
             })
         report["gaps"] = gap_recs[:max_parts]
+        if len(gap_recs) > max_parts:
+            report["gaps_truncated"] = len(gap_recs) - max_parts
         floating = [g["part"] for g in gap_recs if g["status"] == "floating"]
+        # Always-present contact summary over ALL parts (not just the truncated
+        # gaps list above) so the agent can confirm "everything touches / N
+        # floating" even on large models where the per-part gaps are clipped.
+        report["gaps_summary"] = {
+            "touching": sum(1 for g in gap_recs if g["status"] == "touching"),
+            "near": sum(1 for g in gap_recs if g["status"] == "near"),
+            "floating": len(floating),
+            "total": len(gap_recs),
+        }
         if floating:
             report["floating_parts"] = floating
 
@@ -2335,7 +2379,7 @@ def execute_build123d_code(
             "feature_count": feature_count,
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
-        "feature_graph": feature_graph,
+        "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _compute_geometry_report(topo),
         "written_artifacts": written,
         "write_files": write_files,
@@ -2586,7 +2630,7 @@ def run_cad_generation_stream(
                 "feature_count": len(feature_graph.get("features", [])),
                 "bounding_box": solid.get("bounding_box") if solid else None,
             },
-            "feature_graph": feature_graph,
+            "feature_graph": _slim_feature_graph_for_response(feature_graph),
             "geometry_report": _compute_geometry_report(topo),
             "written_artifacts": written,
             "write_files": write_files,
@@ -2741,7 +2785,7 @@ def refine_cad_generation(
             "feature_count": len(feature_graph.get("features", [])),
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
-        "feature_graph": feature_graph,
+        "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "written_artifacts": written,
         "write_files": write_files,
         "preview_url": f"/api/projects/{project_id}/cad-preview",
@@ -3618,7 +3662,7 @@ def edit_build123d_parameter(
             "feature_count": len(feature_graph.get("features", [])),
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
-        "feature_graph": feature_graph,
+        "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _compute_geometry_report(topo),
         "regression_diff": regression_diff,
         "written_artifacts": [
@@ -3743,7 +3787,7 @@ def _rebuild_after_part_edit(
             "feature_count": len(feature_graph.get("features", [])),
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
-        "feature_graph": feature_graph,
+        "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _compute_geometry_report(topo),
         "regression_diff": regression_diff,
         "written_artifacts": [

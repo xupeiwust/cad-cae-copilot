@@ -951,6 +951,11 @@ def test_geometry_report_flags_asymmetry_and_floating() -> None:
     assert arm["mirror_axis"] == "x"
     # foot_FL has no partner and is far from everything
     assert "foot_FL" in report.get("floating_parts", [])
+    # always-present contact summary spans every part and the buckets add up
+    gs = report["gaps_summary"]
+    assert gs["total"] == 4
+    assert gs["floating"] >= 1
+    assert gs["touching"] + gs["near"] + gs["floating"] == gs["total"]
 
 
 # ── geometry regression diff ──────────────────────────────────────────────────

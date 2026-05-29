@@ -686,15 +686,16 @@ export function useWorkbenchApp() {
         if (cancelled) return;
         const runId = activeSession.active_run_id;
         setChatHistory((current) => current.map((item) => {
-          if (item.autopilotRun?.run_id !== runId) return item;
-          if (!ACTIVE_AUTOPILOT_STATUSES.has(item.autopilotRun.status)) return item;
+          const run = item.autopilotRun;
+          if (!run || run.run_id !== runId) return item;
+          if (!ACTIVE_AUTOPILOT_STATUSES.has(run.status)) return item;
           return {
             ...item,
             body: `${item.body}\n\n*(Run state is no longer available; status may be stale.)*`,
             autopilotRun: {
-              ...item.autopilotRun,
+              ...run,
               status: "failed" as const,
-              errors: [...(item.autopilotRun.errors || []), "Run state is no longer available."],
+              errors: [...(run.errors || []), "Run state is no longer available."],
             },
           };
         }));

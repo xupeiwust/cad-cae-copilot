@@ -1,13 +1,23 @@
 # aieng — CAD/CAE Agent Workbench
 
+![CAD](https://img.shields.io/badge/CAD-build123d%20%2F%20OpenCASCADE-1f6feb)
+![FEA](https://img.shields.io/badge/FEA-CalculiX-e36209)
+![Agent](https://img.shields.io/badge/agent-MCP%20server-8957e5)
+![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
+
 A co-pilot platform for mechanical engineering. It lets AI agents (Claude Code,
 GitHub Copilot, OpenAI Codex, Cursor, …) drive **real 3D CAD modeling** (via
 [build123d](https://github.com/gumyr/build123d) / OpenCASCADE) and **structural FEA**
 (via CalculiX), with every project stored as a self-describing `.aieng` package.
 
-The headline capability: an agent can model incrementally without an API key —
-it writes build123d code, the backend executes it deterministically, returns a
-rendered thumbnail, and accumulates named parts across steps.
+## Highlights
+
+- **Real geometry, no API key** — the agent writes build123d code; the backend runs it deterministically and returns STEP/STL/GLB plus a 4-view thumbnail.
+- **Incremental modeling** — `append` builds onto the previous result; parts carry semantic `.label` names and colors that persist across steps.
+- **Click-to-pick faces** — the 3D viewer maps each GLB primitive to its exact B-Rep face, so you click a face to bind a CAE load or support (`@face:` pointers).
+- **CAD → FEA in one package** — material, BCs, mesh, CalculiX run, and results all live in one self-describing `.aieng` file.
+- **Discoverable projects** — builds auto-name from their parts; locate any model by a part label via `aieng.find_projects_by_part`.
+- **Driven over MCP** — one tool registry, usable from Claude Code, Copilot, Codex, and Cursor.
 
 ---
 

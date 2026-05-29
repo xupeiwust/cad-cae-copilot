@@ -524,7 +524,8 @@ This is also good engineering practice — fixture and load on flat interfaces.
 | Tool | Purpose |
 |------|---------|
 | `aieng.agent_readme` | This guide, served at runtime |
-| `aieng.list_projects` | All known projects with id, name, status |
+| `aieng.list_projects` | All known projects with id, name, status, and (for agent-built geometry) `named_parts` + `part_count` |
+| `aieng.find_projects_by_part` | Locate a project by a part label (case-insensitive substring on `named_parts`) |
 | `aieng.agent_context` | Compact context: pointers, stale warnings, next steps |
 | `aieng.inspect_package` | Full project summary: geometry, CAE setup, results, verdict |
 
@@ -543,7 +544,7 @@ This is also good engineering practice — fixture and load on flat interfaces.
 
 | Tool | Purpose |
 |------|---------|
-| `cad.execute_build123d` | Run caller-supplied build123d code to create/replace geometry (mode=replace\|append). Optional `model_kind` (auto\|organic\|mechanical) gates the feature-graph heuristics |
+| `cad.execute_build123d` | Run caller-supplied build123d code to create/replace geometry (mode=replace\|append). Optional `name` sets a human-recognizable project name (else placeholder projects are auto-named from part labels); optional `model_kind` (auto\|organic\|mechanical) gates the feature-graph heuristics |
 | `cad.edit_parameter` | Fast parametric edit: replaces a named constant in `source.py` + re-executes build123d (no LLM). Requires the feature to carry editable parameters — see "Parametric editing" below |
 | `cad.replace_part` | Swap ONE named part (by `.label`) for caller-supplied build123d code, keeping everything else. Re-executes, no LLM. See "Part-level edits" below |
 | `cad.remove_part` | Drop ONE named part (by `.label`) from the model. Re-executes, no LLM |
@@ -586,6 +587,7 @@ is possible).
 | `aieng.refresh_semantics` | Re-validate and re-extract semantic labels |
 | `aieng.update_validation_status` | Write per-category validation flags |
 | `aieng.write_evidence_scaffold` | Initialize `results/evidence_index.json` scaffold |
+| `aieng.delete_project` | **[APPROVAL]** Permanently delete a project — its directory + chat sessions/messages. Irreversible |
 
 ### MCP introspection
 
@@ -670,7 +672,7 @@ process. Always: (1) explain the side effects to the user, (2) wait for explicit
 confirmation, (3) report the outcome after the call.
 
 Currently approval-gated: `cad.execute_build123d`, `cad.edit_parameter`,
-`cad.replace_part`, `cad.remove_part`, `cae.run_solver`.
+`cad.replace_part`, `cad.remove_part`, `cae.run_solver`, `aieng.delete_project`.
 
 ---
 

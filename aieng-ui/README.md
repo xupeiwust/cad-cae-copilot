@@ -49,13 +49,15 @@ For the step-by-step evidence-grounded CAD/CAE Copilot loop, see
 For the issue #10 v0.26 demo acceptance path, see
 [`docs/copilot-loop-v0.26-demo-walkthrough.md`](docs/copilot-loop-v0.26-demo-walkthrough.md).
 
-38 registered runtime tools (mutation / expensive operations are approval-gated).
+40 registered runtime tools (mutation / expensive operations are approval-gated).
 Honest status semantics: `skipped`, `partial`, `error`, and `completed` are never
 conflated. Key tools listed below; full registry available via `GET /api/runtime/tools`.
 
 | Tool | Status |
 |------|--------|
 | `aieng.inspect_package` | Working |
+| `aieng.find_projects_by_part` | Working — locate a project by a part label (case-insensitive substring on `named_parts`) |
+| `aieng.delete_project` | Working — permanently delete a project (directory + chat sessions/messages). Approval-gated. |
 | `aieng.refresh_semantics` | Working |
 | `aieng.generate_preview` | Working |
 | `aieng.read_audit_log` | Working |

@@ -585,7 +585,7 @@ is possible).
 
 | Tool | Purpose |
 |------|---------|
-| `aieng.convert` | Import STEP/FCStd/Shape IR into a `.aieng` package; Shape IR can compile+publish GLB |
+| `aieng.convert` | Import STEP/FCStd/Shape IR into a `.aieng` package. Shape IR compiles by `representation`: `brep_build123d` (default) → build123d STEP/B-Rep + analytic faces; `implicit_sdf` → fogleman/sdf mesh → GLB (region-level faces). Publishes a viewer preview |
 | `aieng.generate_preview` | Regenerate GLB/STL web preview from current STEP |
 | `aieng.refresh_semantics` | Re-validate and re-extract semantic labels |
 | `aieng.update_validation_status` | Write per-category validation flags |

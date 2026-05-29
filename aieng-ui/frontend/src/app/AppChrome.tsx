@@ -46,8 +46,10 @@ export function AppChrome({ app }: AppChromeProps) {
           </div>
         </header>
 
-        <div className="app-main">
+        <div className={app.sidebarCollapsed ? "app-main sidebar-collapsed" : "app-main"}>
           <SessionsSidebar
+            collapsed={app.sidebarCollapsed}
+            onCollapsedChange={app.setSidebarCollapsed}
             projectName={app.projectName}
             onProjectNameChange={app.setProjectName}
             busy={app.busy}
@@ -56,6 +58,10 @@ export function AppChrome({ app }: AppChromeProps) {
             selectedId={app.selectedId}
             selectedProject={app.selectedProject}
             projects={app.projects}
+            chatSessions={app.chatSessions}
+            activeSessionId={app.activeSessionId}
+            onSelectSession={app.selectChatSession}
+            onCreateSession={() => void app.createChatSession()}
             stages={app.stages}
             runBusyTask={app.runBusyTask}
             refreshProjects={app.refreshProjects}

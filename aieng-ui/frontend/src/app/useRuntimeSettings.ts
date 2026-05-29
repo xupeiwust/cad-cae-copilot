@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import { api } from "../api";
 import {
@@ -23,6 +23,9 @@ import type {
 } from "../types";
 import { useBrowserStorageState } from "./useBrowserStorageState";
 
+const LLM_CONFIG_KEY = "llm_config";
+const LOCAL_AGENT_CONFIG_KEY = "local_agent_config";
+
 type UseRuntimeSettingsArgs = {
   setSummary: Dispatch<SetStateAction<ProjectSummary | null>>;
 };
@@ -32,25 +35,8 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
   const [runtimeDraft, setRuntimeDraft] = useState<RuntimeConfig | null>(null);
   const [runtimeNotice, setRuntimeNotice] = useState<Notice | null>(null);
   const [runtimeBusy, setRuntimeBusy] = useState(false);
-  const [llmConfig, setLlmConfig] = useBrowserStorageState<LLMConfig>(
-    LLM_CONFIG_STORAGE_KEY,
-    DEFAULT_LLM_CONFIG,
-    {
-      storage: "local",
-      deserialize: (raw) => normalizeLlmConfig(JSON.parse(raw)),
-    },
-  );
-  const [localAgentConfig, setLocalAgentConfig] = useBrowserStorageState<LocalAgentConfig>(
-    LOCAL_AGENT_CONFIG_STORAGE_KEY,
-    DEFAULT_LOCAL_AGENT_CONFIG,
-    {
-      storage: "local",
-      deserialize: (raw) => {
-        const parsed = JSON.parse(raw) as Partial<LocalAgentConfig>;
-        return { preferredAdapterId: parsed.preferredAdapterId ?? null };
-      },
-    },
-  );
+  const [llmConfig, setLlmConfigState] = useState<LLMConfig>(DEFAULT_LLM_CONFIG);
+  const [localAgentConfig, setLocalAgentConfigState] = useState<LocalAgentConfig>(DEFAULT_LOCAL_AGENT_CONFIG);
   const [directApiKey, setDirectApiKey] = useBrowserStorageState<string>(
     "aieng_api_key",
     "",
@@ -61,6 +47,59 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
       shouldRemove: (value) => !value,
     },
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await api.getSettings();
+        if (cancelled) return;
+        const savedLlm = settings[LLM_CONFIG_KEY];
+        if (savedLlm && typeof savedLlm === "object") {
+          setLlmConfigState(normalizeLlmConfig(savedLlm as Record<string, unknown>));
+        } else {
+          const legacyLlm = readLegacyLlmConfig();
+          if (legacyLlm) {
+            setLlmConfigState(legacyLlm);
+            void api.updateSetting(LLM_CONFIG_KEY, legacyLlm).catch(() => {});
+          }
+        }
+        const savedLocal = settings[LOCAL_AGENT_CONFIG_KEY];
+        if (savedLocal && typeof savedLocal === "object") {
+          const parsed = savedLocal as Partial<LocalAgentConfig>;
+          setLocalAgentConfigState({ preferredAdapterId: parsed.preferredAdapterId ?? null });
+        } else {
+          const legacyLocal = readLegacyLocalAgentConfig();
+          if (legacyLocal) {
+            setLocalAgentConfigState(legacyLocal);
+            void api.updateSetting(LOCAL_AGENT_CONFIG_KEY, legacyLocal).catch(() => {});
+          }
+        }
+      } catch {
+        const legacyLlm = readLegacyLlmConfig();
+        const legacyLocal = readLegacyLocalAgentConfig();
+        if (legacyLlm && !cancelled) setLlmConfigState(legacyLlm);
+        if (legacyLocal && !cancelled) setLocalAgentConfigState(legacyLocal);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  function setLlmConfig(value: LLMConfig | ((prev: LLMConfig) => LLMConfig)) {
+    setLlmConfigState((prev) => {
+      const next = typeof value === "function" ? value(prev) : value;
+      void api.updateSetting(LLM_CONFIG_KEY, next).catch(() => {});
+      return next;
+    });
+  }
+
+  function setLocalAgentConfig(value: LocalAgentConfig | ((prev: LocalAgentConfig) => LocalAgentConfig)) {
+    setLocalAgentConfigState((prev) => {
+      const next = typeof value === "function" ? value(prev) : value;
+      void api.updateSetting(LOCAL_AGENT_CONFIG_KEY, next).catch(() => {});
+      return next;
+    });
+  }
 
   const runtimeReady = runtime?.probe.ready ?? false;
   const runtimeProvider = getProviderLabel(runtime?.config.provider);
@@ -166,4 +205,24 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
     testRuntimeConfig: () => api.testRuntimeConfig(runtimeDraft!),
     updateRuntimeConfig: () => api.updateRuntimeConfig(runtimeDraft!),
   };
+}
+
+function readLegacyLlmConfig(): LLMConfig | null {
+  try {
+    const raw = window.localStorage.getItem(LLM_CONFIG_STORAGE_KEY);
+    return raw ? normalizeLlmConfig(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLegacyLocalAgentConfig(): LocalAgentConfig | null {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_AGENT_CONFIG_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LocalAgentConfig>;
+    return { preferredAdapterId: parsed.preferredAdapterId ?? null };
+  } catch {
+    return null;
+  }
 }

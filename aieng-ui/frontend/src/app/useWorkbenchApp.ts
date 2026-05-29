@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 
-import { api } from "../api";
+import { api, type ChatSession, type PersistedChatMessage } from "../api";
 import {
   BASE_STAGES,
   DEFAULT_CHAT_CONNECTIONS,
@@ -21,10 +21,11 @@ import type {
   RuntimeConfigSnapshot,
   RuntimeRun,
   SolverFieldDescriptor,
+  AutopilotRunState,
 } from "../types";
 import { useAgentActivityStream } from "./useAgentActivityStream";
 import { useAgentRuns } from "./useAgentRuns";
-import { mergeLocalAgentCapabilities } from "./workbenchHelpers";
+import { mergeLocalAgentCapabilities, summarizeAutopilotRun } from "./workbenchHelpers";
 import { resolveEngineeringIntent } from "./engineeringIntent";
 import { buildFallbackSummary } from "./projectSummary";
 import { runtimeRunChatEntry } from "./runtimeRunChat";
@@ -37,6 +38,9 @@ export function useWorkbenchApp() {
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [projectName, setProjectName] = useState("STEP workbench project");
   const [message, setMessage] = useState("Check the current project status and generate a reviewable engineering execution plan.");
@@ -53,6 +57,31 @@ export function useWorkbenchApp() {
   const [artifactViewerData, setArtifactViewerData] = useState<ArtifactResponse | null>(null);
   const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
+  const persistedChatIdsRef = useRef<Set<string>>(new Set());
+  const persistChatItem = useCallback((item: ChatHistoryItem) => {
+    if (!selectedId || !activeSessionId || persistedChatIdsRef.current.has(item.id)) return;
+    persistedChatIdsRef.current.add(item.id);
+    void api.saveChatMessage(selectedId, {
+      session_id: activeSessionId,
+      role: item.role,
+      content: item.body,
+      mode: item.mode,
+      created_at: item.createdAt,
+      extra: chatItemExtra(item),
+    }).catch(() => {
+      persistedChatIdsRef.current.delete(item.id);
+    });
+  }, [activeSessionId, selectedId]);
+  const setPersistentChatHistory = useCallback((value: SetStateAction<ChatHistoryItem[]>) => {
+    setChatHistory((current) => {
+      const next = typeof value === "function" ? value(current) : value;
+      const currentIds = new Set(current.map((item) => item.id));
+      for (const item of next) {
+        if (!currentIds.has(item.id)) persistChatItem(item);
+      }
+      return next;
+    });
+  }, [persistChatItem]);
   const runtimeSettings = useRuntimeSettings({ setSummary });
   const {
     runtime,
@@ -101,7 +130,7 @@ export function useWorkbenchApp() {
     directApiKey,
     refreshProjects,
     setBusy,
-    setChatHistory,
+    setChatHistory: setPersistentChatHistory,
   });
   const {
     pickedFaces,
@@ -143,6 +172,34 @@ export function useWorkbenchApp() {
     () => chatConnections.find((item) => item.id === selectedChatConnectionId) ?? chatConnections[0] ?? DEFAULT_CHAT_CONNECTIONS[0],
     [chatConnections, selectedChatConnectionId],
   );
+  const activeSession = useMemo(
+    () => chatSessions.find((item) => item.id === activeSessionId) ?? null,
+    [activeSessionId, chatSessions],
+  );
+  const updateActiveSessionFromRun = useCallback((run: AutopilotRunState) => {
+    const projectId = run.project_id ?? selectedId;
+    const sessionId = run.session_id ?? activeSessionId;
+    if (!projectId || !sessionId) return;
+    const status =
+      run.status === "running" || run.status === "awaiting_approval" || run.status === "chatting"
+        ? "running"
+        : run.status === "completed"
+          ? "completed"
+          : run.status === "cancelled"
+            ? "cancelled"
+            : run.status === "failed"
+              ? "failed"
+              : "idle";
+    setChatSessions((current) => current.map((session) => (
+      session.id === sessionId
+        ? { ...session, status, active_run_id: run.run_id, updated_at: run.updated_at }
+        : session
+    )));
+    void api.updateChatSession(projectId, sessionId, {
+      status,
+      active_run_id: run.run_id,
+    }).catch(() => {});
+  }, [activeSessionId, selectedId]);
   const selectedConnectionBlocked = selectedChatConnection.requires_project && !selectedId;
   const {
     agentBusy,
@@ -153,11 +210,13 @@ export function useWorkbenchApp() {
     runAgentChat,
     probeLocalAgents,
     runAutopilotAgent,
+    watchAutopilotRun,
     updateAutopilotRun,
     approveRun,
     rejectRun,
   } = useAgentRuns({
     selectedId,
+    activeSessionId,
     message,
     selectedChatConnection,
     localAgentConfig,
@@ -166,8 +225,9 @@ export function useWorkbenchApp() {
     appendRunToChatHistory,
     runBusyTask,
     setNotice,
-    setChatHistory,
+    setChatHistory: setPersistentChatHistory,
     setChatConnections,
+    onAutopilotRunUpdate: updateActiveSessionFromRun,
   });
   const {
     liveSyncStatus,
@@ -182,7 +242,7 @@ export function useWorkbenchApp() {
     stopAutopilotPoll,
     setAgentBusy,
     setNotice,
-    setChatHistory,
+    setChatHistory: setPersistentChatHistory,
     setCadGenerationProgress,
   });
   const chatBusy = agentBusy || busy;
@@ -370,13 +430,20 @@ export function useWorkbenchApp() {
   async function sendUnified() {
     const prompt = message.trim();
     if (!prompt) return;
+    if (selectedId && activeSessionId && activeSession && /^default session|new session$/i.test(activeSession.title)) {
+      const title = prompt.length > 54 ? `${prompt.slice(0, 51)}...` : prompt;
+      setChatSessions((current) => current.map((session) => (
+        session.id === activeSessionId ? { ...session, title } : session
+      )));
+      void api.updateChatSession(selectedId, activeSessionId, { title }).catch(() => {});
+    }
     if (selectedChatConnection.id === "local-agent" || selectedChatConnection.id === "llm-api") {
       const chattingRun = chatHistory
         .slice()
         .reverse()
         .find((item) => item.autopilotRun?.status === "chatting")?.autopilotRun;
       if (chattingRun) {
-        setChatHistory((current) => [
+        setPersistentChatHistory((current) => [
           ...current,
           { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
         ]);
@@ -384,7 +451,7 @@ export function useWorkbenchApp() {
         await updateAutopilotRun(chattingRun.run_id, "approve", prompt);
         return;
       }
-      setChatHistory((current) => [
+      setPersistentChatHistory((current) => [
         ...current,
         { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
       ]);
@@ -394,7 +461,7 @@ export function useWorkbenchApp() {
     }
     const agentPrompt = withSelectedGeometryPrompt(prompt);
 
-    setChatHistory((current) => [
+    setPersistentChatHistory((current) => [
       ...current,
       { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString() },
     ]);
@@ -408,7 +475,7 @@ export function useWorkbenchApp() {
     const cadIntent = plannedAction?.intent ?? null;
     if (cadIntent === "simulate") {
       setSimulationPending(true);
-      setChatHistory((current) => [
+      setPersistentChatHistory((current) => [
         ...current,
         {
           id: createChatId(),
@@ -496,8 +563,70 @@ export function useWorkbenchApp() {
   }, [selectedId, selectedCaeField, hasCaeResultArtifacts, renderableCaeFields]);
 
   useEffect(() => {
-    setChatHistory([]);
+    if (!selectedId) {
+      persistedChatIdsRef.current = new Set();
+      setChatSessions([]);
+      setActiveSessionId(null);
+      setChatHistory([]);
+      return;
+    }
+    let cancelled = false;
+    void api.getChatSessions(selectedId)
+      .then((sessions) => {
+        if (cancelled) return;
+        setChatSessions(sessions);
+        setActiveSessionId((current) => (
+          current && sessions.some((session) => session.id === current)
+            ? current
+            : sessions[0]?.id ?? null
+        ));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChatSessions([]);
+          setActiveSessionId(null);
+          setChatHistory([]);
+        }
+      });
+    return () => { cancelled = true; };
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || !activeSessionId) {
+      persistedChatIdsRef.current = new Set();
+      setChatHistory([]);
+      return;
+    }
+    let cancelled = false;
+    void api.getChatMessages(selectedId, activeSessionId)
+      .then((messages) => {
+        if (cancelled) return;
+        const items = messages.map(persistedMessageToChatItem);
+        persistedChatIdsRef.current = new Set(items.map((item) => item.id));
+        setChatHistory(items);
+      })
+      .catch(() => {
+        persistedChatIdsRef.current = new Set();
+        if (!cancelled) setChatHistory([]);
+      });
+    return () => { cancelled = true; };
+  }, [activeSessionId, selectedId]);
+
+  useEffect(() => {
+    if (!activeSession?.active_run_id) return;
+    let cancelled = false;
+    void api.getAutopilotRun(activeSession.active_run_id)
+      .then((run) => {
+        if (cancelled) return;
+        updateActiveSessionFromRun(run);
+        setChatHistory((current) => upsertAutopilotChatItem(current, run));
+        if (run.status === "running") {
+          void watchAutopilotRun(run.run_id);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeSession?.active_run_id, updateActiveSessionFromRun]);
 
   useEffect(() => {
     if (!chatLogRef.current) return;
@@ -505,7 +634,20 @@ export function useWorkbenchApp() {
   }, [chatHistory]);
 
   function appendRunToChatHistory(run: RuntimeRun) {
-    setChatHistory((current) => [...current, runtimeRunChatEntry(run)]);
+    setPersistentChatHistory((current) => [...current, runtimeRunChatEntry(run)]);
+  }
+
+  async function createChatSession(title?: string) {
+    if (!selectedId) return;
+    const session = await api.createChatSession(selectedId, title ?? "New session");
+    setChatSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+    setActiveSessionId(session.id);
+    persistedChatIdsRef.current = new Set();
+    setChatHistory([]);
+  }
+
+  function selectChatSession(sessionId: string) {
+    setActiveSessionId(sessionId);
   }
 
   async function viewArtifact(path: string) {
@@ -536,6 +678,13 @@ export function useWorkbenchApp() {
     setNotice,
     setRuntimeNotice,
     selectedProject,
+    chatSessions,
+    activeSessionId,
+    activeSession,
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    createChatSession,
+    selectChatSession,
     setSettingsOpen,
     projectName,
     setProjectName,
@@ -607,6 +756,63 @@ export function useWorkbenchApp() {
     globalSettingsOpen,
     setGlobalSettingsOpen,
   };
+}
+
+function chatItemExtra(item: ChatHistoryItem): Record<string, unknown> | undefined {
+  const {
+    id: _id,
+    role: _role,
+    body: _body,
+    createdAt: _createdAt,
+    mode: _mode,
+    ...extra
+  } = item;
+  const entries = Object.entries(extra).filter(([, value]) => value !== undefined);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function persistedMessageToChatItem(message: PersistedChatMessage): ChatHistoryItem {
+  const extra = (message.extra ?? {}) as Partial<ChatHistoryItem>;
+  const role = message.role === "assistant" ? "assistant" : "user";
+  const mode =
+    message.mode === "plan" || message.mode === "execute" || message.mode === "runtime"
+      ? message.mode
+      : undefined;
+  return {
+    ...extra,
+    id: `db-${message.id}`,
+    role,
+    body: message.content,
+    createdAt: message.created_at,
+    mode,
+  };
+}
+
+function autopilotRunToChatItem(run: AutopilotRunState): ChatHistoryItem {
+  return {
+    id: `run-${run.run_id}`,
+    role: "assistant",
+    body: summarizeAutopilotRun(run),
+    createdAt: run.created_at,
+    mode: "runtime",
+    autopilotRun: run,
+    errors: run.errors,
+  };
+}
+
+function upsertAutopilotChatItem(current: ChatHistoryItem[], run: AutopilotRunState): ChatHistoryItem[] {
+  const index = current.findIndex((item) => item.autopilotRun?.run_id === run.run_id);
+  if (index === -1) {
+    return [...current, autopilotRunToChatItem(run)];
+  }
+  const updated = [...current];
+  updated[index] = {
+    ...updated[index],
+    body: summarizeAutopilotRun(run),
+    autopilotRun: run,
+    errors: run.errors,
+  };
+  return updated;
 }
 
 

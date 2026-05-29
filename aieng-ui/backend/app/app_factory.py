@@ -20,9 +20,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     _sync_main_symbols()
     active_settings = settings or Settings.from_env()
     ensure_dirs(active_settings)
+    from . import db
+
+    db_path = active_settings.data_root / "aieng.db"
+    db.init_db(db_path)
     server_started_at = datetime.now(timezone.utc).isoformat()
     app = FastAPI(title="aieng-platform")
     app.state.settings = active_settings
+    app.state.db_path = db_path
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -268,6 +273,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             status="running",
             message=request.message,
             project_id=request.project_id,
+            session_id=request.session_id,
             adapter_id=request.adapter_id,
             mode=request.mode,
             dry_run=request.dry_run,
@@ -961,16 +967,38 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         into the system prompt so the LLM can answer engineering questions accurately.
         Body: { message: str, history?: [{role, content}], api_key?: str }
         """
-        from . import contextual_chat
+        from . import contextual_chat, db
 
         p = payload or {}
-        return contextual_chat.chat_with_context(
+        message = str(p.get("message") or "").strip()
+        session_id = str(p.get("session_id") or "").strip() or None
+        if session_id is None:
+            session_id = db.ensure_default_chat_session(db_path, project_id)["id"]
+        if message:
+            db.add_chat_message(
+                db_path,
+                project_id=project_id,
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
+        result = contextual_chat.chat_with_context(
             settings=active_settings,
             project_id=project_id,
-            message=str(p.get("message") or ""),
+            message=message,
             history=list(p.get("history") or []),
             api_key=p.get("api_key"),
         )
+        reply = result.get("reply", "")
+        if reply:
+            db.add_chat_message(
+                db_path,
+                project_id=project_id,
+                session_id=session_id,
+                role="assistant",
+                content=reply,
+            )
+        return result
 
     def _publish_project_live_change(
         *,
@@ -1856,7 +1884,177 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
     @app.post("/api/projects/{project_id}/chat")
     def chat(project_id: str, payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        return chat_orchestrator(active_settings, project_id, payload or {})
+        from . import db
+
+        p = payload or {}
+        message = str(p.get("message") or "").strip()
+        session_id = str(p.get("session_id") or "").strip() or None
+        if session_id is None:
+            session_id = db.ensure_default_chat_session(db_path, project_id)["id"]
+        if message:
+            db.add_chat_message(
+                db_path,
+                project_id=project_id,
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
+        result = chat_orchestrator(active_settings, project_id, p)
+        reply = result.get("reply", "")
+        if reply:
+            db.add_chat_message(
+                db_path,
+                project_id=project_id,
+                session_id=session_id,
+                role="assistant",
+                content=reply,
+            )
+        return result
+
+    @app.get("/api/projects/{project_id}/chat-sessions")
+    def list_chat_sessions(project_id: str) -> list[dict[str, Any]]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        sessions = db.get_chat_sessions(db_path, project_id)
+        if not sessions:
+            sessions = [db.ensure_default_chat_session(db_path, project_id)]
+        return sessions
+
+    @app.post("/api/projects/{project_id}/chat-sessions")
+    def create_chat_session_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        p = payload or {}
+        try:
+            return db.create_chat_session(
+                db_path,
+                project_id=project_id,
+                title=str(p.get("title") or "New session"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/projects/{project_id}/chat-sessions/{session_id}")
+    def update_chat_session_endpoint(
+        project_id: str,
+        session_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        p = payload or {}
+        updated = db.update_chat_session(
+            db_path,
+            session_id,
+            title=p.get("title") if isinstance(p.get("title"), str) else None,
+            status=p.get("status") if isinstance(p.get("status"), str) else None,
+            active_run_id=p.get("active_run_id") if isinstance(p.get("active_run_id"), str) else None,
+        )
+        if updated is None or updated["project_id"] != project_id:
+            raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        return updated
+
+    @app.delete("/api/projects/{project_id}/chat-sessions/{session_id}")
+    def delete_chat_session_endpoint(project_id: str, session_id: str) -> dict[str, Any]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        if not db.delete_chat_session(db_path, project_id, session_id):
+            raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        return {"deleted": True, "project_id": project_id, "session_id": session_id}
+
+    @app.get("/api/projects/{project_id}/chat-messages")
+    def list_chat_messages(project_id: str, session_id: str | None = None) -> list[dict[str, Any]]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        if session_id:
+            session = db.get_chat_session(db_path, session_id)
+            if session is None or session["project_id"] != project_id:
+                raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        return db.get_chat_messages(db_path, project_id, session_id=session_id)
+
+    @app.post("/api/projects/{project_id}/chat-messages")
+    def create_chat_message(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from . import db
+
+        p = payload or {}
+        get_project(active_settings, project_id)
+        session_id = str(p.get("session_id") or "").strip() or None
+        try:
+            return db.add_chat_message(
+                db_path,
+                project_id=project_id,
+                session_id=session_id,
+                role=str(p.get("role", "user")),
+                content=str(p.get("content") or ""),
+                mode=p.get("mode") if p.get("mode") else None,
+                created_at=p.get("created_at") if p.get("created_at") else None,
+                extra=p.get("extra") if isinstance(p.get("extra"), dict) else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/projects/{project_id}/chat-messages")
+    def delete_chat_messages(project_id: str, session_id: str | None = None) -> dict[str, Any]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        if session_id:
+            session = db.get_chat_session(db_path, session_id)
+            if session is None or session["project_id"] != project_id:
+                raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        deleted = db.clear_chat_messages(db_path, project_id, session_id=session_id)
+        return {"deleted": deleted, "project_id": project_id}
+
+    @app.get("/api/settings")
+    def list_settings() -> dict[str, Any]:
+        from . import db
+
+        return db.get_all_settings(db_path)
+
+    @app.get("/api/settings/{key}")
+    def get_setting_endpoint(key: str) -> dict[str, Any]:
+        from . import db
+
+        record = db.get_setting_record(db_path, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Setting not found: {key}")
+        return record
+
+    @app.put("/api/settings/{key}")
+    def put_setting_endpoint(
+        key: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from . import db
+
+        p = payload or {}
+        try:
+            return db.set_setting(db_path, key, p.get("value"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/settings/{key}")
+    def delete_setting_endpoint(key: str) -> dict[str, Any]:
+        from . import db
+
+        try:
+            deleted = db.delete_setting(db_path, key)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Setting not found: {key}")
+        return {"deleted": True, "key": key}
 
     @app.get("/api/projects/{project_id}/fields/{field_name}")
     def get_field_descriptor(project_id: str, field_name: str) -> dict[str, Any]:

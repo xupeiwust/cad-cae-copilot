@@ -3,6 +3,27 @@ import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactRespons
 
 const API = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
+export type PersistedChatMessage = {
+  id: number;
+  session_id?: string | null;
+  project_id: string;
+  role: string;
+  content: string;
+  mode?: string | null;
+  created_at: string;
+  extra?: Record<string, unknown> | null;
+};
+
+export type ChatSession = {
+  id: string;
+  project_id: string;
+  title: string;
+  status: string;
+  active_run_id?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const timeoutMs = init?.timeoutMs ?? 30000;
   const controller = new AbortController();
@@ -48,6 +69,19 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+    }),
+  getSettings: () => request<Record<string, unknown>>("/api/settings"),
+  getSetting: (key: string) =>
+    request<{ key: string; value: unknown }>(`/api/settings/${encodeURIComponent(key)}`),
+  updateSetting: (key: string, value: unknown) =>
+    request<{ key: string; value: unknown; updated_at: string }>(`/api/settings/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    }),
+  deleteSetting: (key: string) =>
+    request<{ deleted: boolean; key: string }>(`/api/settings/${encodeURIComponent(key)}`, {
+      method: "DELETE",
     }),
   testLlmProvider: (config: LLMConfig, verifyConnection: boolean) =>
     request<{
@@ -104,6 +138,7 @@ export const api = {
   runAutopilot: (payload: {
     message: string;
     project_id?: string | null;
+    session_id?: string | null;
     adapter_id?: string;
     selected_geometry?: SelectedGeometryContext | null;
     llm_config?: LLMConfig;
@@ -289,11 +324,11 @@ export const api = {
   importAieng: (projectId: string) => request(`/api/projects/${projectId}/import-aieng`, { method: "POST" }),
   validate: (projectId: string) => request(`/api/projects/${projectId}/validate`, { method: "POST" }),
   convert: (projectId: string) => request(`/api/projects/${projectId}/convert`, { method: "POST" }),
-  chat: (projectId: string, message: string, execute: boolean) =>
+  chat: (projectId: string, message: string, execute: boolean, sessionId?: string | null) =>
     request<ChatResponse>(`/api/projects/${projectId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, execute }),
+      body: JSON.stringify({ message, execute, ...(sessionId ? { session_id: sessionId } : {}) }),
     }),
   getFieldDescriptor: (projectId: string, fieldName: string) =>
     request<SolverFieldDescriptor>(`/api/projects/${projectId}/fields/${fieldName}`),
@@ -467,15 +502,66 @@ export const api = {
     message: string,
     history: Array<{ role: string; content: string }>,
     apiKey?: string,
+    sessionId?: string | null,
   ) =>
     request<{ reply: string; context_used: boolean; project_id: string }>(
       `/api/projects/${projectId}/contextual-chat`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history, ...(apiKey ? { api_key: apiKey } : {}) }),
+        body: JSON.stringify({ message, history, ...(apiKey ? { api_key: apiKey } : {}), ...(sessionId ? { session_id: sessionId } : {}) }),
       },
     ),
+  getChatSessions: (projectId: string) =>
+    request<ChatSession[]>(`/api/projects/${projectId}/chat-sessions`),
+  createChatSession: (projectId: string, title?: string) =>
+    request<ChatSession>(`/api/projects/${projectId}/chat-sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+  updateChatSession: (
+    projectId: string,
+    sessionId: string,
+    payload: { title?: string; status?: string; active_run_id?: string | null },
+  ) =>
+    request<ChatSession>(`/api/projects/${projectId}/chat-sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  deleteChatSession: (projectId: string, sessionId: string) =>
+    request<{ deleted: boolean; project_id: string; session_id: string }>(
+      `/api/projects/${projectId}/chat-sessions/${sessionId}`,
+      { method: "DELETE" },
+    ),
+  getChatMessages: (projectId: string, sessionId?: string | null) =>
+    request<PersistedChatMessage[]>(
+      `/api/projects/${projectId}/chat-messages${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,
+    ),
+  saveChatMessage: (
+    projectId: string,
+    payload: {
+      role: string;
+      content: string;
+      session_id?: string | null;
+      mode?: string;
+      created_at?: string;
+      extra?: Record<string, unknown>;
+    },
+  ) =>
+    request<PersistedChatMessage>(
+      `/api/projects/${projectId}/chat-messages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    ),
+  clearChatMessages: (projectId: string, sessionId?: string | null) =>
+    request<{ deleted: number; project_id: string }>(`/api/projects/${projectId}/chat-messages${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`, {
+      method: "DELETE",
+    }),
   getProjectArtifact: (projectId: string, path: string) =>
     request<ArtifactResponse>(`/api/projects/${projectId}/artifact?path=${encodeURIComponent(path)}`),
   diffArtifactJson: (projectId: string, before: unknown, after: unknown) =>

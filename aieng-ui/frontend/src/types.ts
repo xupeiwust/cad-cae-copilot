@@ -1257,6 +1257,7 @@ export type AutopilotRunState = {
   status: "running" | "awaiting_approval" | "completed" | "failed" | "cancelled" | "blocked" | "chatting" | string;
   message: string;
   project_id?: string | null;
+  session_id?: string | null;
   adapter_id: string;
   mode: "assist" | "autopilot" | "full_agent" | string;
   dry_run: boolean;

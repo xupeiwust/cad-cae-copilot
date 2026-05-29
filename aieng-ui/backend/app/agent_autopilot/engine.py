@@ -92,6 +92,7 @@ class AutopilotEngine:
             status="running",
             message=request.message,
             project_id=request.project_id,
+            session_id=request.session_id,
             adapter_id=request.adapter_id,
             mode=request.mode,
             dry_run=request.dry_run,

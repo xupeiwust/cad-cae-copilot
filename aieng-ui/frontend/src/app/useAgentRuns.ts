@@ -10,6 +10,7 @@ import type {
   LocalAgentCapability,
   LocalAgentConfig,
   RuntimeRun,
+  AutopilotRunState,
 } from "../types";
 import {
   autopilotAgentLabel,
@@ -19,6 +20,7 @@ import {
 
 type UseAgentRunsArgs = {
   selectedId: string | null;
+  activeSessionId: string | null;
   message: string;
   selectedChatConnection: ChatConnection;
   localAgentConfig: LocalAgentConfig;
@@ -29,10 +31,12 @@ type UseAgentRunsArgs = {
   setNotice: Dispatch<SetStateAction<Notice | null>>;
   setChatHistory: Dispatch<SetStateAction<ChatHistoryItem[]>>;
   setChatConnections: Dispatch<SetStateAction<ChatConnection[]>>;
+  onAutopilotRunUpdate?(run: AutopilotRunState): void;
 };
 
 export function useAgentRuns({
   selectedId,
+  activeSessionId,
   message,
   selectedChatConnection,
   localAgentConfig,
@@ -43,6 +47,7 @@ export function useAgentRuns({
   setNotice,
   setChatHistory,
   setChatConnections,
+  onAutopilotRunUpdate,
 }: UseAgentRunsArgs) {
   const [agentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
@@ -174,6 +179,7 @@ export function useAgentRuns({
     const poll = async () => {
       try {
         const run = await api.getAutopilotRun(runId);
+        onAutopilotRunUpdate?.(run);
         setChatHistory((current) => {
           const index = current.findIndex((item) => item.autopilotRun?.run_id === runId);
           if (index === -1) return current;
@@ -250,12 +256,14 @@ export function useAgentRuns({
       const result = await api.runAutopilot({
         message: prompt,
         project_id: selectedId ?? null,
+        session_id: activeSessionId ?? undefined,
         selected_geometry: agentPayloadGeometry(),
         adapter_id: adapterId,
         ...(isLlmApi ? { llm_config: llmConfig } : {}),
         mode: "autopilot",
         dry_run: false,
       });
+      onAutopilotRunUpdate?.(result);
       if (!skipUserMsg) {
         setChatHistory((current) => [
           ...current,
@@ -301,6 +309,7 @@ export function useAgentRuns({
       const result = action === "cancel"
         ? await api.cancelAutopilot(runId)
         : await api.continueAutopilot(runId, action === "approve", userMessage || null);
+      onAutopilotRunUpdate?.(result);
       setChatHistory((current) => current.map((entry) => (
         entry.autopilotRun?.run_id === runId
           ? {
@@ -338,6 +347,7 @@ export function useAgentRuns({
     runAgentChat,
     probeLocalAgents,
     runAutopilotAgent,
+    watchAutopilotRun: pollAutopilotRun,
     updateAutopilotRun,
     approveRun,
     rejectRun,

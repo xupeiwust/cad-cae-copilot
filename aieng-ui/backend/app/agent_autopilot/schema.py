@@ -116,6 +116,7 @@ class AutopilotStep(StrictModel):
 class AutopilotRunRequest(StrictModel):
     message: str = Field(min_length=1)
     project_id: str | None = None
+    session_id: str | None = None
     adapter_id: str = "fake"
     mode: Literal["assist", "autopilot", "full_agent"] = "autopilot"
     selected_geometry: dict[str, Any] = Field(default_factory=dict)
@@ -138,6 +139,7 @@ class AutopilotRunState(StrictModel):
     ]
     message: str
     project_id: str | None = None
+    session_id: str | None = None
     adapter_id: str
     mode: Literal["assist", "autopilot", "full_agent"] = "autopilot"
     dry_run: bool = True

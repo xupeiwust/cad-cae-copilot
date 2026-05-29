@@ -308,3 +308,43 @@ def test_compile_shape_ir_dispatch_manifold_and_registry():
     # registry exposes all three built-in targets
     reps = available_representations()
     assert {"brep_build123d", "implicit_sdf", "manifold_mesh"} <= set(reps)
+
+
+def test_shape_ir_nurbs_compiler_emits_valid_source():
+    """nurbs_brep compiler emits build123d source that builds a NURBS face via OCP."""
+    from aieng.converters.shape_ir_nurbs import compile_shape_ir_to_nurbs_source
+
+    payload = {
+        "representation": "nurbs_brep",
+        "parts": [
+            {"id": "patch", "type": "nurbs_surface", "control_net": [
+                [[0, 0, 0], [10, 0, 2], [20, 0, 0]],
+                [[0, 10, 2], [10, 10, 5], [20, 10, 2]],
+                [[0, 20, 0], [10, 20, 2], [20, 20, 0]],
+            ]},
+        ],
+    }
+    src = compile_shape_ir_to_nurbs_source(payload)
+    compile(src, "geometry/source.py", "exec")
+    assert src.startswith("from build123d import *")
+    assert "def _nurbs_face(" in src
+    assert "GeomAPI_PointsToBSplineSurface" in src
+    assert "part_patch = _nurbs_face([[[0, 0, 0]" in src
+    assert "result = parts[0]" in src or "result = Compound" in src
+
+
+def test_compile_shape_ir_dispatch_nurbs_runs_on_build123d():
+    from aieng.converters.shape_ir import compile_shape_ir, representation_runtime, available_representations
+
+    out = compile_shape_ir({"representation": "nurbs_brep", "parts": [
+        {"id": "p", "type": "nurbs_surface", "control_net": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 1]]]},
+    ]})
+    assert out["representation"] == "nurbs_brep"
+    assert out["source_path"] == "geometry/source.py"   # reuses the build123d runner
+    assert out["runtime"] == "build123d" and out["fallback"] is False
+    assert "_nurbs_face(" in out["source"]
+    # runtime routing
+    assert representation_runtime("nurbs_brep") == "build123d"
+    assert representation_runtime("implicit_sdf") == "sdf"
+    assert representation_runtime("manifold_mesh") == "manifold"
+    assert "nurbs_brep" in available_representations()

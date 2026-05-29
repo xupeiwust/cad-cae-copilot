@@ -4018,7 +4018,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             try:
                 import zipfile as _zipfile
                 from . import cad_generation as _cad_generation
-                from aieng.converters.shape_ir import shape_ir_representation as _shape_ir_rep
+                from aieng.converters.shape_ir import (
+                    representation_runtime as _shape_ir_runtime,
+                    shape_ir_representation as _shape_ir_rep,
+                )
 
                 with _zipfile.ZipFile(out_path, "r") as _archive:
                     names = set(_archive.namelist())
@@ -4027,7 +4030,11 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                         if "geometry/shape_ir.json" in names else {}
                     )
                     representation = _shape_ir_rep(_ir_payload) if isinstance(_ir_payload, dict) else "brep_build123d"
-                    if representation == "brep_build123d":
+                    runtime = _shape_ir_runtime(representation)
+                    # build123d-runtime representations (brep_build123d, nurbs_brep)
+                    # all execute the generated geometry/source.py through the
+                    # build123d runner — exact STEP/B-Rep with per-face topology.
+                    if runtime == "build123d":
                         if "geometry/source.py" not in names:
                             raise RuntimeError("Shape IR package did not contain geometry/source.py")
                         source_code = _archive.read("geometry/source.py").decode("utf-8")
@@ -4068,8 +4075,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     }
                     raise _ShapeIRRepresentationHandled()
 
-                if representation != "brep_build123d":
-                    # Other non-B-Rep representations have no wired runner yet.
+                if runtime != "build123d":
+                    # Representations whose runner isn't wired yet (future targets).
                     shape_ir_execution = {
                         "status": "skipped",
                         "code": "runtime_not_wired",
@@ -4104,10 +4111,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 # The projected topology/feature were just replaced with REAL
                 # executed geometry; refresh object_registry + stamp provenance so
                 # they don't dangle against the converter's pre-execution slug ids.
-                _cad_generation.reconcile_shape_ir_provenance(out_path, topo, feature_graph)
+                _cad_generation.reconcile_shape_ir_provenance(
+                    out_path, topo, feature_graph,
+                    representation=representation, backend="build123d", geometry_kind="brep",
+                )
                 named_parts = _cad_generation._named_parts_from_feature_graph(feature_graph)
                 shape_ir_execution = {
                     "status": "ok",
+                    "representation": representation,
                     "written_artifacts": [
                         "geometry/generated.step",
                         "geometry/preview.stl",

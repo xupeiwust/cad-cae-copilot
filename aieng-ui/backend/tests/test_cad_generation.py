@@ -1400,3 +1400,25 @@ def test_execute_manifold_code_meshes_a_solid() -> None:
     assert topo["metadata"]["representation"] == "manifold_mesh"
     faces = [e for e in topo["entities"] if e.get("type") == "face"]
     assert faces and faces[0]["surface_type"] == "mesh_region"
+
+
+def test_execute_nurbs_source_builds_brep_face() -> None:
+    """nurbs_brep compiles to build123d+OCP source that builds a real B-Rep NURBS
+    face (surface_type 'bspline') and exports STEP. Runs in aieng311 (build123d+OCP)."""
+    pytest.importorskip("build123d")
+    from aieng.converters.shape_ir_nurbs import compile_shape_ir_to_nurbs_source
+    from app.cad_generation import _execute_build123d_code
+
+    payload = {"representation": "nurbs_brep", "parts": [
+        {"id": "patch", "type": "nurbs_surface", "control_net": [
+            [[0, 0, 0], [10, 0, 5], [20, 0, 0]],
+            [[0, 10, 5], [10, 10, -4], [20, 10, 5]],
+            [[0, 20, 0], [10, 20, 5], [20, 20, 0]],
+        ]},
+    ]}
+    src = compile_shape_ir_to_nurbs_source(payload)
+    step, stl, glb, topo = _execute_build123d_code(src, timeout=120)
+    assert len(step) > 0
+    faces = [e for e in topo.get("entities", []) if e.get("type") == "face"]
+    assert faces, "NURBS surface must yield at least one B-Rep face"
+    assert any(f.get("surface_type") == "bspline" for f in faces)

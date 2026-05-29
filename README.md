@@ -17,7 +17,7 @@ GitHub Copilot, OpenAI Codex, Cursor, …) drive **real 3D CAD modeling** (via
 - **Click-to-pick faces** — the 3D viewer maps each GLB primitive to its exact B-Rep face, so you click a face to bind a CAE load or support (`@face:` pointers).
 - **CAD → FEA in one package** — material, BCs, mesh, CalculiX run, and results all live in one self-describing `.aieng` file.
 - **Discoverable projects** — builds auto-name from their parts; locate any model by a part label via `aieng.find_projects_by_part`.
-- **One source, many representations** — a neutral **Shape IR** compiles to build123d/OCP (exact STEP/B-Rep with analytic faces) *or* implicit **SDF** (organic/irregular → marching-cubes mesh/GLB); STEP and GLB are derived evidence at different levels, recorded in provenance.
+- **One source, many representations** — a neutral **Shape IR** compiles through a pluggable backend registry: build123d/OCP (exact STEP/B-Rep), **NURBS** B-Rep surfaces (OCP), implicit **SDF** (organic → mesh), or **Manifold** (CSG mesh). B-Rep targets keep analytic per-face topology; mesh targets give fast previews. STEP/GLB are derived evidence at different levels, recorded in provenance.
 - **Driven over MCP** — one tool registry, usable from Claude Code, Copilot, Codex, and Cursor.
 
 ---

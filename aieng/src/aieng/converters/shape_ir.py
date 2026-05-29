@@ -271,6 +271,14 @@ def available_representations() -> list[str]:
     return sorted({entry["canonical"] for entry in _COMPILER_REGISTRY.values()})
 
 
+def representation_runtime(representation: str) -> str:
+    """The runtime that executes a representation's generated source
+    ('build123d', 'sdf', 'manifold', ...). Unknown representations default to
+    build123d. Lets callers route execution by runtime rather than name."""
+    entry = _COMPILER_REGISTRY.get(str(representation).lower())
+    return str(entry["runtime"]) if entry else "build123d"
+
+
 def shape_ir_representation(payload: dict[str, Any]) -> str:
     """The requested compile target, lower-cased. Defaults to build123d B-Rep."""
     return str(payload.get("representation") or payload.get("target") or "brep_build123d").lower()
@@ -306,6 +314,11 @@ def _compile_sdf(payload: dict[str, Any]) -> str:
 def _compile_manifold(payload: dict[str, Any]) -> str:
     from .shape_ir_manifold import compile_shape_ir_to_manifold_source
     return compile_shape_ir_to_manifold_source(payload)
+
+
+def _compile_nurbs(payload: dict[str, Any]) -> str:
+    from .shape_ir_nurbs import compile_shape_ir_to_nurbs_source
+    return compile_shape_ir_to_nurbs_source(payload)
 
 
 def compile_shape_ir_to_build123d_source(payload: dict[str, Any]) -> str:
@@ -899,4 +912,14 @@ register_compiler(
     compiler=_compile_manifold,
     source_path=SHAPE_IR_MANIFOLD_SOURCE_PATH,
     runtime="manifold",
+)
+register_compiler(
+    # NURBS B-Rep surfaces built via OCP; emits build123d source and reuses the
+    # build123d runtime (exact STEP + per-face B-Rep topology), so source_path is
+    # geometry/source.py.
+    "nurbs_brep",
+    compiler=_compile_nurbs,
+    source_path=BUILD123D_SOURCE_PATH,
+    runtime="build123d",
+    aliases=("nurbs", "nurbs_ocp", "bspline_brep"),
 )

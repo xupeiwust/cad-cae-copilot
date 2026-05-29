@@ -259,9 +259,23 @@ with `fallback=True`. New backends register as plug-ins — no edits to the disp
   emits manifold3d source — guaranteed-manifold mesh CSG with sphere/cube/cylinder/
   cone/ellipsoid, boolean `+`/`-`/`^`, native rotate+translate. No smooth blend
   (use implicit_sdf for that); `organic_blend` degrades to a plain union.
+- `nurbs_brep` → `geometry/source.py` (`converters/shape_ir_nurbs.py`): NURBS
+  B-Rep surfaces via the already-installed OCP kernel (no new dependency). A
+  `nurbs_surface` node's `control_net` (2-D grid of points) is fitted with
+  `GeomAPI_PointsToBSplineSurface` → a real OCC B-Rep face wrapped as build123d.
+  `runtime=build123d`, so it **reuses the build123d pipeline**: exact STEP, GLB,
+  and REAL per-patch B-Rep topology (each NURBS surface is its own pickable face,
+  `surface_type=bspline`) — the analytic-face advantage over mesh backends. Other
+  node kinds fall back to the build123d primitive compiler, so NURBS patches mix
+  with primitives/lofts. (compas_occ was evaluated but is not on PyPI and would
+  add a second, conflicting OCCT build alongside OCP; OCP-direct gives the same
+  output with zero new deps.)
 
 Workbench runtime (`aieng-ui/backend`):
-- `aieng.convert` routes execution by the package's representation. Mesh backends
+- `aieng.convert` routes execution by the representation's **runtime**
+  (`representation_runtime()`): build123d-runtime reps (`brep_build123d`,
+  `nurbs_brep`) execute `geometry/source.py` through the build123d runner (STEP +
+  analytic per-face topology); mesh backends
   share one path (`_mesh_feature_graph` / `_write_mesh_artifacts`): `implicit_sdf`
   → `_execute_sdf_code` (marching cubes); `manifold_mesh` → `_execute_manifold_code`
   (manifold3d CSG → trimesh). Both project a region-level mesh topology (one body,

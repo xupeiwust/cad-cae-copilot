@@ -293,6 +293,45 @@ def _build_nsets(
     return nsets
 
 
+def _unresolved_bc_load_faces(
+    setup: dict[str, Any],
+    cae_mapping: dict[str, Any],
+    nsets: dict[str, list[int]],
+) -> list[dict[str, Any]]:
+    """Return loads/BCs whose mapped face(s) matched zero mesh nodes.
+
+    A load or boundary condition whose target feature maps to an NSET that
+    resolved to no nodes (face ↔ mesh mismatch) is silently dropped by the deck
+    builder, so the solve would run with a missing constraint/load and produce a
+    wrong (often singular) result. Surfacing these as @face hints lets the caller
+    re-pick the face — or remesh — *before* paying for the solver run. Targets
+    with no mapping at all are left to the normal completeness checks; this only
+    flags the "selected a face but it caught no nodes" case.
+    """
+    feat_map: dict[str, tuple[str, list[str]]] = {}
+    for m in cae_mapping.get("mappings") or []:
+        fid = (m.get("maps_to") or {}).get("feature_id")
+        if fid:
+            feat_map[fid] = (m.get("cae_entity", ""), list(m.get("face_ids") or []))
+
+    problems: list[dict[str, Any]] = []
+    for kind, items in (
+        ("boundary_condition", setup.get("boundary_conditions") or []),
+        ("load", setup.get("loads") or []),
+    ):
+        for item in items:
+            target = item.get("target_feature", "")
+            nset_name, face_ids = feat_map.get(target, ("", []))
+            if nset_name and not nsets.get(nset_name):
+                problems.append({
+                    "kind": kind,
+                    "target_feature": target,
+                    "cae_entity": nset_name,
+                    "face_pointers": [f"@face:{fid}" for fid in face_ids],
+                })
+    return problems
+
+
 # ── CalculiX deck generation ──────────────────────────────────────────────────
 
 def _sanitize_name(name: str) -> str:
@@ -559,6 +598,24 @@ def run_simulation(
         nsets = _build_nsets(nodes, topology, cae_mapping)
         empty_nsets = [k for k, v in nsets.items() if not v]
 
+        # Fail fast: a load/BC whose face matched zero mesh nodes would be
+        # silently dropped, yielding a wrong/singular solve. Abort with @face
+        # hints before invoking CalculiX so the caller can re-pick or remesh.
+        unresolved = _unresolved_bc_load_faces(setup, cae_mapping, nsets)
+        if unresolved:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "unresolved_face_mapping",
+                    "message": (
+                        "Aborted before solving: load/boundary-condition face(s) "
+                        "matched zero mesh nodes. Re-pick the face(s) or reduce "
+                        "mesh_size_mm, then retry."
+                    ),
+                    "unresolved": unresolved,
+                },
+            )
+
         # ── Generate solver deck ──────────────────────────────────────────────
         mesh_text = mesh_inp.read_text(errors="replace")
         deck_text, bc_count, load_count = _build_calculix_deck(
@@ -748,6 +805,24 @@ def run_simulation_stream(
             yield _sse({"step": "building_nsets", "message": f"Mapping {face_count} face(s) to mesh nodes ({node_count:,} nodes)…"})
             nsets = _build_nsets(nodes, topology, cae_mapping)
             empty_nsets = [k for k, v in nsets.items() if not v]
+
+            # Fail fast before solving if a load/BC face matched zero mesh nodes
+            # (it would be silently dropped → wrong/singular solve).
+            unresolved = _unresolved_bc_load_faces(setup, cae_mapping, nsets)
+            if unresolved:
+                hint_faces = ", ".join(
+                    fp for prob in unresolved for fp in prob["face_pointers"]
+                ) or "(no face hints available)"
+                yield _sse({
+                    "step": "error",
+                    "code": "unresolved_face_mapping",
+                    "message": (
+                        "Load/BC face(s) matched zero mesh nodes — aborted before "
+                        f"solving. Re-pick or remesh: {hint_faces}"
+                    ),
+                    "unresolved": unresolved,
+                })
+                return
 
             mesh_text = mesh_inp.read_text(errors="replace")
             deck_text, bc_count, load_count = _build_calculix_deck(mesh_text, setup, nsets, cae_mapping)

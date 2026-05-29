@@ -216,6 +216,27 @@ def test_build_nsets_empty_when_no_topology() -> None:
         assert node_list == []
 
 
+# ── _unresolved_bc_load_faces (fail-fast on empty mapped NSETs) ────────────────
+
+def test_unresolved_bc_load_faces_flags_empty_mapped_nset() -> None:
+    from app.simulation_runner import _unresolved_bc_load_faces
+
+    # bc target's NSET (FEAT_HOLE_001) caught no nodes; load target is fine.
+    nsets = {"FEAT_HOLE_001": [], "FEAT_BASE_001_L": [3, 4]}
+    problems = _unresolved_bc_load_faces(_SETUP_YAML, _CAE_MAPPING, nsets)
+    assert len(problems) == 1
+    assert problems[0]["kind"] == "boundary_condition"
+    assert problems[0]["cae_entity"] == "FEAT_HOLE_001"
+    assert problems[0]["face_pointers"] == ["@face:face_003"]
+
+
+def test_unresolved_bc_load_faces_none_when_all_resolved() -> None:
+    from app.simulation_runner import _unresolved_bc_load_faces
+
+    nsets = {"FEAT_HOLE_001": [5], "FEAT_BASE_001_L": [4]}
+    assert _unresolved_bc_load_faces(_SETUP_YAML, _CAE_MAPPING, nsets) == []
+
+
 # ── _build_calculix_deck ──────────────────────────────────────────────────────
 
 _MINIMAL_MESH_INP = """\
@@ -224,9 +245,13 @@ _MINIMAL_MESH_INP = """\
 2, 10.0, 0.0, 0.0
 3, 5.0, 10.0, 0.0
 4, 5.0, 5.0, 10.0
+5, 14.0, 10.0, 5.0
 *Element, type=C3D4, ELSET=EALL
 1, 1, 2, 3, 4
 """
+# Node 4 lands on the top face (face_002 → load NSET); node 5 on the cylinder
+# surface (face_003 → fixed-support NSET) so the full-mock run resolves both
+# the load and the BC and reaches the solver (see fail-fast on empty mappings).
 
 
 def test_build_calculix_deck_structure() -> None:
@@ -417,6 +442,46 @@ def test_run_simulation_full_mock(tmp_path: Path) -> None:
         summary = json.loads(zf.read("simulation/results_summary.json"))
         assert summary["status"] == "success"
         assert summary["von_mises_max_mpa"] == pytest.approx(45.6)
+
+
+def _fake_mesh_missing_hole(step_path, work_dir, mesh_size_mm):
+    """Mesh that covers the top (load) face but NOT the cylinder (BC) face."""
+    out = work_dir / "mesh.inp"
+    out.write_text(
+        "*Node\n"
+        "1, 0.0, 0.0, 0.0\n"
+        "4, 5.0, 5.0, 10.0\n"   # on top face → load NSET resolves; nothing on hole
+        "*Element, type=C3D4, ELSET=EALL\n"
+        "1, 1, 1, 1, 4\n"
+    )
+    return out
+
+
+def test_run_simulation_aborts_on_unresolved_face(tmp_path: Path) -> None:
+    """A load/BC face that matches zero mesh nodes aborts before the solver."""
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    project_id, pkg_path = _make_project(settings, "sim-unresolved", "sim_unresolved.aieng")
+    _build_test_package(pkg_path)
+
+    with patch("app.simulation_runner._gmsh_available", return_value=True), \
+         patch("app.simulation_runner._find_ccx", return_value="/usr/bin/ccx"), \
+         patch("app.simulation_runner._mesh_with_gmsh", side_effect=_fake_mesh_missing_hole), \
+         patch("app.simulation_runner._run_calculix", side_effect=_fake_calculix) as ccx, \
+         patch("app.simulation_runner._extract_metrics", return_value=_MOCK_FRD_METRICS):
+        resp = client.post(
+            f"/api/projects/{project_id}/run-simulation",
+            json={"confirmed": True},
+        )
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "unresolved_face_mapping"
+    assert any("@face:face_003" in p["face_pointers"] for p in detail["unresolved"])
+    # The solver must NOT have been invoked.
+    ccx.assert_not_called()
 
 
 # ── GET /api/simulation/tools ─────────────────────────────────────────────────

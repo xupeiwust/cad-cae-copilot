@@ -689,6 +689,30 @@ def _apply_single_patch(
     raise ValueError(f"unsupported action_type: {action!r}")
 
 
+# Whole-document before/after snapshots are only echoed for full-replace /
+# merge / append diffs; for a large setup/mesh/load-case file that doubles the
+# response size for no agent benefit (changed_paths/added_paths already convey
+# the delta). Cap the echo: keep small docs verbatim, replace large ones with a
+# marker. ~4 KB ≈ a comfortably-sized setup doc; bigger gets summarized.
+_ARTIFACT_DOC_MAX_CHARS = 4000
+
+
+def _capped_artifact_doc(doc: Any) -> Any:
+    """Return ``doc`` unchanged if small, else a compact size marker."""
+    if doc is None:
+        return None
+    try:
+        size = len(json.dumps(doc, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return doc
+    if size <= _ARTIFACT_DOC_MAX_CHARS:
+        return doc
+    return {
+        "_omitted": "document too large to echo; see changed_paths/added_paths/removed_paths",
+        "size_bytes": size,
+    }
+
+
 def _apply_patches_to_package(
     package_path: Path,
     patches: list[dict[str, Any]],
@@ -743,8 +767,8 @@ def _apply_patches_to_package(
                 diff_meta["before"] = _json_pointer_get(before_doc, tokens) if before_doc is not None else None
                 diff_meta["after"] = _json_pointer_get(after_doc, tokens)
             else:
-                diff_meta["before"] = before_doc
-                diff_meta["after"] = after_doc
+                diff_meta["before"] = _capped_artifact_doc(before_doc)
+                diff_meta["after"] = _capped_artifact_doc(after_doc)
         else:
             # Fallback for any future actions
             diff_meta["before"] = None

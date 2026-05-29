@@ -8,11 +8,9 @@ import type {
   CadStageState,
 } from "./appTypes";
 import type {
-  CapabilityDescriptor,
   ChatResponse,
   LLMConfig,
   ProjectRecord,
-  ProjectSummary,
   RuntimeConfigSnapshot,
   RuntimeRun,
 } from "./types";
@@ -44,29 +42,6 @@ export function runtimeStatusLabel(status: RuntimeRun["status"]): string {
   if (status === "rejected") return "已拒绝";
   if (status === "cancelled") return "已取消";
   return status;
-}
-
-export function jsonBlock(value: unknown) {
-  return JSON.stringify(value ?? null, null, 2);
-}
-
-export function formatTime(value?: string | null) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
-}
-
-export function getDerivedNumber(summary: ProjectSummary | null, group: string, key: string) {
-  const derived = ((summary as any)?.derived ?? {}) as Record<string, Record<string, unknown>>;
-  const value = derived[group]?.[key];
-  return typeof value === "number" ? value : 0;
-}
-
-export function getManifestString(summary: ProjectSummary | null, key: string) {
-  const manifest = (summary?.manifest ?? null) as Record<string, unknown> | null;
-  const value = manifest?.[key];
-  return value == null ? "-" : String(value);
 }
 
 export function getProviderLabel(provider?: string | null) {
@@ -130,53 +105,6 @@ export function fieldLabel(field: string) {
   if (field === "stress") return "Von Mises Stress";
   if (field === "displacement") return "Displacement Magnitude";
   return field;
-}
-
-export function caeModeLabel(mode: string) {
-  if (mode === "cad_only") return "CAD-only";
-  if (mode === "cae_setup") return "CAE setup";
-  if (mode === "cae_result") return "CAE result (external solver-output)";
-  if (mode === "cae_validation") return "CAE validation / review";
-  return mode;
-}
-
-export function caeModeClass(mode: string) {
-  if (mode === "cad_only") return "mode-cad-only";
-  if (mode === "cae_setup") return "mode-cae-setup";
-  if (mode === "cae_result") return "mode-cae-result";
-  if (mode === "cae_validation") return "mode-cae-validation";
-  return "";
-}
-
-export function mutabilityLabel(capability: CapabilityDescriptor) {
-  const parts = [];
-  if (capability.mutates_cad) parts.push("CAD");
-  if (capability.mutates_package) parts.push(".aieng");
-  if (capability.may_update_claim_map) parts.push("claim");
-  return parts.length ? parts.join(" + ") : "read-only";
-}
-
-export function workflowStepLabel(kind: string) {
-  if (kind === "tool") return "runtime tool";
-  if (kind === "mcp_tool") return "MCP tool";
-  if (kind === "llm") return "LLM";
-  if (kind === "approval") return "approval";
-  if (kind === "benchmark") return "benchmark";
-  if (kind === "artifact") return "artifact";
-  return kind;
-}
-
-export function formatRecordSummary(record: Record<string, unknown>) {
-  return Object.entries(record)
-    .filter(([, value]) => value != null && value !== "")
-    .slice(0, 3)
-    .map(([key, value]) => `${key}: ${String(value)}`)
-    .join(" / ");
-}
-
-export function summarizeAssistantReply(response: ChatResponse, mode: "plan" | "execute") {
-  const prefix = mode === "execute" ? "已执行编排请求。" : "已生成编排计划。";
-  return `${prefix} ${response.reply}`;
 }
 
 export function runtimeRunToChatPlan(run: RuntimeRun): ChatResponse["plan"] {

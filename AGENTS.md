@@ -55,6 +55,30 @@ need to construct valid tool calls.
 
 ---
 
+## Frontend maintainability rules
+
+When editing `aieng-ui/frontend/`, think about maintainability before adding or
+changing code:
+
+- Keep `src/App.tsx` as a lightweight composition layer. Do not put workflow
+  orchestration, data fetching, domain actions, or large JSX trees directly in
+  `App.tsx`.
+- Prefer focused hooks and modules by responsibility: runtime settings, agent
+  runs, geometry pointers, CAD/CAE actions, live activity streams, and pure
+  formatting/helpers should live in separate files.
+- Do not replace one giant file with another. If a module grows beyond a single
+  clear responsibility, split it before adding more behavior.
+- Preserve existing UI behavior and styling during refactors. Move code first,
+  verify, then simplify.
+- Remove dead components, helpers, constants, and types once they are no longer
+  reachable from the active UI or API surface. Do not keep obsolete panels around
+  "just in case" unless there is a concrete owner and integration path.
+- For new UI work, prefer reusable components and explicit prop contracts over
+  hidden cross-file coupling. Use TypeScript build results and reference searches
+  to prove that cleanup is safe.
+
+---
+
 ## What the workbench can actually do
 
 ### Real 3D CAD modeling (no API key needed)

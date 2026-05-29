@@ -1,5 +1,5 @@
 import type { ChatConnection, LLMConfig } from "./types";
-import type { ControlPaneMode, StageItem, WorkbenchPaneMode } from "./appTypes";
+import type { StageItem } from "./appTypes";
 
 export const BASE_STAGES: StageItem[] = [
   { key: "upload", label: "Upload", detail: "Place STEP file into project", state: "idle" },
@@ -12,7 +12,6 @@ export const CAD_PROVIDER_OPTIONS = [
   { value: "build123d", label: "build123d / OCP" },
   { value: "freecad", label: "FreeCAD (optional adapter)" },
 ] as const;
-export const AI_FIRST_WORKBENCH_ENABLED = true;
 export const LLM_CONFIG_STORAGE_KEY = "aieng-ui.llm-config";
 export const LOCAL_AGENT_CONFIG_STORAGE_KEY = "aieng-ui.local-agent-config";
 export const LLM_PROVIDER_SUGGESTIONS = ["openai-compatible", "anthropic", "openai", "azure-openai"] as const;
@@ -37,21 +36,6 @@ export const DEFAULT_LOCAL_AGENT_CONFIG = {
   preferredAdapterId: null as string | null,
 };
 export const EMPTY_CAE_FIELDS: string[] = [];
-
-export const CONTROL_PANE_MODES: Array<{ id: ControlPaneMode; label: string; detail: string }> = [
-  { id: "chat", label: "对话", detail: "聊天、规划和审批" },
-  { id: "project", label: "项目", detail: "导入和语义摘要" },
-  { id: "agent", label: "工具", detail: "工具、工作流和基准测试" },
-  { id: "cae", label: "仿真", detail: "仿真设置和结果" },
-  { id: "recommend", label: "推荐", detail: "修改建议和验证" },
-  { id: "copilot", label: "Copilot", detail: "闭环优化" },
-  { id: "pilot", label: "规划", detail: "自然语言任务规划" },
-];
-
-export const WORKBENCH_PANE_MODES: Array<{ id: WorkbenchPaneMode; label: string; detail: string }> = [
-  { id: "agent", label: "Build", detail: "Chat and current task" },
-  { id: "project", label: "Files", detail: "Projects and imports" },
-];
 
 export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [
   {

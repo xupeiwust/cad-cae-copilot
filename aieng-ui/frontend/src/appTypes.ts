@@ -84,8 +84,6 @@ export type ChatHistoryItem = {
 };
 
 export type ViewerLoadState = "idle" | "loading" | "ready" | "error";
-export type ControlPaneMode = "project" | "agent" | "cae" | "recommend" | "copilot" | "chat" | "pilot";
-export type WorkbenchPaneMode = "agent" | "project" | "debug";
 
 export type PickedFace = {
   pointer: string;

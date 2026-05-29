@@ -10,3 +10,7 @@ The full agent guide is in [AGENTS.md](AGENTS.md) — read it before acting.
 - First calls: `aieng.agent_readme` → `aieng.list_projects` → `aieng.agent_context`.
 - Do NOT read `aieng/src/` for capabilities, and do NOT run code to diagnose the
   backend. Use the MCP tools.
+- In `aieng-ui/frontend/`, keep `App.tsx` lightweight and modular. Split large
+  responsibilities into focused hooks/components, preserve UI behavior during
+  refactors, and remove confirmed-dead frontend code instead of accumulating
+  another monolith.

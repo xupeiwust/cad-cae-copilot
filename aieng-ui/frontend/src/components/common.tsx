@@ -1,13 +1,4 @@
-import type { ControlPaneMode, Notice, WorkbenchPaneMode } from "../appTypes";
-
-export function JsonDisclosure({ title, body, defaultOpen = false }: { title: string; body: string; defaultOpen?: boolean }) {
-  return (
-    <details className="fold-block" open={defaultOpen}>
-      <summary className="fold-summary">{title}</summary>
-      <pre className="json-block">{body}</pre>
-    </details>
-  );
-}
+import type { Notice } from "../appTypes";
 
 export function NoticeCenter({ notice, onDismiss }: { notice: Notice | null; onDismiss(): void }) {
   if (!notice) return null;
@@ -29,52 +20,6 @@ export function NoticeCenter({ notice, onDismiss }: { notice: Notice | null; onD
         </button>
       </article>
     </div>
-  );
-}
-
-export function ControlPaneIcon({ mode }: { mode: ControlPaneMode | WorkbenchPaneMode }) {
-  if (mode === "project") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M4 7.5h6.2l1.5 2H20v8.8H4V7.5Z" />
-        <path d="M4 7.5V5.7h5.4l1.5 1.8" />
-      </svg>
-    );
-  }
-  if (mode === "agent") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 4.2v3.1" />
-        <path d="M7.3 9.4h9.4v8H7.3v-8Z" />
-        <path d="M9.8 12.2h.1M14.1 12.2h.1" />
-        <path d="M10 16h4" />
-        <path d="M5 12.2H3.4M20.6 12.2H19" />
-      </svg>
-    );
-  }
-  if (mode === "cae") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 17.8 9 6.2l3.4 8 2.2-4.7L19 17.8" />
-        <path d="M4 18h16" />
-        <path d="M8 14h8" />
-      </svg>
-    );
-  }
-  if (mode === "debug") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M14.8 5.2a4 4 0 0 0 4.1 4.1l-8.4 8.4a2.2 2.2 0 0 1-3.1-3.1l8.4-8.4Z" />
-        <path d="m5.7 18.3 2 2" />
-        <path d="M4.8 5.8h5.4M7.5 3.1v5.4M17 15.5h3.2M18.6 13.9v3.2" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M5 6.5h14v8.2H8.2L5 18V6.5Z" />
-      <path d="M8.2 9.4h7.6M8.2 12h5.5" />
-    </svg>
   );
 }
 

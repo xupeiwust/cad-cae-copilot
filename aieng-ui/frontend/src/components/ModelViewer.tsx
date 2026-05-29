@@ -279,21 +279,74 @@ function disposeHighlightObject(child: THREE.Object3D) {
   }
 }
 
-function createFaceHighlightMesh(object: THREE.Object3D, face: BrepFaceEntity): THREE.Mesh | null {
+// ── viewer ↔ model coordinate frames ────────────────────────────────────────
+// build123d exports GLB in glTF's Y-up convention scaled to metres, but the
+// backend B-Rep faces (geometry/topology_map.json) stay in the original model
+// frame: Z-up, millimetres. Picking and face-highlight both compare *viewer*
+// coordinates against those B-Rep faces, so without mapping between the frames
+// every click resolves to whichever face sits nearest the origin (≈1–2 faces)
+// and the highlight overlay never matches a triangle. STL previews are already
+// in the model frame, so their transform is the identity.
+//   model → display:  (x, y, z) → ( x·s,  z·s, −y·s)
+//   display → model:  (x, y, z) → ( x/s, −z/s,  y/s)
+type DisplayTransform = { scale: number; isGlb: boolean };
+const IDENTITY_TRANSFORM: DisplayTransform = { scale: 1, isGlb: false };
+
+function displayToModelPoint(p: THREE.Vector3, t: DisplayTransform): THREE.Vector3 {
+  if (!t.isGlb) return p.clone();
+  return new THREE.Vector3(p.x / t.scale, -p.z / t.scale, p.y / t.scale);
+}
+
+function modelToDisplayVec(x: number, y: number, z: number, t: DisplayTransform): THREE.Vector3 {
+  if (!t.isGlb) return new THREE.Vector3(x, y, z);
+  return new THREE.Vector3(x * t.scale, z * t.scale, -y * t.scale);
+}
+
+// Recover the export scale from data (rather than hard-coding mm→m): compare
+// the union of B-Rep face bounding boxes (model frame) against the displayed
+// object's bounds. Falls back to 0.001 (build123d's mm→m) when unknown.
+function deriveGlbScale(object: THREE.Object3D, snapshot: BrepGraphSnapshot | null): number {
+  const FALLBACK = 0.001;
+  if (!snapshot) return FALLBACK;
+  const mn = [Infinity, Infinity, Infinity];
+  const mx = [-Infinity, -Infinity, -Infinity];
+  let any = false;
+  for (const id in snapshot.faces) {
+    const bb = snapshot.faces[id]?.bounding_box;
+    if (!bb || bb.length !== 6) continue;
+    any = true;
+    for (let i = 0; i < 3; i++) {
+      mn[i] = Math.min(mn[i], bb[i]);
+      mx[i] = Math.max(mx[i], bb[i + 3]);
+    }
+  }
+  if (!any) return FALLBACK;
+  const modelMax = Math.max(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]);
+  const box = new THREE.Box3().setFromObject(object);
+  const dispMax = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
+  if (!(modelMax > 0) || !(dispMax > 0) || !Number.isFinite(dispMax)) return FALLBACK;
+  return dispMax / modelMax;
+}
+
+function createFaceHighlightMesh(object: THREE.Object3D, face: BrepFaceEntity, transform: DisplayTransform): THREE.Mesh | null {
   const bbox = face.bounding_box;
   if (!bbox || bbox.length !== 6) return null;
-  const min = new THREE.Vector3(bbox[0], bbox[1], bbox[2]);
-  const max = new THREE.Vector3(bbox[3], bbox[4], bbox[5]);
+  // Map the model-frame face bbox/center/normal into the viewer frame so the
+  // triangle-centroid test below runs in displayed coordinates.
+  const cornerA = modelToDisplayVec(bbox[0], bbox[1], bbox[2], transform);
+  const cornerB = modelToDisplayVec(bbox[3], bbox[4], bbox[5], transform);
+  const min = new THREE.Vector3(Math.min(cornerA.x, cornerB.x), Math.min(cornerA.y, cornerB.y), Math.min(cornerA.z, cornerB.z));
+  const max = new THREE.Vector3(Math.max(cornerA.x, cornerB.x), Math.max(cornerA.y, cornerB.y), Math.max(cornerA.z, cornerB.z));
   const size = new THREE.Vector3().subVectors(max, min);
   const diagonal = Math.max(size.length(), 1e-3);
   const pad = Math.max(diagonal * 0.015, 1e-4);
   const paddedMin = min.clone().subScalar(pad);
   const paddedMax = max.clone().addScalar(pad);
   const center = face.center && face.center.length === 3
-    ? new THREE.Vector3(face.center[0], face.center[1], face.center[2])
+    ? modelToDisplayVec(face.center[0], face.center[1], face.center[2], transform)
     : new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5);
   const faceNormal = face.normal && face.normal.length === 3
-    ? new THREE.Vector3(face.normal[0], face.normal[1], face.normal[2]).normalize()
+    ? modelToDisplayVec(face.normal[0], face.normal[1], face.normal[2], transform).normalize()
     : null;
   const planarSurface = (face.surface_type ?? "").toLowerCase().includes("plane");
   const planeTolerance = Math.max(diagonal * 0.04, 0.15);
@@ -404,6 +457,10 @@ export function ModelViewer({
   });
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
   const [preprocessBusy, setPreprocessBusy] = useState(false);
+  // Viewer↔model coordinate transform (see DisplayTransform). Held in a ref so
+  // the click handler always reads the current value without re-binding.
+  const displayTransformRef = useRef<DisplayTransform>(IDENTITY_TRANSFORM);
+  const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
   const fieldDescriptorKey = fieldDescriptor
     ? [
         fieldDescriptor.project_id,
@@ -584,7 +641,9 @@ export function ModelViewer({
         return;
       }
       const hit = intersects[0];
-      const pt = hit.point;
+      // Convert the viewer-frame hit point into the model frame the backend
+      // B-Rep faces live in (identity for STL, Y-up/metres→Z-up/mm for GLB).
+      const pt = displayToModelPoint(hit.point, displayTransformRef.current);
       api.pickFace(projectId, pt.x, pt.y, pt.z)
         .then((data) => {
           if (data && data.pointer) {
@@ -629,6 +688,19 @@ export function ModelViewer({
     };
   }, [assetFormat, assetUrl, fieldDescriptorKey]);
 
+  // Keep the viewer↔model transform current whenever the object or B-Rep
+  // snapshot changes. Declared before the highlight effect so the ref is set
+  // before highlights (and any click) are processed.
+  useEffect(() => {
+    const object = objectRef.current;
+    const isGlb = (resolvedAssetFormat ?? "").toLowerCase() === "glb";
+    if (!object || !isGlb) {
+      displayTransformRef.current = IDENTITY_TRANSFORM;
+      return;
+    }
+    displayTransformRef.current = { scale: deriveGlbScale(object, brepSnapshot), isGlb: true };
+  }, [objectReadyKey, brepSnapshot, resolvedAssetFormat]);
+
   // Highlight effect: extracts displayed mesh triangles whose centroids match
   // the selected B-Rep face metadata, then paints a translucent face overlay.
   useEffect(() => {
@@ -644,10 +716,11 @@ export function ModelViewer({
 
     const object = objectRef.current;
     if (!object) return;
+    const transform = displayTransformRef.current;
     for (const faceId of highlightedFaceIds) {
       const face = brepSnapshot.faces[faceId];
       if (!face) continue;
-      const highlightMesh = createFaceHighlightMesh(object, face);
+      const highlightMesh = createFaceHighlightMesh(object, face, transform);
       if (highlightMesh) group.add(highlightMesh);
     }
   }, [highlightedFaceIds, brepSnapshot, objectReadyKey]);

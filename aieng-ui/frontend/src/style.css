@@ -8670,11 +8670,13 @@ textarea:focus,
 }
 
 @keyframes agent-activity-sweep {
-  0% {
-    background-position: 180% 50%;
+  0%,
+  18% {
+    background-position: 170% 50%;
   }
+  58%,
   100% {
-    background-position: -80% 50%;
+    background-position: -70% 50%;
   }
 }
 
@@ -8696,16 +8698,16 @@ textarea:focus,
   background: linear-gradient(
     100deg,
     var(--text-secondary) 0%,
-    var(--text-secondary) 34%,
-    #ffffff 48%,
-    var(--text-primary) 58%,
-    var(--text-secondary) 72%,
+    var(--text-secondary) 40%,
+    #ffffff 50%,
+    var(--text-primary) 54%,
+    var(--text-secondary) 64%,
     var(--text-secondary) 100%
   );
-  background-size: 260% 100%;
+  background-size: 320% 100%;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: agent-activity-sweep 2.1s linear infinite;
+  animation: agent-activity-sweep 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 .agent-activity-line time {

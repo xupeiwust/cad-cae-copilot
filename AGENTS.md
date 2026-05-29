@@ -483,6 +483,14 @@ to the user — the UI renders them as clickable chips.
 Example: if `aieng.agent_context` reports `@face:f_top_001` as a flat surface
 suitable for a fixed support, pass `"faceId": "f_top_001"` in your CAE setup call.
 
+**Free-form faces and CAE.** Faces produced by the high-level helpers
+(loft/sweep/sphere/spline) are `surface_type: "other"` and carry `freeform: true`
+plus a *proxy* normal sampled at the face midpoint — enough to pick them and bind
+an approximate CAE boundary condition, but the node-mapping is a tangent-plane
+band, not the exact curved surface. For accurate fixtures/loads prefer **planar
+faces** (a `rounded_box` keeps its flat faces as true planes with exact normals).
+This is also good engineering practice — fixture and load on flat interfaces.
+
 ---
 
 ## Tool taxonomy

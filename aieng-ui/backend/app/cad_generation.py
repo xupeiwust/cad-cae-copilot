@@ -675,8 +675,17 @@ def render_mesh_thumbnail(
         return _render_mesh_thumbnail_basic(triangles, size)
 
 
-def _topology_to_feature_graph(topo: dict[str, Any]) -> dict[str, Any]:
-    """Heuristic: derive a feature_graph.json from extracted topology."""
+def _topology_to_feature_graph(
+    topo: dict[str, Any],
+    source_code: str | None = None,
+) -> dict[str, Any]:
+    """Heuristic: derive a feature_graph.json from extracted topology.
+
+    When ``source_code`` is provided (the build123d script that produced this
+    topology), scan it for UPPER_SNAKE_CASE named constants and attach them as
+    editable parameters to the matching features. This is what makes
+    ``cad.edit_parameter`` a fast text-replacement instead of an LLM round-trip.
+    """
     entities = topo.get("entities", [])
     faces = [e for e in entities if e.get("type") == "face"]
     solid = next((e for e in entities if e.get("type") == "solid"), None)
@@ -759,7 +768,10 @@ def _topology_to_feature_graph(topo: dict[str, Any]) -> dict[str, Any]:
             "intent": {"role": "structural_base"},
         })
 
-    return {"features": features}
+    feature_graph = {"features": features}
+    if source_code:
+        feature_graph = _enrich_feature_graph_with_source_params(source_code, feature_graph)
+    return feature_graph
 
 
 def _named_parts_from_feature_graph(feature_graph: dict[str, Any]) -> list[str]:
@@ -778,6 +790,447 @@ def _available_named_parts_from_topology(topology_map: dict[str, Any]) -> list[s
         for entity in (topology_map or {}).get("entities", [])
         if entity.get("type") == "solid" and entity.get("name")
     ]
+
+
+# ── quantitative geometry report ───────────────────────────────────────────────
+# The agent judges form badly from a blurry thumbnail but reasons well over
+# numbers. This report converts "does it look right?" into deterministic signals
+# the agent can self-correct against: part proportions, symmetry residuals, and
+# a contact/gap matrix. Returned alongside the thumbnail on every build.
+
+# Name-token pairs that signal a left/right mirror partner. Checked longest-first
+# so `_fl`/`_fr` win over `_l`/`_r`.
+_MIRROR_TOKEN_PAIRS: tuple[tuple[str, str], ...] = (
+    ("_fl", "_fr"), ("_bl", "_br"),
+    ("_lf", "_rf"), ("_lb", "_rb"),
+    ("left", "right"),
+    ("_l", "_r"),
+)
+
+
+def _mirror_partner_name(name: str) -> str | None:
+    """Return the expected mirror-partner name for a part, or None.
+
+    e.g. motor_pod_FL → motor_pod_FR, left_arm → right_arm.
+    Direction-agnostic: maps either side to the other.
+    """
+    low = name.lower()
+    for a, b in _MIRROR_TOKEN_PAIRS:
+        if low.endswith(a):
+            return name[: len(name) - len(a)] + b
+        if low.endswith(b):
+            return name[: len(name) - len(b)] + a
+        # also handle mid-name "left"/"right"
+        if a == "left" and "left" in low:
+            return low.replace("left", "right")
+        if a == "left" and "right" in low:
+            return low.replace("right", "left")
+    return None
+
+
+def _bbox_metrics(bb: list[float]) -> tuple[tuple[float, float, float], tuple[float, float, float], float]:
+    """Return (center, size, max_dim) for a 6-element bbox."""
+    center = ((bb[0] + bb[3]) / 2, (bb[1] + bb[4]) / 2, (bb[2] + bb[5]) / 2)
+    size = (bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
+    return center, size, max(size)
+
+
+def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) -> dict[str, Any]:
+    """Produce a deterministic, agent-readable geometry report from topology.
+
+    Sections:
+      overall_bbox / overall_proportions  — model size + normalized H:W:D
+      parts            — per-named-part dims, max-dim, ratio to largest part
+      symmetry         — for detected left/right name pairs, size + mirror residual
+      gaps             — each part's nearest-neighbour gap (touching vs floating)
+    Every number is in millimetres unless noted. Designed to be small enough to
+    travel in the MCP text response so the agent can cite specifics like
+    "arm_len/torso_len = 0.42, too short".
+    """
+    entities = (topology_map or {}).get("entities", [])
+    solids = [
+        e for e in entities
+        if e.get("type") == "solid" and isinstance(e.get("bounding_box"), list)
+        and len(e["bounding_box"]) == 6
+    ]
+    if not solids:
+        return {"available": False, "reason": "no solids with bounding boxes in topology"}
+
+    # Overall bbox (union of all solids)
+    xs = [s["bounding_box"] for s in solids]
+    ov = [
+        min(b[0] for b in xs), min(b[1] for b in xs), min(b[2] for b in xs),
+        max(b[3] for b in xs), max(b[4] for b in xs), max(b[5] for b in xs),
+    ]
+    ov_center, ov_size, ov_max = _bbox_metrics(ov)
+    ov_max = ov_max or 1.0
+
+    def _r(x: float, n: int = 2) -> float:
+        return round(float(x), n)
+
+    report: dict[str, Any] = {
+        "available": True,
+        "units": "mm",
+        "part_count": len(solids),
+        "overall_bbox": [_r(v) for v in ov],
+        "overall_size": {"x": _r(ov_size[0]), "y": _r(ov_size[1]), "z": _r(ov_size[2])},
+        "overall_proportions": {
+            "x": _r(ov_size[0] / ov_max, 3),
+            "y": _r(ov_size[1] / ov_max, 3),
+            "z": _r(ov_size[2] / ov_max, 3),
+            "note": "normalized so the largest overall dimension = 1.0",
+        },
+    }
+
+    # Per-part metrics
+    part_recs: list[dict[str, Any]] = []
+    named: list[tuple[str, tuple[float, float, float], tuple[float, float, float], float]] = []
+    largest_part_dim = max(_bbox_metrics(s["bounding_box"])[2] for s in solids) or 1.0
+    for s in solids:
+        name = s.get("name") or s.get("id")
+        c, sz, mx = _bbox_metrics(s["bounding_box"])
+        named.append((name, c, sz, mx))
+        part_recs.append({
+            "name": name,
+            "size": {"x": _r(sz[0]), "y": _r(sz[1]), "z": _r(sz[2])},
+            "max_dim": _r(mx),
+            "ratio_to_largest": _r(mx / largest_part_dim, 3),
+        })
+    report["parts"] = part_recs[:max_parts]
+    if len(part_recs) > max_parts:
+        report["parts_truncated"] = len(part_recs) - max_parts
+
+    # Symmetry: match left/right name pairs, report size + mirror residuals.
+    name_to_idx = {n.lower(): i for i, (n, *_rest) in enumerate(named)}
+    symmetry: list[dict[str, Any]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for name, c, sz, _mx in named:
+        partner = _mirror_partner_name(name)
+        if not partner:
+            continue
+        pidx = name_to_idx.get(partner.lower())
+        if pidx is None:
+            symmetry.append({
+                "part": name,
+                "expected_partner": partner,
+                "status": "missing_partner",
+                "note": "mirror partner not found — symmetry likely broken",
+            })
+            continue
+        key = tuple(sorted((name.lower(), partner.lower())))
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        _pn, pc, psz, _pmx = named[pidx]
+        # Size residual — mirror parts should be the same size.
+        size_res = max(abs(sz[0] - psz[0]), abs(sz[1] - psz[1]), abs(sz[2] - psz[2]))
+        # Mirror axis = the axis along which the two centers are most separated
+        # (the symmetry plane is normal to it). Robust to a skewed global center
+        # because it only looks at the pair. For a true mirror, the OTHER two
+        # axes should align — that misalignment is the residual.
+        seps = [abs(c[ax] - pc[ax]) for ax in range(3)]
+        mirror_ax = max(range(3), key=lambda ax: seps[ax])
+        align_res = max(seps[o] for o in range(3) if o != mirror_ax)
+        symmetry.append({
+            "pair": [name, named[pidx][0]],
+            "size_residual_mm": _r(size_res),
+            "mirror_axis": "xyz"[mirror_ax],
+            "mirror_separation_mm": _r(seps[mirror_ax]),
+            "align_residual_mm": _r(align_res),
+            "ok": bool(
+                size_res < max(1.0, largest_part_dim * 0.02)
+                and align_res < max(1.0, ov_max * 0.02)
+            ),
+        })
+    if symmetry:
+        report["symmetry"] = symmetry
+
+    # Gap matrix: each part's nearest-neighbour approximate gap. Negative ⇒
+    # overlapping/touching (good for an assembly); large positive ⇒ floating.
+    if len(named) >= 2:
+        gap_recs: list[dict[str, Any]] = []
+        mean_size = sum(m for *_x, m in named) / len(named)
+        gap_threshold = max(mean_size, 50.0)
+        for i, (name, c1, _s1, m1) in enumerate(named):
+            min_gap = float("inf")
+            nearest = None
+            for j, (n2, c2, _s2, m2) in enumerate(named):
+                if i == j:
+                    continue
+                dist = ((c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2 + (c1[2] - c2[2]) ** 2) ** 0.5
+                gap = dist - (m1 + m2) / 2.0
+                if gap < min_gap:
+                    min_gap = gap
+                    nearest = n2
+            status = "touching" if min_gap <= 0 else ("floating" if min_gap > gap_threshold else "near")
+            gap_recs.append({
+                "part": name,
+                "nearest": nearest,
+                "gap_mm": _r(min_gap),
+                "status": status,
+            })
+        report["gaps"] = gap_recs[:max_parts]
+        floating = [g["part"] for g in gap_recs if g["status"] == "floating"]
+        if floating:
+            report["floating_parts"] = floating
+
+    return report
+
+
+# ── parametric editing: extract editable parameters from source.py ─────────────
+
+_PARAM_CONSTANT_RE = re.compile(r"^([ \t]*)([A-Z][A-Z0-9_]*)[ \t]*=[ \t]*([0-9]+\.?[0-9]*)([ \t]*(?:#.*)?)$")
+
+
+def _infer_param_name(const_name: str) -> str:
+    """Infer a human-friendly parameter name from a UPPER_SNAKE_CASE constant."""
+    lower = const_name.lower()
+    # Dimensional suffixes take priority
+    for suffix, unit in [
+        ("_radius_mm", "radius_mm"),
+        ("_diameter_mm", "diameter_mm"),
+        ("_height_mm", "height_mm"),
+        ("_length_mm", "length_mm"),
+        ("_width_mm", "width_mm"),
+        ("_depth_mm", "depth_mm"),
+        ("_thickness_mm", "thickness_mm"),
+        ("_offset_mm", "offset_mm"),
+        ("_angle_deg", "angle_deg"),
+        ("_radius", "radius_mm"),
+        ("_diameter", "diameter_mm"),
+        ("_height", "height_mm"),
+        ("_length", "length_mm"),
+        ("_width", "width_mm"),
+        ("_depth", "depth_mm"),
+        ("_thickness", "thickness_mm"),
+        ("_offset", "offset_mm"),
+        ("_angle", "angle_deg"),
+    ]:
+        if lower.endswith(suffix):
+            return unit
+    # Content-based inference
+    if "radius" in lower:
+        return "radius_mm"
+    if "diameter" in lower:
+        return "diameter_mm"
+    if "height" in lower:
+        return "height_mm"
+    if "length" in lower:
+        return "length_mm"
+    if "width" in lower:
+        return "width_mm"
+    if "depth" in lower:
+        return "depth_mm"
+    if "thickness" in lower:
+        return "thickness_mm"
+    if "fillet" in lower:
+        return "fillet_radius_mm"
+    if "offset" in lower:
+        return "offset_mm"
+    if "angle" in lower:
+        return "angle_deg"
+    return lower + "_mm"
+
+
+def _match_constant_to_feature(const_name: str, feature_name: str) -> bool:
+    """Determine whether a named constant likely belongs to a given feature.
+
+    Matching rules (all case-insensitive):
+    1. The constant's first word appears in the feature name.
+       e.g. MOTOR_POD_RADIUS → motor_pod_FL (motor matches).
+    2. The feature's first word appears in the constant name.
+       e.g. BODY_LENGTH → body (body matches).
+    3. Global / shared prefixes.
+       e.g. FILLET_RADIUS, GLOBAL_WALL, DEFAULT_…
+    4. The constant contains the feature name verbatim.
+       e.g. FUSELAGE_LENGTH → fuselage
+    """
+    c_parts = const_name.lower().split("_")
+    f_parts = feature_name.lower().replace("-", "_").split("_")
+    c0 = c_parts[0]
+    f0 = f_parts[0]
+
+    if c0 in f_parts:
+        return True
+    if f0 in c_parts:
+        return True
+    if c0 in ("global", "default", "fillet", "chamfer"):
+        return True
+    if feature_name.lower() in const_name.lower():
+        return True
+    return False
+
+
+def _enrich_feature_graph_with_source_params(
+    source_code: str,
+    feature_graph: dict[str, Any],
+) -> dict[str, Any]:
+    """Scan source.py for UPPER_SNAKE_CASE constants and attach them as editable
+    parameters to the feature-graph features they likely belong to.
+
+    This is what makes ``cad.edit_parameter`` work: the feature graph now carries
+    ``parameters`` entries with ``cad_parameter_name`` pointing back to a named
+    constant in source.py, so editing can be a deterministic text replacement
+    instead of an LLM round-trip.
+    """
+    # 1. Extract all named constants (UPPER_SNAKE_CASE = number).
+    constants: dict[str, float] = {}
+    for line in source_code.splitlines():
+        m = _PARAM_CONSTANT_RE.match(line)
+        if m:
+            name = m.group(2)
+            try:
+                val = float(m.group(3))
+                constants[name] = val
+            except ValueError:
+                pass
+
+    if not constants:
+        return feature_graph
+
+    features = feature_graph.get("features", [])
+
+    # 2. Attach matched constants to each feature.
+    for feature in features:
+        fname = feature.get("name", "")
+        if not fname:
+            continue
+
+        matched: dict[str, Any] = {}
+        for cname, cval in constants.items():
+            if not _match_constant_to_feature(cname, fname):
+                continue
+            pname = _infer_param_name(cname)
+            if pname in matched:
+                # Ambiguous: skip if we already have a param with the same inferred name.
+                continue
+            matched[pname] = {
+                "current_value": cval,
+                "cad_parameter_name": cname,
+                "type": "number",
+                "min_value": max(0.01, cval * 0.05),
+                "max_value": max(cval * 5.0, 1000.0),
+            }
+
+        if matched:
+            existing = feature.get("parameters") or {}
+            if isinstance(existing, dict):
+                # Merge: source-derived params win over topology-derived heuristics
+                # because they are the ground truth the user can actually edit.
+                existing.update(matched)
+                feature["parameters"] = existing
+            elif isinstance(existing, list):
+                # Append as dict items
+                for k, v in matched.items():
+                    existing.append({"name": k, **v})
+
+    # 3. Also surface any truly global constants as a synthetic "global_params"
+    #    feature so agents can edit shared dims (wall thickness, default fillet).
+    global_consts = {
+        k: v
+        for k, v in constants.items()
+        if k.split("_")[0].lower() in ("global", "default", "fillet", "chamfer", "wall")
+    }
+    if global_consts:
+        # Check if a global_params feature already exists
+        has_global = any(f.get("type") == "global_params" for f in features)
+        if not has_global:
+            gparams: dict[str, Any] = {}
+            for k, v in global_consts.items():
+                pname = _infer_param_name(k)
+                gparams[pname] = {
+                    "current_value": v,
+                    "cad_parameter_name": k,
+                    "type": "number",
+                    "min_value": max(0.01, v * 0.05),
+                    "max_value": max(v * 5.0, 1000.0),
+                }
+            features.insert(0, {
+                "id": "feat_global_params",
+                "type": "global_params",
+                "name": "Global Parameters",
+                "parameters": gparams,
+                "intent": {"role": "shared_dimensions"},
+            })
+
+    # 4. Detect advanced modelling features from source code patterns
+    #    (loft, revolve, sweep, fillet, mirror) so the feature graph reflects
+    #    industrial-design intent, not just primitive counts.
+    _source_lower = source_code.lower()
+    _adv_counter = 0
+
+    def _add_adv_feature(ftype: str, name: str, params: dict[str, Any], intent_role: str) -> None:
+        nonlocal _adv_counter
+        _adv_counter += 1
+        features.append({
+            "id": f"feat_{ftype}_{_adv_counter:03d}",
+            "type": ftype,
+            "name": name,
+            "parameters": params,
+            "intent": {"role": intent_role},
+        })
+
+    # Loft — count BuildSketch pairs with loft() between them
+    loft_count = _source_lower.count("loft(")
+    if loft_count > 0:
+        _add_adv_feature(
+            "loft",
+            f"Loft ({loft_count} operation{'s' if loft_count > 1 else ''})",
+            {},
+            "tapered_body",
+        )
+
+    # Revolve
+    revolve_count = _source_lower.count("revolve(")
+    if revolve_count > 0:
+        _add_adv_feature(
+            "revolve",
+            f"Revolve ({revolve_count} operation{'s' if revolve_count > 1 else ''})",
+            {},
+            "axisymmetric_body",
+        )
+
+    # Sweep
+    sweep_count = _source_lower.count("sweep(")
+    if sweep_count > 0:
+        _add_adv_feature(
+            "sweep",
+            f"Sweep ({sweep_count} operation{'s' if sweep_count > 1 else ''})",
+            {},
+            "path_extrusion",
+        )
+
+    # Fillet — extract radii so they become editable if declared as constants
+    _fillet_radii: list[float] = []
+    for _fm in re.finditer(
+        r'fillet\s*\([^)]*radius\s*=\s*([0-9]+\.?[0-9]*)',
+        source_code,
+        re.IGNORECASE,
+    ):
+        try:
+            _fillet_radii.append(float(_fm.group(1)))
+        except ValueError:
+            pass
+    if _fillet_radii:
+        _add_adv_feature(
+            "fillet",
+            f"Fillet ({len(_fillet_radii)} operation{'s' if len(_fillet_radii) > 1 else ''}, "
+            f"r={min(_fillet_radii):.1f}–{max(_fillet_radii):.1f}mm)",
+            {"fillet_radius_mm": round(sum(_fillet_radii) / len(_fillet_radii), 2)},
+            "edge_rounding",
+        )
+
+    # Mirror
+    mirror_count = _source_lower.count("mirror(")
+    if mirror_count > 0:
+        _add_adv_feature(
+            "mirror",
+            f"Mirror symmetry ({mirror_count} operation{'s' if mirror_count > 1 else ''})",
+            {},
+            "symmetric_copy",
+        )
+
+    return feature_graph
 
 
 # ── Claude API call ────────────────────────────────────────────────────────────
@@ -1122,7 +1575,7 @@ class Build123dBackend:
                 step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(
                     generated_code, timeout=timeout
                 )
-                feature_graph = _topology_to_feature_graph(topo)
+                feature_graph = _topology_to_feature_graph(topo, source_code=generated_code)
                 face_count = sum(
                     1 for e in topo.get("entities", []) if e.get("type") == "face"
                 )
@@ -1413,7 +1866,7 @@ def execute_build123d_code(
     # _mesh_meta is transient (used only for thumbnail coloring) — pop it so it
     # doesn't get written to topology_map.json on disk.
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
-    feature_graph = _topology_to_feature_graph(topo)
+    feature_graph = _topology_to_feature_graph(topo, source_code=code)
     face_count = sum(1 for e in topo.get("entities", []) if e.get("type") == "face")
     feature_count = len(feature_graph.get("features", []))
 
@@ -1485,6 +1938,7 @@ def execute_build123d_code(
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
         "feature_graph": feature_graph,
+        "geometry_report": _compute_geometry_report(topo),
         "written_artifacts": written,
         "write_files": write_files,
         "preview_url": f"/api/projects/{project_id}/cad-preview",
@@ -1675,7 +2129,7 @@ def run_cad_generation_stream(
                 return
 
     # At this point step_bytes is set (or we returned above).
-    feature_graph = _topology_to_feature_graph(topo)
+    feature_graph = _topology_to_feature_graph(topo, source_code=generated_code)
     face_count = sum(1 for e in topo.get("entities", []) if e.get("type") == "face")
 
     # Stage 3: write artifacts.
@@ -1735,6 +2189,7 @@ def run_cad_generation_stream(
                 "bounding_box": solid.get("bounding_box") if solid else None,
             },
             "feature_graph": feature_graph,
+            "geometry_report": _compute_geometry_report(topo),
             "written_artifacts": written,
             "write_files": write_files,
             "preview_url": f"/api/projects/{project_id}/cad-preview",
@@ -1838,7 +2293,7 @@ def refine_cad_generation(
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Refined CAD execution failed: {exc}")
 
-    feature_graph = _topology_to_feature_graph(topo)
+    feature_graph = _topology_to_feature_graph(topo, source_code=refined_code)
     named_parts = _named_parts_from_feature_graph(feature_graph)
     parts_added = [part for part in named_parts if part not in prior_named_parts]
 
@@ -2558,3 +3013,202 @@ def serve_cad_preview(settings: Any, project_id: str) -> tuple[bytes, str]:
         raise HTTPException(status_code=500, detail=str(exc))
 
     raise HTTPException(status_code=404, detail="No CAD preview in package — generate a model first")
+
+
+# ── parametric edit: fast text replacement in source.py ────────────────────────
+
+def edit_build123d_parameter(
+    settings: Any,
+    project_id: str,
+    feature_id: str,
+    parameter_name: str,
+    new_value: Any,
+    timeout: int = 120,
+) -> dict[str, Any]:
+    """Apply a parametric edit by replacing a named constant in source.py.
+
+    Workflow:
+        1. Validate the edit contract against graph/feature_graph.json.
+        2. Read geometry/source.py from the .aieng package.
+        3. Locate the UPPER_SNAKE_CASE constant and replace its value.
+        4. Re-execute build123d with the modified source.
+        5. Write new geometry/topology/feature_graph back into the package.
+        6. Return a thumbnail so the caller can visually verify the change.
+
+    This is deterministic and fast (sub-second to a few seconds) because it
+    bypasses the LLM entirely — only a text substitution + rebuild.
+    """
+    from .project_io import (
+        _validate_cad_parameter_edit_contract,
+        get_project,
+        resolve_project_path,
+    )
+
+    # 1. Load project & package
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+
+    pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if pkg_path is None or not pkg_path.exists():
+        return {
+            "status": "error",
+            "code": "package_not_found",
+            "message": ".aieng package not found — generate a model first",
+        }
+
+    # 2. Validate contract (reads feature_graph.json, checks min/max bounds)
+    try:
+        contract = _validate_cad_parameter_edit_contract(
+            pkg_path, feature_id, parameter_name, new_value
+        )
+    except ValueError as exc:
+        return {"status": "error", "code": "invalid_contract", "message": str(exc)}
+
+    param_info = contract["parameter"]
+    cad_parameter_name = param_info.get("cad_parameter_name") or parameter_name
+    previous_value = param_info.get("current_value")
+
+    # 3. Read source.py + reference image
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            source_code = zf.read("geometry/source.py").decode("utf-8")
+            ref_bytes = (
+                zf.read("geometry/reference.png")
+                if "geometry/reference.png" in zf.namelist()
+                else None
+            )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "code": "read_failed",
+            "message": f"Failed to read source.py from package: {exc}",
+        }
+
+    # 4. Text replacement: find `CONSTANT_NAME = value` and swap the numeric part.
+    #    We preserve indentation and any inline comment.
+    pattern = rf'^([ \t]*)({re.escape(cad_parameter_name)})([ \t]*=[ \t]*)([0-9]+\.?[0-9]*)(.*)$'
+    modified_lines: list[str] = []
+    found = False
+
+    for line in source_code.splitlines():
+        m = re.match(pattern, line)
+        if m:
+            indent = m.group(1)
+            name = m.group(2)
+            eq = m.group(3)
+            tail = m.group(5)
+            modified_lines.append(f"{indent}{name}{eq}{new_value}{tail}")
+            found = True
+        else:
+            modified_lines.append(line)
+
+    if not found:
+        return {
+            "status": "error",
+            "code": "parameter_not_found_in_source",
+            "message": (
+                f"Named constant '{cad_parameter_name}' not found in source.py. "
+                f"Ensure the CAD code declares parameters as UPPER_SNAKE_CASE constants "
+                f"(e.g. {cad_parameter_name} = {previous_value})."
+            ),
+            "previous_value": previous_value,
+        }
+
+    modified_source = "\n".join(modified_lines)
+
+    # 5. Re-execute build123d with the modified source
+    backend = Build123dBackend(settings)
+    if not backend.can_generate():
+        return {
+            "status": "error",
+            "code": "build123d_unavailable",
+            "message": "build123d is not installed — cannot re-execute CAD code.",
+        }
+
+    try:
+        step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(
+            modified_source, timeout=timeout
+        )
+    except Exception as exc:
+        # If the edit breaks the model, return the error but preserve the
+        # previous state (do NOT write the broken source back into the package).
+        return {
+            "status": "error",
+            "code": "execution_failed",
+            "message": (
+                f"Parameter edit caused build failure — the value {new_value} may be "
+                f"geometrically invalid for this feature. Error: {exc}"
+            ),
+            "previous_value": previous_value,
+            "new_value": new_value,
+            "cad_parameter_name": cad_parameter_name,
+        }
+
+    # 6. Build enriched feature_graph from the new topology + modified source
+    feature_graph = _topology_to_feature_graph(topo, source_code=modified_source)
+
+    # 7. Write artifacts back into the package atomically
+    _write_cad_artifacts(
+        pkg_path=pkg_path,
+        step_bytes=step_bytes,
+        stl_bytes=stl_bytes or b"",
+        topology_map=topo,
+        feature_graph=feature_graph,
+        generated_code=modified_source,
+        glb_bytes=glb_bytes,
+    )
+    _clear_revalidation_status(pkg_path)
+
+    # 8. Mark project as updated
+    try:
+        from .main import save_project as _save_project, now_iso as _now_iso
+        project["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
+        project["updated_at"] = _now_iso()
+        _save_project(settings, project)
+    except Exception:
+        pass
+
+    # 9. Render thumbnail so the caller can verify visually
+    mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+    face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
+    thumb = render_mesh_thumbnail(
+        stl_bytes or b"",
+        face_colors=face_colors,
+        reference_image_bytes=ref_bytes,
+    )
+
+    solid = next(
+        (e for e in topo.get("entities", []) if e.get("type") == "solid"), None
+    )
+
+    return {
+        "status": "ok",
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "feature_id": feature_id,
+        "parameter_name": parameter_name,
+        "cad_parameter_name": cad_parameter_name,
+        "new_value": new_value,
+        "previous_value": previous_value,
+        "topology_summary": {
+            "face_count": sum(
+                1 for e in topo.get("entities", []) if e.get("type") == "face"
+            ),
+            "feature_count": len(feature_graph.get("features", [])),
+            "bounding_box": solid.get("bounding_box") if solid else None,
+        },
+        "feature_graph": feature_graph,
+        "geometry_report": _compute_geometry_report(topo),
+        "written_artifacts": [
+            "geometry/generated.step",
+            "geometry/preview.stl",
+            "geometry/topology_map.json",
+            "graph/feature_graph.json",
+            "geometry/source.py",
+        ] + (["geometry/preview.glb"] if glb_bytes else []),
+        "preview_url": f"/api/projects/{project_id}/cad-preview",
+        "preview_format": "glb" if glb_bytes else "stl",
+        "thumbnail_png_base64": thumb,
+    }

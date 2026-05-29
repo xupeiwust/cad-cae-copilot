@@ -188,13 +188,45 @@ The enabling tool is **`cad.execute_build123d`** (approval-gated):
   and sets the project to `viewer_ready_glb`.
 - **Returns**: a **2×2 multi-view PNG contact sheet** (front / side / top / iso) so
   the agent can verify silhouette and alignment from four angles at once, plus
-  `named_parts`, `parts_added`, `mode`, `used_base`, topology summary, and a
-  preview URL. When a reference image is attached, the layout expands to 2×3
-  with the reference filling the right column.
+  `named_parts`, `parts_added`, `mode`, `used_base`, topology summary, a
+  preview URL, and a deterministic **`geometry_report`** (see below). When a
+  reference image is attached, the layout expands to 2×3 with the reference
+  filling the right column.
 
 Companion read-only tool **`cad.get_source`** returns the accumulated source and
 `{named_parts, has_base}` — call it before an incremental edit to decide replace vs
 append and see which named parts already exist.
+
+### Quantitative geometry report (numeric self-review)
+
+Every `cad.execute_build123d` and `cad.edit_parameter` response carries a
+`geometry_report` so the agent judges form from numbers, not just the low-res
+thumbnail (LLMs read ratios far more reliably than 3D renders):
+
+- `overall_proportions` — normalized H:W:D of the whole model (largest dim = 1.0).
+- `parts[].ratio_to_largest` — each named part's size vs the biggest part.
+- `symmetry[]` — for left/right name pairs (`arm_L`/`arm_R`, `motor_pod_FL`/`FR`):
+  `ok:false` flags an asymmetric pair, `align_residual_mm` is how far off the
+  mirror is, `status:missing_partner` means only one side was named.
+- `gaps[]` / `floating_parts` — `status:floating` flags a detached part (usually a
+  coordinate typo); `touching` means parts connect as intended.
+
+### Fast parametric edits — `cad.edit_parameter` (approval-gated)
+
+For pure dimensional tweaks of an existing model, prefer `cad.edit_parameter`
+over regenerating: it replaces a named **UPPER_SNAKE_CASE** constant in
+`geometry/source.py` and re-executes build123d — no LLM, sub-second to a few
+seconds, fully reproducible.
+
+- Input: `{ project_id, featureId, parameterName, newValue, timeout? }`
+- `featureId` / `parameterName` come from the feature's `parameters` block in
+  `feature_graph.json` (each carries a `cad_parameter_name` → the source constant).
+- The value is validated against the parameter's declared `min_value`/`max_value`.
+  If the edit breaks the build, the package is left untouched and an error is
+  returned — the prior geometry is preserved.
+- Works only when the source declares dimensions as named constants. Generated
+  code does this automatically (system-prompt rule); hand-written code should too:
+  `MOTOR_POD_RADIUS = 3` rather than a bare `3` inline.
 
 ### Reference image calibration (recommended for named real-world targets)
 

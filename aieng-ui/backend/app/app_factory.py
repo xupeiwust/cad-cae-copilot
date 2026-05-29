@@ -4475,18 +4475,15 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     )
 
     def _tool_cad_edit_parameter(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "status": "unavailable",
-            "code": "no_cad_provider",
-            "message": (
-                "No CAD provider is configured. Direct parametric edits require a connected CAD "
-                "integration (e.g. a native CAD API or FreeCAD bridge). "
-                "You can still propose parameter changes via the copilot loop proposal workflow."
-            ),
-            "feature_id": inp.get("featureId"),
-            "parameter_name": inp.get("parameterName"),
-            "new_value": inp.get("newValue"),
-        }
+        from . import cad_generation as _cg
+        return _cg.edit_build123d_parameter(
+            settings=active_settings,
+            project_id=str(inp.get("project_id") or ""),
+            feature_id=str(inp.get("featureId") or ""),
+            parameter_name=str(inp.get("parameterName") or ""),
+            new_value=inp.get("newValue"),
+            timeout=int(inp.get("timeout", 120)),
+        )
 
     _rt.register_tool(
         "cad.edit_parameter",
@@ -4496,7 +4493,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         description=(
             "Apply a parametric edit to a CAD model feature. "
             "Requires explicit user approval before execution. "
-            "Returns unavailable if no CAD provider is connected."
+            "Performs a fast deterministic text replacement in geometry/source.py "
+            "(no LLM round-trip) and re-executes build123d so the change is immediate. "
+            "The feature graph must carry editable parameters (UPPER_SNAKE_CASE constants)."
         ),
     )
     from . import runtime_tools

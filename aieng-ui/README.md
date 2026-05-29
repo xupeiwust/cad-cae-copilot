@@ -59,12 +59,12 @@ conflated. Key tools listed below; full registry available via `GET /api/runtime
 | `aieng.refresh_semantics` | Working |
 | `aieng.generate_preview` | Working |
 | `aieng.read_audit_log` | Working |
-| `cad.execute_build123d` | Working — caller-supplied build123d Python code → STEP/STL/GLB. Returns a 2×2 multi-view contact sheet thumbnail (front/side/top/iso) with per-part colors honoured. Approval-gated. |
+| `cad.execute_build123d` | Working — caller-supplied build123d Python code → STEP/STL/GLB. Returns a 2×2 multi-view contact sheet thumbnail (front/side/top/iso) with per-part colors honoured, plus a deterministic `geometry_report` (overall proportions, per-part size ratios, left/right symmetry residuals, floating-part gaps) for numeric self-review. Approval-gated. |
 | `cad.get_source` | Working — read accumulated build123d source + named_parts + has_base for incremental editing |
 | `cad.set_reference_image` | Working — attach a reference photo/drawing to a project so future thumbnails tile it side-by-side for proportion calibration |
 | `cad.critique` | Working — read-only deterministic engineering audit (min wall thickness, standard hole sizes, floating components) based on the canonical labels from `aieng/schemas/feature_graph.schema.json` |
 | `cad.refine` | Working — LLM-assisted refinement of an existing build123d model from natural-language feedback. Approval-gated. |
-| `cad.edit_parameter` | Working — FreeCAD parameter edit with honest executor selection (`auto`\|stub\|`macro`\|`rpc`). Stub mode returns `source="stub_mock"`, `status="partial"`. Approval-gated. |
+| `cad.edit_parameter` | Working — fast build123d parametric edit: replaces a named UPPER_SNAKE_CASE constant in `geometry/source.py` and re-executes (no LLM). Validated against the parameter's declared `min`/`max`; on build failure the prior geometry is preserved. Approval-gated. |
 | `freecad.inspect_geometry` | Working — FreeCADCmd bridge |
 | `freecad.export_step` | Working — FreeCADCmd bridge; writes `{stem}_export.step` |
 | `postprocess.generate_computed_metrics` | Working — normalizes external metrics into `computed_metrics.json` and writes it back into the `.aieng` package |

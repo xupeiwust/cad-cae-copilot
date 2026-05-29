@@ -152,6 +152,52 @@ narrows."
 `named_parts` (all named parts now in the model), `parts_added` (what this step added),
 `mode` (`replace`/`append`), `used_base` (whether an append consumed a prior model).
 
+**Quantitative geometry report (`geometry_report`).** Every `cad.execute_build123d`
+and `cad.edit_parameter` response carries a deterministic `geometry_report` —
+judge proportions from these *numbers*, not only the blurry thumbnail (LLMs read
+ratios far more reliably than low-res 3D renders):
+- `overall_proportions` — normalized H:W:D of the whole model (largest dim = 1.0).
+- `parts[].ratio_to_largest` — each named part's size relative to the biggest part.
+- `symmetry[]` — for left/right name pairs (`arm_L`/`arm_R`, `motor_pod_FL`/`FR`):
+  `ok:false` = the pair is NOT symmetric (fix the coordinates); `align_residual_mm`
+  is how far off the mirror is; `status:missing_partner` = you named one side only.
+- `gaps[]` — `status:floating` flags a detached part (usually a coordinate typo);
+  `touching` = parts connect as intended; `floating_parts` lists all detached ones.
+Cite specific numbers when iterating ("arm ratio_to_largest=0.5, too short → 0.7")
+— this converts proportion judgment from eyeballing into a convergence metric.
+
+**Parametric editing (`cad.edit_parameter`) — change one dimension fast, no LLM.**
+When you want to resize an existing feature, do NOT regenerate the whole model.
+`cad.edit_parameter` does a deterministic text replacement of a named constant in
+`geometry/source.py` and re-executes build123d — sub-second to a few seconds,
+fully reproducible. For this to work the source must declare dimensions as
+**UPPER_SNAKE_CASE constants** (the system prompt enforces this on generated
+code; do the same in hand-written code):
+```python
+MOTOR_POD_RADIUS = 3        # editable → feature_graph exposes radius_mm
+fl = Cylinder(MOTOR_POD_RADIUS, 30); fl.label = "motor_pod_FL"
+```
+The feature graph then carries editable `parameters` with a `cad_parameter_name`
+pointing back at the constant. Call it as:
+```
+cad.edit_parameter { project_id, featureId, parameterName, newValue }   [APPROVAL]
+```
+- `featureId` / `parameterName` come from the feature's `parameters` block in
+  `feature_graph.json` (or `aieng.agent_context`).
+- Validated against the parameter's declared `min_value`/`max_value` first.
+- If the new value breaks the build, the package is left untouched and the error
+  is returned — the prior geometry is preserved.
+- Constants whose prefix is `GLOBAL_`/`DEFAULT_`/`WALL_`/`FILLET_`/`CHAMFER_` are
+  also surfaced under a synthetic `Global Parameters` feature for shared dims.
+Use `cad.execute_build123d` (mode=append/replace) only for changes that add or
+remove geometry; use `cad.edit_parameter` for pure dimensional tweaks.
+
+**Advanced-feature awareness in the feature graph.** Beyond named parts, the
+feature graph now tags the modelling operations it detects in the source:
+`loft`, `revolve`, `sweep`, `fillet` (with average radius), and `mirror`. This
+lets you (and downstream tools) see whether a body was built with industrial-
+design curves or plain primitive stacking.
+
 Example — a simplified coffee-machine body:
 ```python
 from build123d import *
@@ -400,7 +446,7 @@ suitable for a fixed support, pass `"faceId": "f_top_001"` in your CAE setup cal
 | Tool | Purpose |
 |------|---------|
 | `cad.execute_build123d` | Run caller-supplied build123d code to create/replace geometry (mode=replace\|append) |
-| `cad.edit_parameter` | Parametric edit of an existing feature (currently returns unavailable) |
+| `cad.edit_parameter` | Fast parametric edit: replaces a named constant in `source.py` + re-executes build123d (no LLM). Requires the feature to carry editable parameters — see "Parametric editing" below |
 | `cad.set_reference_image` | Attach a reference photo/drawing to a project so future thumbnails include it side-by-side for proportion calibration |
 
 Before an incremental edit, call **`cad.get_source`** (read-only) to see the current

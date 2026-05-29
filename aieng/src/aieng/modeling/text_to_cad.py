@@ -82,6 +82,25 @@ Rules:
    - Mirror symmetric parts with `mirror(part, about=Plane.YZ)`.
    For purely mechanical brackets/fixtures/prototypes, primitive stacking
    is fine — this rule is for visible exterior forms only.
+
+   HARD RULE: If your iteration script is mostly `Box(...) + .moved(...)` for a
+   visible character/vehicle/product, STOP and replace the major exterior masses
+   with ONE of: loft between sketches, revolved profile, or swept profile.
+   Stacked boxes cap the result at "high-quality pixel art" — it will not read
+   as designed.
+
+   Named landmarks (mm) — define proportions ONCE as named constants so the
+   whole body re-proportions when a value changes:
+   ```python
+   HIP_Z, SHOULDER_Z = 232, 392
+   HIP_HALF, SHOULDER_HALF = 55, 150
+   with BuildPart() as bp:
+       with BuildSketch(Plane.XY.offset(HIP_Z + 30)) as base:
+           RectangleRounded(HIP_HALF * 2 + 20, 90)
+       with BuildSketch(Plane.XY.offset(SHOULDER_Z)) as top:
+           RectangleRounded(SHOULDER_HALF * 2, 80)
+       loft()
+   ```
 9. ENGINEERING MODE — when the description names a mechanical part like
    bracket, housing, enclosure, manifold, fixture, frame, mount, flange,
    or chassis (parts that downstream tools will manufacture or simulate):
@@ -95,6 +114,46 @@ Rules:
      don't shift it on later iterations.
    - Pick standard hole diameters (3, 4, 5, 6, 8, 10, 12, 16, 20 mm)
      and place holes ≥ 2× radius from any edge.
+10. PARAMETRIC DESIGN — declare every key dimension as a named UPPER_SNAKE_CASE
+    constant BEFORE the geometry that uses it. This enables downstream parametric
+    editing without re-running the LLM.
+
+    BAD:
+      body = Box(120, 80, 8)
+      with Locations((45, 25, 0)):
+          Hole(radius=5, depth=8)
+
+    GOOD:
+      BODY_LENGTH = 120
+      BODY_WIDTH = 80
+      BODY_THICKNESS = 8
+      HOLE_RADIUS = 5
+      body = Box(BODY_LENGTH, BODY_WIDTH, BODY_THICKNESS)
+      with Locations((45, 25, 0)):
+          Hole(radius=HOLE_RADIUS, depth=BODY_THICKNESS)
+
+    For each named part, prefix the constant with the part name:
+      MOTOR_POD_RADIUS = 3
+      MOTOR_POD_HEIGHT = 30
+      fl = Cylinder(MOTOR_POD_RADIUS, MOTOR_POD_HEIGHT)
+      fl.label = "motor_pod_FL"
+      fl.color = Color(0.20, 0.30, 0.65)
+
+    Use named constants for ALL dimensions: Box sizes, Cylinder radii/heights,
+    Hole radii, fillet radii, placement offsets, and loft sketch sizes.
+11. QUANTITATIVE SELF-REVIEW — after each build, the tool returns a
+    `geometry_report` with exact numbers. Judge proportions from these numbers,
+    NOT only from the blurry thumbnail:
+    - `overall_proportions` — normalized H:W:D of the whole model.
+    - `parts[].ratio_to_largest` — each part's size relative to the biggest part.
+    - `symmetry[]` — for left/right name pairs (e.g. arm_L/arm_R, motor_pod_FL/FR):
+      `ok: false` means the pair is NOT symmetric — fix the offending coordinates.
+      `status: missing_partner` means you named one side but not the other.
+    - `gaps[]` — `status: floating` means a part is detached (likely a coordinate
+      typo); `touching` means parts connect as intended.
+    Cite specific numbers when iterating, e.g. "arm ratio_to_largest=0.5 but the
+    reference arm reaches mid-thigh → lengthen to ~0.7". This is far more reliable
+    than eyeballing the render.
 """
 
 

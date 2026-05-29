@@ -2,10 +2,10 @@ import type { ChatConnection, LLMConfig } from "./types";
 import type { ControlPaneMode, StageItem, WorkbenchPaneMode } from "./appTypes";
 
 export const BASE_STAGES: StageItem[] = [
-  { key: "upload", label: "上传", detail: "将 STEP 文件放入项目", state: "idle" },
-  { key: "import", label: "导入", detail: "生成 .aieng 包并提取拓扑和特征", state: "idle" },
-  { key: "preview", label: "预览", detail: "生成 3D 预览模型", state: "idle" },
-  { key: "semantic", label: "语义", detail: "同步清单、拓扑和摘要", state: "idle" },
+  { key: "upload", label: "Upload", detail: "Place STEP file into project", state: "idle" },
+  { key: "import", label: "Import", detail: "Generate .aieng package and extract topology", state: "idle" },
+  { key: "preview", label: "Preview", detail: "Generate 3D preview model", state: "idle" },
+  { key: "semantic", label: "Semantic", detail: "Sync manifest, topology and summary", state: "idle" },
 ];
 
 export const CAD_PROVIDER_OPTIONS = [{ value: "freecad", label: "FreeCAD" }] as const;
@@ -48,7 +48,6 @@ export const CONTROL_PANE_MODES: Array<{ id: ControlPaneMode; label: string; det
 export const WORKBENCH_PANE_MODES: Array<{ id: WorkbenchPaneMode; label: string; detail: string }> = [
   { id: "agent", label: "Build", detail: "Chat and current task" },
   { id: "project", label: "Files", detail: "Projects and imports" },
-  { id: "debug", label: "Advanced", detail: "Diagnostics and expert tools" },
 ];
 
 export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [

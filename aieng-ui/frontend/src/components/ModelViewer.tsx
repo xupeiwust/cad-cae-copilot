@@ -400,7 +400,7 @@ export function ModelViewer({
   const [objectReadyKey, setObjectReadyKey] = useState(0);
   const [viewerState, setViewerState] = useState<{ status: ViewerLoadState; detail: string }>({
     status: "idle",
-    detail: "等待生成预览资产",
+    detail: "Waiting for preview asset",
   });
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
   const [preprocessBusy, setPreprocessBusy] = useState(false);
@@ -429,7 +429,7 @@ export function ModelViewer({
       height: Math.max(host.clientHeight, 1),
     });
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#08111f");
+    scene.background = new THREE.Color("#111111");
     sceneRef.current = scene;
     const highlightGroup = new THREE.Group();
     highlightGroup.name = "pointer-highlights";
@@ -451,14 +451,14 @@ export function ModelViewer({
     controls.enableDamping = true;
     controls.target.set(0.5, 0.5, 0.5);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.4));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
     dirLight.position.set(5, 10, 7);
     scene.add(dirLight);
-    const fillLight = new THREE.DirectionalLight(0x60a5fa, 0.8);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
     fillLight.position.set(-6, 4, -5);
     scene.add(fillLight);
-    scene.add(new THREE.GridHelper(10, 10, 0x3b82f6, 0x334155));
+    scene.add(new THREE.GridHelper(10, 10, 0x333333, 0x222222));
 
     let object3d: THREE.Object3D | null = null;
     let isDisposed = false;
@@ -499,7 +499,7 @@ export function ModelViewer({
       }
       scene.add(nextObject);
       if (!fitCameraToObject(camera, controls, nextObject)) {
-        setSafeViewerState("error", "预览资产缺少可用的几何边界，无法定位相机");
+        setSafeViewerState("error", "Preview asset missing valid geometry bounds, cannot position camera");
         return;
       }
       const fieldNote = (() => {
@@ -507,23 +507,23 @@ export function ModelViewer({
         const label = fieldLabel(fieldDescriptor.field_name);
         if (fieldDescriptor.source === "frd") {
           if (fieldDescriptor.bbox_status === "suspicious") {
-            return ` · ${label} overlay (FRD数据存在，但几何坐标可能不一致)`;
+            return ` · ${label} overlay (FRD data present, but geometry coordinates may mismatch)`;
           }
-          return ` · ${label} overlay (FRD真实数据)`;
+          return ` · ${label} overlay (FRD real data)`;
         }
-        return ` · ${label} overlay (合成预览，不可用于工程判断)`;
+        return ` · ${label} overlay (synthetic preview, not for engineering decisions)`;
       })();
       if (fieldDescriptor?.bbox_status === "suspicious") {
-        setSafeViewerState("ready", `真实预览资产已加载${fieldNote} — 警告：FRD 坐标与几何不匹配`);
+        setSafeViewerState("ready", `Real preview asset loaded${fieldNote} — Warning: FRD coordinates mismatch geometry`);
       } else {
-        setSafeViewerState("ready", `真实预览资产已加载${fieldNote}`);
+        setSafeViewerState("ready", `Real preview asset loaded${fieldNote}`);
       }
       setObjectReadyKey((current) => current + 1);
     };
 
     if (assetUrl && resolvedFormat) {
       const absoluteUrl = assetUrl.startsWith("http") ? assetUrl : `${api.base}${assetUrl}`;
-      setSafeViewerState("loading", `正在加载 ${resolvedFormat.toUpperCase()} 预览资产`);
+      setSafeViewerState("loading", `Loading ${resolvedFormat.toUpperCase()} preview asset`);
 
       if (resolvedFormat === "glb") {
         new GLTFLoader().load(
@@ -533,7 +533,7 @@ export function ModelViewer({
           },
           undefined,
           (error: unknown) => {
-            const detail = error instanceof Error ? error.message : "GLB 预览资产加载失败";
+            const detail = error instanceof Error ? error.message : "GLB preview asset failed to load";
             setSafeViewerState("error", detail);
           },
         );
@@ -544,21 +544,21 @@ export function ModelViewer({
             geometry.computeVertexNormals();
             const mesh = new THREE.Mesh(
               geometry,
-              new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.15, roughness: 0.6 }),
+              new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.15, roughness: 0.6 }),
             );
             attachObject(mesh);
           },
           undefined,
           (error: unknown) => {
-            const detail = error instanceof Error ? error.message : "STL 预览资产加载失败";
+            const detail = error instanceof Error ? error.message : "STL preview asset failed to load";
             setSafeViewerState("error", detail);
           },
         );
       }
     } else if (assetUrl && !resolvedFormat) {
-      setSafeViewerState("error", "预览资产格式无法识别");
+      setSafeViewerState("error", "Preview asset format not recognized");
     } else {
-      setSafeViewerState("idle", "等待生成预览资产");
+      setSafeViewerState("idle", "Waiting for preview asset");
     }
 
     const onResize = () => {
@@ -659,10 +659,10 @@ export function ModelViewer({
         <div className={`viewer-overlay state-${viewerState.status}`}>
           <strong>
             {viewerState.status === "error"
-              ? "预览加载失败"
+              ? "Preview load failed"
               : viewerState.status === "loading"
-                ? "正在加载真实模型"
-                : "等待预览资产"}
+                ? "Loading model"
+                : "Waiting for preview"}
           </strong>
           <span>{viewerState.detail}</span>
         </div>

@@ -24,7 +24,7 @@ export function NoticeCenter({ notice, onDismiss }: { notice: Notice | null; onD
           <strong>{notice.title}</strong>
           <span>{notice.detail}</span>
         </div>
-        <button type="button" className="notification-close" onClick={onDismiss} aria-label="关闭通知">
+        <button type="button" className="notification-close" onClick={onDismiss} aria-label="Dismiss notification">
           ×
         </button>
       </article>

@@ -38,19 +38,13 @@ import {
   summarizeAssistantReply,
   withAssetVersion,
 } from "./appUtils";
+import { Settings } from "lucide-react";
 import { NoticeCenter } from "./components/common";
 import { PointerProvider } from "./components/PointerText";
+import { SessionsSidebar } from "./components/SessionsSidebar";
 import { ViewerPane } from "./components/ViewerPane";
-import { WorkbenchRightRail, type WorkbenchRightRailModeId } from "./components/WorkbenchRightRail";
 import { SelectionInspectorCard } from "./components/agent/SelectionInspectorCard";
-import { AgentPanel } from "./components/panels/AgentPanel";
-import { CaePanel } from "./components/panels/CaePanel";
 import { ChatPanel } from "./components/panels/ChatPanel";
-import { CopilotLoopPanel } from "./components/panels/CopilotLoopPanel";
-import { DebugPanel } from "./components/panels/DebugPanel";
-import { IntentPlannerCard } from "./components/panels/IntentPlannerCard";
-import { ProjectPanel } from "./components/panels/ProjectPanel";
-import { RecommendationsPanel } from "./components/panels/RecommendationsPanel";
 import { GlobalSettingsDrawer, RuntimeSettingsDrawer } from "./components/settings/RuntimeSettingsDrawer";
 import type {
   AgentPlan,
@@ -260,29 +254,7 @@ export default function App() {
     () => capabilities.filter((item) => item.available && item.source === "aieng-ui-runtime" && item.name.startsWith("mcp.")).length,
     [capabilities],
   );
-  const activeControlPaneModes = AI_FIRST_WORKBENCH_ENABLED
-    ? WORKBENCH_PANE_MODES
-    : CONTROL_PANE_MODES;
-  const activeControlPaneMode = AI_FIRST_WORKBENCH_ENABLED ? workbenchPaneMode : controlPaneMode;
-  const activeControlPaneModeDetail =
-    activeControlPaneModes.find((mode) => mode.id === activeControlPaneMode)?.detail ??
-    CONTROL_PANE_MODES.find((mode) => mode.id === controlPaneMode)?.detail;
   const showAgentWorkbench = AI_FIRST_WORKBENCH_ENABLED && workbenchPaneMode === "agent";
-  const showProjectPanel = AI_FIRST_WORKBENCH_ENABLED ? workbenchPaneMode === "project" : controlPaneMode === "project";
-  const showDebugPanel = AI_FIRST_WORKBENCH_ENABLED && workbenchPaneMode === "debug";
-  const showLegacyAgentPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "agent";
-  const showLegacyCaePanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "cae";
-  const showRecommendationsPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "recommend";
-  const showCopilotLoopPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "copilot";
-  const showIntentPlannerPanel = !AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "pilot";
-  const showChatPanel = showAgentWorkbench || (!AI_FIRST_WORKBENCH_ENABLED && controlPaneMode === "chat");
-  function handleControlPaneModeChange(mode: WorkbenchRightRailModeId) {
-    if (AI_FIRST_WORKBENCH_ENABLED) {
-      setWorkbenchPaneMode(mode as WorkbenchPaneMode);
-      return;
-    }
-    setControlPaneMode(mode as ControlPaneMode);
-  }
 
   useEffect(() => {
     if (!notice) return;
@@ -633,7 +605,7 @@ export default function App() {
   function restoreRuntimeDefaults() {
     if (!runtime?.defaults) return;
     setRuntimeDraft(runtime.defaults);
-    setRuntimeNotice({ tone: "info", title: "已恢复默认值", detail: "表单已回填默认 CAD 配置，保存后才会生效。" });
+    setRuntimeNotice({ tone: "info", title: "Defaults restored", detail: "Default CAD config restored. Save to apply." });
   }
 
   async function runRuntimeTask(kind: "save" | "test", task: () => Promise<RuntimeConfigSnapshot>) {
@@ -647,12 +619,12 @@ export default function App() {
       syncRuntimeIntoSummary(snapshot);
       setRuntimeNotice({
         tone: snapshot.probe.ready ? "success" : "info",
-        title: kind === "save" ? "CAD 配置已保存" : "CAD 配置已测试",
+        title: kind === "save" ? "CAD config saved" : "CAD config tested",
         detail: getRuntimeDetail(snapshot),
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setRuntimeNotice({ tone: "error", title: "CAD 配置操作失败", detail });
+      setRuntimeNotice({ tone: "error", title: "CAD config operation failed", detail });
     } finally {
       setRuntimeBusy(false);
     }
@@ -676,7 +648,7 @@ export default function App() {
       await task();
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "操作失败", detail });
+      setNotice({ tone: "error", title: "Operation failed", detail });
     } finally {
       setBusy(false);
     }
@@ -684,7 +656,7 @@ export default function App() {
 
   async function ensureProject() {
     if (selectedId) return selectedId;
-    const baseName = selectedFile?.name.replace(/\.(step|stp|aieng)$/i, "") || projectName || "STEP 工作台项目";
+    const baseName = selectedFile?.name.replace(/\.(step|stp|aieng)$/i, "") || projectName || "STEP workbench project";
     const created = await api.createProject(baseName);
     await refreshProjects(created.id);
     return created.id;
@@ -1538,7 +1510,7 @@ export default function App() {
 
   const semanticSections = [
     {
-      title: "Manifest / 校验",
+      title: "Manifest / Validation",
       body: jsonBlock({ manifest: summary?.manifest ?? null, validation: summary?.validation ?? null }),
     },
     {
@@ -1553,10 +1525,10 @@ export default function App() {
   const runtimeDetail = getRuntimeDetail(runtime);
   const validationState =
     (summary as any)?.validation?.report_ok === true
-      ? "通过"
+      ? "Pass"
       : (summary as any)?.validation?.report_ok === false
-        ? "失败"
-        : "待刷新";
+        ? "Fail"
+        : "Pending refresh";
   const integrationBody = jsonBlock({
     integration: summary?.integration ?? null,
     members: summary?.members ?? [],
@@ -1645,10 +1617,10 @@ export default function App() {
         : null;
     const artifactLine = formatArtifactChanges(run);
     const body = geoLine
-      ? `[本地运行时] ${statusLabel} — ${geoLine}${artifactLine ? "\n" + artifactLine : ""}`
+      ? `[Local runtime] ${statusLabel} — ${geoLine}${artifactLine ? "\n" + artifactLine : ""}`
       : run.summary
-        ? `[本地运行时] ${statusLabel} — ${run.summary}${artifactLine ? "\n" + artifactLine : ""}`
-        : `[本地运行时] ${statusLabel}${artifactLine ? "\n" + artifactLine : ""}`;
+        ? `[Local runtime] ${statusLabel} — ${run.summary}${artifactLine ? "\n" + artifactLine : ""}`
+        : `[Local runtime] ${statusLabel}${artifactLine ? "\n" + artifactLine : ""}`;
     const artifactPaths = extractArtifactPaths(run);
 
     // Extract artifact_diffs from cae.apply_setup_patch output
@@ -1700,7 +1672,7 @@ export default function App() {
       setSelectedCapabilityName((current) => current || nextCapabilities[0]?.name || "");
       setSelectedWorkflowId((current) => current || nextWorkflows[0]?.id || "");
       setSelectedScenarioId((current) => current || nextScenarios[0]?.id || "");
-      setNotice({ tone: "success", title: "Agent 工作台已刷新", detail: "能力注册表、工作流和 benchmark 场景已重新读取。" });
+      setNotice({ tone: "success", title: "Agent workbench refreshed", detail: "Capabilities, workflows and benchmark scenarios refreshed." });
     });
   }
 
@@ -1724,7 +1696,7 @@ export default function App() {
       setCapabilityPreview(preview);
       setNotice({
         tone: preview.status === "success" ? "success" : "info",
-        title: preview.approval_required ? "需要审批" : "能力预览完成",
+        title: preview.approval_required ? "Approval required" : "Capability preview complete",
         detail: preview.preview?.warnings?.[0] || preview.errors?.[0] || `${selectedCapability.name} preview ready.`,
       });
     });
@@ -1743,7 +1715,7 @@ export default function App() {
       appendRunToChatHistory(run);
       setNotice({
         tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
-        title: `工作流 — ${runtimeStatusLabel(run.status)}`,
+        title: `Workflow — ${runtimeStatusLabel(run.status)}`,
         detail: run.summary || run.errors[0] || selectedWorkflow.title,
       });
     });
@@ -1755,9 +1727,9 @@ export default function App() {
 
   function handleLlmTestResult(status: "config_ok" | "conn_ok" | "error", message: string) {
     if (status === "config_ok" || status === "conn_ok") {
-      setNotice({ tone: "success", title: "LLM 测试通过", detail: message });
+      setNotice({ tone: "success", title: "LLM test passed", detail: message });
     } else {
-      setNotice({ tone: "error", title: "LLM 测试失败", detail: message });
+      setNotice({ tone: "error", title: "LLM test failed", detail: message });
     }
   }
 
@@ -1794,12 +1766,12 @@ export default function App() {
       setBenchmarkRun(run);
       setNotice({
         tone: run.status === "completed" ? "success" : "error",
-        title: dryRun ? "Benchmark dry-run 完成" : "Benchmark 运行完成",
+        title: dryRun ? "Benchmark dry-run complete" : "Benchmark run complete",
         detail: run.errors?.[0] || run.warnings[0] || run.result_path || run.run_id,
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "Benchmark 运行失败", detail });
+      setNotice({ tone: "error", title: "Benchmark run failed", detail });
     } finally {
       setBenchmarkBusy(false);
     }
@@ -1808,7 +1780,7 @@ export default function App() {
   async function submitRuntime(promptOverride?: string, skipUserMsg = false) {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) {
-      if (!skipUserMsg) setNotice({ tone: "info", title: "请输入请求", detail: "本地运行时需要一条自然语言指令。" });
+      if (!skipUserMsg) setNotice({ tone: "info", title: "Please enter a request", detail: "Local runtime needs a natural language instruction." });
       return;
     }
     const agentPrompt = withSelectedGeometryPrompt(prompt);
@@ -1825,7 +1797,7 @@ export default function App() {
       const statusLabel = runtimeStatusLabel(run.status);
       setNotice({
         tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
-        title: `本地运行时 — ${statusLabel}`,
+        title: `Local runtime — ${statusLabel}`,
         detail: run.summary || run.errors[0] || "",
       });
     });
@@ -1846,19 +1818,19 @@ export default function App() {
         await refreshProjects(selectedId);
         setNotice({
           tone: "success",
-          title: "CAE 摘要已刷新",
-          detail: run.summary || "已重新生成 CAE 结果摘要、证据索引和 Markdown 文件。",
+          title: "CAE summary refreshed",
+          detail: run.summary || "Regenerated CAE result summary, evidence index and Markdown.",
         });
       } else {
         setNotice({
           tone: "error",
-          title: "CAE 摘要刷新失败",
-          detail: run.errors[0] || run.summary || "运行时返回非成功状态。",
+          title: "CAE summary refresh failed",
+          detail: run.errors[0] || run.summary || "Runtime returned non-success status.",
         });
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "CAE 摘要刷新失败", detail });
+      setNotice({ tone: "error", title: "CAE summary refresh failed", detail });
     } finally {
       setCaeRefreshing(false);
     }
@@ -1888,7 +1860,7 @@ export default function App() {
     if (!selectedId || metricsImporting) return;
     const inputPath = metricsInputPath.trim();
     if (!inputPath) {
-      setNotice({ tone: "info", title: "请输入指标文件路径", detail: "需要提供外部 JSON/CSV 指标文件的绝对路径。" });
+      setNotice({ tone: "info", title: "Please enter metrics file path", detail: "Absolute path to external JSON/CSV metrics file required." });
       return;
     }
     setMetricsImporting(true);
@@ -1906,8 +1878,8 @@ export default function App() {
       if (genRun.status !== "completed") {
         setNotice({
           tone: "error",
-          title: "计算指标生成失败",
-          detail: genRun.errors[0] || genRun.summary || "运行时返回非成功状态。",
+          title: "Computed metrics generation failed",
+          detail: genRun.errors[0] || genRun.summary || "Runtime returned non-success status.",
         });
         setMetricsImporting(false);
         return;
@@ -1924,19 +1896,19 @@ export default function App() {
         await refreshProjects(selectedId);
         setNotice({
           tone: "success",
-          title: "计算指标已导入并刷新摘要",
-          detail: refreshRun.summary || "已生成计算指标并重新生成 CAE 结果摘要。",
+          title: "Computed metrics imported and summary refreshed",
+          detail: refreshRun.summary || "Generated computed metrics and refreshed CAE result summary.",
         });
       } else {
         setNotice({
           tone: "error",
-          title: "CAE 摘要刷新失败",
-          detail: refreshRun.errors[0] || refreshRun.summary || "运行时返回非成功状态。",
+          title: "CAE summary refresh failed",
+          detail: refreshRun.errors[0] || refreshRun.summary || "Runtime returned non-success status.",
         });
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "导入计算指标失败", detail });
+      setNotice({ tone: "error", title: "Import computed metrics failed", detail });
     } finally {
       setMetricsImporting(false);
     }
@@ -1946,7 +1918,7 @@ export default function App() {
     if (!selectedId || frdExtracting) return;
     const frdPath = frdInputPath.trim();
     if (!frdPath) {
-      setNotice({ tone: "info", title: "请输入 FRD 文件路径", detail: "需要提供 CalculiX .frd 结果文件的绝对路径。" });
+      setNotice({ tone: "info", title: "Please enter FRD file path", detail: "Absolute path to CalculiX .frd result file required." });
       return;
     }
     setFrdExtracting(true);
@@ -1964,8 +1936,8 @@ export default function App() {
       if (extractRun.status !== "completed") {
         setNotice({
           tone: "error",
-          title: "FRD 提取失败",
-          detail: extractRun.errors[0] || extractRun.summary || "运行时返回非成功状态。",
+          title: "FRD extraction failed",
+          detail: extractRun.errors[0] || extractRun.summary || "Runtime returned non-success status.",
         });
         setFrdExtracting(false);
         return;
@@ -1973,12 +1945,12 @@ export default function App() {
       await refreshProjects(selectedId);
       setNotice({
         tone: "success",
-        title: "FRD 结果已提取并刷新摘要",
-        detail: extractRun.summary || "已从 .frd 文件提取最大位移和最大 von Mises 应力，并重新生成 CAE 结果摘要。",
+        title: "FRD results extracted and summary refreshed",
+        detail: extractRun.summary || "Extracted max displacement and max von Mises stress from .frd, and refreshed CAE summary.",
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "FRD 提取失败", detail });
+      setNotice({ tone: "error", title: "FRD extraction failed", detail });
     } finally {
       setFrdExtracting(false);
     }
@@ -2014,8 +1986,8 @@ export default function App() {
       const statusLabel = runtimeStatusLabel(run.status);
       setNotice({
         tone: run.status === "completed" ? "success" : "error",
-        title: `运行时审批 — ${statusLabel}`,
-        detail: run.summary || run.errors[0] || "已批准并执行",
+        title: `Runtime approval — ${statusLabel}`,
+        detail: run.summary || run.errors[0] || "Approved and executed",
       });
     });
   }
@@ -2026,7 +1998,7 @@ export default function App() {
       const run = await api.rejectRun(lastRuntimeRun.run_id);
       setLastRuntimeRun(run);
       appendRunToChatHistory(run);
-      setNotice({ tone: "info", title: "运行时审批 — 已拒绝", detail: "已拒绝，待执行工具未运行。" });
+      setNotice({ tone: "info", title: "Runtime approval — Rejected", detail: "Rejected, pending tool was not executed." });
     });
   }
 
@@ -2063,12 +2035,12 @@ export default function App() {
       ]);
       setNotice({
         tone: plan.errors?.length ? "info" : "success",
-        title: "Agent 计划已生成",
-        detail: plan.preview.warnings[0] || `${plan.steps.length} 个步骤，${plan.requires_approval ? "包含审批闸门" : "无需审批"}`,
+        title: "Agent plan generated",
+        detail: plan.preview.warnings[0] || `${plan.steps.length}  steps, ${plan.requires_approval ? "includes approval gate" : "no approval needed"}`,
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setNotice({ tone: "error", title: "Agent 计划失败", detail });
+      setNotice({ tone: "error", title: "Agent plan failed", detail });
     } finally {
       setAgentBusy(false);
     }
@@ -2077,7 +2049,7 @@ export default function App() {
   async function planAgentChat() {
     const prompt = message.trim();
     if (!prompt) {
-      setNotice({ tone: "info", title: "请输入 Agent 目标", detail: "Agent 需要一条建模、检查或分析目标。" });
+      setNotice({ tone: "info", title: "Please enter an agent goal", detail: "Agent needs a modeling, inspection or analysis goal." });
       return;
     }
     await createAgentPlanFromPrompt(prompt);
@@ -2086,7 +2058,7 @@ export default function App() {
   async function runAgentChat(promptOverride?: string) {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt && !agentPlan) {
-      if (!promptOverride) setNotice({ tone: "info", title: "请输入 Agent 目标", detail: "可以先生成计划，也可以直接运行 Agent。" });
+      if (!promptOverride) setNotice({ tone: "info", title: "Please enter an agent goal", detail: "Generate a plan first, or run the agent directly." });
       return;
     }
     setAgentBusy(true);
@@ -2174,7 +2146,7 @@ export default function App() {
   async function runAutopilotAgent(promptOverride?: string, skipUserMsg = false) {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) {
-      if (!promptOverride) setNotice({ tone: "info", title: "请输入 Agent 目标", detail: "Agent 需要一条建模、检查或分析目标。" });
+      if (!promptOverride) setNotice({ tone: "info", title: "Please enter an agent goal", detail: "Agent needs a modeling, inspection or analysis goal." });
       return;
     }
     const isLlmApi = selectedChatConnection.id === "llm-api";
@@ -2190,8 +2162,8 @@ export default function App() {
         adapters.find((item) => item.status === "available");
     }
     if (!isLlmApi && !preferredAdapter) {
-      const diagnostic = adapters[0]?.diagnostic || "未检测到可用的 Claude Code 或 Codex CLI 非交互 JSON 模式。";
-      setNotice({ tone: "info", title: "Local Agent 不可用", detail: diagnostic });
+      const diagnostic = adapters[0]?.diagnostic || "No Claude Code or Codex CLI in non-interactive JSON mode detected.";
+      setNotice({ tone: "info", title: "Local Agent unavailable", detail: diagnostic });
       if (!skipUserMsg) {
         setChatHistory((current) => [
           ...current,
@@ -2293,7 +2265,7 @@ export default function App() {
 
   async function planSelectedChatConnection() {
     if (selectedConnectionBlocked) {
-      setNotice({ tone: "info", title: "请选择项目", detail: `${selectedChatConnection.label} 需要当前项目上下文。` });
+      setNotice({ tone: "info", title: "Please select a project", detail: `${selectedChatConnection.label} requires current project context.` });
       return;
     }
     if (selectedChatConnection.id === "llm-api") {
@@ -2318,7 +2290,7 @@ export default function App() {
 
   async function runSelectedChatConnection() {
     if (selectedConnectionBlocked) {
-      setNotice({ tone: "info", title: "请选择项目", detail: `${selectedChatConnection.label} 需要当前项目上下文。` });
+      setNotice({ tone: "info", title: "Please select a project", detail: `${selectedChatConnection.label} requires current project context.` });
       return;
     }
     if (selectedChatConnection.id === "llm-api") {
@@ -2345,7 +2317,7 @@ export default function App() {
     if (!selectedId) return;
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) {
-      if (!skipUserMsg) setNotice({ tone: "info", title: "请输入编排请求", detail: "聊天窗需要一条自然语言指令才能生成计划或执行。" });
+      if (!skipUserMsg) setNotice({ tone: "info", title: "Please enter an orchestration request", detail: "Chat needs a natural language instruction to generate a plan or execute." });
       return;
     }
     const agentPrompt = withSelectedGeometryPrompt(prompt);
@@ -2378,105 +2350,10 @@ export default function App() {
       ]);
       setNotice({
         tone: mode === "execute" ? "success" : "info",
-        title: mode === "execute" ? "已执行安全步骤" : "已生成计划",
-        detail: mode === "execute" ? "聊天窗已执行当前请求允许的后端步骤。" : "聊天窗已生成一组可审阅的受保护步骤。",
+        title: mode === "execute" ? "Safe steps executed" : "Plan generated",
+        detail: mode === "execute" ? "Chat executed allowed backend steps for the current request." : "Chat generated a set of reviewable protected steps.",
       });
     });
-  }
-
-  function renderAgentToolsPanel() {
-    return (
-      <AgentPanel
-        busy={busy}
-        capabilities={capabilities}
-        capabilityCategory={capabilityCategory}
-        capabilityCategories={capabilityCategories}
-        capabilityQuery={capabilityQuery}
-        filteredCapabilities={filteredCapabilities}
-        selectedCapability={selectedCapability}
-        capabilityPreview={capabilityPreview}
-        workflows={workflows}
-        selectedWorkflow={selectedWorkflow}
-        benchmarkScenarios={benchmarkScenarios}
-        selectedScenarioId={selectedScenarioId}
-        benchmarkRun={benchmarkRun}
-        benchmarkBusy={benchmarkBusy}
-        llmConfig={llmConfig}
-        llmReady={llmReady}
-        summary={summary}
-        setCapabilityCategory={setCapabilityCategory}
-        setCapabilityQuery={setCapabilityQuery}
-        setSelectedCapabilityName={setSelectedCapabilityName}
-        setCapabilityPreview={setCapabilityPreview}
-        setSelectedWorkflowId={setSelectedWorkflowId}
-        setSelectedScenarioId={setSelectedScenarioId}
-        refreshAgentWorkbench={refreshAgentWorkbench}
-        previewSelectedCapability={previewSelectedCapability}
-        runSelectedWorkflow={runSelectedWorkflow}
-        runBenchmark={runBenchmark}
-      />
-    );
-  }
-
-  function renderCaePanel() {
-    return (
-      <CaePanel
-        summary={summary}
-        selectedId={selectedId}
-        caeSummary={caeSummary}
-        hasCaeContext={hasCaeContext}
-        hasCaeResultArtifacts={hasCaeResultArtifacts}
-        renderableCaeFields={renderableCaeFields}
-        selectedCaeField={selectedCaeField}
-        fieldDescriptor={fieldDescriptor}
-        caeRefreshing={caeRefreshing}
-        caeReviewReport={caeReviewReport}
-        caeReviewLoading={caeReviewLoading}
-        metricsInputPath={metricsInputPath}
-        metricsLoadCaseId={metricsLoadCaseId}
-        metricsSoftware={metricsSoftware}
-        metricsImporting={metricsImporting}
-        frdInputPath={frdInputPath}
-        frdLoadCaseId={frdLoadCaseId}
-        frdSoftware={frdSoftware}
-        frdExtracting={frdExtracting}
-        artifactViewerPath={artifactViewerPath}
-        artifactViewerData={artifactViewerData}
-        artifactViewerBusy={artifactViewerBusy}
-        setSelectedCaeField={setSelectedCaeField}
-        setMetricsInputPath={setMetricsInputPath}
-        setMetricsLoadCaseId={setMetricsLoadCaseId}
-        setMetricsSoftware={setMetricsSoftware}
-        setFrdInputPath={setFrdInputPath}
-        setFrdLoadCaseId={setFrdLoadCaseId}
-        setFrdSoftware={setFrdSoftware}
-        setArtifactViewerPath={setArtifactViewerPath}
-        refreshCaeSummary={refreshCaeSummary}
-        generateCaeReviewReport={generateCaeReviewReport}
-        importMetricsAndRefresh={importMetricsAndRefresh}
-        extractFrdAndRefresh={extractFrdAndRefresh}
-        viewArtifact={viewArtifact}
-      />
-    );
-  }
-
-  function renderRecommendationsPanel() {
-    return <RecommendationsPanel selectedId={selectedId} />;
-  }
-
-  function renderCopilotLoopPanel() {
-    return (
-      <CopilotLoopPanel
-        selectedId={selectedId}
-        onSelectProject={(projectId) => {
-          void refreshProjects(projectId);
-        }}
-      />
-    );
-  }
-
-  function renderIntentPlannerPanel() {
-    return <IntentPlannerCard selectedId={selectedId} />;
   }
 
   const pointerContextValue = useMemo(
@@ -2496,95 +2373,69 @@ export default function App() {
           }
         }}
       />
-      <div className="app-shell workbench-shell">
-        <ViewerPane
-          runtimeReady={runtimeReady}
-          runtimeProvider={runtimeProvider}
-          runtimeDetail={runtimeDetail}
-          selectedProject={selectedProject}
-          selectedFile={selectedFile}
-          summary={summary}
-          validationState={validationState}
-          effectiveViewerFormat={effectiveViewerFormat}
-          activeFieldDescriptor={activeFieldDescriptor}
-          effectiveViewerUrl={effectiveViewerUrl}
-          onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
-          pickedFaces={pickedFaces}
-          onAddPickedFace={addPickedFace}
-          onClearPickedFaces={clearPickedFaces}
-          onInsertToChat={insertToChat}
-          onRunPreprocess={runPreprocessFromPointer}
-          cadGenerationProgress={cadGenerationProgress}
-          highlightedFaceIds={highlightedFaceIds}
-          brepSnapshot={brepSnapshot}
-          onClearHighlightedFaces={clearHighlightedFaces}
-        />
+      <div className="app-shell">
+        <header className="app-topbar">
+          <div className="app-topbar-brand">
+            <span className="app-logo">AIDE</span>
+            <span className="app-topbar-divider" />
+            <span className="app-topbar-project">{selectedProject?.name || "Workbench"}</span>
+          </div>
+          <div className="app-topbar-actions">
+            <button
+              type="button"
+              className="app-topbar-btn"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
 
-        <WorkbenchRightRail
-          ref={sidePaneRef}
-          activeMode={activeControlPaneMode}
-          activeModeDetail={activeControlPaneModeDetail}
-          modes={activeControlPaneModes}
-          onModeChange={handleControlPaneModeChange}
-          onOpenGlobalSettings={() => setGlobalSettingsOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
-        >
-          {showProjectPanel ? (
-            <ProjectPanel
-              projectName={projectName}
-              onProjectNameChange={setProjectName}
-              busy={busy}
-              selectedFile={selectedFile}
-              onSelectedFileChange={setSelectedFile}
-              selectedId={selectedId}
-              selectedProject={selectedProject}
-              projects={projects}
-              stages={stages}
-              summary={summary}
-              aiSummary={aiSummary}
-              semanticSections={semanticSections}
-              integrationBody={integrationBody}
-              runBusyTask={runBusyTask}
-              refreshProjects={refreshProjects}
-              setNotice={setNotice}
-              runWorkbenchImportFlow={runWorkbenchImportFlow}
-              runProjectAction={runProjectAction}
-            />
-          ) : null}
+        <div className="app-main">
+          <SessionsSidebar
+            projectName={projectName}
+            onProjectNameChange={setProjectName}
+            busy={busy}
+            selectedFile={selectedFile}
+            onSelectedFileChange={setSelectedFile}
+            selectedId={selectedId}
+            selectedProject={selectedProject}
+            projects={projects}
+            stages={stages}
+            runBusyTask={runBusyTask}
+            refreshProjects={refreshProjects}
+            setNotice={setNotice}
+            runWorkbenchImportFlow={runWorkbenchImportFlow}
+          />
 
-          {showDebugPanel ? (
-            <DebugPanel
-              sections={[
-                { id: "tools", label: "Capabilities", children: renderAgentToolsPanel() },
-                { id: "cae", label: "Simulation", children: renderCaePanel() },
-                { id: "recommendations", label: "Design advice", children: renderRecommendationsPanel() },
-                { id: "loop", label: "Optimization", children: renderCopilotLoopPanel() },
-                { id: "planner", label: "Intent planner", children: renderIntentPlannerPanel() },
-              ]}
-            />
-          ) : null}
+          <ViewerPane
+            runtimeReady={runtimeReady}
+            runtimeProvider={runtimeProvider}
+            selectedProject={selectedProject}
+            effectiveViewerFormat={effectiveViewerFormat}
+            activeFieldDescriptor={activeFieldDescriptor}
+            effectiveViewerUrl={effectiveViewerUrl}
+            pickedFaces={pickedFaces}
+            onAddPickedFace={addPickedFace}
+            onClearPickedFaces={clearPickedFaces}
+            onInsertToChat={insertToChat}
+            onRunPreprocess={runPreprocessFromPointer}
+            cadGenerationProgress={cadGenerationProgress}
+            highlightedFaceIds={highlightedFaceIds}
+            brepSnapshot={brepSnapshot}
+            onClearHighlightedFaces={clearHighlightedFaces}
+          />
 
-          {showLegacyAgentPanel ? renderAgentToolsPanel() : null}
-
-          {showLegacyCaePanel ? renderCaePanel() : null}
-
-          {showRecommendationsPanel ? renderRecommendationsPanel() : null}
-
-          {showCopilotLoopPanel ? renderCopilotLoopPanel() : null}
-
-          {showIntentPlannerPanel ? renderIntentPlannerPanel() : null}
-
-          {showAgentWorkbench ? (
-            <SelectionInspectorCard
-              pickedFaces={pickedFaces}
-              onClear={clearPickedFaces}
-              onSetPrompt={setMessage}
-              onUseInPrompt={insertToChat}
-            />
-          ) : null}
-
-          {showChatPanel ? (
+          <div className="chat-pane">
+            {pickedFaces.length > 0 ? (
+              <SelectionInspectorCard
+                pickedFaces={pickedFaces}
+                onClear={clearPickedFaces}
+                onSetPrompt={setMessage}
+                onUseInPrompt={insertToChat}
+              />
+            ) : null}
             <ChatPanel
               chatConnections={chatConnections}
               selectedChatConnectionId={selectedChatConnectionId}
@@ -2616,12 +2467,9 @@ export default function App() {
               heatmapRange={heatmapRange}
               onViewHeatmap={() => void viewStressHeatmap()}
               recentPickedFaces={pickedFaces}
-              liveSyncStatus={liveSyncStatus}
-              liveSyncDetail={liveSyncDetail}
-              liveSyncLastEventAt={liveSyncLastEventAt}
             />
-          ) : null}
-        </WorkbenchRightRail>
+          </div>
+        </div>
       </div>
 
       <RuntimeSettingsDrawer

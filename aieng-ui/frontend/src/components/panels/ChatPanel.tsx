@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
 import { MarkdownText } from "../MarkdownText";
 import { PointerText } from "../PointerText";
-import { ActionIcon, JsonDisclosure } from "../common";
+import { ActionIcon } from "../common";
 import { ApprovalCard } from "../agent/ApprovalCard";
 import { AgentPlanCard } from "../agent/AgentPlanCard";
 import { AgentResultCard } from "../agent/AgentResultCard";
-import { isLowRiskArtifactPath, type LiveSyncStatus } from "../../appUtils";
+import { isLowRiskArtifactPath } from "../../appUtils";
 import type { AutopilotObservation, AutopilotRunState, ChatConnection, ProjectRecord, RuntimeRun } from "../../types";
 
 type SimulationProgress = { step: string; message: string };
@@ -112,16 +112,12 @@ type ChatPanelProps = {
   heatmapRange: { min: number; max: number } | null;
   onViewHeatmap(): void;
   recentPickedFaces: PickedFace[];
-  liveSyncStatus: LiveSyncStatus;
-  liveSyncDetail: string;
-  liveSyncLastEventAt: string | null;
 };
 
 export function ChatPanel({
   chatConnections,
   selectedChatConnectionId,
   selectedConnectionBlocked,
-  selectedProject,
   selectedId,
   chatBusy,
   cadGenerating,
@@ -148,9 +144,6 @@ export function ChatPanel({
   heatmapRange,
   onViewHeatmap,
   recentPickedFaces,
-  liveSyncStatus,
-  liveSyncDetail,
-  liveSyncLastEventAt,
 }: ChatPanelProps) {
   const [acOpen, setAcOpen] = useState(false);
   const [acQuery, setAcQuery] = useState("");
@@ -169,11 +162,18 @@ export function ChatPanel({
     return () => window.clearInterval(timer);
   }, [chatHistory]);
 
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    if (!message) {
+      el.style.height = "auto";
+    }
+  }, [message]);
+
   const acMatches = recentPickedFaces.filter((f) =>
     f.pointer.toLowerCase().includes(acQuery.toLowerCase()) ||
     f.label.toLowerCase().includes(acQuery.toLowerCase()),
   );
-  const selectedConnection = chatConnections.find((conn) => conn.id === selectedChatConnectionId);
 
   function openAutocomplete(cursorStart: number, query: string) {
     if (recentPickedFaces.length === 0) return;
@@ -254,61 +254,14 @@ export function ChatPanel({
 
   const inputPlaceholder = selectedConnectionBlocked
     ? "Select a project to start…"
-    : "Describe a part to generate, or ask about the current model… (Enter to send, Shift+Enter for newline)";
+    : "";
 
   const sendLabel = chatBusy
     ? cadGenerating ? "Generating…" : "Thinking…"
     : "Send";
-  const liveSyncLabel = liveSyncStatus === "live"
-    ? "Live"
-    : liveSyncStatus === "polling"
-      ? "Polling"
-      : liveSyncStatus === "reconnecting"
-        ? "Reconnecting"
-        : liveSyncStatus === "offline"
-          ? "Offline"
-          : "Connecting";
-  const liveSyncTitle = liveSyncLastEventAt
-    ? `${liveSyncDetail} Last event: ${new Date(liveSyncLastEventAt).toLocaleTimeString()}`
-    : liveSyncDetail;
 
   return (
-    <section className="card agent-console-card">
-      <div className="chat-header">
-        <div className="chat-agent-identity">
-          <span className={`chat-agent-orb ${chatBusy ? "active" : ""}`} aria-hidden="true" />
-          <div>
-            <strong>Engineering Agent</strong>
-            <span>{selectedConnection?.label ?? "Agent"} · {selectedConnection?.status ?? "ready"}</span>
-          </div>
-        </div>
-        <div className="chat-header-controls">
-          <select
-            className="chat-connection-select"
-            value={selectedChatConnectionId}
-            onChange={(e) => setSelectedChatConnectionId(e.target.value)}
-          >
-            {chatConnections.map((conn) => (
-              <option key={conn.id} value={conn.id}>
-                {conn.label}
-              </option>
-            ))}
-          </select>
-          <span className={`live-sync-pill live-sync-${liveSyncStatus}`} title={liveSyncTitle}>
-            <span className="live-sync-dot" aria-hidden="true" />
-            {liveSyncLabel}
-          </span>
-          <button
-            type="button"
-            className="ghost-button icon-only-button"
-            onClick={() => setSettingsOpen(true)}
-            title="Model settings"
-          >
-            <ActionIcon name="settings" />
-          </button>
-        </div>
-      </div>
-
+    <section className="chat-pane-body">
       <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>}>
         {chatHistory.length ? (
           chatHistory.map((entry) => (
@@ -592,13 +545,50 @@ export function ChatPanel({
         ) : null}
       </div>
 
+      {(() => {
+        const selectedConn = chatConnections.find((c) => c.id === selectedChatConnectionId);
+        const connStatus = selectedConn?.status ?? "blocked";
+        const statusText = connStatus === "ready" ? "Ready" : connStatus === "blocked" ? "Unavailable" : connStatus.replace(/_/g, " ");
+        const statusClass = `connection-status status-${connStatus}`;
+        return (
+          <div className="chat-input-toolbar">
+            <select
+              className="chat-connection-select"
+              value={selectedChatConnectionId}
+              onChange={(e) => setSelectedChatConnectionId(e.target.value)}
+            >
+              {chatConnections.map((conn) => (
+                <option key={conn.id} value={conn.id}>
+                  {conn.status === "ready" ? "●" : conn.status === "blocked" ? "○" : "◐"} {conn.label}
+                </option>
+              ))}
+            </select>
+            <span className={statusClass} title={selectedConn?.detail ?? ""}>
+              {statusText}
+            </span>
+            <button
+              type="button"
+              className="ghost-button icon-only-button"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+              style={{ marginLeft: "auto" }}
+            >
+              <ActionIcon name="settings" />
+            </button>
+          </div>
+        );
+      })()}
+
       <div className="chat-input-row">
         <div className="chat-input-wrap">
           <textarea
             ref={textareaRef}
-            rows={2}
             value={message}
-            onChange={(e) => handleInput(e.target.value)}
+            onChange={(e) => {
+              handleInput(e.target.value);
+              e.target.style.height = "auto";
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
             onKeyDown={handleKeyDown}
             placeholder={inputPlaceholder}
             disabled={chatBusy}

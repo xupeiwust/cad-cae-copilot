@@ -1,7 +1,7 @@
 import { forwardRef, type ReactNode } from "react";
 
 import type { ControlPaneMode, WorkbenchPaneMode } from "../appTypes";
-import { ActionIcon, ControlPaneIcon } from "./common";
+import { ControlPaneIcon } from "./common";
 
 export type WorkbenchRightRailModeId = ControlPaneMode | WorkbenchPaneMode;
 
@@ -17,8 +17,6 @@ export type WorkbenchRightRailProps = {
   modes: WorkbenchRightRailMode[];
   children: ReactNode;
   onModeChange(mode: WorkbenchRightRailModeId): void;
-  onOpenGlobalSettings(): void;
-  onOpenSettings(): void;
 };
 
 export const WorkbenchRightRail = forwardRef<HTMLElement, WorkbenchRightRailProps>(
@@ -29,8 +27,6 @@ export const WorkbenchRightRail = forwardRef<HTMLElement, WorkbenchRightRailProp
       modes,
       children,
       onModeChange,
-      onOpenGlobalSettings,
-      onOpenSettings,
     },
     ref,
   ) {
@@ -41,14 +37,6 @@ export const WorkbenchRightRail = forwardRef<HTMLElement, WorkbenchRightRailProp
             <span className="control-pane-kicker">AI Workbench</span>
             <strong>{activeModeDetail}</strong>
           </div>
-          <button type="button" className="ghost-button compact-button" onClick={onOpenSettings}>
-            <ActionIcon name="settings" />
-            环境
-          </button>
-          <button type="button" className="ghost-button compact-button" onClick={onOpenGlobalSettings}>
-            <ActionIcon name="global" />
-            全局
-          </button>
         </div>
 
         <div className="control-pane-tabs" role="tablist" aria-label="Workbench control sections">

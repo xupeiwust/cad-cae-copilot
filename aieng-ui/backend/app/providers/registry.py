@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .build123d_preview import Build123dPreviewProvider
 from .freecad_preview import FreecadPreviewProvider
 from .protocols import CadExecutionProvider
 
@@ -99,6 +100,8 @@ class _UnavailableCadProvider:
 
 def get_provider(settings: Any, config: dict[str, str]) -> CadExecutionProvider:
     provider_name = str(config.get("provider") or "").strip().lower()
+    if provider_name in {"", "build123d"}:
+        return Build123dPreviewProvider(settings, config)  # type: ignore[return-value]
     if provider_name == "freecad":
         return FreecadPreviewProvider(settings, config)  # type: ignore[return-value]
     return _UnavailableCadProvider(settings, config)  # type: ignore[return-value]

@@ -629,6 +629,8 @@ export type RuntimeProbe = {
   freecad_python: string;
   freecad_cmd_exists: boolean;
   freecad_python_exists: boolean;
+  build123d_available?: boolean;
+  ocp_available?: boolean;
   ready: boolean;
   issues: string[];
   bridge?: Record<string, unknown>;
@@ -1275,7 +1277,7 @@ export type AutopilotRunState = {
 };
 
 export type ChatConnection = {
-  id: "llm-api" | "freecad-desktop" | string;
+  id: "llm-api" | "external-cad-adapter" | string;
   label: string;
   transport: string;
   status: "ready" | "configurable" | "degraded" | "blocked" | string;

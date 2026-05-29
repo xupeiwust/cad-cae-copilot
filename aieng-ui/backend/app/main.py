@@ -155,7 +155,7 @@ del _compat_name, _compat_obj
 
 def default_runtime_config(settings: Settings) -> dict[str, str]:
     return {
-        "provider": "freecad",
+        "provider": "build123d",
         "aieng_root": str(settings.aieng_root),
         "freecad_mcp_root": "",
         "freecad_home": "",

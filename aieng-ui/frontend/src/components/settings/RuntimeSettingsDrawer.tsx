@@ -406,7 +406,7 @@ export function RuntimeSettingsDrawer({
             <div className="drawer-section-heading">
               <div>
                 <h3>CAD Runtime</h3>
-                <p>STEP 导入、预览、语义刷新和 FreeCAD MCP 能力使用这组配置。</p>
+                <p>AI 建模默认使用 build123d/OCP；FreeCAD 仅作为可选外部适配器配置。</p>
               </div>
             </div>
 
@@ -414,7 +414,7 @@ export function RuntimeSettingsDrawer({
               <label className="form-field">
                 <span>CAD Provider</span>
                 <select
-                  value={runtimeDraft?.provider ?? "freecad"}
+                  value={runtimeDraft?.provider ?? "build123d"}
                   disabled={runtimeBusy}
                   onChange={(event) => onDraftChange("provider", event.target.value)}
                 >
@@ -437,24 +437,28 @@ export function RuntimeSettingsDrawer({
                   <option value="occ">occ</option>
                 </select>
               </label>
-              <label className="form-field runtime-config-span">
-                <span>FreeCAD Home</span>
-                <input
-                  value={runtimeDraft?.freecad_home ?? ""}
-                  disabled={runtimeBusy}
-                  onChange={(event) => onDraftChange("freecad_home", event.target.value)}
-                  placeholder="FreeCAD 安装目录"
-                />
-              </label>
-              <label className="form-field runtime-config-span">
-                <span>FREECAD_MCP_ROOT</span>
-                <input
-                  value={runtimeDraft?.freecad_mcp_root ?? ""}
-                  disabled={runtimeBusy}
-                  onChange={(event) => onDraftChange("freecad_mcp_root", event.target.value)}
-                  placeholder="aieng-freecad-mcp 仓库目录"
-                />
-              </label>
+              {runtimeDraft?.provider === "freecad" ? (
+                <>
+                  <label className="form-field runtime-config-span">
+                    <span>FreeCAD Home</span>
+                    <input
+                      value={runtimeDraft?.freecad_home ?? ""}
+                      disabled={runtimeBusy}
+                      onChange={(event) => onDraftChange("freecad_home", event.target.value)}
+                      placeholder="FreeCAD 安装目录"
+                    />
+                  </label>
+                  <label className="form-field runtime-config-span">
+                    <span>FREECAD_MCP_ROOT</span>
+                    <input
+                      value={runtimeDraft?.freecad_mcp_root ?? ""}
+                      disabled={runtimeBusy}
+                      onChange={(event) => onDraftChange("freecad_mcp_root", event.target.value)}
+                      placeholder="aieng-freecad-mcp 仓库目录"
+                    />
+                  </label>
+                </>
+              ) : null}
               <label className="form-field runtime-config-span">
                 <span>AIENG_ROOT</span>
                 <input
@@ -495,8 +499,12 @@ export function RuntimeSettingsDrawer({
                 <strong>{runtime?.probe.topology_backend_resolved ?? "-"}</strong>
               </div>
               <div>
-                <span>FreeCADCmd</span>
-                <strong>{runtime?.probe.freecad_cmd_exists ? "已找到" : "未找到"}</strong>
+                <span>{runtimeProvider === "freecad" ? "FreeCADCmd" : "build123d"}</span>
+                <strong>
+                  {runtimeProvider === "freecad"
+                    ? (runtime?.probe.freecad_cmd_exists ? "已找到" : "未找到")
+                    : (runtimeReady ? "可用" : "未找到")}
+                </strong>
               </div>
             </div>
           </section>

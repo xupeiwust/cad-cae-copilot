@@ -8,7 +8,10 @@ export const BASE_STAGES: StageItem[] = [
   { key: "semantic", label: "Semantic", detail: "Sync manifest, topology and summary", state: "idle" },
 ];
 
-export const CAD_PROVIDER_OPTIONS = [{ value: "freecad", label: "FreeCAD" }] as const;
+export const CAD_PROVIDER_OPTIONS = [
+  { value: "build123d", label: "build123d / OCP" },
+  { value: "freecad", label: "FreeCAD (optional adapter)" },
+] as const;
 export const AI_FIRST_WORKBENCH_ENABLED = true;
 export const LLM_CONFIG_STORAGE_KEY = "aieng-ui.llm-config";
 export const LOCAL_AGENT_CONFIG_STORAGE_KEY = "aieng-ui.local-agent-config";
@@ -77,11 +80,11 @@ export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [
     adapters: [],
   },
   {
-    id: "freecad-desktop",
-    label: "FreeCAD desktop",
-    transport: "freecadcmd-bridge",
+    id: "external-cad-adapter",
+    label: "External CAD adapter",
+    transport: "optional-cad-bridge",
     status: "degraded",
-    detail: "Runs geometry checks and controlled CAD actions through FreeCADCmd.",
+    detail: "Optional bridge for external CAD runtimes; build123d remains the default modelling path.",
     requires_project: true,
     supports_llm: false,
     supports_execution: true,

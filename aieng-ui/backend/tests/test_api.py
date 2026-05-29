@@ -25,6 +25,7 @@ from app.main import (
     project_dir,
     save_project,
     summarize_cae_payload,
+    write_json,
     _append_audit_event_to_package,
     _build_audit_event,
     _build_claim_proposal,
@@ -2937,6 +2938,13 @@ def test_aieng_convert_missing_source_returns_error(tmp_path: Path) -> None:
 
 def test_import_aieng_file_uses_core_bridge_without_cad_provider(tmp_path: Path) -> None:
     settings = _make_patch_settings(tmp_path)
+    write_json(settings.runtime_config_path, {
+        "provider": "none",
+        "aieng_root": str(settings.aieng_root),
+        "freecad_mcp_root": "",
+        "freecad_home": "",
+        "topology_backend": "auto",
+    })
     project = save_project(settings, default_project("bridge-import"))
     project_id = project["id"]
     step_path = project_dir(settings, project_id) / "source" / "bracket.step"
@@ -2954,14 +2962,21 @@ def test_import_aieng_file_uses_core_bridge_without_cad_provider(tmp_path: Path)
     assert summary["files"]["aieng_file"]["exists"] is True
     assert summary["project"]["aieng_file"] == "packages/bracket.aieng"
     assert summary["summary_mode"] in {"bridge", "zip_fallback"}
-    assert "geometry/topology_map.json" in summary["members"]
-    assert "graph/feature_graph.json" in summary["members"]
+    assert "geometry/source.step" in summary["members"]
+    assert "validation/completeness_report.json" in summary["members"]
 
 
 def test_convert_asset_reports_unavailable_honestly_without_provider(tmp_path: Path) -> None:
     from app.main import convert_asset
 
     settings = _make_patch_settings(tmp_path)
+    write_json(settings.runtime_config_path, {
+        "provider": "none",
+        "aieng_root": str(settings.aieng_root),
+        "freecad_mcp_root": "",
+        "freecad_home": "",
+        "topology_backend": "auto",
+    })
     project = save_project(settings, default_project("no-preview-provider"))
     project_id = project["id"]
     step_path = project_dir(settings, project_id) / "source" / "simple.step"
@@ -2986,12 +3001,13 @@ def test_runtime_snapshot_probe_uses_frontend_compatible_fields(tmp_path: Path) 
     settings = _make_patch_settings(tmp_path)
     snapshot = runtime_config_snapshot(settings)
 
-    assert snapshot["config"]["provider"] == "freecad"
-    assert snapshot["probe"]["provider"] == "freecad"
-    assert snapshot["probe"]["ready"] is False
+    assert snapshot["config"]["provider"] == "build123d"
+    assert snapshot["probe"]["provider"] == "build123d"
+    assert isinstance(snapshot["probe"]["ready"], bool)
     assert snapshot["probe"]["topology_backend_requested"] == "auto"
     assert snapshot["probe"]["topology_backend_resolved"] in {"mock", "occ"}
     assert snapshot["probe"]["freecad_cmd_exists"] is False
+    assert isinstance(snapshot["probe"]["build123d_available"], bool)
     assert isinstance(snapshot["probe"]["issues"], list)
 
 

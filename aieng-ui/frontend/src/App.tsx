@@ -2276,9 +2276,9 @@ export default function App() {
       await runAutopilotAgent();
       return;
     }
-    if (selectedChatConnection.id === "freecad-desktop") {
+    if (selectedChatConnection.id === "external-cad-adapter") {
       const prompt = message.trim();
-      await submitRuntime(`inspect geometry through FreeCAD bridge. User request: ${prompt || "inspect current project geometry"}`);
+      await submitRuntime(`inspect current geometry through the configured CAD adapter. User request: ${prompt || "inspect current project geometry"}`);
       return;
     }
     await submitRuntime();
@@ -2297,9 +2297,9 @@ export default function App() {
       await runAutopilotAgent();
       return;
     }
-    if (selectedChatConnection.id === "freecad-desktop") {
+    if (selectedChatConnection.id === "external-cad-adapter") {
       const prompt = message.trim();
-      await submitRuntime(`inspect geometry through FreeCAD bridge. User request: ${prompt || "inspect current project geometry"}`);
+      await submitRuntime(`inspect current geometry through the configured CAD adapter. User request: ${prompt || "inspect current project geometry"}`);
       return;
     }
     await submitRuntime();

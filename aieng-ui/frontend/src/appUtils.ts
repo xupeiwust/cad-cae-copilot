@@ -70,6 +70,7 @@ export function getManifestString(summary: ProjectSummary | null, key: string) {
 }
 
 export function getProviderLabel(provider?: string | null) {
+  if (provider === "build123d") return "build123d / OCP";
   if (provider === "freecad") return "FreeCAD";
   return provider ?? "-";
 }

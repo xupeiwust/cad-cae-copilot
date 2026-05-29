@@ -21,8 +21,9 @@ keywords = [
     "llm",
     "agent",
     "mcp",
+    "build123d",
+    "opencascade",
     "calculix",
-    "freecad",
     "approval-gate",
     "runtime",
     "evidence",
@@ -54,7 +55,8 @@ dependencies = [
   "python-multipart>=0.0.9",
   "PyYAML>=6.0",
   "jsonschema>=4.0",
-  "trimesh>=4.0"
+  "trimesh>=4.0",
+  "build123d>=0.10.0"
 ]
 
 [project.optional-dependencies]

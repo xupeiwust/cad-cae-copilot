@@ -26,8 +26,9 @@ aieng local runtime          ← this module (backend/app/runtime.py)
         │
         ├── aieng tools       ← wraps existing package_summary / validate / convert
         ├── audit tools       ← wraps existing write_audit_log / recent_logs
-        ├── FreeCAD adapter   ← skeleton; bridge path TBD (see below)
-        └── future adapters   ← solver, MCP, CLI
+        ├── cad tools         ← build123d/OCP agent modelling and parameter edits
+        ├── cae tools         ← setup, solver input, CalculiX execution, postprocess
+        └── optional adapters ← external CAD runtimes such as FreeCADCmd
 ```
 
 The runtime module (`backend/app/runtime.py`) has *no imports from main.py*.
@@ -36,11 +37,17 @@ active `Settings` instance. This keeps the dependency graph one-directional.
 
 ---
 
-## How FreeCAD should connect
+## CAD provider direction
 
-`freecad.inspect_geometry` and `freecad.run_macro` are registered as skeleton
-tools. Four integration paths are viable; pick the one that fits the
-deployment environment:
+The default CAD runtime is build123d/OCP. Agent-authored modelling flows call
+`cad.execute_build123d`, write `.aieng` package artifacts, and expose named
+parts plus topology through the CAD-neutral package graph.
+
+FreeCAD is no longer the default runtime provider. It can still be kept as an
+optional external adapter for shops that need FreeCADCmd-specific import,
+preview, or legacy bridge workflows. If that adapter is re-enabled, four
+integration paths are viable; pick the one that fits the deployment
+environment:
 
 | Path | How | When to use |
 |------|-----|-------------|
@@ -49,9 +56,9 @@ deployment environment:
 | **C — Local socket bridge** | POST to `freecad-mcp` running on `localhost:PORT` | Best for interactive sessions; freecad-mcp already exists in this repo |
 | **D — Workbench extension** | Named pipe or stdout capture from a running FreeCAD GUI instance | Needed for UI-driven workflows |
 
-`freecad.run_macro` is gated with `requires_approval=True`. The runtime
-executor will pause and emit an `approval_required` event before any macro
-executes, regardless of which bridge path is used.
+Any future FreeCAD macro or external-CAD mutation should remain approval-gated.
+The runtime executor must pause and emit an `approval_required` event before
+any external CAD subprocess mutates package state or a desktop document.
 
 ---
 
@@ -73,15 +80,15 @@ aieng local runtime          ← backend/app/runtime.py  (already exists)
         ├── aieng.refresh_semantics
         ├── aieng.generate_preview
         ├── aieng.read_audit_log
-        ├── freecad.inspect_geometry
-        ├── freecad.export_step
-        ├── cad.edit_parameter  (approval-gated)
+        ├── cad.execute_build123d  (approval-gated)
+        ├── cad.edit_parameter     (approval-gated)
+        ├── cad.critique
         ├── cae.apply_setup_patch
         ├── cae.extract_solver_results
         ├── cae.prepare_solver_run
-        ├── cae.run_solver  (approval-gated)
-        ├── cae.generate_mesh  (approval-gated)
-        ├── freecad.run_macro  (approval-gated)
+        ├── cae.generate_solver_input
+        ├── cae.run_solver         (approval-gated)
+        ├── cae.write_mesh_handoff
         └── mcp.check / mcp.parse_patch / mcp.prepare_execution
 ```
 
@@ -112,13 +119,13 @@ human-in-the-loop confirmation pattern.
 | `aieng.refresh_semantics` tool | ✅ wraps `validate_aieng_file()` |
 | `aieng.generate_preview` tool | ✅ wraps `convert_asset()` |
 | `aieng.read_audit_log` tool | ✅ wraps `recent_logs()` |
-| `freecad.inspect_geometry` tool | ✅ real bridge via `freecad_bridge.inspect_geometry()` → `FreeCADCmd` |
-| `freecad.export_step` tool | ✅ real bridge via `freecad_bridge.export_step()` → `FreeCADCmd`; returns artifact refs |
-| `cad.edit_parameter` tool | ✅ real bridge via `freecad_bridge.edit_parameter()`; honest executor selection (`auto` checks `freecad_cmd`, `stub` explicit-only, `macro`/`rpc` real). Returns `source` field (`freecad_real` vs `stub_mock`). Approval-gated. |
-| `cae.generate_mesh` tool | ✅ real bridge via `freecad_bridge.generate_mesh()` → `FreeCADCmd` + Gmsh macro; atomic ZIP write-back. Returns `error/freecad_unavailable` when FreeCAD missing. Approval-gated. |
-| `freecad.run_macro` tool | ✅ skeleton (approval-gated) |
+| `cad.execute_build123d` tool | ✅ runs caller-supplied build123d code, writes STEP/STL/GLB/topology/feature graph artifacts. Approval-gated. |
+| `cad.edit_parameter` tool | ✅ text-replaces named build123d constants and re-executes the stored source. Approval-gated. |
+| `cad.critique` tool | ✅ deterministic engineering audit over build123d-generated package semantics |
+| `cae.generate_solver_input` tool | ✅ writes CalculiX input deck from package setup artifacts |
+| `cae.write_mesh_handoff` tool | ✅ writes an external mesher handoff contract; no mesher execution |
 | `ToolResult.artifacts` hoisting | ✅ `_execute_steps()` extracts `artifacts` list from tool output dict |
-| Per-project artifact audit log | ✅ `write_audit_log(..., "freecad_export", {...})` on each export |
+| Per-project artifact audit log | ✅ package mutations append structured audit events |
 | `POST /api/runtime/runs` endpoint | ✅ |
 | `GET /api/runtime/runs` endpoint | ✅ listing (slim summaries, up to 50) |
 | `GET /api/runtime/runs/{id}` endpoint | ✅ |
@@ -130,7 +137,7 @@ human-in-the-loop confirmation pattern.
 | Audit log on each run + approval/rejection events | ✅ |
 | Frontend approve/reject buttons (conditional on awaiting_approval) | ✅ |
 | Frontend events shown as plan steps in chat | ✅ |
-| Frontend geometry result summary line | ✅ compact human-readable output for `freecad.inspect_geometry` |
+| Frontend CAD result summary line | ✅ compact human-readable output for build123d/model-generation results |
 | Frontend artifact changed-files section | ✅ `变更文件:` block from `ToolResult.artifacts` |
 | Runtime audit event log (`audit/events.jsonl`) | ✅ append-only JSONL inside ZIP; `geometry_modified`, `solver_run_completed`, `cae_summary_refreshed` events |
 | `GET /api/projects/{id}/audit-events` endpoint | ✅ read-only; returns events in append order |
@@ -146,16 +153,9 @@ human-in-the-loop confirmation pattern.
 | Review readiness diagnostics | ✅ `review_readiness` field in support packet; 5 checks (A–E); rollup `blocked > warning > ready`; `claim_advancement: "none"` |
 | Package semantics taxonomy | ✅ [`docs/package_semantics.md`](package_semantics.md) — canonical definitions for all concepts; six core principles; lifecycle flow diagram |
 
-**Phase 2 / 2.5 bridge files:**
-- `aieng_freecad_mcp/src/freecad_mcp/geometry_inspector.py` — `FREECAD_INSPECT_SCRIPT` + `run_geometry_inspection()` launcher
-- `aieng_freecad_mcp/src/freecad_mcp/step_exporter.py` — `FREECAD_EXPORT_SCRIPT` + `run_step_export()` launcher; returns `artifacts` list
-- `aieng-ui/backend/app/freecad_bridge.py` — thin sys.path-injection wrapper; exports `inspect_geometry()` and `export_step()`
-
-**Input resolution for `freecad.inspect_geometry` and `freecad.export_step`** (first match wins):
-1. `inputPath` or `input_path` key in tool input
-2. `project_id` key → reads `metadata.json` → resolves `source_step` relative path
-
-**Output path for `freecad.export_step`:** If no `outputPath` provided, auto-generates `{stem}_export.step` alongside the input file (never overwrites source).
+**Optional FreeCAD adapter files:**
+- `backend/app/providers/freecad_preview.py` — minimal STEP preview provider through FreeCADCmd when `provider=freecad`.
+- Legacy `aieng-freecad-mcp` docs remain useful as integration notes, but they are not required for the default build123d runtime.
 
 ---
 
@@ -264,11 +264,12 @@ separate, deliberate step.
 ### Revalidation workflow
 
 1. `cad.edit_parameter` → geometry modified; `current_geometry_revision` incremented; `requires_revalidation: true`
-2. `cae.generate_mesh` → regenerate mesh for new geometry
-3. `cae.run_solver` → rerun solver; on `return_code == 0`: `last_validated_geometry_revision = current`; `requires_revalidation: false`
-4. `postprocess.refresh_cae_summary` → update result summary and evidence index
+2. `cae.write_mesh_handoff` or an external mesher → produce mesh evidence for the new geometry
+3. `cae.generate_solver_input` → write a fresh CalculiX deck from current setup artifacts
+4. `cae.run_solver` → rerun solver; on `return_code == 0`: `last_validated_geometry_revision = current`; `requires_revalidation: false`
+5. `postprocess.refresh_cae_summary` → update result summary and evidence index
 
-Only after step 3 do `current_geometry_revision == last_validated_geometry_revision`.
+Only after step 4 do `current_geometry_revision == last_validated_geometry_revision`.
 
 ---
 
@@ -853,8 +854,8 @@ not accept proposals, create claim maps, or advance engineering claims.
 | Item | Notes |
 |------|-------|
 | Streaming events | Poll-based; SSE or WebSocket would enable live updates |
-| Real FreeCAD macro bridge | `freecad.run_macro` is still a skeleton; needs approval gate wired to a real execution path |
-| Mesh quality metrics | Not yet implemented — mesh generation produces `.inp` only; no quality report |
+| Optional external CAD adapter | FreeCADCmd or another CAD backend can be reintroduced behind the provider registry when needed |
+| Mesh quality metrics | Not yet implemented — external mesh handoff records intent, but no quality report |
 | Field data endpoint | Extend `GET /projects/{id}/fields/{f}` to serve real VTK/HDF5 data (currently synthetic `y_normalized` with explicit "合成预览，不可用于工程判断" label) |
 | Solver field data endpoint | Extend `GET /projects/{id}/fields/{f}` to serve real VTK/HDF5 data |
 | MCP server adapter | `backend/app/mcp_server.py` wrapping `runtime.registered_tool_names()` |

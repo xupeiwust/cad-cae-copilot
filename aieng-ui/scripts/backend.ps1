@@ -28,13 +28,15 @@ if ($existing) {
   }
 }
 
-# Two candidate Python interpreters. We prefer whichever can actually import
-# build123d, because the backend's `Build123dBackend.can_generate()` gates
-# text-to-CAD on that import — picking a Python without it makes the whole
-# CAD pipeline 503 even though the host technically has FreeCAD installed.
+# Candidate Python interpreters. The default runtime is build123d/OCP, so prefer
+# a normal Python environment that can import build123d. FreeCAD remains an
+# optional adapter and is no longer the preferred backend interpreter.
 $FreeCADHome = Join-Path $WorkspaceRoot "FreeCAD_1.1.1-Windows-x86_64-py311"
 $FreeCADPython = Join-Path $FreeCADHome "bin\python.exe"
 $CondaPython = "C:\Users\RL_Carla\anaconda3\envs\aieng311\python.exe"
+$EnvPython = $env:AIENG_PYTHON
+$PathPythonCmd = Get-Command python -ErrorAction SilentlyContinue
+$PathPython = if ($PathPythonCmd) { $PathPythonCmd.Source } else { $null }
 
 function Test-HasBuild123d($py) {
   if (-not (Test-Path $py)) { return $false }
@@ -45,31 +47,28 @@ function Test-HasBuild123d($py) {
 $PythonExe = $null
 $ExtraEnv = @{}
 
-# Preference order: a Python that can import build123d wins. Among interpreters
-# that have build123d, prefer FreeCAD because it also unlocks the FreeCAD MCP
-# integration path.
-if (Test-HasBuild123d $FreeCADPython) {
-  $PythonExe = $FreeCADPython
+$Candidates = @(
+  @{ Label = "AIENG_PYTHON"; Path = $EnvPython },
+  @{ Label = "conda env aieng311"; Path = $CondaPython },
+  @{ Label = "PATH python"; Path = $PathPython },
+  @{ Label = "FreeCAD embedded Python"; Path = $FreeCADPython }
+)
+
+foreach ($candidate in $Candidates) {
+  $path = $candidate.Path
+  if ($path -and (Test-HasBuild123d $path)) {
+    $PythonExe = $path
+    Write-Host "Selected $($candidate.Label) (build123d available): $PythonExe"
+    break
+  }
+}
+
+if (-not $PythonExe) {
+  throw "No Python with build123d found. Set AIENG_PYTHON or install build123d into the aieng311 environment."
+}
+
+if (Test-Path $FreeCADHome) {
   $ExtraEnv["FREECAD_MCP_FREECAD_PATH"] = $FreeCADHome
-  Write-Host "Selected FreeCAD embedded Python (build123d available): $PythonExe"
-} elseif (Test-HasBuild123d $CondaPython) {
-  $PythonExe = $CondaPython
-  Write-Host "Selected conda env aieng311 (build123d available): $PythonExe"
-} elseif (Test-Path $FreeCADPython) {
-  # FreeCAD exists but lacks build123d — still usable for non-CAD endpoints.
-  $PythonExe = $FreeCADPython
-  $ExtraEnv["FREECAD_MCP_FREECAD_PATH"] = $FreeCADHome
-  Write-Host "WARNING: FreeCAD Python does NOT have build123d — CAD generation will return 503."
-  Write-Host "  To fix: install build123d into the conda env (aieng311) and either remove FreeCAD"
-  Write-Host "  from this path or install build123d into FreeCAD's Python."
-  Write-Host "  Falling back to: $PythonExe"
-} elseif (Test-Path $CondaPython) {
-  $PythonExe = $CondaPython
-  Write-Host "WARNING: conda env aieng311 does NOT have build123d — CAD generation will return 503."
-  Write-Host "  To fix: pip install build123d into aieng311."
-  Write-Host "  Falling back to: $PythonExe"
-} else {
-  throw "No suitable Python found. Install FreeCAD at $FreeCADHome or create conda env aieng311 with build123d."
 }
 
 foreach ($kv in $ExtraEnv.GetEnumerator()) {

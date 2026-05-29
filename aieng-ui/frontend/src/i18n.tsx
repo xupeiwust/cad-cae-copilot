@@ -85,7 +85,7 @@ const zhToEn: Record<string, string> = {
   "界面设置": "Interface settings",
   "集中管理 LLM Provider 和 CAD Runtime。主工作区只显示当前状态与常用操作。": "Manage the LLM provider and CAD runtime in one place. The main workspace only shows current status and common actions.",
   "关闭": "Close",
-  "STEP 导入、预览、语义刷新和 FreeCAD MCP 能力使用这组配置。": "STEP import, preview, semantic refresh, and FreeCAD MCP capabilities use this configuration.",
+  "AI 建模默认使用 build123d/OCP；FreeCAD 仅作为可选外部适配器配置。": "AI modelling uses build123d/OCP by default; FreeCAD is configured only as an optional external adapter.",
   "FreeCAD 安装目录": "FreeCAD installation directory",
   "aieng-freecad-mcp 仓库目录": "aieng-freecad-mcp repository directory",
   "aieng 仓库目录": "aieng repository directory",

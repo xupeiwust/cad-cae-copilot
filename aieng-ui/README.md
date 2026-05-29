@@ -8,7 +8,7 @@
 
 Web workbench and FastAPI service for the `.aieng` engineering platform.
 
-**Keywords:** CAD · CAE · FEA · workbench · FastAPI · React · Three.js · LLM agent · MCP · CalculiX · FreeCAD · approval gate · audit · evidence review · design automation
+**Keywords:** CAD · CAE · FEA · workbench · FastAPI · React · Three.js · LLM agent · MCP · build123d · OpenCASCADE · CalculiX · approval gate · audit · evidence review · design automation
 
 ## What This Is
 
@@ -19,10 +19,10 @@ Web workbench and FastAPI service for the `.aieng` engineering platform.
 - **FastAPI service layer** — project/file management, preview generation, semantic package inspection, CAE artifact detection (`GET /api/projects/{project_id}/cae-artifacts`)
 - **React SPA** — STEP upload, Three.js viewer (GLB/STL), semantic summary panel, honest CAE lifecycle panel (setup / simulation runs / results) with one-click refresh and external metrics import, CAE Review Report Assistant, Closed-loop Copilot Stepper, artifact inspector (read-only JSON/text evidence review), chat/orchestration panel, audit log, settings drawer, stress-heatmap visualization
 - **Local orchestration runtime** — `RunRecord`, `ToolCall`, `ToolResult`, `RuntimeEvent` types; intent-based plan builder; synchronous executor with approval gate
-- **CAD provider registry** — pluggable `CadProvider` interface; FreeCAD is the first implementation
+- **CAD provider registry** — pluggable `CadProvider` interface; build123d/OCP is the default provider, with FreeCAD kept as an optional external adapter
 - **B-Rep graph engine** — symbolic face/edge/group pointer index (`@face:`, `@edge:`, `@group:`) derived from topology maps; deterministic, CAD-neutral, read-only
 - **Engineering action planner** — typed intent classification for chat-first CAD/CAE workflows (generate, refine, preprocess, simulate, change-material, refine-mesh, set-target)
-- **Simulation runner** — Gmsh meshing → CalculiX solve → FRD parse → atomic write-back, with SSE streaming progress and post-processing verdict vs. design targets
+- **Simulation runner** — external mesh handoff / solver input generation → CalculiX solve → FRD parse → atomic write-back, with SSE streaming progress and post-processing verdict vs. design targets
 - **Stress heatmap generator** — per-node Von Mises stress colormap as binary GLB from CalculiX FRD results
 - **Contextual engineering chat** — Claude-powered chat grounded in live project state (geometry, FEA setup, simulation results, design targets)
 - **Local Agent Autopilot quality gate** ? external agents return one JSON action at a time; CAD actions use a compact brief gate, semantic labels/colors, approval-gated build123d execution, and automatic read-only `cad.critique` follow-up where registered.
@@ -34,13 +34,13 @@ Web workbench and FastAPI service for the `.aieng` engineering platform.
 `aieng-ui` is the **workbench**: the local FastAPI runtime + React SPA where the vertical CAE MVP actually executes. It owns the moving parts that `aieng` deliberately does not:
 
 - The runtime tool registry (table below) and the `POST /api/runtime/runs` orchestration entry point.
-- The **approval gate** — `cae.run_solver`, `cae.generate_mesh`, `cad.edit_parameter`, and `freecad.run_macro` are `requires_approval=True`; the runtime pauses before mutation or subprocess execution and exposes explicit `approve`/`reject` REST endpoints.
+- The **approval gate** — `cae.run_solver`, `cad.execute_build123d`, `cad.edit_parameter`, and other package mutations are `requires_approval=True`; the runtime pauses before mutation or subprocess execution and exposes explicit `approve`/`reject` REST endpoints.
 - The **external CalculiX subprocess adapter** — `subprocess.run([ccx, …], shell=False)` with timeout, captured stdout/stderr/return code, and honest `converged: null` semantics. AIENG does not host a solver.
 - **Artifact write-back** into the `.aieng` package (atomic ZIP rewrite via temp file + `shutil.move`).
 - The **audit/event timeline** (`RuntimeEvent` sequence).
 - The schema-version drift warning surfaced through the `aieng_bridge` to the chat panel.
 
-External agents (Claude Code, Codex, MCP clients) reach the workbench through `aieng_freecad_mcp`. For the reproducible end-to-end demo see [`docs/quickstart-vertical-cae-demo.md`](docs/quickstart-vertical-cae-demo.md).
+External agents (Claude Code, Codex, MCP clients) reach the workbench through the MCP server in `backend/app/mcp_server.py`. For the reproducible end-to-end demo see [`docs/quickstart-vertical-cae-demo.md`](docs/quickstart-vertical-cae-demo.md).
 
 When `AIENG_BACKEND_URL` points MCP calls at the running FastAPI backend, external-agent mutations emit live UI events. The viewer refreshes on CAD preview changes without a manual browser reload; if the SSE stream drops, the UI shows `Polling` / `Reconnecting` and refreshes the active project periodically until the stream recovers.
 
@@ -49,7 +49,7 @@ For the step-by-step evidence-grounded CAD/CAE Copilot loop, see
 For the issue #10 v0.26 demo acceptance path, see
 [`docs/copilot-loop-v0.26-demo-walkthrough.md`](docs/copilot-loop-v0.26-demo-walkthrough.md).
 
-32 registered runtime tools (mutation / expensive operations are approval-gated).
+38 registered runtime tools (mutation / expensive operations are approval-gated).
 Honest status semantics: `skipped`, `partial`, `error`, and `completed` are never
 conflated. Key tools listed below; full registry available via `GET /api/runtime/tools`.
 
@@ -65,8 +65,6 @@ conflated. Key tools listed below; full registry available via `GET /api/runtime
 | `cad.critique` | Working — read-only deterministic engineering audit (min wall thickness, standard hole sizes, floating components) based on the canonical labels from `aieng/schemas/feature_graph.schema.json` |
 | `cad.refine` | Working — LLM-assisted refinement of an existing build123d model from natural-language feedback. Approval-gated. |
 | `cad.edit_parameter` | Working — fast build123d parametric edit: replaces a named UPPER_SNAKE_CASE constant in `geometry/source.py` and re-executes (no LLM). Validated against the parameter's declared `min`/`max`; on build failure the prior geometry is preserved. Approval-gated. |
-| `freecad.inspect_geometry` | Working — FreeCADCmd bridge |
-| `freecad.export_step` | Working — FreeCADCmd bridge; writes `{stem}_export.step` |
 | `postprocess.generate_computed_metrics` | Working — normalizes external metrics into `computed_metrics.json` and writes it back into the `.aieng` package |
 | `postprocess.refresh_cae_summary` | Working — regenerates CAE result summary, evidence index, and markdown |
 | `mcp.check` | Working — checks MCP guardrails, capability gaps, operation policy |
@@ -75,11 +73,12 @@ conflated. Key tools listed below; full registry available via `GET /api/runtime
 | `cae.apply_setup_patch` | Working — controlled patches to CAE setup artifacts |
 | `cae.extract_solver_results` | Working — parses CalculiX FRD and writes `computed_metrics.json` |
 | `cae.prepare_solver_run` | Working — preflight inspection, no solver execution |
+| `cae.generate_solver_input` | Working — generate a CalculiX input deck from package setup artifacts |
 | `cae.run_solver` | Working — external CalculiX execution adapter MVP, approval-gated |
-| `cae.generate_mesh` | Working — geometry ZIP unpack → FreeCAD/Gmsh mesh → `.inp` → atomic write-back. Returns `error/freecad_unavailable` when FreeCAD missing. Approval-gated. |
-| `freecad.run_macro` | Skeleton, approval-gated |
+| `cae.write_mesh_handoff` | Working — write a mesh handoff contract for an external mesher |
+| `cae.import_solver_evidence` | Working — import external solver evidence into the `.aieng` package |
 
-External agents (Claude Code, Codex, custom MCP clients) can access all runtime tools via the MCP bridge in `aieng_freecad_mcp`. See [`../docs/runtime_and_agents.md`](../docs/runtime_and_agents.md).
+External agents (Claude Code, Codex, custom MCP clients) can access all runtime tools via `python -m app.mcp_server` from the backend. See [`backend/MCP_SETUP.md`](backend/MCP_SETUP.md).
 
 ## Evidence review API
 
@@ -135,7 +134,6 @@ Use this path for the v0.28 public-facing Copilot MVP demo. The demo is determin
    cd aieng-workspace
    git clone https://github.com/armpro24-blip/aieng-ui.git
    git clone https://github.com/armpro24-blip/aieng.git
-   git clone https://github.com/armpro24-blip/aieng-freecad-mcp.git
    ```
 
 2. Install backend dependencies.
@@ -147,7 +145,6 @@ Use this path for the v0.28 public-facing Copilot MVP demo. The demo is determin
    python -m pip install --upgrade pip
    pip install -e ".[dev]"
    pip install -e ../../aieng
-   pip install -e ../../aieng-freecad-mcp
    ```
 
    On Windows PowerShell:
@@ -159,7 +156,6 @@ Use this path for the v0.28 public-facing Copilot MVP demo. The demo is determin
    python -m pip install --upgrade pip
    pip install -e ".[dev]"
    pip install -e ..\..\aieng
-   pip install -e ..\..\aieng-freecad-mcp
    ```
 
 3. Install frontend dependencies.
@@ -222,8 +218,8 @@ For the release checklist, screenshot/GIF checklist, and known limitations, see 
 
 ### Run the full Copilot MVP demo
 
-The full end-to-end Copilot loop — health check → FreeCAD inspection → design
-targets → computed metrics → target comparison → approval-gated CAD edit →
+The full end-to-end Copilot loop — health check → CAD/package inspection →
+design targets → computed metrics → target comparison → approval-gated CAD edit →
 stale-evidence tracking → structural preflight → approval-gated solver run →
 FRD extraction → Copilot Loop report → **Engineering Review Support Packet
 export** — is documented step-by-step in
@@ -262,11 +258,11 @@ Optional real-environment checks:
 cd backend
 python -m pytest tests/test_api.py::test_run_solver_real_ccx_skipped_if_unavailable -v
 
-# Requires AIENG_TEST_REAL_FREECAD=1 and FreeCADCmd.
+# Legacy optional adapter check; requires AIENG_TEST_REAL_FREECAD=1 and FreeCADCmd.
 python -m pytest tests/test_api.py::test_cae_generate_mesh_real_freecad_integration -v
 ```
 
-CI is defined in [`.github/workflows/demo-health.yml`](.github/workflows/demo-health.yml). It runs a smoke-check gate on push and pull request, plus full backend tests and frontend build. Real FreeCAD/CalculiX integration checks are optional local gates and are expected to skip cleanly when binaries are unavailable.
+CI is defined in [`.github/workflows/demo-health.yml`](.github/workflows/demo-health.yml). It runs a smoke-check gate on push and pull request, plus full backend tests and frontend build. Real CalculiX and legacy FreeCAD-adapter checks are optional local gates and are expected to skip cleanly when binaries are unavailable.
 
 ## Tests
 
@@ -280,7 +276,7 @@ A generic end-to-end post-processing smoke test (`test_postprocessing_smoke_metr
 A vertical CAE workflow benchmark (`test_vertical_cae_workflow_end_to_end`) demonstrates the full agent-run lifecycle through the runtime REST API: preflight → approval-gated external solver execution (mocked ccx) → FRD scalar extraction → computed metrics write-back → result summary refresh, with honest limitations enforced (`converged=null`, explicit warnings, no physical correctness claim). See [`../docs/aieng-agent-workflow.md`](../docs/aieng-agent-workflow.md) for the reusable agent workflow pattern, and [`../docs/demo-vertical-cae-workflow.md`](../docs/demo-vertical-cae-workflow.md) for a step-by-step walkthrough with agent prompt.
 
 If you have CalculiX installed, you can run a real-environment smoke test: [`docs/quickstart-real-ccx.md`](docs/quickstart-real-ccx.md).
-For a step-by-step explanation of the full real-binary pipeline (FreeCAD → mesh → ccx → FRD → evidence index), see [`docs/walkthrough-real-cae-pipeline.md`](docs/walkthrough-real-cae-pipeline.md).
+For historical notes on the older FreeCAD/Gmsh real-binary path, see [`docs/walkthrough-real-cae-pipeline.md`](docs/walkthrough-real-cae-pipeline.md).
 
 Before demoing, use the [`docs/demo-readiness-checklist.md`](docs/demo-readiness-checklist.md). If something breaks during setup or runtime, see [`docs/troubleshooting-vertical-cae-mvp.md`](docs/troubleshooting-vertical-cae-mvp.md).
 
@@ -289,8 +285,8 @@ Before demoing, use the [`docs/demo-readiness-checklist.md`](docs/demo-readiness
 Repo-level docs:
 
 - [Package semantics](docs/package_semantics.md) — canonical concept definitions (artifact, evidence, claim, proposal, support packet, review readiness, etc.) and six core principles
-- [Runtime architecture](docs/runtime_architecture.md) — orchestration layer, tool adapters, FreeCAD bridge paths
-- [Real CAE pipeline walkthrough](docs/walkthrough-real-cae-pipeline.md) — real-binary end-to-end: STEP → mesh → ccx → FRD → evidence index; evidence vs. claim discipline; manual validation checklist
+- [Runtime architecture](docs/runtime_architecture.md) — orchestration layer, runtime tools, and optional external CAD adapter notes
+- [Real CAE pipeline walkthrough](docs/walkthrough-real-cae-pipeline.md) — historical real-binary path: STEP → mesh → ccx → FRD → evidence index; evidence vs. claim discipline; manual validation checklist
 - [Vertical CAE MVP milestone](docs/milestone-vertical-cae-mvp.md) — current MVP positioning, real capabilities, boundaries, and check commands
 
 Workspace-level docs (covers all three repos):

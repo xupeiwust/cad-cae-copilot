@@ -6,7 +6,7 @@ import {
   DEFAULT_CHAT_CONNECTIONS,
   EMPTY_CAE_FIELDS,
 } from "../appConstants";
-import type { ChatHistoryItem, Notice, StageItem, StageState } from "../appTypes";
+import type { ChatHistoryItem, Notice, ShapeIrObject, StageItem, StageState } from "../appTypes";
 import {
   createChatId,
   projectViewerUrl,
@@ -31,6 +31,7 @@ import { buildFallbackSummary } from "./projectSummary";
 import { runtimeRunChatEntry } from "./runtimeRunChat";
 import { useEngineeringActions } from "./useEngineeringActions";
 import { useGeometryPointers } from "./useGeometryPointers";
+import { useObjectRegistry } from "./useObjectRegistry";
 import { useRuntimeSettings } from "./useRuntimeSettings";
 
 export function useWorkbenchApp() {
@@ -148,6 +149,7 @@ export function useWorkbenchApp() {
     insertToChat,
     runPreprocessFromPointer,
     clearHighlightedFaces,
+    setHighlightedFacesExact,
     selectedGeometryContext,
     withSelectedGeometryPrompt,
     agentPayloadGeometry,
@@ -162,6 +164,24 @@ export function useWorkbenchApp() {
     setNotice,
     executePreprocessFromPrompt,
   });
+
+  // Shape IR object registry: maps Shape IR nodes <-> viewer-selectable entities.
+  const geometryVersion = projects.find((item) => item.id === selectedId)?.updated_at ?? null;
+  const { objects: shapeIrObjects, verification: shapeIrVerification } = useObjectRegistry({
+    selectedId,
+    geometryVersion,
+  });
+  const [selectedShapeIrNodeId, setSelectedShapeIrNodeId] = useState<string | null>(null);
+  useEffect(() => {
+    setSelectedShapeIrNodeId(null);
+  }, [selectedId]);
+  const selectShapeIrNode = useCallback(
+    (node: ShapeIrObject) => {
+      setSelectedShapeIrNodeId(node.node_id);
+      setHighlightedFacesExact(node.viewer_selectable_ids ?? []);
+    },
+    [setHighlightedFacesExact],
+  );
 
   const selectedProject = useMemo(
     () => projects.find((item) => item.id === selectedId) ?? null,
@@ -805,6 +825,10 @@ export function useWorkbenchApp() {
     highlightedFaceIds,
     brepSnapshot,
     clearHighlightedFaces,
+    shapeIrObjects,
+    shapeIrVerification,
+    selectedShapeIrNodeId,
+    selectShapeIrNode,
     chatConnections,
     selectedChatConnectionId,
     selectedConnectionBlocked,

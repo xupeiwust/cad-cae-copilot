@@ -4,6 +4,7 @@ import { api } from "../api";
 import { NoticeCenter } from "../components/common";
 import { PointerProvider } from "../components/PointerText";
 import { SessionsSidebar } from "../components/SessionsSidebar";
+import { ShapeIrObjectsCard } from "../components/ShapeIrObjectsCard";
 import { ViewerPane } from "../components/ViewerPane";
 import { SelectionInspectorCard } from "../components/agent/SelectionInspectorCard";
 import { ChatPanel } from "../components/panels/ChatPanel";
@@ -88,6 +89,17 @@ export function AppChrome({ app }: AppChromeProps) {
           />
 
           <div className="chat-pane">
+            {app.shapeIrObjects.length > 0 ? (
+              <ShapeIrObjectsCard
+                objects={app.shapeIrObjects}
+                verification={app.shapeIrVerification}
+                activeNodeId={app.selectedShapeIrNodeId}
+                onSelectNode={app.selectShapeIrNode}
+                pickedFaceIds={app.pickedFaces.map((face) =>
+                  face.pointer.startsWith("@face:") ? face.pointer.slice("@face:".length) : face.pointer,
+                )}
+              />
+            ) : null}
             {app.pickedFaces.length > 0 ? (
               <SelectionInspectorCard
                 pickedFaces={app.pickedFaces}

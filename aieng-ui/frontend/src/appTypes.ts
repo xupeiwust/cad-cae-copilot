@@ -189,3 +189,52 @@ export type BrepGraphSnapshot = {
   // feature_id -> list of face_ids (for @feature: pointer expansion)
   featureFaces: Record<string, string[]>;
 };
+
+// Shape IR object registry (registry/object_registry.json): maps a Shape IR node
+// to its generated artifacts and viewer-selectable entities.
+export type ShapeIrObject = {
+  node_id: string;
+  source_pointer?: string;
+  node_type?: string;
+  runtime?: string | null;
+  backend?: string | null;
+  representation_kind?: string;
+  capability_level?: string | null;
+  lossiness?: string | null;
+  cad_editable?: boolean | null;
+  editable_parameters?: Record<string, unknown>;
+  topology_entities?: string[];
+  viewer_selectable_ids?: string[];
+  mesh_entities?: string[];
+  linkage?: string;
+  verification_status_ref?: string;
+};
+
+export type ShapeIrObjectRegistry = {
+  representation?: string;
+  representation_kind?: string;
+  runtime?: string | null;
+  backend?: string | null;
+  executed?: boolean;
+  fallback?: boolean;
+  geometry_kind?: string;
+  node_count?: number;
+  resolved_count?: number;
+  objects: ShapeIrObject[];
+  notes?: string[];
+};
+
+export type ShapeIrVerification = {
+  status?: string;
+  representation_kind?: string;
+  lossiness?: string;
+  cad_editable?: boolean;
+  capability_level?: string;
+  warnings?: string[];
+  nodes?: Array<Record<string, unknown>>;
+};
+
+export type ObjectRegistryResponse = {
+  object_registry: ShapeIrObjectRegistry;
+  verification: ShapeIrVerification | null;
+};

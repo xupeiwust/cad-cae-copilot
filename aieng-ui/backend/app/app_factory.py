@@ -902,6 +902,34 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
         return brep_graph.get_brep_graph_for_project(active_settings, project_id)
 
+    @app.get("/api/projects/{project_id}/object-registry")
+    def get_object_registry_endpoint(project_id: str) -> dict[str, Any]:
+        """Shape IR object registry (+ verification) — source of truth for mapping
+        Shape IR nodes <-> viewer-selectable entities. Returns
+        {object_registry, verification}. 404 if the project has no package or no
+        registry (i.e. not a Shape IR package)."""
+        import zipfile as _zipfile
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        registry: dict[str, Any] | None = None
+        verification: dict[str, Any] | None = None
+        try:
+            with _zipfile.ZipFile(package_path, "r") as zf:
+                names = set(zf.namelist())
+                if "registry/object_registry.json" in names:
+                    registry = json.loads(zf.read("registry/object_registry.json").decode("utf-8"))
+                if "diagnostics/shape_ir_verification.json" in names:
+                    verification = json.loads(zf.read("diagnostics/shape_ir_verification.json").decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"failed to read registry: {exc}") from exc
+        if registry is None:
+            raise HTTPException(status_code=404, detail="object registry not found (not a Shape IR package?)")
+        return {"object_registry": registry, "verification": verification}
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,

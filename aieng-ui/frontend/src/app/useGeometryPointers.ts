@@ -128,6 +128,12 @@ export function useGeometryPointers({
     setHighlightedFaceIds(new Set());
   }
 
+  // Replace the highlight set with exactly these faces (used by node selection:
+  // clicking a Shape IR node highlights precisely its viewer_selectable_ids).
+  function setHighlightedFacesExact(faceIds: string[]) {
+    setHighlightedFaceIds(new Set(faceIds));
+  }
+
   function handlePointerClick(token: PointerToken) {
     if (token.kind === "face") {
       toggleHighlightedFace(token.id);
@@ -179,6 +185,7 @@ export function useGeometryPointers({
     insertToChat,
     runPreprocessFromPointer,
     clearHighlightedFaces,
+    setHighlightedFacesExact,
     selectedGeometryContext,
     withSelectedGeometryPrompt,
     agentPayloadGeometry,

@@ -10241,3 +10241,109 @@ def test_delete_project_removes_dir_and_chat(tmp_path: Path) -> None:
     assert client.get(f"/api/projects/{pid}").status_code == 404
     # deleting an unknown project 404s
     assert client.delete("/api/projects/nonexistent123456").status_code == 404
+
+
+def _make_shape_ir_package(settings, pid: str, members: dict) -> None:
+    """Write a Shape IR .aieng into the project dir + populate verification +
+    object registry, and point the project at it."""
+    import json as _json, zipfile as _zip
+    from app.main import project_dir, get_project, save_project
+    from aieng.converters.shape_ir_verification import write_shape_ir_verification
+    from aieng.converters.shape_ir_object_registry import write_shape_ir_object_registry
+
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    with _zip.ZipFile(pkg, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, content if isinstance(content, (bytes, str)) else _json.dumps(content))
+    write_shape_ir_verification(pkg)
+    write_shape_ir_object_registry(pkg)
+    proj = get_project(settings, pid)
+    proj["aieng_file"] = f"{pid}.aieng"
+    save_project(settings, proj)
+
+
+def _ir_manifest(representation: str, *, backend="build123d", geometry_kind="brep", executed=True) -> dict:
+    m = {"source": {"source_document_metadata": {
+            "representation": representation, "requested_representation": representation,
+            "compile_runtime": backend, "representation_fallback": False}},
+         "achieved_capability_levels": [{"level": n} for n in (0, 1, 2, 3)]}
+    if executed:
+        m["geometry_execution"] = {"executed": True, "backend": backend, "geometry_kind": geometry_kind}
+    return m
+
+
+def test_object_registry_endpoint_brep(tmp_path: Path) -> None:
+    from app.main import create_app, default_project, save_project
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("brep-reg"))["id"]
+    _make_shape_ir_package(settings, pid, {
+        "geometry/shape_ir.json": {"parts": [
+            {"id": "plate", "type": "box", "parameters": {"LENGTH": 10}},
+            {"id": "post", "type": "cylinder"},
+        ]},
+        "geometry/source.py": "# Shape IR node: plate\n# Shape IR node: post\n",
+        "geometry/generated.step": "ISO-10303-21;\n",
+        "geometry/preview.glb": b"glTF",
+        "geometry/topology_map.json": {"metadata": {"extractor": "build123d"}, "entities": [
+            {"id": "body_001", "type": "solid", "name": "plate", "face_ids": ["face_001", "face_002"]},
+            {"id": "body_002", "type": "solid", "name": "post", "face_ids": ["face_003"]},
+            {"id": "face_001", "type": "face", "body_id": "body_001", "surface_type": "plane"},
+            {"id": "face_002", "type": "face", "body_id": "body_001", "surface_type": "plane"},
+            {"id": "face_003", "type": "face", "body_id": "body_002", "surface_type": "cylinder"},
+        ]},
+        "provenance/conversion_manifest.json": _ir_manifest("brep_build123d"),
+    })
+    client = TestClient(create_app(settings))
+    resp = client.get(f"/api/projects/{pid}/object-registry")
+    assert resp.status_code == 200
+    data = resp.json()
+    objs = {o["node_id"]: o for o in data["object_registry"]["objects"]}
+    assert set(objs) == {"plate", "post"}
+    assert objs["plate"]["linkage"] == "name_match"
+    assert set(objs["plate"]["viewer_selectable_ids"]) == {"face_001", "face_002"}
+    assert objs["plate"]["editable_parameters"] == {"LENGTH": 10}
+    assert objs["plate"]["cad_editable"] is True
+    assert data["verification"]["representation_kind"] == "brep"
+
+
+def test_object_registry_endpoint_mesh_object_level(tmp_path: Path) -> None:
+    from app.main import create_app, default_project, save_project
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("mesh-reg"))["id"]
+    _make_shape_ir_package(settings, pid, {
+        "geometry/shape_ir.json": {"representation": "implicit_sdf", "parts": [
+            {"id": "a", "type": "sphere"}, {"id": "b", "type": "sphere"}]},
+        "geometry/sdf_source.py": "# Shape IR node: a\n# Shape IR node: b\n",
+        "geometry/preview.glb": b"glTF",
+        "geometry/topology_map.json": {"metadata": {
+            "extractor": "SDFRunner", "extraction_mode": "marching_cubes_mesh", "real_step_parsing": False},
+            "entities": [
+                {"id": "body_001", "type": "solid", "name": "sdf_body", "face_ids": ["face_001"]},
+                {"id": "face_001", "type": "face", "body_id": "body_001", "surface_type": "freeform"}]},
+        "provenance/conversion_manifest.json": _ir_manifest("implicit_sdf", backend="sdf", geometry_kind="mesh"),
+    })
+    client = TestClient(create_app(settings))
+    resp = client.get(f"/api/projects/{pid}/object-registry")
+    assert resp.status_code == 200
+    data = resp.json()
+    objs = {o["node_id"]: o for o in data["object_registry"]["objects"]}
+    # object-level (fused) selection: every node resolves to the single mesh body/region
+    for nid in ("a", "b"):
+        assert objs[nid]["linkage"] == "fused_mesh"
+        assert objs[nid]["viewer_selectable_ids"] == ["face_001"]
+        assert objs[nid]["representation_kind"] == "implicit_field"
+        assert objs[nid]["cad_editable"] is False
+
+
+def test_object_registry_endpoint_404_without_registry(tmp_path: Path) -> None:
+    from app.main import create_app, default_project, save_project
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("empty"))["id"]
+    client = TestClient(create_app(settings))
+    assert client.get(f"/api/projects/{pid}/object-registry").status_code == 404

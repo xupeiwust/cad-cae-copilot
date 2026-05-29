@@ -5125,6 +5125,122 @@ textarea {
   background: rgba(255, 255, 255, 0.055);
 }
 
+/* ── Shape IR objects card ─────────────────────────────────────────────── */
+.shapeir-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.shapeir-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.shapeir-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shapeir-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.shapeir-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.shapeir-item.active {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--accent, #6ea8fe);
+}
+
+.shapeir-chip {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(110, 168, 254, 0.18);
+  color: var(--text-secondary);
+}
+
+.shapeir-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-line);
+}
+
+.shapeir-meta-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shapeir-hint {
+  font-size: 10px;
+  color: var(--accent, #6ea8fe);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.shapeir-meta-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.shapeir-meta-grid dt {
+  color: var(--text-secondary);
+}
+
+.shapeir-meta-grid dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.shapeir-params {
+  font-size: 12px;
+}
+
+.shapeir-params-label {
+  color: var(--text-secondary);
+}
+
+.shapeir-params ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.shapeir-verification {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .selection-inspector-head,
 .selection-inspector-actions {
   display: flex;

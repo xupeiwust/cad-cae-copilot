@@ -159,7 +159,7 @@ def test_feature_graph_empty_topology() -> None:
     from app.cad_generation import _topology_to_feature_graph
 
     fg = _topology_to_feature_graph({})
-    assert fg == {"features": []}
+    assert fg["features"] == []
 
 
 def test_feature_graph_surfaces_named_parts() -> None:
@@ -1071,3 +1071,112 @@ def test_edit_build123d_parameter_invalid_value_preserves_geometry(tmp_path: Pat
     )
     assert edited["status"] == "error"
     assert edited["code"] in ("execution_failed", "invalid_contract")
+
+
+# ── F1: organic models skip mechanical heuristics ─────────────────────────────
+
+def test_feature_graph_organic_skips_mechanical_heuristics() -> None:
+    from app.cad_generation import _topology_to_feature_graph
+
+    # Two cylinders of equal radius would normally trip the bolt-pattern heuristic.
+    topo = {"entities": [
+        {"type": "solid", "id": "b1", "name": "arm_L", "bounding_box": [-50, -10, 0, -30, 10, 200]},
+        {"type": "solid", "id": "b2", "name": "arm_R", "bounding_box": [30, -10, 0, 50, 10, 200]},
+        {"type": "face", "id": "f1", "body_id": "b1", "surface_type": "cylinder", "radius": 20.0},
+        {"type": "face", "id": "f2", "body_id": "b2", "surface_type": "cylinder", "radius": 20.0},
+        {"type": "face", "id": "f3", "body_id": "b1", "surface_type": "plane",
+         "normal": [0, 0, -1], "center": [-40, 0, 0], "area": 1200, "bounding_box": [-50, -10, 0, -30, 10, 0]},
+    ]}
+    src = "from build123d import *\narm_L = capsule(20, 160)\nresult = Compound(children=[arm_L])\n"
+    fg = _topology_to_feature_graph(topo, source_code=src, model_kind="auto")
+    types = {f["type"] for f in fg["features"]}
+    assert fg["model_kind"] == "organic"
+    assert "mounting_hole" not in types and "mounting_hole_pattern" not in types
+    assert "base_plate" not in types
+
+
+def test_feature_graph_mechanical_keeps_heuristics() -> None:
+    from app.cad_generation import _topology_to_feature_graph
+
+    topo = {"entities": [
+        {"type": "solid", "id": "b1", "name": "base_plate", "bounding_box": [0, 0, 0, 100, 60, 8]},
+        {"type": "face", "id": "f1", "body_id": "b1", "surface_type": "cylinder", "radius": 5.0},
+        {"type": "face", "id": "f2", "body_id": "b1", "surface_type": "cylinder", "radius": 5.0},
+    ]}
+    fg = _topology_to_feature_graph(topo, model_kind="auto")
+    assert fg["model_kind"] == "mechanical"
+    assert any(f["type"] in ("mounting_hole", "mounting_hole_pattern") for f in fg["features"])
+
+
+# ── F2: remove / replace a named part (real build123d) ────────────────────────
+
+def _ironman_stub_code() -> str:
+    return (
+        "from build123d import *\n"
+        "torso = lofted_stack([(0,300,200),(400,360,220)], label='torso', color=(0.7,0.1,0.1))\n"
+        "head = Sphere(80).moved(Location((0,0,520))); head.label='head'; head.color=Color(0.85,0.66,0.12)\n"
+        "arm_L = capsule(40, 200, label='arm_L').moved(Location((-220,0,300)))\n"
+        "result = Compound(children=[torso, head, arm_L])\n"
+    )
+
+
+def test_remove_part_drops_named_part(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code, remove_build123d_part
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "ironman-remove")
+    execute_build123d_code(settings, pid, {"code": _ironman_stub_code(), "thumbnail": False})
+
+    out = remove_build123d_part(settings, pid, label="head")
+    assert out["status"] == "ok"
+    assert "head" not in out["named_parts"]
+    assert sorted(out["named_parts"]) == ["arm_L", "torso"]
+    assert "head" in out["regression_diff"]["removed"]
+
+
+def test_remove_part_unknown_label_errors(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code, remove_build123d_part
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "ironman-remove-bad")
+    execute_build123d_code(settings, pid, {"code": _ironman_stub_code(), "thumbnail": False})
+
+    out = remove_build123d_part(settings, pid, label="cape")
+    assert out["status"] == "error"
+    assert out["code"] == "part_not_found"
+    assert "head" in out["available_parts"]
+
+
+def test_replace_part_swaps_named_part(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code, replace_build123d_part
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "ironman-replace")
+    execute_build123d_code(settings, pid, {"code": _ironman_stub_code(), "thumbnail": False})
+
+    # swap the spherical head for a taller lofted helmet, same label
+    new_head = (
+        "from build123d import *\n"
+        "result = lofted_stack([(440,150,170),(560,90,110)], label='head', color=(0.85,0.66,0.12))\n"
+    )
+    out = replace_build123d_part(settings, pid, label="head", code=new_head)
+    assert out["status"] == "ok"
+    assert sorted(out["named_parts"]) == ["arm_L", "head", "torso"]
+    # head changed, torso/arm should not be collateral
+    assert out["regression_diff"]["collateral_parts"] == []
+
+
+def test_replace_part_contract_requires_result(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code, replace_build123d_part
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "ironman-replace-bad")
+    execute_build123d_code(settings, pid, {"code": _ironman_stub_code(), "thumbnail": False})
+
+    out = replace_build123d_part(settings, pid, label="head", code="x = Sphere(50)")
+    assert out["status"] == "error"
+    assert out["code"] == "contract_violation"

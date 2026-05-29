@@ -234,6 +234,32 @@ seconds, fully reproducible.
   or `topology_changed` (a part appeared/disappeared). Collateral is not judged for
   `Global Parameters` edits, since shared dims are meant to move many parts.
 
+### Part-level edits — `cad.replace_part` / `cad.remove_part` (approval-gated)
+
+`append` only adds geometry. To fix or drop ONE part of a model without
+resubmitting the whole script:
+- `cad.remove_part { project_id, label }` — drops the part with that build123d
+  `.label`.
+- `cad.replace_part { project_id, label, code }` — swaps it for new build123d
+  `code` (must reassign `result` to the new part and set `result.label`). The
+  high-level helpers (lofted_stack, capsule, …) are available in `code`.
+
+Both append a transform step to `geometry/source.py` (keeping the stored script
+self-consistent), re-execute build123d (no LLM), and return a `regression_diff`.
+**This is what makes step-by-step modelling visible**: build the model
+incrementally with `append` + part-level edits and the viewer updates after each
+call, so the user watches it assemble rather than seeing one monolithic build.
+
+### Organic vs mechanical models — `model_kind`
+
+`cad.execute_build123d` accepts `model_kind` (default `auto`). The feature-graph
+heuristics (bolt-pattern detection, base-plate detection) are meant for
+mechanical parts; on a character/vehicle/product they mislabel limb cylinders as
+`mounting_hole_pattern` and the bottom face as a `base_plate`. Pass
+`model_kind="organic"` to skip them (or `"mechanical"` to force them). `auto`
+infers from part labels + whether the organic helpers are used. The resolved kind
+is echoed in `feature_graph.model_kind`.
+
 ### Reference image calibration (recommended for named real-world targets)
 
 When modelling a real product / character / vehicle, attach a reference image once

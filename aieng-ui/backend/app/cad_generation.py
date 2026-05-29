@@ -828,9 +828,44 @@ def render_mesh_thumbnail(
         return _render_mesh_thumbnail_basic(triangles, size)
 
 
+# Canonical engineering labels (from feature_graph.schema.json) — their presence
+# signals a mechanical part where bolt-pattern / base-plate heuristics are wanted.
+_ENGINEERING_LABEL_HINTS: tuple[str, ...] = (
+    "base_plate", "back_plate", "mount_plate", "mounting_hole", "rib", "boss",
+    "flange", "interface_face", "load_interface", "wall", "cover", "lid",
+    "shell", "bracket", "housing", "manifold", "fixture", "frame", "mount",
+    "chassis", "plate", "bearing", "bolt", "gusset",
+)
+
+# Organic/industrial-design helper calls in the source — their presence signals
+# a character/vehicle/product where the mechanical heuristics misfire (they tag
+# limb cylinders as "mounting_hole_pattern" and the bottom face as "base_plate").
+_ORGANIC_HELPER_HINTS: tuple[str, ...] = (
+    "lofted_stack(", "capsule(", "swept_tube(", "revolved_profile(",
+    "organic_blend(", "tapered_cylinder(",
+)
+
+
+def _infer_model_kind(named_solids: list[dict[str, Any]], source_code: str | None) -> str:
+    """Decide whether a model is 'organic' or 'mechanical' for heuristic gating.
+
+    Mechanical wins if any named part uses a canonical engineering label.
+    Otherwise, using the organic helper functions (loft/capsule/sweep/…) marks
+    the model organic. Default when neither signal fires: mechanical (preserves
+    prior behaviour for plain primitive parts).
+    """
+    names = " ".join(str(b.get("name") or "").lower() for b in named_solids)
+    if any(h in names for h in _ENGINEERING_LABEL_HINTS):
+        return "mechanical"
+    if source_code and any(h in source_code for h in _ORGANIC_HELPER_HINTS):
+        return "organic"
+    return "mechanical"
+
+
 def _topology_to_feature_graph(
     topo: dict[str, Any],
     source_code: str | None = None,
+    model_kind: str = "auto",
 ) -> dict[str, Any]:
     """Heuristic: derive a feature_graph.json from extracted topology.
 
@@ -838,6 +873,12 @@ def _topology_to_feature_graph(
     topology), scan it for UPPER_SNAKE_CASE named constants and attach them as
     editable parameters to the matching features. This is what makes
     ``cad.edit_parameter`` a fast text-replacement instead of an LLM round-trip.
+
+    ``model_kind`` gates the mechanical heuristics (bolt patterns, base plate):
+    ``"mechanical"`` runs them, ``"organic"`` skips them, ``"auto"`` (default)
+    infers from labels + helper usage. On a character/vehicle the bolt-pattern
+    heuristic otherwise mislabels limb cylinders as "mounting_hole_pattern" and
+    the bottom face as a "base_plate" — noise that pollutes the feature graph.
     """
     entities = topo.get("entities", [])
     faces = [e for e in entities if e.get("type") == "face"]
@@ -864,64 +905,68 @@ def _topology_to_feature_graph(
             "intent": {"role": "named_component"},
         })
 
-    # bolt pattern detection — group cylinders by radius (±8% tolerance)
-    cylinders = [f for f in faces if f.get("surface_type") == "cylinder" and f.get("radius")]
-    radius_groups: dict[float, list[str]] = {}
-    for face in cylinders:
-        r = float(face["radius"])
-        matched = next(
-            (kr for kr in radius_groups if abs(r - kr) / max(r, kr) < 0.08),
-            None,
-        )
-        if matched is None:
-            radius_groups[r] = [face["id"]]
-        else:
-            radius_groups[matched].append(face["id"])
+    resolved_kind = model_kind if model_kind in ("organic", "mechanical") else _infer_model_kind(named_solids, source_code)
+    run_mechanical_heuristics = resolved_kind != "organic"
 
-    for radius, face_ids in radius_groups.items():
-        if len(face_ids) >= 2:
+    if run_mechanical_heuristics:
+        # bolt pattern detection — group cylinders by radius (±8% tolerance)
+        cylinders = [f for f in faces if f.get("surface_type") == "cylinder" and f.get("radius")]
+        radius_groups: dict[float, list[str]] = {}
+        for face in cylinders:
+            r = float(face["radius"])
+            matched = next(
+                (kr for kr in radius_groups if abs(r - kr) / max(r, kr) < 0.08),
+                None,
+            )
+            if matched is None:
+                radius_groups[r] = [face["id"]]
+            else:
+                radius_groups[matched].append(face["id"])
+
+        for radius, face_ids in radius_groups.items():
+            if len(face_ids) >= 2:
+                feat_counter += 1
+                ftype = "mounting_hole_pattern" if len(face_ids) >= 4 else "mounting_hole"
+                features.append({
+                    "id": f"feat_{feat_counter:03d}",
+                    "type": ftype,
+                    "name": f"Hole pattern r={radius:.1f}mm ({len(face_ids)} holes)",
+                    "geometry_refs": {"faces": face_ids},
+                    "parameters": {"hole_diameter_mm": round(radius * 2, 2), "count": len(face_ids)},
+                    "intent": {"role": "mounting_candidate"},
+                })
+
+        # base plate — largest planar face in the bottom 20% of Z range.
+        # Skip the heuristic entirely for degenerate Z extents (flat shells / no
+        # Z thickness) so we never advertise a 0 mm-thick "base plate" feature.
+        planes = [f for f in faces if f.get("surface_type") == "plane"]
+        z_range = bbox[5] - bbox[2]
+        bottom_planes: list[dict[str, Any]] = []
+        if z_range > 1e-6:
+            z_threshold = bbox[2] + z_range * 0.2
+            bottom_planes = [
+                f for f in planes
+                if f.get("normal") and f["normal"][2] < -0.8
+                and (f.get("center", [0, 0, 0])[2]) <= z_threshold
+            ]
+        if bottom_planes:
+            base = max(bottom_planes, key=lambda f: f.get("area", 0.0))
+            bb = base.get("bounding_box", [0] * 6)
             feat_counter += 1
-            ftype = "mounting_hole_pattern" if len(face_ids) >= 4 else "mounting_hole"
             features.append({
                 "id": f"feat_{feat_counter:03d}",
-                "type": ftype,
-                "name": f"Hole pattern r={radius:.1f}mm ({len(face_ids)} holes)",
-                "geometry_refs": {"faces": face_ids},
-                "parameters": {"hole_diameter_mm": round(radius * 2, 2), "count": len(face_ids)},
-                "intent": {"role": "mounting_candidate"},
+                "type": "base_plate",
+                "name": "Base face",
+                "geometry_refs": {"faces": [base["id"]]},
+                "parameters": {
+                    "length_mm": round(bb[3] - bb[0], 2),
+                    "width_mm": round(bb[4] - bb[1], 2),
+                    "thickness_mm": round(z_range, 2),
+                },
+                "intent": {"role": "structural_base"},
             })
 
-    # base plate — largest planar face in the bottom 20% of Z range.
-    # Skip the heuristic entirely for degenerate Z extents (flat shells / no
-    # Z thickness) so we never advertise a 0 mm-thick "base plate" feature.
-    planes = [f for f in faces if f.get("surface_type") == "plane"]
-    z_range = bbox[5] - bbox[2]
-    bottom_planes: list[dict[str, Any]] = []
-    if z_range > 1e-6:
-        z_threshold = bbox[2] + z_range * 0.2
-        bottom_planes = [
-            f for f in planes
-            if f.get("normal") and f["normal"][2] < -0.8
-            and (f.get("center", [0, 0, 0])[2]) <= z_threshold
-        ]
-    if bottom_planes:
-        base = max(bottom_planes, key=lambda f: f.get("area", 0.0))
-        bb = base.get("bounding_box", [0] * 6)
-        feat_counter += 1
-        features.append({
-            "id": f"feat_{feat_counter:03d}",
-            "type": "base_plate",
-            "name": "Base face",
-            "geometry_refs": {"faces": [base["id"]]},
-            "parameters": {
-                "length_mm": round(bb[3] - bb[0], 2),
-                "width_mm": round(bb[4] - bb[1], 2),
-                "thickness_mm": round(z_range, 2),
-            },
-            "intent": {"role": "structural_base"},
-        })
-
-    feature_graph = {"features": features}
+    feature_graph = {"features": features, "model_kind": resolved_kind}
     if source_code:
         feature_graph = _enrich_feature_graph_with_source_params(source_code, feature_graph)
     return feature_graph
@@ -2161,7 +2206,9 @@ def execute_build123d_code(
     # _mesh_meta is transient (used only for thumbnail coloring) — pop it so it
     # doesn't get written to topology_map.json on disk.
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
-    feature_graph = _topology_to_feature_graph(topo, source_code=code)
+    feature_graph = _topology_to_feature_graph(
+        topo, source_code=code, model_kind=str(payload.get("model_kind", "auto")),
+    )
     face_count = sum(1 for e in topo.get("entities", []) if e.get("type") == "face")
     feature_count = len(feature_graph.get("features", []))
 
@@ -3528,3 +3575,242 @@ def edit_build123d_parameter(
         "preview_format": "glb" if glb_bytes else "stl",
         "thumbnail_png_base64": thumb,
     }
+
+
+# ── part-level edits: remove / replace a named part (F2) ──────────────────────
+# append-mode can only ADD geometry; to refine a character/product the agent
+# also needs to drop or swap a single part by label without resubmitting the
+# whole script. Both operations transform source.py so it stays self-consistent
+# (the stored script still rebuilds the current model), then re-execute + diff.
+
+# Snippet appended after the prior source to drop the named child(ren). Robust to
+# a single-body result (no children) — it treats the whole result as one part.
+_REMOVE_PART_SNIPPET = """
+
+# --- aieng remove_part: drop '{label}' ---
+_aieng_prev = result.part if hasattr(result, 'part') else result
+_aieng_children = list(getattr(_aieng_prev, 'children', None) or [])
+if not _aieng_children:
+    _aieng_children = [_aieng_prev]
+_aieng_kept = [c for c in _aieng_children if (getattr(c, 'label', '') or '') != '{label}']
+result = Compound(children=_aieng_kept)
+"""
+
+# Snippet that drops the old child(ren) then appends the caller's replacement
+# code (which must reassign `result` to the new part and set its `.label`).
+_REPLACE_PART_HEAD = """
+
+# --- aieng replace_part: swap '{label}' ---
+_aieng_prev = result.part if hasattr(result, 'part') else result
+_aieng_children = list(getattr(_aieng_prev, 'children', None) or [])
+if not _aieng_children:
+    _aieng_children = [_aieng_prev]
+_aieng_kept = [c for c in _aieng_children if (getattr(c, 'label', '') or '') != '{label}']
+# --- replacement code (reassigns `result` to the new part) ---
+"""
+
+_REPLACE_PART_TAIL = """
+# --- aieng replace_part: recombine ---
+_aieng_repl = result.part if hasattr(result, 'part') else result
+result = Compound(children=_aieng_kept + [_aieng_repl])
+"""
+
+
+def _rebuild_after_part_edit(
+    settings: Any,
+    project_id: str,
+    project: dict[str, Any],
+    pkg_path: Path,
+    new_source: str,
+    before_topo: dict[str, Any],
+    *,
+    action: str,
+    label: str,
+    expected_parts: set[str] | None,
+    ref_bytes: bytes | None,
+    timeout: int,
+) -> dict[str, Any]:
+    """Execute ``new_source``, write artifacts, and assemble the response with a
+    regression diff. Shared by remove_part / replace_part."""
+    try:
+        step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(new_source, timeout=timeout)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "code": "execution_failed",
+            "message": f"{action} for '{label}' failed to rebuild: {exc}",
+            "label": label,
+        }
+
+    feature_graph = _topology_to_feature_graph(topo, source_code=new_source)
+    regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
+
+    _write_cad_artifacts(
+        pkg_path=pkg_path,
+        step_bytes=step_bytes,
+        stl_bytes=stl_bytes or b"",
+        topology_map=topo,
+        feature_graph=feature_graph,
+        generated_code=new_source,
+        glb_bytes=glb_bytes,
+    )
+    _clear_revalidation_status(pkg_path)
+
+    try:
+        from .main import save_project as _save_project, now_iso as _now_iso
+        project["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
+        project["updated_at"] = _now_iso()
+        _save_project(settings, project)
+    except Exception:
+        pass
+
+    mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+    thumb = render_mesh_thumbnail(
+        stl_bytes or b"",
+        face_colors=_build_face_colors_from_mesh_meta(mesh_meta),
+        reference_image_bytes=ref_bytes,
+    )
+    solid = next((e for e in topo.get("entities", []) if e.get("type") == "solid"), None)
+    named_parts = _named_parts_from_feature_graph(feature_graph)
+
+    return {
+        "status": "ok",
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "action": action,
+        "label": label,
+        "named_parts": named_parts,
+        "topology_summary": {
+            "face_count": sum(1 for e in topo.get("entities", []) if e.get("type") == "face"),
+            "feature_count": len(feature_graph.get("features", [])),
+            "bounding_box": solid.get("bounding_box") if solid else None,
+        },
+        "feature_graph": feature_graph,
+        "geometry_report": _compute_geometry_report(topo),
+        "regression_diff": regression_diff,
+        "written_artifacts": [
+            "geometry/generated.step",
+            "geometry/preview.stl",
+            "geometry/topology_map.json",
+            "graph/feature_graph.json",
+            "geometry/source.py",
+        ] + (["geometry/preview.glb"] if glb_bytes else []),
+        "preview_url": f"/api/projects/{project_id}/cad-preview",
+        "preview_format": "glb" if glb_bytes else "stl",
+        "thumbnail_png_base64": thumb,
+    }
+
+
+def _read_source_and_state(
+    settings: Any, project_id: str,
+) -> tuple[dict[str, Any], Path, str, dict[str, Any], bytes | None] | dict[str, Any]:
+    """Resolve project + package and read source.py / topology / reference image.
+    Returns (project, pkg_path, source, before_topo, ref_bytes) or an error dict."""
+    from .project_io import get_project, resolve_project_path
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+    pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if pkg_path is None or not pkg_path.exists():
+        return {"status": "error", "code": "package_not_found", "message": ".aieng package not found — build a model first"}
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            names = zf.namelist()
+            if "geometry/source.py" not in names:
+                return {"status": "error", "code": "no_source", "message": "No geometry/source.py — generate a model first"}
+            source = zf.read("geometry/source.py").decode("utf-8")
+            ref_bytes = zf.read("geometry/reference.png") if "geometry/reference.png" in names else None
+            before_topo = (
+                json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                if "geometry/topology_map.json" in names else {}
+            )
+    except Exception as exc:
+        return {"status": "error", "code": "read_failed", "message": f"{exc}"}
+    return project, pkg_path, source, before_topo, ref_bytes
+
+
+def remove_build123d_part(
+    settings: Any, project_id: str, label: str, timeout: int = 120,
+) -> dict[str, Any]:
+    """Remove a named part from the model by its build123d ``.label``.
+
+    Appends a filter step to source.py (keeping the script self-consistent) and
+    re-executes. The regression diff lists the dropped part under ``removed``.
+    """
+    label = str(label or "").strip()
+    if not label:
+        return {"status": "error", "code": "missing_label", "message": "label is required"}
+
+    state = _read_source_and_state(settings, project_id)
+    if isinstance(state, dict):
+        return state
+    project, pkg_path, source, before_topo, ref_bytes = state
+
+    if label not in _solids_by_name(before_topo):
+        return {
+            "status": "error",
+            "code": "part_not_found",
+            "message": f"No named part '{label}' in the current model.",
+            "available_parts": sorted(_solids_by_name(before_topo)),
+        }
+
+    new_source = source + _REMOVE_PART_SNIPPET.format(label=label)
+    return _rebuild_after_part_edit(
+        settings, project_id, project, pkg_path, new_source, before_topo,
+        action="remove_part", label=label, expected_parts={label},
+        ref_bytes=ref_bytes, timeout=timeout,
+    )
+
+
+def replace_build123d_part(
+    settings: Any, project_id: str, label: str, code: str, timeout: int = 120,
+) -> dict[str, Any]:
+    """Replace a named part by its ``.label`` with caller-supplied build123d code.
+
+    The replacement ``code`` must reassign ``result`` to the new part and set its
+    ``.label`` (normally back to the same name). The old part is dropped and the
+    new one combined in; everything else is preserved. The regression diff should
+    show ``clean`` (only ``label`` changed) when the swap is well-scoped.
+    """
+    label = str(label or "").strip()
+    code = _coerce_code(str(code or ""))
+    if not label:
+        return {"status": "error", "code": "missing_label", "message": "label is required"}
+    if not code:
+        return {"status": "error", "code": "missing_code", "message": "code (replacement build123d) is required"}
+    if not re.search(r"\bresult\s*=", code):
+        return {
+            "status": "error",
+            "code": "contract_violation",
+            "message": "Replacement code must assign the new part to `result` (and set result.label).",
+        }
+    if _EXPORT_CALL_RE.search(code):
+        return {"status": "error", "code": "contract_violation", "message": "Replacement code must not include export calls."}
+
+    state = _read_source_and_state(settings, project_id)
+    if isinstance(state, dict):
+        return state
+    project, pkg_path, source, before_topo, ref_bytes = state
+
+    if label not in _solids_by_name(before_topo):
+        return {
+            "status": "error",
+            "code": "part_not_found",
+            "message": f"No named part '{label}' in the current model.",
+            "available_parts": sorted(_solids_by_name(before_topo)),
+        }
+
+    new_source = (
+        source
+        + _REPLACE_PART_HEAD.format(label=label)
+        + code
+        + _REPLACE_PART_TAIL
+    )
+    # Both the old and new part carry `label`, so the diff's expected set is {label}.
+    return _rebuild_after_part_edit(
+        settings, project_id, project, pkg_path, new_source, before_topo,
+        action="replace_part", label=label, expected_parts={label},
+        ref_bytes=ref_bytes, timeout=timeout,
+    )

@@ -137,6 +137,18 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "boolean",
                 "description": "Write artifacts into the .aieng package (default true).",
             },
+            "model_kind": {
+                "type": "string",
+                "enum": ["auto", "organic", "mechanical"],
+                "description": (
+                    "Gates the feature-graph heuristics (default auto). "
+                    "'mechanical' runs bolt-pattern + base-plate detection; "
+                    "'organic' skips them (use for characters/vehicles/products, "
+                    "where those heuristics mislabel limb cylinders as mounting holes). "
+                    "'auto' infers from part labels and whether the organic helpers "
+                    "(lofted_stack/capsule/…) are used."
+                ),
+            },
             "timeout": {
                 "type": "integer",
                 "minimum": 1,
@@ -272,6 +284,41 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "newValue": {
                 "description": "Replacement value. Type follows the parameter's declared schema (number, string, bool).",
             },
+        },
+        "additionalProperties": True,
+    },
+    "cad.remove_part": {
+        "type": "object",
+        "required": ["project_id", "label"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "label": {
+                "type": "string",
+                "description": "build123d .label of the named part to remove (e.g. 'chest_plate').",
+            },
+            "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
+        },
+        "additionalProperties": True,
+    },
+    "cad.replace_part": {
+        "type": "object",
+        "required": ["project_id", "label", "code"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "label": {
+                "type": "string",
+                "description": "build123d .label of the named part to replace (e.g. 'head').",
+            },
+            "code": {
+                "type": "string",
+                "description": (
+                    "Replacement build123d code. Must reassign `result` to the new "
+                    "part and set its .label (normally back to the same name). "
+                    "Omit export calls. The high-level helpers (lofted_stack, capsule, "
+                    "etc.) are available."
+                ),
+            },
+            "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
         },
         "additionalProperties": True,
     },

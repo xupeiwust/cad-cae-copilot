@@ -4498,6 +4498,52 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "The feature graph must carry editable parameters (UPPER_SNAKE_CASE constants)."
         ),
     )
+
+    def _tool_cad_remove_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+        return _cg.remove_build123d_part(
+            settings=active_settings,
+            project_id=str(inp.get("project_id") or ""),
+            label=str(inp.get("label") or ""),
+            timeout=int(inp.get("timeout", 120)),
+        )
+
+    _rt.register_tool(
+        "cad.remove_part",
+        _tool_cad_remove_part,
+        requires_approval=True,
+        input_schema=_schema("cad.remove_part"),
+        description=(
+            "Remove a named part from the model by its build123d label. "
+            "Appends a filter step to geometry/source.py (keeping the script "
+            "self-consistent) and re-executes — no LLM. Returns a regression_diff "
+            "confirming only that part was dropped. Requires approval."
+        ),
+    )
+
+    def _tool_cad_replace_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+        return _cg.replace_build123d_part(
+            settings=active_settings,
+            project_id=str(inp.get("project_id") or ""),
+            label=str(inp.get("label") or ""),
+            code=str(inp.get("code") or ""),
+            timeout=int(inp.get("timeout", 120)),
+        )
+
+    _rt.register_tool(
+        "cad.replace_part",
+        _tool_cad_replace_part,
+        requires_approval=True,
+        input_schema=_schema("cad.replace_part"),
+        description=(
+            "Replace a named part by its build123d label with caller-supplied "
+            "build123d code (the code must reassign `result` to the new part and "
+            "set result.label). Drops the old part, combines the new one in, and "
+            "re-executes — no LLM. Lets the agent refine one part without "
+            "resubmitting the whole model. Returns a regression_diff. Requires approval."
+        ),
+    )
     from . import runtime_tools
     runtime_tools.register_engineering_template_tools(_rt, active_settings)
 

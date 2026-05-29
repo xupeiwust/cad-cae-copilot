@@ -210,6 +210,27 @@ shouldn't have. Read its `verdict` before trusting the result:
 (For edits to a `Global Parameters` constant, collateral is not judged — shared
 dims are *meant* to move many parts.)
 
+**Part-level edits — `cad.replace_part` / `cad.remove_part` (the visible loop).**
+`append` only ADDS geometry; when you need to fix or drop ONE part of a
+character/product without resubmitting the whole script, use these:
+- `cad.remove_part { project_id, label }` — drops the part with that `.label`.
+- `cad.replace_part { project_id, label, code }` — swaps it for new build123d
+  `code` (which must reassign `result` to the new part and set `result.label`,
+  normally back to the same name). The high-level helpers are available in `code`.
+Both append a transform step to `source.py` (so the stored script stays
+self-consistent) and re-execute — no LLM — and return a `regression_diff` so you
+can confirm only the targeted part changed. **Build incrementally with these +
+`append` so each step shows in the viewer** — that is how the user watches the
+model assemble, instead of one monolithic build appearing at the end.
+
+**Organic vs mechanical (`model_kind`).** `cad.execute_build123d` accepts
+`model_kind`: `"mechanical"` runs the bolt-pattern + base-plate feature
+heuristics, `"organic"` skips them, `"auto"` (default) infers from part labels
+and helper usage. Pass `"organic"` for characters/vehicles/products — otherwise
+the heuristics mislabel limb cylinders as `mounting_hole_pattern` and the bottom
+face as a `base_plate`, cluttering the feature graph. The chosen kind is echoed
+back in `feature_graph.model_kind`.
+
 **Advanced-feature awareness in the feature graph.** Beyond named parts, the
 feature graph now tags the modelling operations it detects in the source:
 `loft`, `revolve`, `sweep`, `fillet` (with average radius), and `mirror`. This
@@ -490,8 +511,10 @@ suitable for a fixed support, pass `"faceId": "f_top_001"` in your CAE setup cal
 
 | Tool | Purpose |
 |------|---------|
-| `cad.execute_build123d` | Run caller-supplied build123d code to create/replace geometry (mode=replace\|append) |
+| `cad.execute_build123d` | Run caller-supplied build123d code to create/replace geometry (mode=replace\|append). Optional `model_kind` (auto\|organic\|mechanical) gates the feature-graph heuristics |
 | `cad.edit_parameter` | Fast parametric edit: replaces a named constant in `source.py` + re-executes build123d (no LLM). Requires the feature to carry editable parameters — see "Parametric editing" below |
+| `cad.replace_part` | Swap ONE named part (by `.label`) for caller-supplied build123d code, keeping everything else. Re-executes, no LLM. See "Part-level edits" below |
+| `cad.remove_part` | Drop ONE named part (by `.label`) from the model. Re-executes, no LLM |
 | `cad.set_reference_image` | Attach a reference photo/drawing to a project so future thumbnails include it side-by-side for proportion calibration |
 
 Before an incremental edit, call **`cad.get_source`** (read-only) to see the current
@@ -614,7 +637,8 @@ Tools marked `[APPROVAL REQUIRED]` mutate the package or execute an external
 process. Always: (1) explain the side effects to the user, (2) wait for explicit
 confirmation, (3) report the outcome after the call.
 
-Currently approval-gated: `cad.execute_build123d`, `cad.edit_parameter`, `cae.run_solver`.
+Currently approval-gated: `cad.execute_build123d`, `cad.edit_parameter`,
+`cad.replace_part`, `cad.remove_part`, `cae.run_solver`.
 
 ---
 

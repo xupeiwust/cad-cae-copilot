@@ -58,6 +58,13 @@ export function useWorkbenchApp() {
   const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const persistedChatIdsRef = useRef<Set<string>>(new Set());
+  // Tracks which project the currently-loaded chatSessions/activeSessionId belong
+  // to. Set synchronously (a ref, not state) so the message-fetch effect can tell,
+  // within the same commit as a project switch, that activeSessionId is still the
+  // PREVIOUS project's session — and skip fetching it (which would 404). Without
+  // this, both the session-reset and message-fetch effects run in one commit and
+  // the fetch sees the stale session id for one render.
+  const sessionsProjectRef = useRef<string | null>(null);
   const persistChatItem = useCallback((item: ChatHistoryItem) => {
     if (!selectedId || !activeSessionId || persistedChatIdsRef.current.has(item.id)) return;
     persistedChatIdsRef.current.add(item.id);
@@ -588,6 +595,7 @@ export function useWorkbenchApp() {
   useEffect(() => {
     if (!selectedId) {
       persistedChatIdsRef.current = new Set();
+      sessionsProjectRef.current = null;
       setChatSessions([]);
       setActiveSessionId(null);
       setChatHistory([]);
@@ -595,12 +603,16 @@ export function useWorkbenchApp() {
     }
     // Reset session state immediately so the next effect does not fire
     // getChatMessages with a stale session id from the previous project.
+    // Invalidate the ref synchronously: until this project's sessions load,
+    // the message-fetch effect sees ref !== selectedId and skips.
+    sessionsProjectRef.current = null;
     setActiveSessionId(null);
     setChatHistory([]);
     let cancelled = false;
     void api.getChatSessions(selectedId)
       .then((sessions) => {
         if (cancelled) return;
+        sessionsProjectRef.current = selectedId;
         setChatSessions(sessions);
         setActiveSessionId((current) => (
           current && sessions.some((session) => session.id === current)
@@ -622,6 +634,13 @@ export function useWorkbenchApp() {
     if (!selectedId || !activeSessionId) {
       persistedChatIdsRef.current = new Set();
       setChatHistory([]);
+      return;
+    }
+    // Guard against the project-switch race: activeSessionId may still hold the
+    // previous project's session for one render. Only fetch once this project's
+    // sessions have loaded (ref === selectedId), so we never query a session id
+    // that belongs to another project (which the backend correctly 404s).
+    if (sessionsProjectRef.current !== selectedId) {
       return;
     }
     const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);

@@ -825,6 +825,26 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     def get_project_summary(project_id: str) -> dict[str, Any]:
         return package_summary(active_settings, project_id)
 
+    @app.delete("/api/projects/{project_id}")
+    def delete_project_endpoint(project_id: str) -> dict[str, Any]:
+        """Delete a project: its directory (.aieng package, metadata, viewer,
+        logs) and all its chat sessions/messages (kept in a separate sqlite db).
+        Idempotent-ish: 404s only if the project metadata doesn't exist."""
+        import shutil
+        from . import db
+
+        get_project(active_settings, project_id)  # 404 if unknown
+        chat_rows = 0
+        try:
+            chat_rows = db.delete_project_chat(db_path, project_id)
+        except Exception:
+            pass
+        target = project_dir(active_settings, project_id)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        _publish_live_event({"type": "project_deleted", "project_id": project_id})
+        return {"deleted": True, "project_id": project_id, "chat_rows_removed": chat_rows}
+
     @app.get("/api/projects/{project_id}/agent-context")
     def get_project_agent_context(project_id: str) -> dict[str, Any]:
         """Read-only CAD/CAE semantic context for connected AI agents.
@@ -4343,11 +4363,93 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         "aieng.list_projects",
         _tool_aieng_list_projects,
         description=(
-            "List all projects available in this workbench instance. "
-            "Returns id, name, status, and last-modified for each .aieng package. "
-            "Call this first if you don't know which project_id to use."
+            "List all projects available in this workbench instance. Returns id, "
+            "name, status, last-modified, and (for agent-built geometry) named_parts "
+            "+ part_count for each project. Call this first if you don't know which "
+            "project_id to use; use aieng.find_projects_by_part to locate a project "
+            "by a part label."
         ),
         input_schema=_schema("aieng.list_projects"),
+    )
+
+    def _tool_aieng_find_projects_by_part(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Find projects whose geometry contains a named part matching the query.
+
+        Scans each project's metadata ``named_parts`` (cheap; populated on every
+        agent build); for older projects without that field it falls back to
+        reading the package's feature graph. Substring, case-insensitive.
+        """
+        from .cad_generation import _named_parts_from_package
+        from .project_io import resolve_project_path
+
+        query = str(_inp.get("query") or "").strip().lower()
+        if not query:
+            return {"query": "", "matches": [], "count": 0}
+        matches: list[dict[str, Any]] = []
+        for path in active_settings.projects_root.glob("*/metadata.json"):
+            proj = normalize_project(read_json(path, {}))
+            parts = proj.get("named_parts")
+            if not isinstance(parts, list):
+                parts = []
+                pkg_path = resolve_project_path(active_settings, proj["id"], proj.get("aieng_file"))
+                if pkg_path and pkg_path.exists():
+                    parts = _named_parts_from_package(pkg_path)
+            hits = [str(p) for p in parts if query in str(p).lower()]
+            if hits:
+                matches.append({
+                    "id": proj["id"],
+                    "name": proj["name"],
+                    "status": proj.get("status"),
+                    "matched_parts": hits,
+                    "part_count": len(parts),
+                })
+        matches.sort(key=lambda m: (-len(m["matched_parts"]), m["name"]))
+        return {"query": query, "matches": matches, "count": len(matches)}
+
+    _rt.register_tool(
+        "aieng.find_projects_by_part",
+        _tool_aieng_find_projects_by_part,
+        description=(
+            "Find projects whose geometry contains a named part matching the query "
+            "(case-insensitive substring on part labels). Use this to locate a model "
+            "by content, e.g. find which project holds the 'optimus' parts."
+        ),
+        input_schema=_schema("aieng.find_projects_by_part"),
+    )
+
+    def _tool_aieng_delete_project(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Permanently delete a project: its directory + chat sessions/messages."""
+        import shutil
+        from . import db
+
+        pid = str(_inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "message": "project_id is required"}
+        try:
+            get_project(active_settings, pid)
+        except HTTPException:
+            return {"status": "error", "code": "not_found", "message": f"project not found: {pid}"}
+        chat_rows = 0
+        try:
+            chat_rows = db.delete_project_chat(db_path, pid)
+        except Exception:
+            pass
+        target = project_dir(active_settings, pid)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        _publish_live_event({"type": "project_deleted", "project_id": pid})
+        return {"status": "ok", "deleted": True, "project_id": pid, "chat_rows_removed": chat_rows}
+
+    _rt.register_tool(
+        "aieng.delete_project",
+        _tool_aieng_delete_project,
+        description=(
+            "[APPROVAL REQUIRED] Permanently delete a project — its .aieng package, "
+            "metadata, viewer assets, and all chat sessions/messages. Irreversible. "
+            "Confirm with the user before calling."
+        ),
+        input_schema=_schema("aieng.delete_project"),
+        requires_approval=True,
     )
 
     def _tool_aieng_agent_readme(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:

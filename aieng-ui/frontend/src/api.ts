@@ -204,6 +204,11 @@ export const api = {
     }),
   createSampleProject: () => request<ProjectRecord>("/api/projects/sample", { method: "POST" }),
   getProject: (projectId: string) => request<ProjectSummary>(`/api/projects/${projectId}`),
+  deleteProject: (projectId: string) =>
+    request<{ deleted: boolean; project_id: string; chat_rows_removed: number }>(
+      `/api/projects/${projectId}`,
+      { method: "DELETE" },
+    ),
   getProjectHealthCheck: (projectId: string) =>
     request<ProjectHealthCheckResponse>(`/api/projects/${projectId}/health-check`),
   getFreeCadAdapterPreflight: () =>

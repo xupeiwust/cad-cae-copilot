@@ -463,6 +463,7 @@ export function parseBrepGraphSnapshot(raw: unknown): BrepGraphSnapshot {
       center: numberList(face.center),
       bounding_box: numberList(face.bounding_box) ?? undefined,
       roles: stringList(face.roles),
+      body_id: typeof face.body_id === "string" ? face.body_id : undefined,
     };
   }
   const groupList = Array.isArray(graph.selection_groups) ? graph.selection_groups : [];

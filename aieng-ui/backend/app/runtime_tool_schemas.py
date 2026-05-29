@@ -51,6 +51,30 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
         "description": "No parameters required. Returns AGENTS.md content.",
     },
+    "aieng.delete_project": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string", "description": "Project id to permanently delete."},
+        },
+        "additionalProperties": True,
+        "description": "Permanently delete a project (its directory + chat sessions). Approval required.",
+    },
+    "aieng.find_projects_by_part": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Substring matched case-insensitively against named-part labels, "
+                    "e.g. 'optimus', 'bracket', 'mounting_hole'."
+                ),
+            },
+        },
+        "additionalProperties": True,
+        "description": "Find projects whose geometry contains a named part matching the query.",
+    },
 
     # ── read-only inspection ──────────────────────────────────────────────────
     "aieng.inspect_package": _project_id_schema(),
@@ -104,6 +128,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["project_id", "code"],
         "properties": {
             "project_id": {"type": "string"},
+            "name": {
+                "type": "string",
+                "description": (
+                    "Optional human-recognizable project name (e.g. 'Optimus + Bumblebee'). "
+                    "Set this so the project is findable in list_projects instead of staying "
+                    "the default 'STEP workbench project'. If omitted, a placeholder-named "
+                    "project is auto-named from its part labels."
+                ),
+            },
             "code": {
                 "type": "string",
                 "description": (

@@ -8562,6 +8562,10 @@ textarea:focus,
   padding: 4px;
 }
 
+.session-item-wrap {
+  position: relative;
+}
+
 .session-item {
   display: flex;
   flex-direction: column;
@@ -8575,6 +8579,34 @@ textarea:focus,
   cursor: pointer;
   font-size: 13px;
   line-height: 1.4;
+  width: 100%;
+}
+
+.session-item-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.session-item-wrap:hover .session-item-delete,
+.session-item-delete:focus-visible {
+  opacity: 1;
+}
+
+.session-item-delete:hover {
+  background: var(--bg-hover);
+  color: var(--danger, #e5484d);
 }
 
 .session-item:hover {

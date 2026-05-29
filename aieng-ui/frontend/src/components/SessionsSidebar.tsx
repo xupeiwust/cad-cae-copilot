@@ -1,4 +1,4 @@
-import { ChevronsLeft, ChevronsRight, Folder, MessageSquarePlus, Plus } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Folder, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
 
 import { api } from "../api";
 import type { Notice, StageItem } from "../appTypes";
@@ -122,17 +122,37 @@ export function SessionsSidebar({
 
       <div className="sessions-list">
         {projects.map((project) => (
-          <button
-            key={project.id}
-            className={project.id === selectedId ? "session-item active" : "session-item"}
-            onClick={() => void refreshProjects(project.id)}
-          >
-            <span className="session-item-row">
-              <Folder className="h-4 w-4" />
-              <span className="session-item-name">{project.name}</span>
-            </span>
-            <span className="session-item-status">{project.status}</span>
-          </button>
+          <div key={project.id} className="session-item-wrap">
+            <button
+              className={project.id === selectedId ? "session-item active" : "session-item"}
+              onClick={() => void refreshProjects(project.id)}
+            >
+              <span className="session-item-row">
+                <Folder className="h-4 w-4" />
+                <span className="session-item-name">{project.name}</span>
+              </span>
+              <span className="session-item-status">{project.status}</span>
+            </button>
+            <button
+              type="button"
+              className="session-item-delete"
+              title="Delete project"
+              aria-label={`Delete project ${project.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!window.confirm(`Delete project "${project.name}"? This removes its geometry and chat history and cannot be undone.`)) {
+                  return;
+                }
+                void runBusyTask(async () => {
+                  await api.deleteProject(project.id);
+                  await refreshProjects(project.id === selectedId ? null : selectedId);
+                  setNotice({ tone: "success", title: "Project deleted", detail: `Deleted ${project.name}.` });
+                });
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         ))}
       </div>
 

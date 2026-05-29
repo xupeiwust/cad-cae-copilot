@@ -1873,6 +1873,33 @@ def _write_cad_artifacts(
     if glb_bytes:
         artifacts["geometry/preview.glb"] = glb_bytes
 
+    # Regenerate the symbolic B-Rep graph from the FRESH topology. Without this,
+    # the zip-rewrite below copies a previously-persisted graph/brep_graph.json
+    # forward unchanged (it isn't in `artifacts`), so after an incremental edit
+    # the viewer's pick/highlight reads a stale, partial face list (e.g. only the
+    # parts that existed at the first explicit build). Primitives for the newly
+    # added parts then have no matching face and fall back to the nearest stale
+    # face — selecting a face on the wrong part. Rebuilding here keeps the graph
+    # consistent with the geometry on every execute/edit/replace/remove. If the
+    # rebuild fails, DROP the stale artifacts so the serving path rebuilds them
+    # on demand from topology instead of trusting an outdated file.
+    drop: set[str] = set()
+    try:
+        from .brep_graph import (
+            BREP_DIGEST_MEMBER,
+            BREP_GRAPH_MEMBER,
+            ENTITY_INDEX_MEMBER,
+            build_brep_graph_from_topology,
+        )
+
+        _bg = build_brep_graph_from_topology(topology_map, feature_graph=feature_graph)
+        artifacts[BREP_GRAPH_MEMBER] = json.dumps(_bg["brep_graph"], indent=2, ensure_ascii=False).encode()
+        artifacts[ENTITY_INDEX_MEMBER] = json.dumps(_bg["entity_index"], indent=2, ensure_ascii=False).encode()
+        artifacts[BREP_DIGEST_MEMBER] = _bg["digest"].encode("utf-8")
+    except Exception as _bg_err:  # noqa: BLE001
+        print(f"[cad] brep_graph regen failed, invalidating stale copy: {_bg_err}", file=sys.stderr)
+        drop = {"graph/brep_graph.json", "graph/entity_index.json", "ai/brep_digest.md"}
+
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
 
     if pkg_path.exists():
@@ -1883,7 +1910,7 @@ def _write_cad_artifacts(
                 zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
             ):
                 for item in src.infolist():
-                    if item.filename not in artifacts:
+                    if item.filename not in artifacts and item.filename not in drop:
                         dst.writestr(item, src.read(item.filename))
                 for name, data in artifacts.items():
                     dst.writestr(name, data)
@@ -1896,6 +1923,55 @@ def _write_cad_artifacts(
             zf.writestr("manifest.json", json.dumps({"schema_version": "0.1"}))
             for name, data in artifacts.items():
                 zf.writestr(name, data)
+
+
+# Project names default to a UI placeholder ("STEP workbench project"); without
+# auto-naming, list_projects shows a wall of identical rows (the discoverability
+# pain). Agent builds derive a recognizable name from their part labels instead.
+_PLACEHOLDER_PROJECT_NAMES = {"", "untitled project", "step workbench project"}
+
+
+def _is_placeholder_project_name(name: Any) -> bool:
+    return str(name or "").strip().lower() in _PLACEHOLDER_PROJECT_NAMES
+
+
+def _derive_project_name(named_parts: list[str], limit: int = 3) -> str | None:
+    """Derive a human-recognizable name from part labels.
+
+    Groups by the token before the first underscore — parts in an assembly share a
+    prefix (``optimus_torso`` / ``bee_torso`` -> "Optimus + Bee"); labels without
+    an underscore are used whole. Returns None when nothing usable is present.
+    """
+    parts = [str(p) for p in (named_parts or []) if str(p).strip()]
+    if not parts:
+        return None
+    prefixes: list[str] = []
+    for p in parts:
+        token = p.split("_", 1)[0].strip()
+        if token and token not in prefixes:
+            prefixes.append(token)
+    # Clean assembly case: a few shared prefixes (optimus_*/bee_* -> "Optimus + Bee").
+    # When labels are flat with no shared scheme, prefix-joining is noisy, so fall
+    # back to a plain count — agents should pass an explicit `name` for these.
+    if 1 <= len(prefixes) <= limit:
+        return " + ".join(t[:1].upper() + t[1:] for t in prefixes)
+    return f"{len(parts)}-part model"
+
+
+def _named_parts_from_package(pkg_path: Path) -> list[str]:
+    """Read named-part labels from a package's feature graph (fallback topology)."""
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            names = set(zf.namelist())
+            if "graph/feature_graph.json" in names:
+                parts = _named_parts_from_feature_graph(json.loads(zf.read("graph/feature_graph.json")))
+                if parts:
+                    return parts
+            if "geometry/topology_map.json" in names:
+                return _available_named_parts_from_topology(json.loads(zf.read("geometry/topology_map.json")))
+    except Exception:
+        pass
+    return []
 
 
 def _publish_preview_to_viewer(
@@ -1928,6 +2004,23 @@ def _publish_preview_to_viewer(
         asset_path.write_bytes(data)
         project["web_asset"] = _project_relpath(settings, project_id, asset_path)
         project["web_asset_format"] = fmt
+        # Discoverability: stash the named parts on project metadata and auto-name
+        # placeholder projects from their parts, so list_projects / part search are
+        # meaningful. Best-effort — never blocks publishing the preview.
+        try:
+            from .project_io import resolve_project_path as _resolve_path
+            pkg_path = _resolve_path(settings, project_id, project.get("aieng_file"))
+            if pkg_path and pkg_path.exists():
+                parts = _named_parts_from_package(pkg_path)
+                if parts:
+                    project["named_parts"] = parts
+                    project["part_count"] = len(parts)
+                    if _is_placeholder_project_name(project.get("name")):
+                        derived = _derive_project_name(parts)
+                        if derived:
+                            project["name"] = derived
+        except Exception:
+            pass
         _save_project(settings, project)
     except Exception:
         pass
@@ -2188,6 +2281,9 @@ def execute_build123d_code(
             obeys. The variable bound to the model must be named ``result``.
         write_files (bool, optional): write artifacts to the package (default true).
         timeout (int, optional): subprocess timeout in seconds (default 60).
+        name (str, optional): a human-recognizable project name (e.g. "Optimus +
+            Bumblebee"). When given it is set on the project; otherwise a
+            placeholder-named project is auto-named from its part labels.
 
     Args:
         on_progress: optional callback invoked with progress dicts as the build
@@ -2338,6 +2434,11 @@ def execute_build123d_code(
         try:
             from .main import save_project as _save_project2, now_iso as _now_iso
             project["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
+            # An explicit caller-supplied name wins; otherwise _publish_preview_to_viewer
+            # auto-derives one for placeholder-named projects from the part labels.
+            req_name = str(payload.get("name") or "").strip()
+            if req_name:
+                project["name"] = req_name
             project["updated_at"] = _now_iso()
             _save_project2(settings, project)
         except Exception:

@@ -10119,3 +10119,34 @@ def test_agent_autopilot_writes_project_audit_events(tmp_path: Path) -> None:
     approval = next(payload for payload in payloads if payload["kind"] == "agent_autopilot_approval")
     assert approval["run_id"] == run_id
     assert approval["approved"] is False
+
+
+def test_delete_project_removes_dir_and_chat(tmp_path: Path) -> None:
+    """DELETE /api/projects/{id} removes the project dir and purges its chat data."""
+    from app.main import create_app, default_project, project_dir, save_project
+
+    settings = Settings(
+        platform_root=tmp_path / "platform",
+        workspace_root=tmp_path / "workspace",
+        data_root=tmp_path / "data",
+        aieng_root=tmp_path / "workspace" / "aieng",
+        sample_step=tmp_path / "workspace" / "sample.step",
+    )
+    project = save_project(settings, default_project("to-delete"))
+    pid = project["id"]
+    client = TestClient(create_app(settings))
+
+    assert client.get(f"/api/projects/{pid}").status_code == 200
+    # create a chat session so we can confirm chat rows are purged
+    sess = client.post(f"/api/projects/{pid}/chat-sessions", json={"title": "s"})
+    assert sess.status_code == 200
+
+    resp = client.delete(f"/api/projects/{pid}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["deleted"] is True and body["project_id"] == pid
+
+    assert not project_dir(settings, pid).exists()
+    assert client.get(f"/api/projects/{pid}").status_code == 404
+    # deleting an unknown project 404s
+    assert client.delete("/api/projects/nonexistent123456").status_code == 404

@@ -138,6 +138,9 @@ export type BrepFaceEntity = {
   center?: number[] | null;
   bounding_box?: number[];
   roles?: string[];
+  // Owning solid id (e.g. "body_007"). Lets the viewer scope primitive↔face
+  // matching to a single part instead of guessing against every face globally.
+  body_id?: string | null;
 };
 
 export type BrepSelectionGroup = {

@@ -1223,3 +1223,60 @@ def test_execute_build123d_publishes_web_asset(tmp_path: Path) -> None:
     assert project.get("web_asset_format") in ("glb", "stl")
     viewer_file = project_dir(settings, pid) / project["web_asset"]
     assert viewer_file.exists() and viewer_file.stat().st_size > 0
+
+
+# ── project discoverability: auto-naming + named_parts + part search ──────────
+
+def test_derive_project_name_prefixed_assembly() -> None:
+    from app.cad_generation import _derive_project_name
+    # parts sharing prefixes (an assembly) -> "Optimus + Bee"
+    assert _derive_project_name(["optimus_torso", "optimus_head", "bee_torso", "bee_head"]) == "Optimus + Bee"
+
+
+def test_derive_project_name_flat_falls_back_to_count() -> None:
+    from app.cad_generation import _derive_project_name
+    # flat labels with no shared scheme -> count-based fallback (agent should pass `name`)
+    flat = ["torso", "windshield", "grille", "waist", "neck", "head"]
+    assert _derive_project_name(flat) == "6-part model"
+    assert _derive_project_name([]) is None
+
+
+def test_is_placeholder_project_name() -> None:
+    from app.cad_generation import _is_placeholder_project_name
+    assert _is_placeholder_project_name("STEP workbench project")
+    assert _is_placeholder_project_name("  untitled project ")
+    assert _is_placeholder_project_name("")
+    assert not _is_placeholder_project_name("Optimus + Bumblebee")
+    assert not _is_placeholder_project_name("Iron Man Mark III")
+
+
+def test_named_parts_from_package_reads_feature_graph(tmp_path: Path) -> None:
+    from app.cad_generation import _named_parts_from_package
+    pkg = tmp_path / "m.aieng"
+    fg = {"features": [
+        {"type": "named_part", "name": "base_plate"},
+        {"type": "named_part", "name": "rib_main"},
+        {"type": "loft", "name": "Loft"},  # non-part feature ignored
+    ]}
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("graph/feature_graph.json", json.dumps(fg))
+    assert _named_parts_from_package(pkg) == ["base_plate", "rib_main"]
+
+
+def test_named_parts_from_package_falls_back_to_topology(tmp_path: Path) -> None:
+    from app.cad_generation import _named_parts_from_package
+    pkg = tmp_path / "m.aieng"
+    topo = {"entities": [
+        {"type": "solid", "name": "body_a"},
+        {"type": "solid", "name": "body_b"},
+        {"type": "face"},
+    ]}
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/topology_map.json", json.dumps(topo))
+    assert _named_parts_from_package(pkg) == ["body_a", "body_b"]
+
+
+def test_find_projects_by_part_tool(tmp_path: Path) -> None:
+    from app.runtime_tool_schemas import get_schema
+    schema = get_schema("aieng.find_projects_by_part")
+    assert schema and "query" in schema["properties"]

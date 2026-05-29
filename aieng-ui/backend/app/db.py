@@ -208,6 +208,23 @@ def delete_chat_session(db_path: Path, project_id: str, session_id: str) -> bool
         conn.close()
 
 
+def delete_project_chat(db_path: Path, project_id: str) -> int:
+    """Delete all chat sessions and messages for a project; returns rows removed.
+
+    Chat data lives in this sqlite db keyed by project_id, separate from the
+    project directory — so deleting a project must purge these rows too or they
+    are orphaned.
+    """
+    conn = _conn(db_path)
+    try:
+        c1 = conn.execute("DELETE FROM chat_messages WHERE project_id = ?", (project_id,))
+        c2 = conn.execute("DELETE FROM chat_sessions WHERE project_id = ?", (project_id,))
+        conn.commit()
+        return (c1.rowcount or 0) + (c2.rowcount or 0)
+    finally:
+        conn.close()
+
+
 def _session_row_to_dict(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
     return {
         "id": row[0],

@@ -33,6 +33,7 @@ from .base import (
 SHAPE_IR_SOURCE_PATH = "geometry/shape_ir.json"
 BUILD123D_SOURCE_PATH = "geometry/source.py"
 SHAPE_IR_SDF_SOURCE_PATH = "geometry/sdf_source.py"
+SHAPE_IR_MANIFOLD_SOURCE_PATH = "geometry/manifold_source.py"
 TOPOLOGY_MAP_PATH = "geometry/topology_map.json"
 FEATURE_GRAPH_PATH = "graph/feature_graph.json"
 OBJECT_REGISTRY_PATH = "objects/object_registry.json"
@@ -241,12 +242,33 @@ def _shape_nodes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [node for node in raw if isinstance(node, dict)]
 
 
-# ── compile-target dispatch ──────────────────────────────────────────────────
-# Shape IR is the source; each representation compiles to a different backend's
-# source (a different evidence level). build123d / OCP -> exact B-Rep STEP;
-# implicit_sdf -> fogleman/sdf -> marching-cubes mesh for organic/irregular forms.
-# More targets (COMPAS-OCC NURBS, topology optimization) register here later.
-_BREP_REPRESENTATIONS = {"brep_build123d", "build123d", "brep", "ocp", "auto", ""}
+# ── compile-target registry + dispatch ───────────────────────────────────────
+# Shape IR is the source; each registered representation compiles to a different
+# backend's source (a different evidence level): build123d/OCP -> exact B-Rep
+# STEP; implicit_sdf -> fogleman/sdf marching-cubes mesh; manifold_mesh ->
+# manifold3d CSG mesh. New targets (COMPAS-OCC NURBS, topology optimization)
+# register here as plug-ins — no edits to the dispatcher.
+_COMPILER_REGISTRY: dict[str, dict[str, Any]] = {}
+
+
+def register_compiler(
+    representation: str,
+    *,
+    compiler: Any,
+    source_path: str,
+    runtime: str,
+    aliases: tuple[str, ...] = (),
+) -> None:
+    """Register a Shape IR compile target. ``compiler`` is ``payload -> source str``."""
+    entry = {"compiler": compiler, "source_path": source_path, "runtime": runtime, "canonical": representation}
+    _COMPILER_REGISTRY[representation] = entry
+    for alias in aliases:
+        _COMPILER_REGISTRY[alias] = dict(entry)  # canonical stays the registered name
+
+
+def available_representations() -> list[str]:
+    """Canonical representation names that have a registered compiler."""
+    return sorted({entry["canonical"] for entry in _COMPILER_REGISTRY.values()})
 
 
 def shape_ir_representation(payload: dict[str, Any]) -> str:
@@ -255,31 +277,35 @@ def shape_ir_representation(payload: dict[str, Any]) -> str:
 
 
 def compile_shape_ir(payload: dict[str, Any]) -> dict[str, Any]:
-    """Dispatch Shape IR to its representation's compiler.
+    """Dispatch Shape IR to its representation's registered compiler.
 
     Returns ``{representation, requested_representation, source, source_path,
     runtime, fallback}``. Unknown representations fall back to build123d and set
     ``fallback=True`` so callers can record the substitution honestly.
     """
     requested = shape_ir_representation(payload)
-    if requested == "implicit_sdf":
-        from .shape_ir_sdf import compile_shape_ir_to_sdf_source
-        return {
-            "representation": "implicit_sdf",
-            "requested_representation": requested,
-            "source": compile_shape_ir_to_sdf_source(payload),
-            "source_path": SHAPE_IR_SDF_SOURCE_PATH,
-            "runtime": "sdf",
-            "fallback": False,
-        }
+    entry = _COMPILER_REGISTRY.get(requested)
+    fallback = entry is None
+    if entry is None:
+        entry = _COMPILER_REGISTRY["brep_build123d"]
     return {
-        "representation": "brep_build123d",
+        "representation": entry["canonical"],
         "requested_representation": requested,
-        "source": compile_shape_ir_to_build123d_source(payload),
-        "source_path": BUILD123D_SOURCE_PATH,
-        "runtime": "build123d",
-        "fallback": requested not in _BREP_REPRESENTATIONS,
+        "source": entry["compiler"](payload),
+        "source_path": entry["source_path"],
+        "runtime": entry["runtime"],
+        "fallback": fallback,
     }
+
+
+def _compile_sdf(payload: dict[str, Any]) -> str:
+    from .shape_ir_sdf import compile_shape_ir_to_sdf_source
+    return compile_shape_ir_to_sdf_source(payload)
+
+
+def _compile_manifold(payload: dict[str, Any]) -> str:
+    from .shape_ir_manifold import compile_shape_ir_to_manifold_source
+    return compile_shape_ir_to_manifold_source(payload)
 
 
 def compile_shape_ir_to_build123d_source(payload: dict[str, Any]) -> str:
@@ -852,3 +878,25 @@ def _bbox_area_proxy(bbox: list[float] | None) -> float:
     dz = abs(bbox[5] - bbox[2])
     faces = sorted((dx * dy, dx * dz, dy * dz), reverse=True)
     return float(faces[0]) if faces else 0.0
+
+
+# ── built-in compile targets (registered at import) ──────────────────────────
+register_compiler(
+    "brep_build123d",
+    compiler=compile_shape_ir_to_build123d_source,
+    source_path=BUILD123D_SOURCE_PATH,
+    runtime="build123d",
+    aliases=("build123d", "brep", "ocp", "auto", ""),
+)
+register_compiler(
+    "implicit_sdf",
+    compiler=_compile_sdf,
+    source_path=SHAPE_IR_SDF_SOURCE_PATH,
+    runtime="sdf",
+)
+register_compiler(
+    "manifold_mesh",
+    compiler=_compile_manifold,
+    source_path=SHAPE_IR_MANIFOLD_SOURCE_PATH,
+    runtime="manifold",
+)

@@ -4032,36 +4032,39 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                             raise RuntimeError("Shape IR package did not contain geometry/source.py")
                         source_code = _archive.read("geometry/source.py").decode("utf-8")
 
-                if representation == "implicit_sdf":
-                    # Run the SDF backend: mesh the implicit field, write mesh-only
-                    # artifacts, and reconcile provenance (geometry_kind=mesh).
-                    if "geometry/sdf_source.py" not in names:
-                        raise RuntimeError("implicit_sdf package did not contain geometry/sdf_source.py")
+                # Mesh backends (SDF / Manifold): run the field/CSG, write mesh-only
+                # artifacts, and reconcile provenance (geometry_kind=mesh). Shared path.
+                _mesh_backends = {
+                    "implicit_sdf": ("geometry/sdf_source.py", _cad_generation._execute_sdf_code, "sdf"),
+                    "manifold_mesh": ("geometry/manifold_source.py", _cad_generation._execute_manifold_code, "manifold"),
+                }
+                if representation in _mesh_backends:
+                    src_member, runner_fn, backend_name = _mesh_backends[representation]
+                    if src_member not in names:
+                        raise RuntimeError(f"{representation} package did not contain {src_member}")
                     with _zipfile.ZipFile(out_path, "r") as _archive:
-                        sdf_code = _archive.read("geometry/sdf_source.py").decode("utf-8")
-                    stl_bytes, glb_bytes, sdf_topo = _cad_generation._execute_sdf_code(
-                        sdf_code, timeout=int(inp.get("timeout") or 120),
-                    )
-                    sdf_feature_graph = _cad_generation._sdf_feature_graph(sdf_topo)
-                    _cad_generation._write_sdf_artifacts(out_path, stl_bytes, glb_bytes, sdf_topo, sdf_feature_graph)
+                        mesh_code = _archive.read(src_member).decode("utf-8")
+                    stl_bytes, glb_bytes, mesh_topo = runner_fn(mesh_code, timeout=int(inp.get("timeout") or 120))
+                    mesh_fg = _cad_generation._mesh_feature_graph(mesh_topo)
+                    _cad_generation._write_mesh_artifacts(out_path, stl_bytes, glb_bytes, mesh_topo, mesh_fg)
                     _cad_generation.reconcile_shape_ir_provenance(
-                        out_path, sdf_topo, sdf_feature_graph,
-                        representation="implicit_sdf", backend="sdf", geometry_kind="mesh",
+                        out_path, mesh_topo, mesh_fg,
+                        representation=representation, backend=backend_name, geometry_kind="mesh",
                     )
-                    sdf_named = _cad_generation._named_parts_from_feature_graph(sdf_feature_graph)
+                    mesh_named = _cad_generation._named_parts_from_feature_graph(mesh_fg)
                     shape_ir_execution = {
                         "status": "ok",
-                        "representation": "implicit_sdf",
-                        "backend": "sdf",
+                        "representation": representation,
+                        "backend": backend_name,
                         "geometry_kind": "mesh",
                         "written_artifacts": [
                             "geometry/preview.stl",
                             "geometry/topology_map.json",
                             "graph/feature_graph.json",
                         ] + (["geometry/preview.glb"] if glb_bytes else []),
-                        "named_parts": sdf_named,
-                        "part_count": len(sdf_named),
-                        "geometry_report": _cad_generation._compute_geometry_report(sdf_topo),
+                        "named_parts": mesh_named,
+                        "part_count": len(mesh_named),
+                        "geometry_report": _cad_generation._compute_geometry_report(mesh_topo),
                     }
                     raise _ShapeIRRepresentationHandled()
 

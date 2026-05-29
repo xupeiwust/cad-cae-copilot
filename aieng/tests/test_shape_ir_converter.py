@@ -272,3 +272,39 @@ def test_shape_ir_converter_implicit_sdf_emits_sdf_source(tmp_path: Path):
     assert md["compile_runtime"] == "sdf"
     assert md["build123d_source_emitted"] is False
     assert md["representation_fallback"] is False
+
+
+def test_shape_ir_manifold_compiler_emits_valid_source():
+    """manifold_mesh compiler produces syntactically valid manifold3d source:
+    primitives, boolean subtract, native rotation+translate."""
+    from aieng.converters.shape_ir_manifold import compile_shape_ir_to_manifold_source
+
+    payload = {
+        "representation": "manifold_mesh",
+        "parts": [
+            {"id": "body", "type": "sphere", "radius": 20},
+            {"id": "slot", "type": "box", "dimensions": [6, 6, 60],
+             "operation": "subtract", "location": [0, 0, 5], "rotation": [0, 90, 0]},
+        ],
+    }
+    src = compile_shape_ir_to_manifold_source(payload)
+    compile(src, "geometry/manifold_source.py", "exec")
+    assert src.startswith("from manifold3d import Manifold")
+    assert "m_body = Manifold.sphere(20.0)" in src
+    assert "Manifold.cube((6.0, 6.0, 60.0), True)" in src
+    assert "m_slot = m_slot.rotate((0.0, 90.0, 0.0))" in src
+    assert "m_slot = m_slot.translate((0.0, 0.0, 5.0))" in src
+    assert "result = (m_body - m_slot)" in src
+
+
+def test_compile_shape_ir_dispatch_manifold_and_registry():
+    from aieng.converters.shape_ir import compile_shape_ir, available_representations
+
+    man = compile_shape_ir({"representation": "manifold_mesh", "parts": [{"id": "s", "type": "sphere", "radius": 5}]})
+    assert man["representation"] == "manifold_mesh"
+    assert man["source_path"] == "geometry/manifold_source.py"
+    assert man["runtime"] == "manifold" and man["fallback"] is False
+    assert "from manifold3d import Manifold" in man["source"]
+    # registry exposes all three built-in targets
+    reps = available_representations()
+    assert {"brep_build123d", "implicit_sdf", "manifold_mesh"} <= set(reps)

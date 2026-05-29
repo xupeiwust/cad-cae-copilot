@@ -242,9 +242,12 @@ framework itself.
 Multi-target compilation (2026-05-30):
 
 Shape IR is now a multi-backend source. `compile_shape_ir(payload)` dispatches by
-`representation` (default `brep_build123d`) to a registered compiler and reports
-`{representation, requested_representation, source, source_path, runtime,
-fallback}`; unknown targets fall back to build123d with `fallback=True`.
+`representation` (default `brep_build123d`) through a pluggable compiler
+**registry** (`register_compiler(representation, compiler, source_path, runtime,
+aliases)` — mirrors the converter registry; `available_representations()` lists
+the canonical targets) and reports `{representation, requested_representation,
+source, source_path, runtime, fallback}`; unknown targets fall back to build123d
+with `fallback=True`. New backends register as plug-ins — no edits to the dispatcher.
 
 - `brep_build123d` → `geometry/source.py` (existing build123d/OCP → STEP/B-Rep).
 - `implicit_sdf` → `geometry/sdf_source.py` (`converters/shape_ir_sdf.py`): emits
@@ -252,20 +255,26 @@ fallback}`; unknown targets fall back to build123d with `fallback=True`.
   boolean union/subtract/intersect in IR source order, `organic_blend` → smooth
   `union(k=)`, translate. loft/sweep/revolve stay on build123d; unrepresentable
   kinds degrade to a bbox proxy.
+- `manifold_mesh` → `geometry/manifold_source.py` (`converters/shape_ir_manifold.py`):
+  emits manifold3d source — guaranteed-manifold mesh CSG with sphere/cube/cylinder/
+  cone/ellipsoid, boolean `+`/`-`/`^`, native rotate+translate. No smooth blend
+  (use implicit_sdf for that); `organic_blend` degrades to a plain union.
 
 Workbench runtime (`aieng-ui/backend`):
-- `aieng.convert` routes execution by the package's representation. For
-  `implicit_sdf` the SDF runner (`_execute_sdf_code`) meshes the field via marching
-  cubes → STL/GLB, projects a region-level mesh topology (one body, one freeform
-  face — honest: not analytic B-Rep faces), rebuilds object_registry, and stamps
-  `provenance/conversion_manifest.json` `geometry_execution` with
-  `backend=sdf, geometry_kind=mesh`.
+- `aieng.convert` routes execution by the package's representation. Mesh backends
+  share one path (`_mesh_feature_graph` / `_write_mesh_artifacts`): `implicit_sdf`
+  → `_execute_sdf_code` (marching cubes); `manifold_mesh` → `_execute_manifold_code`
+  (manifold3d CSG → trimesh). Both project a region-level mesh topology (one body,
+  one region face — honest: not analytic B-Rep faces), rebuild object_registry, and
+  stamp `provenance/conversion_manifest.json` `geometry_execution` with
+  `backend={sdf|manifold}, geometry_kind=mesh`.
 - Honest representation contract: STEP/B-Rep is exact + analytic-face pickable;
   SDF is real mesh evidence but region-level faces only. Both are derived products
   of the same Shape IR source, at different evidence levels.
-- Runtime dependency (workbench only, not aieng core): the implicit_sdf runner
-  needs `sdf` (github.com/fogleman/sdf) + `scikit-image` in the `aieng311` env:
-  `pip install "git+https://github.com/fogleman/sdf.git" scikit-image`.
+- Runtime dependencies (workbench only, not aieng core), in the `aieng311` env:
+  `implicit_sdf` needs `sdf` (github.com/fogleman/sdf) + `scikit-image`;
+  `manifold_mesh` needs `manifold3d`:
+  `pip install "git+https://github.com/fogleman/sdf.git" scikit-image manifold3d`.
 
 ---
 

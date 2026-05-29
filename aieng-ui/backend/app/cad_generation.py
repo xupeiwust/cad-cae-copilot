@@ -2321,8 +2321,15 @@ def _execute_sdf_code(
         return stl_bytes, glb_bytes, topo
 
 
-def _sdf_feature_graph(topology_map: dict[str, Any]) -> dict[str, Any]:
-    """Minimal feature graph for an SDF mesh body (one named_part per solid)."""
+def _mesh_feature_graph(topology_map: dict[str, Any]) -> dict[str, Any]:
+    """Minimal feature graph for a mesh body (one named_part per solid).
+
+    Backend-agnostic: representation/recognizer are read from the topology
+    metadata the runner wrote (SDF or Manifold), so the same builder serves both.
+    """
+    meta = topology_map.get("metadata", {}) or {}
+    representation = str(meta.get("representation") or "mesh")
+    recognizer = str(meta.get("extractor") or "MeshRunner")
     features: list[dict[str, Any]] = []
     for entity in topology_map.get("entities", []) or []:
         if entity.get("type") != "solid":
@@ -2337,33 +2344,34 @@ def _sdf_feature_graph(topology_map: dict[str, Any]) -> dict[str, Any]:
                 "faces": list(entity.get("face_ids") or []),
             },
             "parameters": {},
-            "intent": {"role": "sdf_body"},
-            "recognition": {"method": "sdf_mesh", "confidence": "low"},
+            "intent": {"role": "mesh_body"},
+            "recognition": {"method": representation, "confidence": "low"},
         })
     return {
         "format_version": "0.1",
         "features": features,
         "metadata": {
-            "recognizer": "SDFRunner",
-            "representation": "implicit_sdf",
+            "recognizer": recognizer,
+            "representation": representation,
             "model_kind": "organic",
             "limitations": [
-                "Single fused field from SDF; individual Shape IR part identity is not preserved in the mesh.",
+                "Single fused mesh body; individual Shape IR part identity is not preserved.",
             ],
         },
     }
 
 
-def _write_sdf_artifacts(
+def _write_mesh_artifacts(
     pkg_path: Path,
     stl_bytes: bytes,
     glb_bytes: bytes,
     topology_map: dict[str, Any],
     feature_graph: dict[str, Any],
 ) -> None:
-    """Write executed SDF mesh artifacts into the package (no STEP / build123d
-    source.py — SDF is mesh-only). Regenerates the brep graph from the mesh
-    topology so face pick/highlight still resolves (region-level)."""
+    """Write executed mesh artifacts into the package (no STEP / build123d
+    source.py — mesh backends are mesh-only). Regenerates the brep graph from the
+    mesh topology so face pick/highlight still resolves (region-level). Shared by
+    the SDF and Manifold runners."""
     artifacts: dict[str, bytes] = {
         "geometry/preview.stl": stl_bytes,
         "geometry/topology_map.json": json.dumps(topology_map, indent=2).encode(),
@@ -2402,6 +2410,99 @@ def _write_sdf_artifacts(
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+
+
+# ── manifold mesh runner (Shape IR representation: manifold_mesh) ────────────
+# Executes manifold3d source (binds `result`), converts the manifold to a
+# trimesh, exports STL + GLB, and projects a region-level mesh topology. Runs in
+# the backend interpreter (aieng311, where `manifold3d` + trimesh are installed).
+_MANIFOLD_RUNNER_TEMPLATE = r'''
+import sys, json
+
+out_stl = sys.argv[1]
+out_glb = sys.argv[2]
+out_topo = sys.argv[3]
+
+# --- user manifold source (must bind `result`) ---
+__AIENG_MANIFOLD_CODE__
+# --- end user source ---
+
+if "result" not in globals() or globals()["result"] is None:
+    raise RuntimeError("manifold source must bind a variable named `result`")
+
+import numpy as np
+import trimesh
+mesh = result.to_mesh()
+verts = np.asarray(mesh.vert_properties)[:, :3]
+faces = np.asarray(mesh.tri_verts).reshape(-1, 3)
+tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+tm.export(out_stl)
+tm.export(out_glb)
+
+b = tm.bounds
+bbox = [float(b[0][0]), float(b[0][1]), float(b[0][2]),
+        float(b[1][0]), float(b[1][1]), float(b[1][2])]
+body = {
+    "id": "body_001", "type": "solid", "name": "manifold_body",
+    "bounding_box": bbox, "area": float(tm.area),
+    "triangle_count": int(len(tm.faces)), "face_ids": ["face_001"],
+}
+try:
+    if tm.is_volume:
+        body["volume"] = float(tm.volume)
+except Exception:
+    pass
+topo = {
+    "format_version": "0.1",
+    "metadata": {
+        "extractor": "ManifoldRunner", "extraction_backend": "manifold",
+        "extraction_mode": "manifold_csg_mesh", "representation": "manifold_mesh",
+        "real_step_parsing": False,
+        "limitations": [
+            "Mesh from manifold3d CSG; faces are region-level, not analytic B-Rep faces.",
+            "Booleans fuse into one solid, so individual Shape IR part identity is not preserved.",
+        ],
+    },
+    "entities": [
+        body,
+        {"id": "face_001", "type": "face", "body_id": "body_001",
+         "surface_type": "mesh_region", "freeform": True, "name": "manifold_surface",
+         "bounding_box": bbox, "area": float(tm.area)},
+    ],
+}
+with open(out_topo, "w") as fh:
+    json.dump(topo, fh, indent=2)
+'''
+
+
+def _execute_manifold_code(
+    code: str, timeout: int = 120,
+) -> tuple[bytes, bytes, dict[str, Any]]:
+    """Run manifold3d source in a subprocess; return (stl_bytes, glb_bytes, topology_map).
+
+    Raises RuntimeError on failure (including a missing `manifold3d` runtime).
+    """
+    runner = _MANIFOLD_RUNNER_TEMPLATE.replace("__AIENG_MANIFOLD_CODE__", code)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        runner_path = tmp / "manifold_runner.py"
+        runner_path.write_text(runner, encoding="utf-8")
+        out_stl, out_glb, out_topo = tmp / "result.stl", tmp / "result.glb", tmp / "topology.json"
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(runner_path), str(out_stl), str(out_glb), str(out_topo)],
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"Manifold execution timed out after {timeout}s") from exc
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Manifold execution failed (exit {proc.returncode}):\n{(proc.stderr or '(no stderr)')[-2000:]}"
+            )
+        stl_bytes = out_stl.read_bytes() if out_stl.exists() else b""
+        glb_bytes = out_glb.read_bytes() if out_glb.exists() else b""
+        topo: dict[str, Any] = json.loads(out_topo.read_text(encoding="utf-8")) if out_topo.exists() else {}
+        return stl_bytes, glb_bytes, topo
 
 
 # ── backend class ─────────────────────────────────────────────────────────────

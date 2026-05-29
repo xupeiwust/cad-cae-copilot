@@ -199,3 +199,50 @@ def test_shape_ir_compiler_combines_translation_and_rotation():
     assert "Location((0, 0, 0)," not in source
     # exactly one .moved() for this part
     assert source.count("part_arm = part_arm.moved(") == 1
+
+
+def test_shape_ir_sdf_compiler_emits_valid_source():
+    """implicit_sdf compiler produces syntactically valid fogleman/sdf source:
+    primitives, smooth blend (union k=), boolean subtract, and translate."""
+    from aieng.converters.shape_ir_sdf import compile_shape_ir_to_sdf_source
+
+    payload = {
+        "representation": "implicit_sdf",
+        "parts": [
+            {"id": "a", "type": "sphere", "radius": 20},
+            {"id": "b", "type": "sphere", "radius": 15, "location": [0, 0, 30]},
+            {"id": "blob", "type": "organic_blend", "children": ["a", "b"], "radius": 5},
+            {"id": "slot", "type": "box", "dimensions": [6, 6, 60], "operation": "subtract"},
+        ],
+    }
+    src = compile_shape_ir_to_sdf_source(payload)
+    compile(src, "geometry/sdf_source.py", "exec")  # syntax-valid
+    assert src.startswith("from sdf import *")
+    assert "f_a = sphere(20.0)" in src
+    assert "f_b = sphere(15.0)" in src
+    assert "f_b = f_b.translate((0.0, 0.0, 30.0))" in src
+    assert "f_blob = f_a.union(f_b, k=5.0)" in src
+    assert "f_slot = box((6.0, 6.0, 60.0))" in src
+    assert "f = (f_blob - f_slot)" in src
+    assert "parts.append" not in src  # that's the build123d target, not SDF
+
+
+def test_compile_shape_ir_dispatch_routes_by_representation():
+    from aieng.converters.shape_ir import compile_shape_ir
+
+    sdf = compile_shape_ir({"representation": "implicit_sdf", "parts": [{"id": "s", "type": "sphere", "radius": 5}]})
+    assert sdf["representation"] == "implicit_sdf"
+    assert sdf["source_path"] == "geometry/sdf_source.py"
+    assert sdf["runtime"] == "sdf" and sdf["fallback"] is False
+    assert "from sdf import" in sdf["source"]
+
+    brep = compile_shape_ir({"parts": [{"id": "b", "type": "box", "dimensions": [1, 1, 1]}]})
+    assert brep["representation"] == "brep_build123d"
+    assert brep["source_path"] == "geometry/source.py"
+    assert "from build123d import" in brep["source"] and brep["fallback"] is False
+
+    # unknown representation falls back to build123d and flags it
+    unknown = compile_shape_ir({"representation": "nurbs_compas", "parts": [{"id": "b", "type": "box", "dimensions": [1, 1, 1]}]})
+    assert unknown["representation"] == "brep_build123d"
+    assert unknown["requested_representation"] == "nurbs_compas"
+    assert unknown["fallback"] is True

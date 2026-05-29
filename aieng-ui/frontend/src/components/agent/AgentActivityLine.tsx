@@ -17,17 +17,18 @@ export function AgentActivityLine({
   running = false,
   elapsed,
 }: AgentActivityLineProps) {
+  const copy = detail ? `${title} · ` : title;
+
   return (
     <div
       className={`agent-activity-line agent-activity-${tone}${running ? " is-running" : ""}`}
       role="status"
       aria-live="polite"
     >
-      <span className="agent-activity-orb" aria-hidden="true" />
-      <div className="agent-activity-copy">
-        <strong>{title}</strong>
-        {detail ? <span><PointerText text={detail} /></span> : null}
-      </div>
+      <span className="agent-activity-copy">
+        <strong>{copy}</strong>
+        {detail ? <PointerText text={detail} /> : null}
+      </span>
       {elapsed ? <time>{elapsed}</time> : null}
     </div>
   );

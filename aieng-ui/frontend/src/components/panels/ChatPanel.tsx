@@ -637,6 +637,16 @@ export function ChatPanel({
             </div>
           </div>
         ) : null}
+
+        {activityLine ? (
+          <AgentActivityLine
+            title={activityLine.title}
+            detail={activityLine.detail}
+            tone={activityLine.tone}
+            running={activityLine.running}
+            elapsed={activityLine.elapsed}
+          />
+        ) : null}
       </div>
 
       {(() => {
@@ -672,16 +682,6 @@ export function ChatPanel({
           </div>
         );
       })()}
-
-      {activityLine ? (
-        <AgentActivityLine
-          title={activityLine.title}
-          detail={activityLine.detail}
-          tone={activityLine.tone}
-          running={activityLine.running}
-          elapsed={activityLine.elapsed}
-        />
-      ) : null}
 
       <div className="chat-input-row">
         <div className="chat-input-wrap">

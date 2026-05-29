@@ -8657,150 +8657,94 @@ textarea:focus,
 }
 
 .agent-activity-line {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
   flex-shrink: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 9px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: var(--radius-md);
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.14), transparent 28%),
-    linear-gradient(135deg, rgba(15, 23, 42, 0.78), rgba(15, 23, 42, 0.48));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-.agent-activity-line::after {
-  content: "";
-  position: absolute;
-  z-index: 0;
-  top: -45%;
-  bottom: -45%;
-  left: -55%;
-  width: 48%;
-  transform: skewX(-18deg);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.08),
-    rgba(255, 255, 255, 0.34),
-    rgba(255, 255, 255, 0.08),
-    transparent
-  );
-  opacity: 0;
-  pointer-events: none;
-}
-
-.agent-activity-line.is-running::after {
-  opacity: 1;
-  animation: agent-activity-sweep 1.9s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  margin: 2px 0 8px;
+  padding: 0 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 @keyframes agent-activity-sweep {
   0% {
-    left: -58%;
+    background-position: 180% 50%;
   }
-  48%,
   100% {
-    left: 116%;
+    background-position: -80% 50%;
   }
-}
-
-.agent-activity-orb {
-  position: relative;
-  z-index: 1;
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-  background: #8ecae6;
-  box-shadow: 0 0 14px rgba(142, 202, 230, 0.7);
-}
-
-.agent-activity-line.is-running .agent-activity-orb {
-  animation: autopilot-pulse 1.5s ease-out infinite;
 }
 
 .agent-activity-copy {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.agent-activity-copy strong {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 850;
-  letter-spacing: 0.01em;
-}
-
-.agent-activity-copy span {
+  display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.agent-activity-copy strong {
+  color: inherit;
+  font-weight: 750;
+}
+
+.agent-activity-line.is-running .agent-activity-copy {
+  color: transparent;
+  background: linear-gradient(
+    100deg,
+    var(--text-secondary) 0%,
+    var(--text-secondary) 34%,
+    #ffffff 48%,
+    var(--text-primary) 58%,
+    var(--text-secondary) 72%,
+    var(--text-secondary) 100%
+  );
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: agent-activity-sweep 2.1s linear infinite;
+}
+
 .agent-activity-line time {
-  position: relative;
-  z-index: 1;
-  padding: 3px 7px;
-  border: 1px solid rgba(142, 202, 230, 0.24);
-  border-radius: 999px;
-  color: #8ecae6;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .agent-activity-running {
-  border-color: rgba(142, 202, 230, 0.28);
+  color: var(--text-secondary);
 }
 
 .agent-activity-approval {
-  border-color: rgba(251, 191, 36, 0.28);
-  background:
-    radial-gradient(circle at 18% 0%, rgba(251, 191, 36, 0.14), transparent 30%),
-    linear-gradient(135deg, rgba(69, 48, 10, 0.46), rgba(15, 23, 42, 0.48));
-}
-
-.agent-activity-approval .agent-activity-orb {
-  background: #fbbf24;
-  box-shadow: 0 0 14px rgba(251, 191, 36, 0.55);
-}
-
-.agent-activity-approval time {
-  border-color: rgba(251, 191, 36, 0.26);
   color: #fbbf24;
 }
 
-.agent-activity-done .agent-activity-orb {
-  background: #22c55e;
-  box-shadow: 0 0 14px rgba(34, 197, 94, 0.45);
+.agent-activity-approval time {
+  color: rgba(251, 191, 36, 0.72);
+}
+
+.agent-activity-done {
+  color: var(--text-secondary);
 }
 
 .agent-activity-error {
-  border-color: rgba(239, 68, 68, 0.28);
+  color: #fca5a5;
 }
 
-.agent-activity-error .agent-activity-orb {
-  background: #ef4444;
-  box-shadow: 0 0 14px rgba(239, 68, 68, 0.5);
+.agent-activity-line .pointer-chip {
+  vertical-align: text-bottom;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-activity-line.is-running::after,
-  .agent-activity-line.is-running .agent-activity-orb {
+  .agent-activity-line.is-running .agent-activity-copy {
     animation: none;
+    color: var(--text-secondary);
+    background: none;
   }
 }
 

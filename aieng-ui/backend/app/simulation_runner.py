@@ -192,9 +192,17 @@ def _nodes_on_face(
         return []
 
     surface_type = face_entity.get("surface_type", "plane")
-    # Tolerance: 2% of longest bbox dimension, minimum 0.5 mm
+    # Tolerance: 2% of longest bbox dimension, minimum 0.5 mm.
     span = max(bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2], 1.0)
     tol = max(0.5, span * 0.02)
+    # Free-form faces (loft/sweep/sphere) only carry a PROXY normal sampled at the
+    # UV midpoint, so the tangent-plane band must be wider to capture a usable
+    # patch of the curved surface near the pick. Approximate by design.
+    is_freeform = bool(face_entity.get("freeform")) or (
+        surface_type == "other" and face_entity.get("normal")
+    )
+    if is_freeform:
+        tol = max(1.0, span * 0.10)
 
     # ── Cylinder ──────────────────────────────────────────────────────────────
     if surface_type == "cylinder":

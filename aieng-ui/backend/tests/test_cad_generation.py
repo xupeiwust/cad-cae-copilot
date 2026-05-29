@@ -1180,3 +1180,41 @@ def test_replace_part_contract_requires_result(tmp_path: Path) -> None:
     out = replace_build123d_part(settings, pid, label="head", code="x = Sphere(50)")
     assert out["status"] == "error"
     assert out["code"] == "contract_violation"
+
+
+# ── free-form faces carry a proxy normal (CAE face-binding fix) ───────────────
+
+def test_freeform_faces_get_proxy_normal(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import _execute_build123d_code
+
+    # capsule = sphere caps + cylinder → all free-form / curved faces
+    _step, _stl, _glb, topo = _execute_build123d_code(
+        "arm = capsule(20, 80, label='arm')\nresult = Compound(children=[arm])\n"
+    )
+    others = [e for e in topo["entities"] if e.get("type") == "face" and e.get("surface_type") == "other"]
+    assert others, "capsule should produce free-form 'other' faces"
+    # every free-form face now carries a proxy normal + freeform flag so CAE can bind it
+    for f in others:
+        assert f.get("freeform") is True
+        assert f.get("normal") and len(f["normal"]) == 3
+
+
+# ── agent builds populate the UI viewer asset (web_asset) ─────────────────────
+
+def test_execute_build123d_publishes_web_asset(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+    from app.main import get_project, project_dir
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "viewer-asset")
+    code = "from build123d import *\nresult = Box(40, 40, 10)\n"
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+    # the build must point web_asset at viewer/model.* so the UI viewer loads it
+    project = get_project(settings, pid)
+    assert project.get("web_asset"), "web_asset must be set so the UI viewer can load the model"
+    assert project.get("web_asset_format") in ("glb", "stl")
+    viewer_file = project_dir(settings, pid) / project["web_asset"]
+    assert viewer_file.exists() and viewer_file.stat().st_size > 0

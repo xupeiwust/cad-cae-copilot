@@ -264,7 +264,24 @@ def _face_entity(face, fid, body_id):
         data["surface_type"] = "cylinder"
         data["radius"] = round(adaptor.Cylinder().Radius(), 4)
     else:
+        # Free-form face (loft / sweep / sphere / spline) from the high-level
+        # helpers. Still record a PROXY normal + true face centre so the face is
+        # usable for face-picking and approximate CAE binding — downstream code
+        # only had a plane/cylinder path and fell back to a broken axis-aligned
+        # heuristic when neither was present. The proxy is the surface normal at
+        # the UV midpoint; `freeform: true` flags that it is an approximation.
         data["surface_type"] = "other"
+        data["freeform"] = True
+        try:
+            n = face.normal_at(0.5, 0.5)
+            data["normal"] = [round(n.X, 6), round(n.Y, 6), round(n.Z, 6)]
+        except Exception:
+            pass
+        try:
+            c = face.center()
+            data["center"] = [round(c.X, 4), round(c.Y, 4), round(c.Z, 4)]
+        except Exception:
+            pass
     return data
 
 
@@ -1837,6 +1854,41 @@ def _write_cad_artifacts(
                 zf.writestr(name, data)
 
 
+def _publish_preview_to_viewer(
+    settings: Any,
+    project_id: str,
+    project: dict[str, Any],
+    glb_bytes: bytes | None,
+    stl_bytes: bytes | None,
+) -> None:
+    """Copy the freshly-built preview to ``viewer/model.{glb,stl}`` and point the
+    project's ``web_asset`` at it.
+
+    The frontend's primary viewer URL (``projectViewerUrl``) resolves to
+    ``/assets/projects/{id}/{web_asset}`` — so without a populated ``web_asset``
+    an agent-built model never appears in the UI viewer even though the package
+    holds a valid preview. Mirrors the ``aieng.generate_preview`` publish step so
+    every agent build (execute / edit / replace / remove) shows up immediately.
+    Best-effort: never raises into the build.
+    """
+    try:
+        from .main import project_dir as _project_dir, save_project as _save_project
+        from .project_io import project_relpath as _project_relpath
+
+        data, fmt = (glb_bytes, "glb") if glb_bytes else (stl_bytes, "stl")
+        if not data:
+            return
+        viewer_root = _project_dir(settings, project_id) / "viewer"
+        viewer_root.mkdir(parents=True, exist_ok=True)
+        asset_path = viewer_root / f"model.{fmt}"
+        asset_path.write_bytes(data)
+        project["web_asset"] = _project_relpath(settings, project_id, asset_path)
+        project["web_asset_format"] = fmt
+        _save_project(settings, project)
+    except Exception:
+        pass
+
+
 def _clear_revalidation_status(pkg_path: Path) -> None:
     """Remove state/revalidation_status.json from the package.
 
@@ -2246,6 +2298,10 @@ def execute_build123d_code(
             _save_project2(settings, project)
         except Exception:
             pass
+
+        # Publish the preview to viewer/model.* + set web_asset so the UI viewer
+        # actually loads it (the frontend resolves /assets/projects/{id}/{web_asset}).
+        _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
         written = [
             "geometry/generated.step",
@@ -3531,6 +3587,7 @@ def edit_build123d_parameter(
         _save_project(settings, project)
     except Exception:
         pass
+    _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
     # 9. Render thumbnail so the caller can verify visually
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
@@ -3663,6 +3720,7 @@ def _rebuild_after_part_edit(
         _save_project(settings, project)
     except Exception:
         pass
+    _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
     thumb = render_mesh_thumbnail(

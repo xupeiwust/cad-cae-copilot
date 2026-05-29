@@ -270,3 +270,39 @@ def test_bbox_filter_excludes_distant_nodes():
     result = set(_nodes_on_face(nodes, face))
     assert 0 in result
     assert 1 not in result
+
+
+# ── Free-form faces (loft/sweep/sphere) — proxy normal + wider tolerance ──────
+
+def test_freeform_face_with_proxy_normal_selects_band():
+    """A free-form face carries a proxy normal + freeform flag; the wider tol
+    captures a usable band of surface nodes near the tangent plane instead of
+    falling through to the (broken-for-curved) thin-bbox heuristic."""
+    s = math.sqrt(0.5)
+    # proxy normal (-s,0,s) through centre (5,0,5) ⇒ tangent plane z = x
+    face = {
+        "surface_type": "other",
+        "freeform": True,
+        "normal": [-s, 0.0, s],
+        "center": [5.0, 0.0, 5.0],
+        "bounding_box": [-1.0, -1.0, -1.0, 11.0, 1.0, 11.0],
+    }
+    # nodes on/near the tangent plane z = x (within the widened band)
+    nodes = _nodes_dict(
+        (5.0, 0.0, 5.0),    # on plane, inside aabb ✓
+        (3.0, 0.0, 3.0),    # on plane ✓
+        (7.0, 0.0, 7.0),    # on plane ✓
+        (0.0, 0.0, 10.0),   # off plane (z−x=10) ✗
+    )
+    result = set(_nodes_on_face(nodes, face))
+    assert {0, 1, 2}.issubset(result)
+    assert 3 not in result
+
+
+def test_freeform_face_without_normal_uses_fallback():
+    """Legacy 'other' faces (no stored normal) still hit the thin-bbox fallback
+    rather than crashing."""
+    face = {"surface_type": "other", "bounding_box": [0.0, 0.0, 0.0, 10.0, 10.0, 0.1]}
+    nodes = _nodes_dict((5.0, 5.0, 0.0), (5.0, 5.0, 50.0))
+    result = set(_nodes_on_face(nodes, face))
+    assert 0 in result and 1 not in result

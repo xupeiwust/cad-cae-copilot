@@ -141,7 +141,28 @@ Rules:
 
     Use named constants for ALL dimensions: Box sizes, Cylinder radii/heights,
     Hole radii, fillet radii, placement offsets, and loft sketch sizes.
-11. QUANTITATIVE SELF-REVIEW — after each build, the tool returns a
+11. HIGH-LEVEL HELPERS — these functions are pre-injected into your namespace
+    (do NOT define or import them). Prefer them over hand-writing
+    BuildSketch/Plane/loft/sweep boilerplate — they produce smoother forms AND
+    are far less error-prone. Each accepts label= and color= and returns a Part.
+    - lofted_stack(sections) — loft through Z-stacked cross-sections. Each section
+      is (z, radius) for a circle, (z, w, d) for a rounded rect, or (z, w, d, r).
+      USE THIS instead of stacking boxes for torsos, cabs, fuselages, bodies.
+        result = lofted_stack([(0,120,80),(200,150,90),(392,60)], label="torso")
+    - rounded_box(length, width, height, radius, edges="all"|"vertical") — a
+      filleted box; the default block for designed enclosures (not a hard Box).
+    - capsule(radius, length, axis="Z") — cylinder with hemispherical caps; the
+      go-to for arms, legs, limbs, rounded pins.
+    - tapered_cylinder(bottom_radius, top_radius, height) — truncated cone for
+      necks, nozzles, tapered legs.
+    - swept_tube(path_points, radius) — sweep a circle along a spline through
+      (x,y,z) points; pipes, handles, exhausts, cable runs.
+    - revolved_profile(profile_points) — revolve a list of (r, z) points around Z
+      (auto-closed to the axis); bottles, vases, bell housings, wheels.
+    - organic_blend(solids, radius) — fuse solids and fillet the joins so they
+      read as ONE smooth body instead of glued primitives. Use to merge a head
+      into a neck, a handle into a body, etc.
+12. QUANTITATIVE SELF-REVIEW — after each build, the tool returns a
     `geometry_report` with exact numbers. Judge proportions from these numbers,
     NOT only from the blurry thumbnail:
     - `overall_proportions` — normalized H:W:D of the whole model.

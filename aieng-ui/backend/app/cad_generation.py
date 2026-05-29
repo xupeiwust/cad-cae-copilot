@@ -55,6 +55,159 @@ class Compound(_AIENG_ORIGINAL_COMPOUND):
 
 _aieng_build123d.Compound = Compound
 
+
+# ── aieng high-level modelling helpers ──────────────────────────────────────
+# Injected into the runner namespace so agent-authored code can produce smooth,
+# designed forms with one call instead of stacking primitives. Each helper wraps
+# the error-prone build123d boilerplate (BuildSketch/Plane/loft/sweep) that LLMs
+# routinely get wrong, so the result is both more organic AND more reliable.
+# Validated against build123d 0.10.0.
+
+def _aieng_finish(part, label=None, color=None):
+    if label is not None:
+        part.label = label
+    if color is not None:
+        if isinstance(color, Color):
+            part.color = color
+        elif isinstance(color, (list, tuple)) and len(color) >= 3:
+            part.color = Color(float(color[0]), float(color[1]), float(color[2]))
+    return part
+
+
+def lofted_stack(sections, label=None, color=None, ruled=False):
+    \"\"\"Loft a smooth solid through cross-sections stacked along Z.
+
+    Each section is a tuple, read by length:
+      (z, radius)            -> circle
+      (z, width, depth)      -> rounded rectangle (auto corner = 20% of min side)
+      (z, width, depth, r)   -> rounded rectangle with corner radius r (r=0 -> sharp)
+    Sections must be ordered by increasing z. Use for torsos, vehicle cabs,
+    fuselages, helmet crowns -- anything tapered. Replaces stacked boxes.
+    \"\"\"
+    secs = list(sections)
+    if len(secs) < 2:
+        raise ValueError("lofted_stack needs >= 2 sections")
+    with BuildPart() as _bp:
+        for sec in secs:
+            z = float(sec[0])
+            with BuildSketch(Plane.XY.offset(z)):
+                if len(sec) == 2:
+                    Circle(float(sec[1]))
+                elif len(sec) == 3:
+                    w, d = float(sec[1]), float(sec[2])
+                    cr = min(w, d) * 0.2
+                    RectangleRounded(w, d, max(0.01, min(cr, min(w, d) / 2 - 0.01)))
+                else:
+                    w, d, cr = float(sec[1]), float(sec[2]), float(sec[3])
+                    if cr > 0:
+                        RectangleRounded(w, d, min(cr, min(w, d) / 2 - 0.01))
+                    else:
+                        Rectangle(w, d)
+        loft(ruled=ruled)
+    return _aieng_finish(_bp.part, label, color)
+
+
+def rounded_box(length, width, height, radius, label=None, color=None, edges="all"):
+    \"\"\"A box with filleted edges -- the default block for *designed* enclosures
+    and bodies instead of a hard-edged Box. ``edges`` is "all" or "vertical".
+    \"\"\"
+    r = max(0.01, min(float(radius), min(length, width, height) / 2 - 0.01))
+    with BuildPart() as _bp:
+        Box(length, width, height)
+        try:
+            if edges == "vertical":
+                fillet(_bp.edges().filter_by(Axis.Z), radius=r)
+            else:
+                fillet(_bp.edges(), radius=r)
+        except Exception:
+            fillet(_bp.edges().filter_by(Axis.Z), radius=min(r, min(length, width) / 2 - 0.01))
+    return _aieng_finish(_bp.part, label, color)
+
+
+def capsule(radius, length, axis="Z", label=None, color=None):
+    \"\"\"A cylinder with hemispherical caps -- limbs, arms, legs, rounded pins.
+    ``length`` is the cylindrical span; total length = length + 2*radius.
+    ``axis`` in {"X","Y","Z"}.
+    \"\"\"
+    part = Cylinder(radius, length) + Sphere(radius).moved(Location((0, 0, length / 2))) \\
+        + Sphere(radius).moved(Location((0, 0, -length / 2)))
+    if isinstance(part, (list, tuple)) or type(part).__name__ == "ShapeList":
+        part = Compound(children=list(part))
+    a = str(axis).upper()
+    if a == "X":
+        part = part.rotate(Axis.Y, 90)
+    elif a == "Y":
+        part = part.rotate(Axis.X, 90)
+    return _aieng_finish(part, label, color)
+
+
+def tapered_cylinder(bottom_radius, top_radius, height, label=None, color=None):
+    \"\"\"A truncated cone (different top/bottom radii) -- necks, nozzles, legs.\"\"\"
+    return _aieng_finish(Cone(bottom_radius, top_radius, height), label, color)
+
+
+def swept_tube(path_points, radius, label=None, color=None):
+    \"\"\"Sweep a circular profile of ``radius`` along a smooth spline through
+    ``path_points`` (list of (x,y,z)). Pipes, handles, exhausts, cable runs.
+    \"\"\"
+    pts = [tuple(float(c) for c in p) for p in path_points]
+    if len(pts) < 2:
+        raise ValueError("swept_tube needs >= 2 path points")
+    with BuildPart() as _bp:
+        with BuildLine() as _ln:
+            if len(pts) == 2:
+                Line(pts[0], pts[1])
+            else:
+                Spline(*pts)
+        with BuildSketch(Plane(origin=_ln.line @ 0, z_dir=_ln.line % 0)):
+            Circle(float(radius))
+        sweep()
+    return _aieng_finish(_bp.part, label, color)
+
+
+def revolved_profile(profile_points, label=None, color=None, degrees=360):
+    \"\"\"Revolve a 2D profile around the Z axis. ``profile_points`` is a list of
+    (r, z) with r>=0 (distance from the Z axis); auto-closed to the axis.
+    Bottles, vases, bell housings, wheels -- anything axisymmetric.
+    \"\"\"
+    pts = [(float(r), float(z)) for r, z in profile_points]
+    if len(pts) < 2:
+        raise ValueError("revolved_profile needs >= 2 points")
+    if pts[0][0] != 0:
+        pts.insert(0, (0.0, pts[0][1]))
+    if pts[-1][0] != 0:
+        pts.append((0.0, pts[-1][1]))
+    with BuildPart() as _bp:
+        with BuildSketch(Plane.XZ):
+            with BuildLine():
+                Polyline(*pts, close=True)
+            make_face()
+        revolve(axis=Axis.Z, revolution_arc=float(degrees))
+    return _aieng_finish(_bp.part, label, color)
+
+
+def organic_blend(solids, radius, label=None, color=None):
+    \"\"\"Fuse solids and fillet the resulting edges so the join reads as one
+    smooth body instead of glued primitives. Falls back to smaller radii (then
+    no fillet) if the requested radius is geometrically infeasible.
+    \"\"\"
+    items = list(solids)
+    if not items:
+        raise ValueError("organic_blend needs >= 1 solid")
+    fused = items[0]
+    for s in items[1:]:
+        fused = fused + s
+    if isinstance(fused, (list, tuple)) or type(fused).__name__ == "ShapeList":
+        fused = Compound(children=list(fused))
+    for rr in (float(radius), float(radius) * 0.5, float(radius) * 0.25):
+        try:
+            fused = fillet(fused.edges(), radius=rr)
+            break
+        except Exception:
+            continue
+    return _aieng_finish(fused, label, color)
+
+
 # ---- aieng generated code ----
 __AIENG_GENERATED_CODE__
 # ---- end generated code ----

@@ -243,7 +243,34 @@ studies — primitive stacking is fine there.
 calls for a visible character/vehicle/product, stop and replace the major
 exterior masses with one of the curve patterns below.
 
-### Curve patterns — copy + adapt
+### High-level helpers — prefer these over hand-rolled boilerplate
+
+`cad.execute_build123d` pre-injects these functions into your namespace (do NOT
+import or redefine them). They wrap the error-prone BuildSketch/Plane/loft/sweep
+boilerplate that LLMs routinely break, so you get smoother forms **and** fewer
+failed builds. Each takes `label=` / `color=` and returns a `Part`:
+
+| Helper | Use for | Signature |
+|--------|---------|-----------|
+| `lofted_stack(sections)` | torsos, cabs, fuselages, tapered bodies | sections = list of `(z, r)` circle / `(z, w, d)` rounded-rect / `(z, w, d, corner_r)` |
+| `rounded_box(l, w, h, radius, edges=)` | designed enclosures (vs hard Box) | `edges="all"` or `"vertical"` |
+| `capsule(radius, length, axis=)` | arms, legs, limbs, rounded pins | `axis` ∈ `"X"/"Y"/"Z"` |
+| `tapered_cylinder(r_bot, r_top, h)` | necks, nozzles, tapered legs | — |
+| `swept_tube(path_points, radius)` | pipes, handles, exhausts, cables | `path_points` = list of `(x,y,z)` |
+| `revolved_profile(profile_points)` | bottles, vases, wheels, axisymmetric | `profile_points` = list of `(r, z)`, auto-closed to Z axis |
+| `organic_blend(solids, radius)` | merge parts into ONE smooth body | fuses + fillets the joins; auto-degrades radius if infeasible |
+
+```python
+# A humanoid torso + symmetric arms + blended head — no BuildSketch boilerplate:
+torso = lofted_stack([(0,120,80),(200,150,90),(392,60)], label="torso")
+arm_L = capsule(8, 120, label="arm_L").moved(Location((-90,0,300)))
+arm_R = mirror(arm_L, about=Plane.YZ); arm_R.label = "arm_R"
+head  = Sphere(45).moved(Location((0,0,440)))
+result = organic_blend([torso, head], 12, label="body")  # smooth neck join
+result = Compound(children=[result, arm_L, arm_R])
+```
+
+### Curve patterns — copy + adapt (when a helper doesn't fit)
 
 **Tapered body via loft** (truck cabs, helmet crowns, conical housings):
 ```python

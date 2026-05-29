@@ -2276,10 +2276,6 @@ export default function App() {
       await runAutopilotAgent();
       return;
     }
-    if (selectedChatConnection.id === "mcp-bridge") {
-      await submitChat("plan");
-      return;
-    }
     if (selectedChatConnection.id === "freecad-desktop") {
       const prompt = message.trim();
       await submitRuntime(`inspect geometry through FreeCAD bridge. User request: ${prompt || "inspect current project geometry"}`);
@@ -2299,10 +2295,6 @@ export default function App() {
     }
     if (selectedChatConnection.id === "local-agent") {
       await runAutopilotAgent();
-      return;
-    }
-    if (selectedChatConnection.id === "mcp-bridge") {
-      await submitChat("execute");
       return;
     }
     if (selectedChatConnection.id === "freecad-desktop") {

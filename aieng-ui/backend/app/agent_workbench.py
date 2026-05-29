@@ -398,18 +398,6 @@ def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
     those transport choices explicit for the frontend chat window.
     """
     runtime_tools = _rt.registered_tools_info()
-    tool_names = {str(tool.get("name")) for tool in runtime_tools}
-    capabilities = list_capabilities(settings)
-    mcp_caps = [
-        cap for cap in capabilities
-        if str(cap.get("source") or "").lower().endswith("mcp")
-        or str(cap.get("source") or "").lower().find("mcp") >= 0
-    ]
-    executable_mcp_tools = [name for name in tool_names if name.startswith("mcp.")]
-
-    local_status = "ready" if runtime_tools else "blocked"
-    mcp_registry_available = any(cap.get("available") for cap in mcp_caps)
-    mcp_status = "ready" if executable_mcp_tools else "degraded" if mcp_registry_available else "blocked"
     try:
         from .agent_autopilot.adapters import probe_local_agent_capabilities
 
@@ -446,31 +434,6 @@ def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
             "approval_gated": True,
             "tool_count": len(runtime_tools),
             "adapters": local_agent_caps,
-        },
-        {
-            "id": "local-runtime",
-            "label": "Local runtime",
-            "transport": "fastapi-runtime",
-            "status": local_status,
-            "detail": "Uses the built-in intent planner and registered runtime tools without requiring an LLM API key.",
-            "requires_project": False,
-            "supports_llm": False,
-            "supports_execution": True,
-            "approval_gated": True,
-            "tool_count": len(runtime_tools),
-        },
-        {
-            "id": "mcp-bridge",
-            "label": "MCP bridge",
-            "transport": "aieng-mcp",
-            "status": mcp_status,
-            "detail": "Inspects MCP guardrails, parses patch proposals, and performs preflight checks through registered bridge tools.",
-            "requires_project": True,
-            "supports_llm": False,
-            "supports_execution": True,
-            "approval_gated": True,
-            "tool_count": len(executable_mcp_tools),
-            "registry_count": len(mcp_caps),
         },
     ]
 

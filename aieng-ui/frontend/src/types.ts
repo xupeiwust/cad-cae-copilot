@@ -1275,7 +1275,7 @@ export type AutopilotRunState = {
 };
 
 export type ChatConnection = {
-  id: "llm-api" | "local-runtime" | "mcp-bridge" | "freecad-desktop" | string;
+  id: "llm-api" | "freecad-desktop" | string;
   label: string;
   transport: string;
   status: "ready" | "configurable" | "degraded" | "blocked" | string;

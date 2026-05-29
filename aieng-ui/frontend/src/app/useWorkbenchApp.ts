@@ -589,6 +589,10 @@ export function useWorkbenchApp() {
       setChatHistory([]);
       return;
     }
+    // Reset session state immediately so the next effect does not fire
+    // getChatMessages with a stale session id from the previous project.
+    setActiveSessionId(null);
+    setChatHistory([]);
     let cancelled = false;
     void api.getChatSessions(selectedId)
       .then((sessions) => {
@@ -616,6 +620,7 @@ export function useWorkbenchApp() {
       setChatHistory([]);
       return;
     }
+    const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
     let cancelled = false;
     void api.getChatMessages(selectedId, activeSessionId)
       .then((messages) => {
@@ -623,6 +628,38 @@ export function useWorkbenchApp() {
         const items = messages.map(persistedMessageToChatItem);
         persistedChatIdsRef.current = new Set(items.map((item) => item.id));
         setChatHistory(items);
+        // Refresh any stale in-progress autopilot runs that were snapshotted
+        // into the DB before the run reached a terminal state.
+        const staleRunIds = new Set<string>();
+        for (const item of items) {
+          if (item.autopilotRun?.run_id && ACTIVE_AUTOPILOT_STATUSES.has(item.autopilotRun.status)) {
+            staleRunIds.add(item.autopilotRun.run_id);
+          }
+        }
+        for (const runId of staleRunIds) {
+          api.getAutopilotRun(runId)
+            .then((run) => {
+              if (!cancelled) {
+                setChatHistory((current) => upsertAutopilotChatItem(current, run));
+              }
+            })
+            .catch(() => {
+              if (cancelled) return;
+              setChatHistory((current) => current.map((item) => {
+                if (item.autopilotRun?.run_id !== runId) return item;
+                if (!ACTIVE_AUTOPILOT_STATUSES.has(item.autopilotRun.status)) return item;
+                return {
+                  ...item,
+                  body: `${item.body}\n\n*(Run state is no longer available; status may be stale.)*`,
+                  autopilotRun: {
+                    ...item.autopilotRun,
+                    status: "failed" as const,
+                    errors: [...(item.autopilotRun.errors || []), "Run state is no longer available."],
+                  },
+                };
+              }));
+            });
+        }
       })
       .catch(() => {
         persistedChatIdsRef.current = new Set();
@@ -633,6 +670,7 @@ export function useWorkbenchApp() {
 
   useEffect(() => {
     if (!activeSession?.active_run_id) return;
+    const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
     let cancelled = false;
     void api.getAutopilotRun(activeSession.active_run_id)
       .then((run) => {
@@ -640,7 +678,23 @@ export function useWorkbenchApp() {
         updateActiveSessionFromRun(run);
         setChatHistory((current) => upsertAutopilotChatItem(current, run));
       })
-      .catch(() => {});
+      .catch(() => {
+        if (cancelled) return;
+        const runId = activeSession.active_run_id;
+        setChatHistory((current) => current.map((item) => {
+          if (item.autopilotRun?.run_id !== runId) return item;
+          if (!ACTIVE_AUTOPILOT_STATUSES.has(item.autopilotRun.status)) return item;
+          return {
+            ...item,
+            body: `${item.body}\n\n*(Run state is no longer available; status may be stale.)*`,
+            autopilotRun: {
+              ...item.autopilotRun,
+              status: "failed" as const,
+              errors: [...(item.autopilotRun.errors || []), "Run state is no longer available."],
+            },
+          };
+        }));
+      });
     return () => { cancelled = true; };
   }, [activeSession?.active_run_id, updateActiveSessionFromRun]);
 

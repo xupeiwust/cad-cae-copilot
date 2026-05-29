@@ -172,3 +172,30 @@ def test_shape_ir_compiler_supports_type_key_and_organic_blend():
     assert "parts.append(part_torso)" not in source
     assert "parts.append(part_head)" not in source
     assert "parts.append(part_body)" in source
+
+
+def test_shape_ir_compiler_combines_translation_and_rotation():
+    """A node with both location and rotation must compile to a SINGLE
+    Location(translation, rotation) — not translate-then-rotate-about-origin,
+    which would orbit the placed part around the world origin."""
+    from aieng.converters.shape_ir import compile_shape_ir_to_build123d_source
+
+    payload = {
+        "parts": [
+            {
+                "id": "arm",
+                "type": "box",
+                "dimensions": [10, 10, 40],
+                "location": [100, 0, 200],
+                "rotation": [0, 90, 0],
+            },
+        ],
+    }
+    source = compile_shape_ir_to_build123d_source(payload)
+    compile(source, "geometry/source.py", "exec")
+    # single combined Location with both translation and rotation
+    assert "part_arm = part_arm.moved(Location((100.0, 0.0, 200.0), (0.0, 90.0, 0.0)))" in source
+    # the old buggy pattern (separate rotate about origin) must be gone
+    assert "Location((0, 0, 0)," not in source
+    # exactly one .moved() for this part
+    assert source.count("part_arm = part_arm.moved(") == 1

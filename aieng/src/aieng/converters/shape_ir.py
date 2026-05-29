@@ -411,22 +411,39 @@ def _bbox_expression(node: dict[str, Any], label: str, color: list[float] | None
 
 
 def _transform_lines(var_name: str, node: dict[str, Any]) -> list[str]:
-    lines: list[str] = []
+    # Resolve translation: explicit location/position/translate, else bbox centre.
+    translation: tuple[float, float, float] | None = None
     loc = node.get("location", node.get("position", node.get("translate")))
     if isinstance(loc, list) and len(loc) == 3:
-        lines.append(f"{var_name} = {var_name}.moved(Location({_py(tuple(float(v) for v in loc))}))")
+        try:
+            translation = tuple(float(v) for v in loc)
+        except (TypeError, ValueError):
+            translation = None
     elif (bbox := _bbox(node)) is not None:
         cx = (bbox[0] + bbox[3]) / 2
         cy = (bbox[1] + bbox[4]) / 2
         cz = (bbox[2] + bbox[5]) / 2
         if any(abs(v) > 1e-9 for v in (cx, cy, cz)):
-            lines.append(f"{var_name} = {var_name}.moved(Location(({cx}, {cy}, {cz})))")
+            translation = (cx, cy, cz)
 
-    rotation = node.get("rotation")
-    if isinstance(rotation, list) and len(rotation) == 3:
-        # build123d Location supports Euler-angle rotation in degrees.
-        lines.append(f"{var_name} = {var_name}.moved(Location((0, 0, 0), {_py(tuple(float(v) for v in rotation))}))")
-    return lines
+    rotation: tuple[float, float, float] | None = None
+    rotation_val = node.get("rotation")
+    if isinstance(rotation_val, list) and len(rotation_val) == 3:
+        try:
+            rotation = tuple(float(v) for v in rotation_val)
+        except (TypeError, ValueError):
+            rotation = None
+
+    if translation is None and rotation is None:
+        return []
+    # Emit ONE Location: build123d applies the Euler rotation about the part
+    # origin FIRST, then the translation — i.e. orient-in-place, then place.
+    # Two separate .moved() calls (translate, then rotate about (0,0,0)) would
+    # orbit an already-translated part around the world origin instead.
+    t = translation if translation is not None else (0.0, 0.0, 0.0)
+    if rotation is not None:
+        return [f"{var_name} = {var_name}.moved(Location({_py(t)}, {_py(rotation)}))"]
+    return [f"{var_name} = {var_name}.moved(Location({_py(t)}))"]
 
 
 def _dims(data: dict[str, Any]) -> list[float] | None:

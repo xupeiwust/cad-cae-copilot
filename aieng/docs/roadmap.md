@@ -221,6 +221,20 @@ Implemented:
   `freeform`) plus `freeform`, `uv_bounds`, `proxy_normal`, and
   Shape-IR-origin metadata when available.
 
+Correctness fixes (2026-05-30):
+
+- Transform compilation: a node carrying both `location` and `rotation` now
+  compiles to a single `Location(translation, rotation)` (orient-in-place, then
+  place). The previous code emitted two `.moved()` calls (translate, then rotate
+  about the world origin), which orbited a placed part around the origin.
+- Post-execution provenance reconciliation: when the workbench executes the
+  generated `source.py`, the projected `topology_map.json` / `feature_graph.json`
+  are replaced with REAL build123d geometry. `objects/object_registry.json` is
+  now rebuilt against those executed entities and
+  `provenance/conversion_manifest.json` is stamped with a `geometry_execution`
+  record — so the package no longer carries projected slug ids that dangle
+  against the real topology, nor a manifest that understates the geometry.
+
 Boundary: the core converter records/generated source and semantic topology;
 CAD-kernel execution happens in the workbench runtime, not inside the converter
 framework itself.

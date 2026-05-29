@@ -2082,6 +2082,147 @@ def _clear_revalidation_status(pkg_path: Path) -> None:
         pass
 
 
+def _build_executed_object_registry(
+    topology_map: dict[str, Any],
+    feature_graph: dict[str, Any],
+) -> dict[str, Any]:
+    """Object registry indexed against REAL executed topology/feature entities.
+
+    The Shape IR converter emits a registry keyed by its projected slug ids
+    (``body_<slug>`` / ``feat_<slug>``). Once the generated source is executed
+    those ids no longer exist (the real extractor uses ``body_001`` / ``feat_*``),
+    so the projected registry dangles. This rebuilds it from the executed
+    artifacts.
+    """
+    fmt = str(topology_map.get("format_version") or "0.1")
+    objects: list[dict[str, Any]] = []
+    relationships: list[dict[str, Any]] = []
+    for entity in topology_map.get("entities", []) or []:
+        eid = entity.get("id")
+        if not eid:
+            continue
+        objects.append({
+            "id": eid,
+            "kind": "topology_entity",
+            "type": str(entity.get("type", "")),
+            "name": str(entity.get("name") or eid),
+            "defined_in": "geometry/topology_map.json",
+            "referenced_by": ["geometry/topology_map.json", "graph/feature_graph.json"],
+            "roles": ["executed_geometry"],
+            "status": "compiled_and_executed",
+        })
+    for feature in feature_graph.get("features", []) or []:
+        fid = feature.get("id")
+        if not fid:
+            continue
+        objects.append({
+            "id": fid,
+            "kind": "feature",
+            "type": str(feature.get("type", "")),
+            "name": str(feature.get("name") or fid),
+            "defined_in": "graph/feature_graph.json",
+            "referenced_by": ["graph/feature_graph.json"],
+            "roles": ["executed_feature"],
+            "status": "compiled_and_executed",
+        })
+        refs = feature.get("geometry_refs") or {}
+        for entity_id in (refs.get("entities") or refs.get("faces") or []):
+            relationships.append({
+                "from": fid,
+                "to": entity_id,
+                "type": "references_topology",
+                "source_file": "graph/feature_graph.json",
+            })
+    return {
+        "format": "aieng.object_registry",
+        "format_version": fmt,
+        "source_files": ["geometry/source.py", "geometry/topology_map.json", "graph/feature_graph.json"],
+        "objects": objects,
+        "relationships": relationships,
+        "notes": [
+            "Rebuilt from executed build123d geometry after Shape IR compilation.",
+            "Supersedes the converter's projected (pre-execution) registry.",
+        ],
+    }
+
+
+def reconcile_shape_ir_provenance(
+    pkg_path: Path,
+    topology_map: dict[str, Any],
+    feature_graph: dict[str, Any],
+    *,
+    executed_at: str | None = None,
+) -> None:
+    """Reconcile a Shape-IR package's provenance after its source was executed.
+
+    Executing the converter-generated ``source.py`` overwrites topology_map.json /
+    feature_graph.json with REAL build123d geometry, but the converter's
+    ``objects/object_registry.json`` and ``provenance/conversion_manifest.json``
+    still describe the PROJECTED (pre-execution) entities — leaving dangling ids
+    and a manifest that claims geometry is projected-only. This:
+
+      1. rebuilds the object registry against the executed entities, and
+      2. stamps the conversion manifest with a ``geometry_execution`` record so
+         the package honestly reflects that real geometry now exists.
+
+    Best-effort and idempotent-ish: skips silently if the package or members are
+    absent, never raises into the caller.
+    """
+    if not pkg_path.exists():
+        return
+    if executed_at is None:
+        from datetime import datetime, timezone
+        executed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    try:
+        registry = _build_executed_object_registry(topology_map, feature_graph)
+        replacements: dict[str, bytes] = {
+            "objects/object_registry.json": (json.dumps(registry, indent=2, sort_keys=True) + "\n").encode(),
+        }
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            names = set(zf.namelist())
+            if "provenance/conversion_manifest.json" in names:
+                try:
+                    manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+                    if isinstance(manifest, dict):
+                        manifest["geometry_execution"] = {
+                            "executed": True,
+                            "backend": "build123d",
+                            "representation": "brep",
+                            "real_geometry": True,
+                            "executed_at_utc": executed_at,
+                            "note": (
+                                "Shape IR source.py was compiled and executed by the workbench "
+                                "runner; topology_map.json and feature_graph.json now describe REAL "
+                                "build123d geometry and supersede the projected (pre-execution) "
+                                "entities. object_registry.json was rebuilt against them."
+                            ),
+                        }
+                        replacements["provenance/conversion_manifest.json"] = (
+                            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+                        ).encode()
+                except Exception:
+                    pass
+        if "objects/object_registry.json" not in names and not registry["objects"]:
+            return
+        tmp = pkg_path.with_suffix(".tmp.aieng")
+        try:
+            with (
+                zipfile.ZipFile(pkg_path, "r") as src,
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+            ):
+                for item in src.infolist():
+                    if item.filename not in replacements:
+                        dst.writestr(item, src.read(item.filename))
+                for name, data in replacements.items():
+                    dst.writestr(name, data)
+            tmp.replace(pkg_path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+    except Exception as exc:  # noqa: BLE001 - provenance reconcile is best-effort
+        print(f"[shape_ir] provenance reconcile failed: {exc}", file=sys.stderr)
+
+
 # ── backend class ─────────────────────────────────────────────────────────────
 
 class Build123dBackend:

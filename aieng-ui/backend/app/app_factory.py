@@ -4039,6 +4039,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     generated_code=source_code,
                     glb_bytes=glb_bytes,
                 )
+                # The projected topology/feature were just replaced with REAL
+                # executed geometry; refresh object_registry + stamp provenance so
+                # they don't dangle against the converter's pre-execution slug ids.
+                _cad_generation.reconcile_shape_ir_provenance(out_path, topo, feature_graph)
                 named_parts = _cad_generation._named_parts_from_feature_graph(feature_graph)
                 shape_ir_execution = {
                     "status": "ok",

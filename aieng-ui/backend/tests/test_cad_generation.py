@@ -1298,3 +1298,50 @@ def test_find_projects_by_part_tool(tmp_path: Path) -> None:
     from app.runtime_tool_schemas import get_schema
     schema = get_schema("aieng.find_projects_by_part")
     assert schema and "query" in schema["properties"]
+
+
+# ── Shape IR: post-execution provenance reconciliation ───────────────────────
+
+def test_reconcile_shape_ir_provenance_refreshes_registry_and_manifest(tmp_path: Path) -> None:
+    """After Shape IR source executes, object_registry is rebuilt against the
+    real executed ids and the conversion manifest is stamped — no dangling
+    projected slug references remain."""
+    from app.cad_generation import reconcile_shape_ir_provenance
+
+    pkg = tmp_path / "m.aieng"
+    projected_registry = {"objects": [{"id": "body_helmet_shell", "kind": "topology_entity"}], "relationships": []}
+    manifest = {
+        "format_version": "0.1",
+        "converter": {"converter_id": "shape_ir_reference"},
+        "coverage_categories": [{"category": "geometry", "status": "inferred"}],
+    }
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("objects/object_registry.json", json.dumps(projected_registry))
+        zf.writestr("provenance/conversion_manifest.json", json.dumps(manifest))
+        zf.writestr("geometry/source.py", "x = 1\n")
+
+    topo = {
+        "format_version": "0.1",
+        "entities": [
+            {"id": "body_001", "type": "solid", "name": "helmet"},
+            {"id": "face_001", "type": "face", "body_id": "body_001"},
+        ],
+    }
+    fg = {"features": [{
+        "id": "feat_body_001", "type": "named_part", "name": "helmet",
+        "geometry_refs": {"entities": ["body_001"], "faces": ["face_001"]},
+    }]}
+
+    reconcile_shape_ir_provenance(pkg, topo, fg, executed_at="2026-01-01T00:00:00Z")
+
+    with zipfile.ZipFile(pkg) as zf:
+        reg = json.loads(zf.read("objects/object_registry.json"))
+        man = json.loads(zf.read("provenance/conversion_manifest.json"))
+
+    ids = {o["id"] for o in reg["objects"]}
+    assert "body_001" in ids and "feat_body_001" in ids
+    assert "body_helmet_shell" not in ids  # projected slug id is gone
+    assert all(o["status"] == "compiled_and_executed" for o in reg["objects"])
+    assert man["geometry_execution"]["executed"] is True
+    assert man["geometry_execution"]["real_geometry"] is True
+    assert man["geometry_execution"]["executed_at_utc"] == "2026-01-01T00:00:00Z"

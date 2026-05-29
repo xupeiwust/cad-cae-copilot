@@ -3935,6 +3935,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         overwrite: bool = bool(inp.get("overwrite", False))
         runtime_mode: str = inp.get("runtimeMode") or inp.get("runtime_mode") or "auto"
         model_id: str | None = inp.get("modelId") or inp.get("model_id")
+        execute_shape_ir: bool = bool(inp.get("executeShapeIr", inp.get("execute_shape_ir", True)))
 
         # Resolve source_path from project.source_step if not provided
         if not source_path_str and project_id:
@@ -4006,6 +4007,62 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 "message": str(exc),
             }
 
+        shape_ir_execution: dict[str, Any] | None = None
+
+        if result.get("source_type") == "shape_ir" and execute_shape_ir:
+            try:
+                import zipfile as _zipfile
+                from . import cad_generation as _cad_generation
+
+                with _zipfile.ZipFile(out_path, "r") as _archive:
+                    names = set(_archive.namelist())
+                    if "geometry/source.py" not in names:
+                        raise RuntimeError("Shape IR package did not contain geometry/source.py")
+                    source_code = _archive.read("geometry/source.py").decode("utf-8")
+
+                step_bytes, stl_bytes, glb_bytes, topo = _cad_generation._execute_build123d_code(
+                    source_code,
+                    timeout=int(inp.get("timeout") or 60),
+                )
+                mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+                feature_graph = _cad_generation._topology_to_feature_graph(
+                    topo,
+                    source_code=source_code,
+                    model_kind=str(inp.get("model_kind") or "organic"),
+                )
+                _cad_generation._write_cad_artifacts(
+                    out_path,
+                    step_bytes=step_bytes,
+                    stl_bytes=stl_bytes,
+                    topology_map=topo,
+                    feature_graph=feature_graph,
+                    generated_code=source_code,
+                    glb_bytes=glb_bytes,
+                )
+                named_parts = _cad_generation._named_parts_from_feature_graph(feature_graph)
+                shape_ir_execution = {
+                    "status": "ok",
+                    "written_artifacts": [
+                        "geometry/generated.step",
+                        "geometry/preview.stl",
+                        "geometry/topology_map.json",
+                        "graph/feature_graph.json",
+                        "geometry/source.py",
+                    ] + (["geometry/preview.glb"] if glb_bytes else []),
+                    "named_parts": named_parts,
+                    "part_count": len(named_parts),
+                    "geometry_report": _cad_generation._compute_geometry_report(topo),
+                    "mesh_meta_available": mesh_meta is not None,
+                }
+            except Exception as exc:  # noqa: BLE001 - return structured tool error, don't throw
+                shape_ir_execution = {
+                    "status": "error",
+                    "code": "shape_ir_execution_failed",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+
+        preview_result: dict[str, Any] | None = None
+
         # Update project aieng_file if project_id is available
         if project_id:
             try:
@@ -4014,6 +4071,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 proj["aieng_file"] = rel_out
                 proj["status"] = "converted"
                 save_project(active_settings, proj)
+                if shape_ir_execution and shape_ir_execution.get("status") == "ok":
+                    preview_result = convert_asset(active_settings, project_id)
             except Exception:
                 pass  # Don't fail the tool if project update fails
 
@@ -4024,6 +4083,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "out_path": result.get("out_path"),
             "source_type": result.get("source_type"),
             "converter_id": result.get("converter_id"),
+            "shape_ir_execution": shape_ir_execution,
+            "preview": preview_result,
         }
 
     def _tool_aieng_write_completeness_report(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
@@ -4568,8 +4629,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         "aieng.convert",
         _tool_aieng_convert,
         description=(
-            "Convert a CAD source file (.step/.stp) to a .aieng package. "
-            "Imports STEP evidence and automatically updates project aieng_file on success."
+            "Convert a CAD/Shape source file (.step/.stp/.FCStd/.shape.json/.shape_ir.json) "
+            "to a .aieng package. Shape IR sources also generate build123d source.py and, "
+            "by default, execute it to publish STEP/STL/GLB viewer artifacts. "
+            "Automatically updates project aieng_file on success."
         ),
         input_schema=_schema("aieng.convert"),
     )

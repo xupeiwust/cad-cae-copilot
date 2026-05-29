@@ -274,6 +274,24 @@ def test_execute_build123d_code_failure() -> None:
             _execute_build123d_code("Box(10, 10, 10)  # missing result =")
 
 
+def test_execute_build123d_freeform_faces_get_rich_surface_metadata() -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import _execute_build123d_code
+
+    code = """
+body = lofted_stack([(0, 20, 10), (15, 26, 14), (30, 12, 8)], label="shell")
+result = body
+"""
+    _step, _stl, _glb, topo = _execute_build123d_code(code, timeout=60)
+    freeform_faces = [
+        entity for entity in topo.get("entities", [])
+        if entity.get("type") == "face" and entity.get("freeform") is True
+    ]
+    assert freeform_faces
+    assert any(face.get("surface_type") in {"bspline", "bezier", "freeform"} for face in freeform_faces)
+    assert any("uv_bounds" in face or "proxy_normal" in face for face in freeform_faces)
+
+
 # ── thumbnail rendering ───────────────────────────────────────────────────────
 
 def test_render_mesh_thumbnail_returns_png_base64() -> None:

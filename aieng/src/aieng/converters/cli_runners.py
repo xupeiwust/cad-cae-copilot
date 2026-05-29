@@ -64,6 +64,9 @@ def _infer_converter_id(source_path: Path) -> str:
     suffix = source_path.suffix.lower()
     if suffix in {".fcstd"}:
         return "freecad_reference"
+    name = source_path.name.lower()
+    if name.endswith((".shape.json", ".shape_ir.json")):
+        return "shape_ir_reference"
     raise ValueError(
         f"could not infer converter from source file extension {suffix!r}; "
         f"pass --converter explicitly. Available: {available_converters()}"

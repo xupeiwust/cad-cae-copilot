@@ -20,6 +20,7 @@ Web workbench and FastAPI service for the `.aieng` engineering platform.
 - **React SPA** — STEP upload, Three.js viewer (GLB/STL), semantic summary panel, honest CAE lifecycle panel (setup / simulation runs / results) with one-click refresh and external metrics import, CAE Review Report Assistant, Closed-loop Copilot Stepper, artifact inspector (read-only JSON/text evidence review), chat/orchestration panel, audit log, settings drawer, stress-heatmap visualization
 - **Local orchestration runtime** — `RunRecord`, `ToolCall`, `ToolResult`, `RuntimeEvent` types; intent-based plan builder; synchronous executor with approval gate
 - **CAD provider registry** — pluggable `CadProvider` interface; build123d/OCP is the default provider, with FreeCAD kept as an optional external adapter
+- **Shape IR conversion** — `.shape.json` / `.shape_ir.json` sources convert into `.aieng`, compile to build123d `source.py`, and publish STEP/STL/GLB viewer artifacts through the existing workbench runner
 - **B-Rep graph engine** — symbolic face/edge/group pointer index (`@face:`, `@edge:`, `@group:`) derived from topology maps; deterministic, CAD-neutral, read-only
 - **Engineering action planner** — typed intent classification for chat-first CAD/CAE workflows (generate, refine, preprocess, simulate, change-material, refine-mesh, set-target)
 - **Simulation runner** — external mesh handoff / solver input generation → CalculiX solve → FRD parse → atomic write-back, with SSE streaming progress and post-processing verdict vs. design targets
@@ -60,6 +61,7 @@ conflated. Key tools listed below; full registry available via `GET /api/runtime
 | `aieng.delete_project` | Working — permanently delete a project (directory + chat sessions/messages). Approval-gated. |
 | `aieng.refresh_semantics` | Working |
 | `aieng.generate_preview` | Working |
+| `aieng.convert` | Working — imports STEP/STP/FCStd/Shape IR; Shape IR can execute generated build123d `source.py` and publish GLB |
 | `aieng.read_audit_log` | Working |
 | `cad.execute_build123d` | Working — caller-supplied build123d Python code → STEP/STL/GLB. Returns a 2×2 multi-view contact sheet thumbnail (front/side/top/iso) with per-part colors honoured, plus a deterministic `geometry_report` (overall proportions, per-part size ratios, left/right symmetry residuals, floating-part gaps) for numeric self-review. Approval-gated. |
 | `cad.get_source` | Working — read accumulated build123d source + named_parts + has_base for incremental editing |

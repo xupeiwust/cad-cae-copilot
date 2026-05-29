@@ -197,6 +197,36 @@ Companion read-only tool **`cad.get_source`** returns the accumulated source and
 `{named_parts, has_base}` — call it before an incremental edit to decide replace vs
 append and see which named parts already exist.
 
+## Shape IR conversion path
+
+`aieng.convert` accepts `.shape.json` / `.shape_ir.json` files in addition to
+STEP/STP and FCStd. The core `shape_ir_reference` converter records the source
+IR, projects semantic topology/features, and writes generated build123d
+`geometry/source.py` without executing a CAD kernel. In the workbench runtime,
+`aieng.convert` then executes that generated source by default and writes:
+
+- `geometry/generated.step`
+- `geometry/preview.stl`
+- `geometry/preview.glb` when GLB export succeeds
+- refreshed `geometry/topology_map.json`
+- refreshed `graph/feature_graph.json`
+
+Set `executeShapeIr: false` to keep the conversion evidence-only. Shape IR node
+`type` / `kind` / `operation` values compile to the existing helper targets:
+`lofted_stack`, `rounded_box`, `capsule`, `swept_tube`, `revolved_profile`,
+`organic_blend`, plus primitive fallbacks (`box`, `cylinder`, `sphere`,
+`tapered_cylinder`/`cone`). Example:
+
+```json
+{
+  "parts": [
+    {"id": "torso", "type": "lofted_stack", "sections": [[0,120,80],[200,150,90],[392,60]]},
+    {"id": "head", "type": "sphere", "radius": 45, "location": [0,0,440]},
+    {"id": "body", "type": "organic_blend", "children": ["torso", "head"], "radius": 12}
+  ]
+}
+```
+
 ### Quantitative geometry report (numeric self-review)
 
 Every `cad.execute_build123d` and `cad.edit_parameter` response carries a

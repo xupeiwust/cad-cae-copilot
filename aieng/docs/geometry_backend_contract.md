@@ -165,7 +165,7 @@ The validator (`aieng validate`) enforces type-specific required fields:
 |----------------|--------------------------|
 | `plane` | `normal` — 3-element numeric array `[nx, ny, nz]` |
 | `cylinder` | `radius` — positive number; `axis` — 3-element numeric array |
-| other | No additional requirements beyond `surface_type` being present |
+| `bspline`, `bezier`, `sphere`, `cone`, `torus`, `surface_of_revolution`, `surface_of_extrusion`, `freeform`, other | No additional requirements beyond `surface_type` being present. Backends should add `freeform: true`, `uv_bounds`, and `proxy_normal` when the face is not a simple analytic plane/cylinder and those values are available. |
 
 ### Adjacency
 
@@ -176,6 +176,9 @@ Backends should populate `adjacent_entity_ids` where topology adjacency is known
 For **faces**:
 - `id`, `type`, `surface_type`, `area`, `bounding_box`
 - `normal` for planes, `radius` and `axis` for cylinders
+- for free-form or non-planar/non-cylinder faces: `freeform: true`, optional
+  `proxy_normal`, `uv_bounds`, `curvature_sample`, and `source_ir_node` when
+  the face originated from Shape IR
 - `body_id` referencing the containing solid
 - `adjacent_entity_ids` listing adjacent face and edge IDs
 - `edge_ids` listing bounding edge IDs
@@ -240,7 +243,7 @@ The `OCCGeometryBackend` has been implemented as an experimental spike in Phase 
 - Accepts `normalized_step_bytes: bytes`, writes to a temp file, reads with `OCP.STEPControl.STEPControl_Reader`.
 - Traverses solids, faces, and edges using `OCP.TopExp.TopExp_Explorer`.
 - For each solid: emits `id`, `type`, `bounding_box` (if computable).
-- For each face: emits `id`, `type`, `body_id`, `bounding_box`, `area` (via `BRepGProp`), `surface_type` (`plane`/`cylinder`/`other` via `GeomAdaptor_Surface`), `normal` for planes, `radius` and `axis` for cylinders.
+- For each face: emits `id`, `type`, `body_id`, `bounding_box`, `area` (via `BRepGProp`), `surface_type` (`plane`, `cylinder`, or the best available free-form/analytic class such as `bspline`, `bezier`, `sphere`, `cone`, `torus`, `surface_of_revolution`, `surface_of_extrusion`, `freeform`), `normal` for planes, `radius` and `axis` for cylinders, and `freeform`/`uv_bounds` for non-plane/non-cylinder surfaces when available.
 - For each edge: emits `id`, `type`, `bounding_box`.
 - Sets metadata: `extraction_backend: "occ"`, `runtime_provider: "OCP"`, `extraction_mode: "parsed_from_step"`, `real_step_parsing: true`, `phase: "7B.2"`, `limitations: [...]`.
 - Requires `pip install cadquery`. Not included in core install. pythonocc-core is detected but raises `NotImplementedError` (use OCP/CadQuery instead).
@@ -265,7 +268,7 @@ The `OCCGeometryBackend` has been implemented as an experimental spike in Phase 
 
 - **Deterministic traversal IDs only.** IDs (`body_001`, `face_001`, ...) are assigned in `TopExp_Explorer` traversal order. They are stable for the same file and backend version but are not derived from CAD kernel persistent naming and will change if geometry is modified.
 - **No persistent naming.** IDs are not linked to STEP product names or B-rep persistent IDs.
-- **Partial surface and edge attributes.** Properties are omitted rather than invented when the OCP API call fails. Not all surface types beyond plane, cylinder, and "other" are classified.
+- **Partial surface and edge attributes.** Properties are omitted rather than invented when the OCP API call fails. Surface types beyond plane/cylinder are best-effort classified; if the kernel type is not recognized, the backend emits `surface_type: "freeform"` with `freeform: true`.
 - **No adjacency data.** `adjacent_entity_ids` and `edge_ids` are not populated in Phase 7B.2.
 - **Feature recognition is separate.** The backend emits topology IDs only. Feature classification (holes, base plate, ribs) remains in `aieng recognize-features`.
 - **Geometry validity is not certified.** The backend reads STEP and traverses topology. It does not check watertightness, self-intersections, degenerate faces, or manufacturing feasibility.

@@ -101,7 +101,7 @@ with zipfile.ZipFile("build/ocp_topology_demo.aieng") as zf:
 | `metadata.phase` | `"7B.2"` |
 | `entities` | List of `solid`, `face`, and `edge` entities from the real STEP file |
 
-Face entities include `surface_type` (`"plane"`, `"cylinder"`, or `"other"`), `area`, `bounding_box`, and `normal`/`radius`/`axis` where applicable.
+Face entities include `surface_type` (`"plane"`, `"cylinder"`, or the best available free-form/analytic class such as `"bspline"`, `"bezier"`, `"sphere"`, `"cone"`, `"torus"`, `"surface_of_revolution"`, `"surface_of_extrusion"`, or `"freeform"`), `area`, `bounding_box`, and `normal`/`radius`/`axis` where applicable. Non-plane/non-cylinder faces are marked with `freeform: true` and may include `uv_bounds`.
 
 ### validation/status.yaml
 
@@ -145,7 +145,7 @@ Face entities include `surface_type` (`"plane"`, `"cylinder"`, or `"other"`), `a
 | Experimental only | Not production-certified; use the mock backend for stable pipelines |
 | No persistent naming | IDs (`body_001`, `face_001`, ...) are assigned by traversal order; they change when geometry is modified |
 | Deterministic traversal IDs only | Stable for the same file and backend version; not linked to STEP product names or B-rep persistent IDs |
-| Partial geometry attributes | Some surface types beyond plane and cylinder are classified as `"other"`; `adjacent_entity_ids` and `edge_ids` are not populated |
+| Partial geometry attributes | Surface types beyond plane and cylinder are best-effort classified; unknown non-simple surfaces become `"freeform"` with `freeform: true`; `adjacent_entity_ids` and `edge_ids` are not populated |
 | No geometry validity certification | Watertightness, self-intersections, degenerate faces, and manufacturing feasibility are not checked |
 | Feature recognition is separate | The OCP backend emits topology IDs only; feature classification runs separately via `aieng recognize-features` (still rule-based and candidate-only) |
 | No mesh or solver run | This demo extracts topology only; meshing and solving are not implemented in any phase |

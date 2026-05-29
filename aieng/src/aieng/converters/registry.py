@@ -38,8 +38,16 @@ def _bootstrap() -> None:
     except Exception:  # pragma: no cover - defensive
         FreeCADConverter = None  # type: ignore[assignment]
 
+    try:
+        from .shape_ir import ShapeIRConverter
+    except Exception:  # pragma: no cover - defensive
+        ShapeIRConverter = None  # type: ignore[assignment]
+
     if FreeCADConverter is not None and "freecad_reference" not in _REGISTRY:
         register_converter("freecad_reference", FreeCADConverter)
+
+    if ShapeIRConverter is not None and "shape_ir_reference" not in _REGISTRY:
+        register_converter("shape_ir_reference", ShapeIRConverter)
 
 
 _bootstrap()

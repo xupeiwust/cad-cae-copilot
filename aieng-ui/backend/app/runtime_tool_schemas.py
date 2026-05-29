@@ -116,7 +116,11 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "project_id": {"type": "string"},
             "sourcePath": {
                 "type": "string",
-                "description": "Absolute path to a .step / .stp source file to import.",
+                "description": "Absolute path to a .step / .stp / .FCStd / .shape.json / .shape_ir.json source file to import.",
+            },
+            "executeShapeIr": {
+                "type": "boolean",
+                "description": "For Shape IR sources, execute the generated build123d source and publish a viewer preview (default true).",
             },
         },
         "additionalProperties": True,

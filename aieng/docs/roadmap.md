@@ -197,6 +197,34 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 21: Shape IR converter + topology-first CAD compilation — COMPLETE (2026-05-30)
+
+Goal: support complex/organic models that are awkward to author directly as
+CadQuery/build123d code by introducing a structured Shape IR source format.
+
+Implemented:
+
+- `src/aieng/converters/shape_ir.py` — `shape_ir_reference` converter for
+  `.shape.json` / `.shape_ir.json` sources.
+- Converter writes `geometry/shape_ir.json`, generated build123d
+  `geometry/source.py`, projected `geometry/topology_map.json`,
+  `graph/feature_graph.json`, `objects/object_registry.json`, README, and
+  standard converter provenance/capability manifests.
+- Shape IR compiler maps node `type` / `kind` / `operation` values to build123d
+  helper targets: `lofted_stack`, `rounded_box`, `capsule`, `swept_tube`,
+  `revolved_profile`, `organic_blend`, plus primitive fallbacks.
+- Workbench `aieng.convert` executes generated Shape IR `source.py` by default,
+  writes `geometry/generated.step`, `geometry/preview.stl`, and
+  `geometry/preview.glb`, then publishes the embedded preview to the viewer.
+- Free-form topology now preserves richer `surface_type` values (`bspline`,
+  `bezier`, `sphere`, `cone`, `torus`, surfaces of revolution/extrusion, or
+  `freeform`) plus `freeform`, `uv_bounds`, `proxy_normal`, and
+  Shape-IR-origin metadata when available.
+
+Boundary: the core converter records/generated source and semantic topology;
+CAD-kernel execution happens in the workbench runtime, not inside the converter
+framework itself.
+
 ---
 
 ## Phase 19: Recognition, writeback, and allowed-operation quality — COMPLETE (issues #45–#48)

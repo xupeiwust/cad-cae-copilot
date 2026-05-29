@@ -253,6 +253,7 @@ def _face_entity(face, fid, body_id):
     }
     adaptor = BRepAdaptor_Surface(face.wrapped)
     surf_type = adaptor.GetType()
+    surf_name = str(surf_type).lower()
     if surf_type == GeomAbs_Plane:
         data["surface_type"] = "plane"
         try:
@@ -270,11 +271,36 @@ def _face_entity(face, fid, body_id):
         # only had a plane/cylinder path and fell back to a broken axis-aligned
         # heuristic when neither was present. The proxy is the surface normal at
         # the UV midpoint; `freeform: true` flags that it is an approximation.
-        data["surface_type"] = "other"
+        if "bspline" in surf_name:
+            data["surface_type"] = "bspline"
+        elif "bezier" in surf_name:
+            data["surface_type"] = "bezier"
+        elif "sphere" in surf_name:
+            data["surface_type"] = "sphere"
+        elif "cone" in surf_name:
+            data["surface_type"] = "cone"
+        elif "torus" in surf_name:
+            data["surface_type"] = "torus"
+        elif "revolution" in surf_name:
+            data["surface_type"] = "surface_of_revolution"
+        elif "extrusion" in surf_name:
+            data["surface_type"] = "surface_of_extrusion"
+        else:
+            data["surface_type"] = "freeform"
         data["freeform"] = True
+        try:
+            data["uv_bounds"] = [
+                round(float(adaptor.FirstUParameter()), 6),
+                round(float(adaptor.LastUParameter()), 6),
+                round(float(adaptor.FirstVParameter()), 6),
+                round(float(adaptor.LastVParameter()), 6),
+            ]
+        except Exception:
+            pass
         try:
             n = face.normal_at(0.5, 0.5)
             data["normal"] = [round(n.X, 6), round(n.Y, 6), round(n.Z, 6)]
+            data["proxy_normal"] = data["normal"]
         except Exception:
             pass
         try:

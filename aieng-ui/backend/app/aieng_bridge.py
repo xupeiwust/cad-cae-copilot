@@ -1056,14 +1056,14 @@ def convert_source_to_package(
     overwrite: bool = False,
     runtime_mode: str = "auto",
 ) -> dict[str, Any]:
-    """Convert a CAD source file (.FCStd or .step) to a .aieng package.
+    """Convert a CAD/Shape source file (.FCStd, .step, or .shape_ir.json) to a .aieng package.
 
     Imports ``aieng.converters.cli_runners.convert_source`` and
     ``aieng.geometry.step_importer.import_step_package`` from
     ``aieng_root/src``. Raises RuntimeError if the import or conversion fails.
 
     Args:
-        source_path: Path to the source CAD file (.FCStd or .step/.stp).
+        source_path: Path to the source CAD/shape file (.FCStd, .step/.stp, .shape.json/.shape_ir.json).
         out_path: Path for the output .aieng package.
         aieng_root: Root of the aieng repo checkout.
         model_id: Optional model ID; inferred from out_path stem if omitted.
@@ -1099,6 +1099,7 @@ def convert_source_to_package(
             model_id = model_id_from_package_path(out)
 
         suffix = src.suffix.lower()
+        name = src.name.lower()
         if suffix in {".fcstd"}:
             from aieng.converters.cli_runners import convert_source  # type: ignore[import]
 
@@ -1116,6 +1117,23 @@ def convert_source_to_package(
                 "converter_id": converter_id or "fcstd_reference",
                 "source_type": "fcstd",
             }
+        elif name.endswith((".shape.json", ".shape_ir.json")):
+            from aieng.converters.cli_runners import convert_source  # type: ignore[import]
+
+            result_path = convert_source(
+                source_path=src,
+                out=out,
+                model_id=model_id,
+                converter_id=converter_id or "shape_ir_reference",
+                overwrite=overwrite,
+                runtime_mode=runtime_mode,
+            )
+            return {
+                "status": "ok",
+                "out_path": str(result_path),
+                "converter_id": converter_id or "shape_ir_reference",
+                "source_type": "shape_ir",
+            }
         elif suffix in {".step", ".stp"}:
             from aieng.geometry.step_importer import import_step_package  # type: ignore[import]
 
@@ -1129,7 +1147,7 @@ def convert_source_to_package(
         else:
             raise ValueError(
                 f"Unsupported source file extension: {suffix!r}. "
-                f"Supported: .FCStd, .step, .stp"
+                f"Supported: .FCStd, .step, .stp, .shape.json, .shape_ir.json"
             )
     except (FileNotFoundError, ValueError):
         raise

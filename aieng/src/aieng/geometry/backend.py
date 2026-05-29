@@ -488,7 +488,33 @@ def _build_entities_ocp(shape: Any) -> list[dict[str, Any]]:
                     except Exception:
                         pass
                 else:
-                    entity["surface_type"] = "other"
+                    surf_name = str(surf_type).lower()
+                    if "bspline" in surf_name:
+                        entity["surface_type"] = "bspline"
+                    elif "bezier" in surf_name:
+                        entity["surface_type"] = "bezier"
+                    elif "sphere" in surf_name:
+                        entity["surface_type"] = "sphere"
+                    elif "cone" in surf_name:
+                        entity["surface_type"] = "cone"
+                    elif "torus" in surf_name:
+                        entity["surface_type"] = "torus"
+                    elif "revolution" in surf_name:
+                        entity["surface_type"] = "surface_of_revolution"
+                    elif "extrusion" in surf_name:
+                        entity["surface_type"] = "surface_of_extrusion"
+                    else:
+                        entity["surface_type"] = "freeform"
+                    entity["freeform"] = True
+                    try:
+                        entity["uv_bounds"] = [
+                            float(adaptor.FirstUParameter()),
+                            float(adaptor.LastUParameter()),
+                            float(adaptor.FirstVParameter()),
+                            float(adaptor.LastVParameter()),
+                        ]
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -570,4 +596,3 @@ def get_backend(name: str) -> MockGeometryBackend | OCCGeometryBackend:
         supported = ", ".join(sorted(SUPPORTED_BACKENDS))
         raise ValueError(f"Unknown geometry backend {name!r}. Supported backends: {supported}")
     return backend_cls()
-

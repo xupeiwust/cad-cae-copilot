@@ -3040,6 +3040,97 @@ def test_convert_asset_publishes_embedded_package_preview_without_provider(tmp_p
     assert saved["status"] == "viewer_ready_stl"
 
 
+def test_aieng_convert_shape_ir_executes_and_publishes_glb(monkeypatch, tmp_path: Path) -> None:
+    """aieng.convert can import Shape IR, execute generated source.py, and publish GLB."""
+    from app.main import create_app, default_project, get_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("shape-ir"))
+    project_id = project["id"]
+    source_path = project_dir(settings, project_id) / "source" / "organic.shape_ir.json"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(json.dumps({
+        "format_version": "0.1.0",
+        "model_id": "organic",
+        "parts": [
+            {
+                "id": "body",
+                "kind": "rounded_box",
+                "dimensions": [20, 12, 8],
+                "radius": 2,
+                "parameters": {"radius": 2},
+            }
+        ],
+    }), encoding="utf-8")
+
+    fake_topology = {
+        "format_version": "0.1",
+        "entities": [
+            {"id": "body_001", "type": "solid", "name": "body", "bounding_box": [0, 0, 0, 20, 12, 8]},
+            {
+                "id": "face_001",
+                "type": "face",
+                "body_id": "body_001",
+                "surface_type": "plane",
+                "bounding_box": [0, 0, 8, 20, 12, 8],
+                "area": 240,
+                "normal": [0, 0, 1],
+            },
+        ],
+    }
+
+    original_build = _rt.build_plan
+    _rt.build_plan = lambda msg, pid: [
+        {
+            "name": "aieng.convert",
+            "description": "convert shape ir",
+            "input": {
+                "project_id": pid,
+                "sourcePath": str(source_path),
+                "overwrite": True,
+            },
+        }
+    ]
+    try:
+        monkeypatch.setattr(
+            "app.cad_generation._execute_build123d_code",
+            lambda *_args, **_kwargs: (b"ISO-10303-21;", b"solid\nendsolid\n", b"glTF\x02\x00\x00\x00", fake_topology),
+        )
+        resp = client.post("/api/runtime/runs", json={
+            "message": "convert shape ir",
+            "project_id": project_id,
+        })
+    finally:
+        _rt.build_plan = original_build
+
+    assert resp.status_code == 200
+    run = resp.json()
+    assert run["status"] == "completed"
+    output = run["tool_results"][0]["output"]
+    assert output["ok"] is True
+    assert output["source_type"] == "shape_ir"
+    assert output["shape_ir_execution"]["status"] == "ok"
+    assert output["preview"]["asset_format"] == "glb"
+
+    saved = get_project(settings, project_id)
+    assert saved["status"] == "viewer_ready_glb"
+    assert saved["web_asset"] == "viewer/model.glb"
+    viewer_file = project_dir(settings, project_id) / "viewer" / "model.glb"
+    assert viewer_file.read_bytes().startswith(b"glTF")
+
+    package_path = project_dir(settings, project_id) / saved["aieng_file"]
+    with zipfile.ZipFile(package_path) as archive:
+        names = set(archive.namelist())
+        assert "geometry/shape_ir.json" in names
+        assert "geometry/source.py" in names
+        assert "geometry/generated.step" in names
+        assert "geometry/preview.glb" in names
+
+
 def test_runtime_snapshot_probe_uses_frontend_compatible_fields(tmp_path: Path) -> None:
     from app.main import runtime_config_snapshot
 

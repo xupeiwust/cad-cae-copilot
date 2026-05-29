@@ -263,6 +263,7 @@ and the per-run reports under
 - [`docs/core_position.md`](docs/core_position.md) — Core positioning and product boundary
 - [`docs/cad_cae_conversion_contract.md`](docs/cad_cae_conversion_contract.md) — CAD/CAE converter contract
 - [`docs/geometry_backend_contract.md`](docs/geometry_backend_contract.md) — Geometry backend interface
+- `src/aieng/converters/shape_ir.py` — Shape IR converter for topology-first/organic modeling sources (`.shape.json` / `.shape_ir.json`); the workbench runtime can execute its generated build123d `geometry/source.py` into STEP/STL/GLB.
 - [`docs/agi_handoff_walkthrough.md`](docs/agi_handoff_walkthrough.md) — End-to-end AGI handoff example
 - [`docs/development_log.md`](docs/development_log.md) — Phase-by-phase development history
 - [`docs/design_targets.md`](docs/design_targets.md) — Design target resource contract (`task/design_targets.yaml`)

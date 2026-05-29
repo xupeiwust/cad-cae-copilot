@@ -508,12 +508,15 @@ Example: if `aieng.agent_context` reports `@face:f_top_001` as a flat surface
 suitable for a fixed support, pass `"faceId": "f_top_001"` in your CAE setup call.
 
 **Free-form faces and CAE.** Faces produced by the high-level helpers
-(loft/sweep/sphere/spline) are `surface_type: "other"` and carry `freeform: true`
-plus a *proxy* normal sampled at the face midpoint — enough to pick them and bind
-an approximate CAE boundary condition, but the node-mapping is a tangent-plane
-band, not the exact curved surface. For accurate fixtures/loads prefer **planar
-faces** (a `rounded_box` keeps its flat faces as true planes with exact normals).
-This is also good engineering practice — fixture and load on flat interfaces.
+(loft/sweep/sphere/spline) now keep the best available surface class
+(`bspline`, `bezier`, `sphere`, `cone`, `torus`, `surface_of_revolution`,
+`surface_of_extrusion`, or `freeform`) and carry `freeform: true`, `uv_bounds`
+when available, and a *proxy* normal sampled at the face midpoint. That is
+enough to pick them and bind an approximate CAE boundary condition, but the
+node-mapping is a tangent-plane band, not the exact curved surface. For accurate
+fixtures/loads prefer **planar faces** (a `rounded_box` keeps its flat faces as
+true planes with exact normals). This is also good engineering practice —
+fixture and load on flat interfaces.
 
 ---
 
@@ -582,7 +585,7 @@ is possible).
 
 | Tool | Purpose |
 |------|---------|
-| `aieng.convert` | Import a STEP file into a new `.aieng` package |
+| `aieng.convert` | Import STEP/FCStd/Shape IR into a `.aieng` package; Shape IR can compile+publish GLB |
 | `aieng.generate_preview` | Regenerate GLB/STL web preview from current STEP |
 | `aieng.refresh_semantics` | Re-validate and re-extract semantic labels |
 | `aieng.update_validation_status` | Write per-category validation flags |

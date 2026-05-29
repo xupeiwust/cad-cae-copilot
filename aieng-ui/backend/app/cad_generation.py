@@ -1130,6 +1130,121 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
     return report
 
 
+# ── geometry regression diff ────────────────────────────────────────────────
+# A parametric edit (or any rebuild) is supposed to change ONE thing. This
+# compares the before/after topology by named part and reports what actually
+# moved — so a typo or an over-broad constant that silently warps unrelated
+# parts is caught instead of shipping. Inspired by earthtojake/text-to-cad's
+# `inspect diff`, adapted to our named-part topology.
+
+def _solids_by_name(topology_map: dict[str, Any]) -> dict[str, list[float]]:
+    """Map each named solid to its bounding box. Unnamed solids fall back to id
+    so they still participate in the diff."""
+    out: dict[str, list[float]] = {}
+    for e in (topology_map or {}).get("entities", []):
+        if e.get("type") != "solid":
+            continue
+        bb = e.get("bounding_box")
+        if not isinstance(bb, list) or len(bb) != 6:
+            continue
+        key = e.get("name") or e.get("id")
+        if key:
+            out[str(key)] = bb
+    return out
+
+
+def _diff_topology(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    expected_parts: set[str] | None = None,
+    eps_mm: float = 0.05,
+) -> dict[str, Any]:
+    """Diff two topology maps by named part.
+
+    Reports, per named part: bbox size delta (per axis), center shift, and
+    whether it changed beyond ``eps_mm``. Parts present only before/after are
+    listed as removed/added.
+
+    ``expected_parts`` is the set of part names the caller intended to affect
+    (e.g. the edited feature's part, or all parts for a global constant). Any
+    changed part NOT in that set is flagged as `collateral` — a likely
+    regression. When ``expected_parts`` is None, no collateral judgment is made.
+    """
+    a = _solids_by_name(before)
+    b = _solids_by_name(after)
+
+    def _r(x: float) -> float:
+        return round(float(x), 2)
+
+    added = sorted(set(b) - set(a))
+    removed = sorted(set(a) - set(b))
+
+    changed: list[dict[str, Any]] = []
+    unchanged: list[str] = []
+    for name in sorted(set(a) & set(b)):
+        ba, bb = a[name], b[name]
+        _ca, sa, _ma = _bbox_metrics(ba)
+        _cb, sb, _mb = _bbox_metrics(bb)
+        size_delta = (sb[0] - sa[0], sb[1] - sa[1], sb[2] - sa[2])
+        center_shift = (
+            (bb[0] + bb[3]) / 2 - (ba[0] + ba[3]) / 2,
+            (bb[1] + bb[4]) / 2 - (ba[1] + ba[4]) / 2,
+            (bb[2] + bb[5]) / 2 - (ba[2] + ba[5]) / 2,
+        )
+        max_change = max(abs(v) for v in (*size_delta, *center_shift))
+        if max_change <= eps_mm:
+            unchanged.append(name)
+            continue
+        rec: dict[str, Any] = {
+            "part": name,
+            "size_delta_mm": {"x": _r(size_delta[0]), "y": _r(size_delta[1]), "z": _r(size_delta[2])},
+            "center_shift_mm": {"x": _r(center_shift[0]), "y": _r(center_shift[1]), "z": _r(center_shift[2])},
+            "max_change_mm": _r(max_change),
+        }
+        if expected_parts is not None:
+            rec["expected"] = name in expected_parts
+        changed.append(rec)
+
+    collateral = (
+        [c["part"] for c in changed if c.get("expected") is False]
+        if expected_parts is not None else []
+    )
+
+    summary: dict[str, Any]
+    if not changed and not added and not removed:
+        verdict = "identical"
+        headline = "No geometry changed (parameter had no effect — wrong constant or no-op value?)."
+    elif collateral:
+        verdict = "collateral_change"
+        headline = (
+            f"WARNING: {len(collateral)} unrelated part(s) also changed: "
+            f"{', '.join(collateral)}. The edit likely affected geometry it "
+            "shouldn't have — verify the constant isn't shared across parts."
+        )
+    elif added or removed:
+        verdict = "topology_changed"
+        headline = (
+            f"Part set changed (added: {added or '—'}, removed: {removed or '—'}). "
+            "A dimensional edit normally preserves the part set; review if unexpected."
+        )
+    else:
+        verdict = "clean"
+        headline = (
+            f"{len(changed)} part(s) changed as expected; "
+            f"{len(unchanged)} unchanged."
+        )
+
+    return {
+        "verdict": verdict,
+        "headline": headline,
+        "changed": changed,
+        "added": added,
+        "removed": removed,
+        "unchanged_count": len(unchanged),
+        "collateral_parts": collateral,
+    }
+
+
 # ── parametric editing: extract editable parameters from source.py ─────────────
 
 _PARAM_CONSTANT_RE = re.compile(r"^([ \t]*)([A-Z][A-Z0-9_]*)[ \t]*=[ \t]*([0-9]+\.?[0-9]*)([ \t]*(?:#.*)?)$")
@@ -1243,67 +1358,94 @@ def _enrich_feature_graph_with_source_params(
 
     features = feature_graph.get("features", [])
 
-    # 2. Attach matched constants to each feature.
-    for feature in features:
-        fname = feature.get("name", "")
-        if not fname:
-            continue
+    def _param_entry(cval: float, cname: str) -> dict[str, Any]:
+        return {
+            "current_value": cval,
+            "cad_parameter_name": cname,
+            "type": "number",
+            "min_value": max(0.01, cval * 0.05),
+            "max_value": max(cval * 5.0, 1000.0),
+        }
 
-        matched: dict[str, Any] = {}
-        for cname, cval in constants.items():
-            if not _match_constant_to_feature(cname, fname):
-                continue
-            pname = _infer_param_name(cname)
-            if pname in matched:
-                # Ambiguous: skip if we already have a param with the same inferred name.
-                continue
-            matched[pname] = {
-                "current_value": cval,
-                "cad_parameter_name": cname,
-                "type": "number",
-                "min_value": max(0.01, cval * 0.05),
-                "max_value": max(cval * 5.0, 1000.0),
-            }
+    def _attach(feature: dict[str, Any], params: dict[str, Any]) -> None:
+        existing = feature.get("parameters") or {}
+        if isinstance(existing, dict):
+            # Source-derived params win over topology-derived heuristics because
+            # they are the ground truth the user can actually edit.
+            existing.update(params)
+            feature["parameters"] = existing
+        elif isinstance(existing, list):
+            for k, v in params.items():
+                existing.append({"name": k, **v})
 
-        if matched:
-            existing = feature.get("parameters") or {}
-            if isinstance(existing, dict):
-                # Merge: source-derived params win over topology-derived heuristics
-                # because they are the ground truth the user can actually edit.
-                existing.update(matched)
-                feature["parameters"] = existing
-            elif isinstance(existing, list):
-                # Append as dict items
-                for k, v in matched.items():
-                    existing.append({"name": k, **v})
-
-    # 3. Also surface any truly global constants as a synthetic "global_params"
-    #    feature so agents can edit shared dims (wall thickness, default fillet).
+    # Global / shared constants get their own feature regardless of part matching.
     global_consts = {
         k: v
         for k, v in constants.items()
         if k.split("_")[0].lower() in ("global", "default", "fillet", "chamfer", "wall")
     }
-    if global_consts:
-        # Check if a global_params feature already exists
-        has_global = any(f.get("type") == "global_params" for f in features)
-        if not has_global:
-            gparams: dict[str, Any] = {}
-            for k, v in global_consts.items():
-                pname = _infer_param_name(k)
-                gparams[pname] = {
-                    "current_value": v,
-                    "cad_parameter_name": k,
-                    "type": "number",
-                    "min_value": max(0.01, v * 0.05),
-                    "max_value": max(v * 5.0, 1000.0),
-                }
+
+    attached: set[str] = set(global_consts)
+
+    # 2. Attach matched constants to the feature whose name they relate to.
+    for feature in features:
+        fname = feature.get("name", "")
+        if not fname:
+            continue
+        matched: dict[str, Any] = {}
+        for cname, cval in constants.items():
+            if cname in global_consts or not _match_constant_to_feature(cname, fname):
+                continue
+            pname = _infer_param_name(cname)
+            if pname in matched:
+                # Same inferred name from two constants — key the 2nd by its
+                # constant name so both stay addressable instead of dropping one.
+                pname = cname.lower()
+            matched[pname] = _param_entry(cval, cname)
+            attached.add(cname)
+        if matched:
+            _attach(feature, matched)
+
+    # 3. Surface global constants as a synthetic "global_params" feature so
+    #    agents can edit shared dims (wall thickness, default fillet).
+    if global_consts and not any(f.get("type") == "global_params" for f in features):
+        gparams: dict[str, Any] = {}
+        for k, v in global_consts.items():
+            pname = _infer_param_name(k)
+            if pname in gparams:
+                pname = k.lower()
+            gparams[pname] = _param_entry(v, k)
+        features.insert(0, {
+            "id": "feat_global_params",
+            "type": "global_params",
+            "name": "Global Parameters",
+            "parameters": gparams,
+            "intent": {"role": "shared_dimensions"},
+        })
+
+    # 3b. Fallback so EVERY declared constant is editable. Constants that matched
+    #     no part name and aren't global would otherwise be unreachable by
+    #     cad.edit_parameter. If there's exactly one named part, they belong to
+    #     it (and collateral detection still works); otherwise collect them in a
+    #     generic model_params bucket.
+    leftover = {k: v for k, v in constants.items() if k not in attached}
+    if leftover:
+        named_parts = [f for f in features if f.get("type") == "named_part"]
+        params: dict[str, Any] = {}
+        for k, v in leftover.items():
+            pname = _infer_param_name(k)
+            if pname in params:
+                pname = k.lower()
+            params[pname] = _param_entry(v, k)
+        if len(named_parts) == 1:
+            _attach(named_parts[0], params)
+        elif not any(f.get("type") == "model_params" for f in features):
             features.insert(0, {
-                "id": "feat_global_params",
-                "type": "global_params",
-                "name": "Global Parameters",
-                "parameters": gparams,
-                "intent": {"role": "shared_dimensions"},
+                "id": "feat_model_params",
+                "type": "model_params",
+                "name": "Model Parameters",
+                "parameters": params,
+                "intent": {"role": "unscoped_dimensions"},
             })
 
     # 4. Detect advanced modelling features from source code patterns
@@ -3223,14 +3365,20 @@ def edit_build123d_parameter(
     cad_parameter_name = param_info.get("cad_parameter_name") or parameter_name
     previous_value = param_info.get("current_value")
 
-    # 3. Read source.py + reference image
+    # 3. Read source.py + reference image + the BEFORE topology (for regression diff)
     try:
         with zipfile.ZipFile(pkg_path, "r") as zf:
+            names = zf.namelist()
             source_code = zf.read("geometry/source.py").decode("utf-8")
             ref_bytes = (
                 zf.read("geometry/reference.png")
-                if "geometry/reference.png" in zf.namelist()
+                if "geometry/reference.png" in names
                 else None
+            )
+            before_topo: dict[str, Any] = (
+                json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                if "geometry/topology_map.json" in names
+                else {}
             )
     except Exception as exc:
         return {
@@ -3302,6 +3450,20 @@ def edit_build123d_parameter(
     # 6. Build enriched feature_graph from the new topology + modified source
     feature_graph = _topology_to_feature_graph(topo, source_code=modified_source)
 
+    # 6b. Geometry regression diff — confirm the edit changed only what it should.
+    # The set of parts we EXPECT to move: for a named_part feature, just that
+    # part; for a shared/global constant, any part is fair game (no collateral
+    # judgment); otherwise we can't attribute it to one part, so skip the verdict.
+    edited_feature = contract.get("feature") or {}
+    before_names = set(_solids_by_name(before_topo))
+    if edited_feature.get("type") == "global_params":
+        expected_parts: set[str] | None = None
+    elif edited_feature.get("name") in before_names:
+        expected_parts = {edited_feature["name"]}
+    else:
+        expected_parts = None
+    regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
+
     # 7. Write artifacts back into the package atomically
     _write_cad_artifacts(
         pkg_path=pkg_path,
@@ -3354,6 +3516,7 @@ def edit_build123d_parameter(
         },
         "feature_graph": feature_graph,
         "geometry_report": _compute_geometry_report(topo),
+        "regression_diff": regression_diff,
         "written_artifacts": [
             "geometry/generated.step",
             "geometry/preview.stl",

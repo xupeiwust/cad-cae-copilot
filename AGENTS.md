@@ -189,8 +189,26 @@ cad.edit_parameter { project_id, featureId, parameterName, newValue }   [APPROVA
   is returned — the prior geometry is preserved.
 - Constants whose prefix is `GLOBAL_`/`DEFAULT_`/`WALL_`/`FILLET_`/`CHAMFER_` are
   also surfaced under a synthetic `Global Parameters` feature for shared dims.
+  Any declared constant that matches no part name lands in a `Model Parameters`
+  feature (or, if there's exactly one named part, on that part) — so every
+  declared constant is editable.
 Use `cad.execute_build123d` (mode=append/replace) only for changes that add or
 remove geometry; use `cad.edit_parameter` for pure dimensional tweaks.
+
+**Regression diff on every edit (`regression_diff`).** The `cad.edit_parameter`
+response includes a `regression_diff` that compares the before/after topology by
+named part — your safety net against an edit silently warping geometry it
+shouldn't have. Read its `verdict` before trusting the result:
+- `clean` — only the intended part(s) changed; `changed[]` lists each with
+  `size_delta_mm` / `center_shift_mm`.
+- `collateral_change` — **WARNING**: parts you did NOT target also moved
+  (`collateral_parts` names them). Usually means the constant is shared across
+  parts; reconsider the edit or split the constant.
+- `identical` — nothing changed (wrong constant, or a no-op value).
+- `topology_changed` — the part set changed (a part appeared/disappeared);
+  unexpected for a pure dimensional edit.
+(For edits to a `Global Parameters` constant, collateral is not judged — shared
+dims are *meant* to move many parts.)
 
 **Advanced-feature awareness in the feature graph.** Beyond named parts, the
 feature graph now tags the modelling operations it detects in the source:

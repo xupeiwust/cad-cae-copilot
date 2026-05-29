@@ -227,6 +227,12 @@ seconds, fully reproducible.
 - Works only when the source declares dimensions as named constants. Generated
   code does this automatically (system-prompt rule); hand-written code should too:
   `MOTOR_POD_RADIUS = 3` rather than a bare `3` inline.
+- **`regression_diff`** in the response compares before/after topology by named
+  part so a bad edit can't silently warp unrelated geometry. `verdict` is one of
+  `clean` (only the target moved), `collateral_change` (WARNING — `collateral_parts`
+  also moved; the constant is likely shared), `identical` (no-op / wrong constant),
+  or `topology_changed` (a part appeared/disappeared). Collateral is not judged for
+  `Global Parameters` edits, since shared dims are meant to move many parts.
 
 ### Reference image calibration (recommended for named real-world targets)
 

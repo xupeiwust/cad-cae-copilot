@@ -929,3 +929,145 @@ def test_cad_execute_build123d_tool_registered_with_approval() -> None:
     schema = tools["cad.execute_build123d"]["input_schema"]
     assert "code" in schema["properties"]
     assert set(schema["required"]) == {"project_id", "code"}
+
+
+# ── geometry report ───────────────────────────────────────────────────────────
+
+def test_geometry_report_flags_asymmetry_and_floating() -> None:
+    from app.cad_generation import _compute_geometry_report
+
+    topo = {"entities": [
+        {"type": "solid", "id": "b1", "name": "torso", "bounding_box": [-30, -15, 100, 30, 15, 300]},
+        {"type": "solid", "id": "b2", "name": "arm_L", "bounding_box": [-50, -10, 150, -30, 10, 290]},
+        {"type": "solid", "id": "b3", "name": "arm_R", "bounding_box": [30, -10, 150, 50, 10, 250]},
+        {"type": "solid", "id": "b4", "name": "foot_FL", "bounding_box": [-200, -10, -20, -180, 10, 0]},
+    ]}
+    report = _compute_geometry_report(topo)
+    assert report["available"] is True
+    assert report["part_count"] == 4
+    # asymmetric arm pair (different Z extents) flagged
+    arm = next(s for s in report["symmetry"] if s.get("pair") == ["arm_L", "arm_R"])
+    assert arm["ok"] is False
+    assert arm["mirror_axis"] == "x"
+    # foot_FL has no partner and is far from everything
+    assert "foot_FL" in report.get("floating_parts", [])
+
+
+# ── geometry regression diff ──────────────────────────────────────────────────
+
+def _topo_from(parts: list[tuple[str, list[float]]]) -> dict:
+    return {"entities": [
+        {"type": "solid", "id": f"b{i}", "name": n, "bounding_box": bb}
+        for i, (n, bb) in enumerate(parts)
+    ]}
+
+
+def test_diff_topology_clean_edit() -> None:
+    from app.cad_generation import _diff_topology
+
+    before = _topo_from([("torso", [-30, -15, 100, 30, 15, 300]), ("arm_L", [-50, -10, 150, -30, 10, 290])])
+    after = _topo_from([("torso", [-30, -15, 100, 30, 15, 300]), ("arm_L", [-50, -10, 150, -30, 10, 330])])
+    diff = _diff_topology(before, after, expected_parts={"arm_L"})
+    assert diff["verdict"] == "clean"
+    assert diff["collateral_parts"] == []
+    assert diff["changed"][0]["part"] == "arm_L"
+    assert diff["changed"][0]["expected"] is True
+
+
+def test_diff_topology_flags_collateral_change() -> None:
+    from app.cad_generation import _diff_topology
+
+    before = _topo_from([("torso", [-30, -15, 100, 30, 15, 300]), ("arm_L", [-50, -10, 150, -30, 10, 290])])
+    # both torso AND arm_L changed, but only arm_L was the target
+    after = _topo_from([("torso", [-30, -15, 100, 30, 15, 360]), ("arm_L", [-50, -10, 150, -30, 10, 330])])
+    diff = _diff_topology(before, after, expected_parts={"arm_L"})
+    assert diff["verdict"] == "collateral_change"
+    assert diff["collateral_parts"] == ["torso"]
+
+
+def test_diff_topology_identical_is_noop() -> None:
+    from app.cad_generation import _diff_topology
+
+    before = _topo_from([("torso", [-30, -15, 100, 30, 15, 300])])
+    diff = _diff_topology(before, before, expected_parts={"torso"})
+    assert diff["verdict"] == "identical"
+
+
+def test_diff_topology_global_param_no_collateral_judgment() -> None:
+    from app.cad_generation import _diff_topology
+
+    before = _topo_from([("torso", [-30, -15, 100, 30, 15, 300]), ("arm_L", [-50, -10, 150, -30, 10, 290])])
+    after = _topo_from([("torso", [-32, -17, 100, 32, 17, 300]), ("arm_L", [-52, -12, 150, -28, 12, 290])])
+    diff = _diff_topology(before, after, expected_parts=None)
+    assert diff["verdict"] == "clean"
+    assert diff["collateral_parts"] == []
+    assert len(diff["changed"]) == 2
+
+
+# ── parametric edit end-to-end (real build123d) ───────────────────────────────
+
+def test_edit_build123d_parameter_end_to_end(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import edit_build123d_parameter, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "param-edit")
+    # Named constants → the feature graph exposes an editable parameter.
+    code = (
+        "from build123d import *\n"
+        "BODY_LENGTH = 120\n"
+        "BODY_WIDTH = 80\n"
+        "BODY_HEIGHT = 8\n"
+        "body = Box(BODY_LENGTH, BODY_WIDTH, BODY_HEIGHT); body.label = 'base_plate'\n"
+        "result = Compound(children=[body])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+    # find the base_plate feature + its length parameter
+    feat = next(
+        f for f in out["feature_graph"]["features"]
+        if f.get("name") == "base_plate" and (f.get("parameters") or {})
+    )
+    assert "length_mm" in feat["parameters"]
+    assert feat["parameters"]["length_mm"]["cad_parameter_name"] == "BODY_LENGTH"
+
+    edited = edit_build123d_parameter(
+        settings, pid,
+        feature_id=feat["id"], parameter_name="length_mm", new_value=200,
+    )
+    assert edited["status"] == "ok"
+    assert edited["previous_value"] == 120
+    assert edited["new_value"] == 200
+    # the box got longer in X
+    bbox = edited["topology_summary"]["bounding_box"]
+    assert abs((bbox[3] - bbox[0]) - 200) < 1.0
+    # regression diff: base_plate changed as expected, nothing collateral
+    diff = edited["regression_diff"]
+    assert diff["verdict"] in ("clean", "topology_changed")
+    assert diff["collateral_parts"] == []
+
+
+def test_edit_build123d_parameter_invalid_value_preserves_geometry(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import edit_build123d_parameter, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "param-edit-bad")
+    code = (
+        "from build123d import *\n"
+        "BODY_LENGTH = 120\n"
+        "body = Box(BODY_LENGTH, 80, 8); body.label = 'base_plate'\n"
+        "result = Compound(children=[body])\n"
+    )
+    execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    feat = next(
+        f for f in execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})["feature_graph"]["features"]
+        if f.get("name") == "base_plate" and (f.get("parameters") or {})
+    )
+    # 0-length box is geometrically invalid → build fails, prior geometry preserved
+    edited = edit_build123d_parameter(
+        settings, pid,
+        feature_id=feat["id"], parameter_name="length_mm", new_value=0,
+    )
+    assert edited["status"] == "error"
+    assert edited["code"] in ("execution_failed", "invalid_contract")

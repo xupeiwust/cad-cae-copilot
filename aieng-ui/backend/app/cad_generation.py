@@ -2152,6 +2152,9 @@ def reconcile_shape_ir_provenance(
     feature_graph: dict[str, Any],
     *,
     executed_at: str | None = None,
+    representation: str = "brep_build123d",
+    backend: str = "build123d",
+    geometry_kind: str = "brep",
 ) -> None:
     """Reconcile a Shape-IR package's provenance after its source was executed.
 
@@ -2186,15 +2189,17 @@ def reconcile_shape_ir_provenance(
                     if isinstance(manifest, dict):
                         manifest["geometry_execution"] = {
                             "executed": True,
-                            "backend": "build123d",
-                            "representation": "brep",
+                            "backend": backend,
+                            "representation": representation,
                             "real_geometry": True,
+                            "geometry_kind": geometry_kind,  # "brep" | "mesh"
                             "executed_at_utc": executed_at,
                             "note": (
-                                "Shape IR source.py was compiled and executed by the workbench "
-                                "runner; topology_map.json and feature_graph.json now describe REAL "
-                                "build123d geometry and supersede the projected (pre-execution) "
-                                "entities. object_registry.json was rebuilt against them."
+                                f"Shape IR was compiled and executed via the {backend} runner; "
+                                "topology_map.json and feature_graph.json now describe REAL "
+                                f"{geometry_kind} geometry and supersede the projected "
+                                "(pre-execution) entities. object_registry.json was rebuilt "
+                                "against them."
                             ),
                         }
                         replacements["provenance/conversion_manifest.json"] = (
@@ -2221,6 +2226,182 @@ def reconcile_shape_ir_provenance(
             raise
     except Exception as exc:  # noqa: BLE001 - provenance reconcile is best-effort
         print(f"[shape_ir] provenance reconcile failed: {exc}", file=sys.stderr)
+
+
+# ── implicit SDF runner (Shape IR representation: implicit_sdf) ──────────────
+# Executes fogleman/sdf source (binds `f`), meshes via marching cubes, exports
+# STL + GLB, and projects a region-level mesh topology. Runs in the backend's
+# interpreter (aieng311, where `sdf` + scikit-image are installed); under any
+# interpreter without `sdf` the subprocess fails and the caller reports honestly.
+_SDF_RUNNER_TEMPLATE = r'''
+import sys, json
+
+out_stl = sys.argv[1]
+out_glb = sys.argv[2]
+out_topo = sys.argv[3]
+samples = int(sys.argv[4]) if len(sys.argv) > 4 else 2 ** 18
+
+# --- user SDF source (must bind `f`) ---
+__AIENG_SDF_CODE__
+# --- end user source ---
+
+if "f" not in globals() or globals()["f"] is None:
+    raise RuntimeError("SDF source must bind a variable named `f`")
+
+f.save(out_stl, samples=samples)
+
+import trimesh
+mesh = trimesh.load(out_stl, file_type="stl", force="mesh")
+mesh.export(out_glb, file_type="glb")
+
+b = mesh.bounds
+bbox = [float(b[0][0]), float(b[0][1]), float(b[0][2]),
+        float(b[1][0]), float(b[1][1]), float(b[1][2])]
+body = {
+    "id": "body_001", "type": "solid", "name": "sdf_body",
+    "bounding_box": bbox, "area": float(mesh.area),
+    "triangle_count": int(len(mesh.faces)), "face_ids": ["face_001"],
+}
+try:
+    if mesh.is_volume:
+        body["volume"] = float(mesh.volume)
+except Exception:
+    pass
+topo = {
+    "format_version": "0.1",
+    "metadata": {
+        "extractor": "SDFRunner", "extraction_backend": "sdf",
+        "extraction_mode": "marching_cubes_mesh", "representation": "implicit_sdf",
+        "real_step_parsing": False,
+        "limitations": [
+            "Mesh from SDF marching cubes; faces are region-level, not analytic B-Rep faces.",
+            "Booleans fuse into one field, so individual Shape IR part identity is not preserved.",
+        ],
+    },
+    "entities": [
+        body,
+        {"id": "face_001", "type": "face", "body_id": "body_001",
+         "surface_type": "freeform", "freeform": True, "name": "sdf_surface",
+         "bounding_box": bbox, "area": float(mesh.area)},
+    ],
+}
+with open(out_topo, "w") as fh:
+    json.dump(topo, fh, indent=2)
+'''
+
+
+def _execute_sdf_code(
+    code: str, timeout: int = 120, samples: int = 2 ** 18,
+) -> tuple[bytes, bytes, dict[str, Any]]:
+    """Run SDF source in a subprocess; return (stl_bytes, glb_bytes, topology_map).
+
+    Raises RuntimeError on failure (including a missing `sdf` runtime, which
+    surfaces as a non-zero exit) so the caller can report it honestly.
+    """
+    runner = _SDF_RUNNER_TEMPLATE.replace("__AIENG_SDF_CODE__", code)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        runner_path = tmp / "sdf_runner.py"
+        runner_path.write_text(runner, encoding="utf-8")
+        out_stl, out_glb, out_topo = tmp / "result.stl", tmp / "result.glb", tmp / "topology.json"
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(runner_path), str(out_stl), str(out_glb), str(out_topo), str(samples)],
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"SDF execution timed out after {timeout}s") from exc
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"SDF execution failed (exit {proc.returncode}):\n{(proc.stderr or '(no stderr)')[-2000:]}"
+            )
+        stl_bytes = out_stl.read_bytes() if out_stl.exists() else b""
+        glb_bytes = out_glb.read_bytes() if out_glb.exists() else b""
+        topo: dict[str, Any] = json.loads(out_topo.read_text(encoding="utf-8")) if out_topo.exists() else {}
+        return stl_bytes, glb_bytes, topo
+
+
+def _sdf_feature_graph(topology_map: dict[str, Any]) -> dict[str, Any]:
+    """Minimal feature graph for an SDF mesh body (one named_part per solid)."""
+    features: list[dict[str, Any]] = []
+    for entity in topology_map.get("entities", []) or []:
+        if entity.get("type") != "solid":
+            continue
+        bid = entity["id"]
+        features.append({
+            "id": f"feat_{bid}",
+            "type": "named_part",
+            "name": entity.get("name") or bid,
+            "geometry_refs": {
+                "entities": [bid, *(entity.get("face_ids") or [])],
+                "faces": list(entity.get("face_ids") or []),
+            },
+            "parameters": {},
+            "intent": {"role": "sdf_body"},
+            "recognition": {"method": "sdf_mesh", "confidence": "low"},
+        })
+    return {
+        "format_version": "0.1",
+        "features": features,
+        "metadata": {
+            "recognizer": "SDFRunner",
+            "representation": "implicit_sdf",
+            "model_kind": "organic",
+            "limitations": [
+                "Single fused field from SDF; individual Shape IR part identity is not preserved in the mesh.",
+            ],
+        },
+    }
+
+
+def _write_sdf_artifacts(
+    pkg_path: Path,
+    stl_bytes: bytes,
+    glb_bytes: bytes,
+    topology_map: dict[str, Any],
+    feature_graph: dict[str, Any],
+) -> None:
+    """Write executed SDF mesh artifacts into the package (no STEP / build123d
+    source.py — SDF is mesh-only). Regenerates the brep graph from the mesh
+    topology so face pick/highlight still resolves (region-level)."""
+    artifacts: dict[str, bytes] = {
+        "geometry/preview.stl": stl_bytes,
+        "geometry/topology_map.json": json.dumps(topology_map, indent=2).encode(),
+        "graph/feature_graph.json": json.dumps(feature_graph, indent=2).encode(),
+    }
+    if glb_bytes:
+        artifacts["geometry/preview.glb"] = glb_bytes
+    try:
+        from .brep_graph import (
+            BREP_DIGEST_MEMBER,
+            BREP_GRAPH_MEMBER,
+            ENTITY_INDEX_MEMBER,
+            build_brep_graph_from_topology,
+        )
+        _bg = build_brep_graph_from_topology(topology_map, feature_graph=feature_graph)
+        artifacts[BREP_GRAPH_MEMBER] = json.dumps(_bg["brep_graph"], indent=2, ensure_ascii=False).encode()
+        artifacts[ENTITY_INDEX_MEMBER] = json.dumps(_bg["entity_index"], indent=2, ensure_ascii=False).encode()
+        artifacts[BREP_DIGEST_MEMBER] = _bg["digest"].encode("utf-8")
+    except Exception as _bg_err:  # noqa: BLE001
+        print(f"[sdf] brep_graph regen failed: {_bg_err}", file=sys.stderr)
+
+    if not pkg_path.exists():
+        return
+    tmp = pkg_path.with_suffix(".tmp.aieng")
+    try:
+        with (
+            zipfile.ZipFile(pkg_path, "r") as src,
+            zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+        ):
+            for item in src.infolist():
+                if item.filename not in artifacts:
+                    dst.writestr(item, src.read(item.filename))
+            for name, data in artifacts.items():
+                dst.writestr(name, data)
+        tmp.replace(pkg_path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 # ── backend class ─────────────────────────────────────────────────────────────

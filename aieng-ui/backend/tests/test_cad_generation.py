@@ -1345,3 +1345,35 @@ def test_reconcile_shape_ir_provenance_refreshes_registry_and_manifest(tmp_path:
     assert man["geometry_execution"]["executed"] is True
     assert man["geometry_execution"]["real_geometry"] is True
     assert man["geometry_execution"]["executed_at_utc"] == "2026-01-01T00:00:00Z"
+
+
+# ── implicit SDF runner (Shape IR representation: implicit_sdf) ───────────────
+
+def test_sdf_feature_graph_minimal() -> None:
+    from app.cad_generation import _sdf_feature_graph
+    topo = {"entities": [
+        {"id": "body_001", "type": "solid", "name": "sdf_body", "face_ids": ["face_001"]},
+        {"id": "face_001", "type": "face", "body_id": "body_001"},
+    ]}
+    fg = _sdf_feature_graph(topo)
+    assert len(fg["features"]) == 1
+    feat = fg["features"][0]
+    assert feat["type"] == "named_part" and feat["id"] == "feat_body_001"
+    assert "body_001" in feat["geometry_refs"]["entities"]
+    assert "face_001" in feat["geometry_refs"]["faces"]
+    assert fg["metadata"]["representation"] == "implicit_sdf"
+
+
+def test_execute_sdf_code_meshes_a_field() -> None:
+    """End-to-end SDF run: meshes a field to STL + GLB and projects mesh topology.
+    Skips where the SDF runtime isn't installed (runs in aieng311/CI)."""
+    pytest.importorskip("sdf")
+    pytest.importorskip("trimesh")
+    from app.cad_generation import _execute_sdf_code
+    src = "from sdf import *\nf = sphere(10) | sphere(8).translate((0, 0, 12))\n"
+    stl, glb, topo = _execute_sdf_code(src, timeout=120, samples=2 ** 15)
+    assert len(stl) > 0 and len(glb) > 0
+    assert topo["metadata"]["extractor"] == "SDFRunner"
+    assert topo["metadata"]["representation"] == "implicit_sdf"
+    faces = [e for e in topo["entities"] if e.get("type") == "face"]
+    assert faces and faces[0]["surface_type"] == "freeform"

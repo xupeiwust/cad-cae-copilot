@@ -4009,9 +4009,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
         shape_ir_execution: dict[str, Any] | None = None
 
-        class _ShapeIRRuntimeSkipped(Exception):
-            """Internal: the representation has no wired runtime — skip execution
-            cleanly without falling into the generic error handler."""
+        class _ShapeIRRepresentationHandled(Exception):
+            """Internal: a non-build123d representation was already handled (run or
+            skipped) — break out before the default build123d execution path,
+            without falling into the generic error handler."""
 
         if result.get("source_type") == "shape_ir" and execute_shape_ir:
             try:
@@ -4031,21 +4032,52 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                             raise RuntimeError("Shape IR package did not contain geometry/source.py")
                         source_code = _archive.read("geometry/source.py").decode("utf-8")
 
+                if representation == "implicit_sdf":
+                    # Run the SDF backend: mesh the implicit field, write mesh-only
+                    # artifacts, and reconcile provenance (geometry_kind=mesh).
+                    if "geometry/sdf_source.py" not in names:
+                        raise RuntimeError("implicit_sdf package did not contain geometry/sdf_source.py")
+                    with _zipfile.ZipFile(out_path, "r") as _archive:
+                        sdf_code = _archive.read("geometry/sdf_source.py").decode("utf-8")
+                    stl_bytes, glb_bytes, sdf_topo = _cad_generation._execute_sdf_code(
+                        sdf_code, timeout=int(inp.get("timeout") or 120),
+                    )
+                    sdf_feature_graph = _cad_generation._sdf_feature_graph(sdf_topo)
+                    _cad_generation._write_sdf_artifacts(out_path, stl_bytes, glb_bytes, sdf_topo, sdf_feature_graph)
+                    _cad_generation.reconcile_shape_ir_provenance(
+                        out_path, sdf_topo, sdf_feature_graph,
+                        representation="implicit_sdf", backend="sdf", geometry_kind="mesh",
+                    )
+                    sdf_named = _cad_generation._named_parts_from_feature_graph(sdf_feature_graph)
+                    shape_ir_execution = {
+                        "status": "ok",
+                        "representation": "implicit_sdf",
+                        "backend": "sdf",
+                        "geometry_kind": "mesh",
+                        "written_artifacts": [
+                            "geometry/preview.stl",
+                            "geometry/topology_map.json",
+                            "graph/feature_graph.json",
+                        ] + (["geometry/preview.glb"] if glb_bytes else []),
+                        "named_parts": sdf_named,
+                        "part_count": len(sdf_named),
+                        "geometry_report": _cad_generation._compute_geometry_report(sdf_topo),
+                    }
+                    raise _ShapeIRRepresentationHandled()
+
                 if representation != "brep_build123d":
-                    # Non-B-Rep representations (e.g. implicit_sdf) compile to a
-                    # different backend's source; their runner is not wired here yet.
-                    # Report honestly instead of forcing build123d execution.
+                    # Other non-B-Rep representations have no wired runner yet.
                     shape_ir_execution = {
                         "status": "skipped",
                         "code": "runtime_not_wired",
                         "representation": representation,
                         "message": (
                             f"Shape IR uses the '{representation}' representation; its compiled "
-                            "source was emitted but the matching runner (e.g. SDF mesh -> STL/GLB) "
-                            "is not yet wired, so no executed geometry/preview was produced."
+                            "source was emitted but no matching runner is wired yet, so no executed "
+                            "geometry/preview was produced."
                         ),
                     }
-                    raise _ShapeIRRuntimeSkipped()
+                    raise _ShapeIRRepresentationHandled()
 
                 step_bytes, stl_bytes, glb_bytes, topo = _cad_generation._execute_build123d_code(
                     source_code,
@@ -4085,8 +4117,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     "geometry_report": _cad_generation._compute_geometry_report(topo),
                     "mesh_meta_available": mesh_meta is not None,
                 }
-            except _ShapeIRRuntimeSkipped:
-                pass  # shape_ir_execution already holds the honest "skipped" status
+            except _ShapeIRRepresentationHandled:
+                pass  # shape_ir_execution already holds the ok/skipped status
             except Exception as exc:  # noqa: BLE001 - return structured tool error, don't throw
                 shape_ir_execution = {
                     "status": "error",

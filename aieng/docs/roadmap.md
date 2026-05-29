@@ -239,6 +239,34 @@ Boundary: the core converter records/generated source and semantic topology;
 CAD-kernel execution happens in the workbench runtime, not inside the converter
 framework itself.
 
+Multi-target compilation (2026-05-30):
+
+Shape IR is now a multi-backend source. `compile_shape_ir(payload)` dispatches by
+`representation` (default `brep_build123d`) to a registered compiler and reports
+`{representation, requested_representation, source, source_path, runtime,
+fallback}`; unknown targets fall back to build123d with `fallback=True`.
+
+- `brep_build123d` → `geometry/source.py` (existing build123d/OCP → STEP/B-Rep).
+- `implicit_sdf` → `geometry/sdf_source.py` (`converters/shape_ir_sdf.py`): emits
+  fogleman/sdf source — sphere/box/rounded_box/capped_cylinder/capsule/ellipsoid,
+  boolean union/subtract/intersect in IR source order, `organic_blend` → smooth
+  `union(k=)`, translate. loft/sweep/revolve stay on build123d; unrepresentable
+  kinds degrade to a bbox proxy.
+
+Workbench runtime (`aieng-ui/backend`):
+- `aieng.convert` routes execution by the package's representation. For
+  `implicit_sdf` the SDF runner (`_execute_sdf_code`) meshes the field via marching
+  cubes → STL/GLB, projects a region-level mesh topology (one body, one freeform
+  face — honest: not analytic B-Rep faces), rebuilds object_registry, and stamps
+  `provenance/conversion_manifest.json` `geometry_execution` with
+  `backend=sdf, geometry_kind=mesh`.
+- Honest representation contract: STEP/B-Rep is exact + analytic-face pickable;
+  SDF is real mesh evidence but region-level faces only. Both are derived products
+  of the same Shape IR source, at different evidence levels.
+- Runtime dependency (workbench only, not aieng core): the implicit_sdf runner
+  needs `sdf` (github.com/fogleman/sdf) + `scikit-image` in the `aieng311` env:
+  `pip install "git+https://github.com/fogleman/sdf.git" scikit-image`.
+
 ---
 
 ## Phase 19: Recognition, writeback, and allowed-operation quality — COMPLETE (issues #45–#48)

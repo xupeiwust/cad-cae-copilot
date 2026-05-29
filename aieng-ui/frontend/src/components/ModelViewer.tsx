@@ -328,6 +328,98 @@ function deriveGlbScale(object: THREE.Object3D, snapshot: BrepGraphSnapshot | nu
   return dispMax / modelMax;
 }
 
+function makeHighlightMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: 0xfacc15,
+    transparent: true,
+    opacity: 0.62,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -6,
+    polygonOffsetUnits: -6,
+  });
+}
+
+// Overlay built from a tessellated primitive's *own* geometry — exact for any
+// face shape (planar or curved), unlike the bbox-centroid heuristic. Geometry
+// is cloned so disposeHighlightObject can free it without touching the model.
+function createPrimitiveOverlay(prim: THREE.Mesh): THREE.Mesh {
+  const mesh = new THREE.Mesh(prim.geometry.clone(), makeHighlightMaterial());
+  prim.updateMatrixWorld(true);
+  mesh.matrixAutoUpdate = false;
+  mesh.matrix.copy(prim.matrixWorld);
+  mesh.matrixWorldNeedsUpdate = true;
+  mesh.renderOrder = 1000;
+  return mesh;
+}
+
+// Associate each displayed mesh primitive with its B-Rep face by matching the
+// primitive's vertex centroid (mapped back to the model frame) to the nearest
+// face center. OCCT emits one glTF primitive per face, so this is a clean
+// bijection (verified ~1mm residual) and lets pick/highlight work by identity
+// rather than per-click geometry guessing. Returns null if nothing matches.
+function buildFaceIdentityMaps(
+  object: THREE.Object3D,
+  snapshot: BrepGraphSnapshot,
+  transform: DisplayTransform,
+): { primitiveToFace: Map<THREE.Object3D, PickedFace>; faceToPrimitives: Map<string, THREE.Mesh[]> } | null {
+  const faceCenters: Array<{ id: string; c: THREE.Vector3 }> = [];
+  for (const id in snapshot.faces) {
+    const f = snapshot.faces[id];
+    let c: THREE.Vector3 | null = null;
+    if (f.center && f.center.length === 3) {
+      c = new THREE.Vector3(f.center[0], f.center[1], f.center[2]);
+    } else if (f.bounding_box && f.bounding_box.length === 6) {
+      const b = f.bounding_box;
+      c = new THREE.Vector3((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
+    }
+    if (c) faceCenters.push({ id, c });
+  }
+  if (faceCenters.length === 0) return null;
+
+  const primitiveToFace = new Map<THREE.Object3D, PickedFace>();
+  const faceToPrimitives = new Map<string, THREE.Mesh[]>();
+  const v = new THREE.Vector3();
+  object.updateMatrixWorld(true);
+  let matched = 0;
+  object.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+    const pos = (node.geometry as THREE.BufferGeometry).attributes.position;
+    if (!pos || pos.count === 0) return;
+    let sx = 0, sy = 0, sz = 0;
+    for (let i = 0; i < pos.count; i++) {
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(node.matrixWorld);
+      sx += v.x; sy += v.y; sz += v.z;
+    }
+    const centroidModel = displayToModelPoint(
+      new THREE.Vector3(sx / pos.count, sy / pos.count, sz / pos.count),
+      transform,
+    );
+    let bestId: string | null = null;
+    let bestD = Infinity;
+    for (const fc of faceCenters) {
+      const d = centroidModel.distanceToSquared(fc.c);
+      if (d < bestD) { bestD = d; bestId = fc.id; }
+    }
+    if (!bestId) return;
+    const f = snapshot.faces[bestId];
+    const pointer = f.pointer ?? `@face:${bestId}`;
+    primitiveToFace.set(node, {
+      pointer,
+      label: pointer,
+      surface_type: f.surface_type || "unknown",
+      roles: f.roles ?? [],
+    });
+    const arr = faceToPrimitives.get(bestId) ?? [];
+    arr.push(node);
+    faceToPrimitives.set(bestId, arr);
+    matched++;
+  });
+  return matched > 0 ? { primitiveToFace, faceToPrimitives } : null;
+}
+
 function createFaceHighlightMesh(object: THREE.Object3D, face: BrepFaceEntity, transform: DisplayTransform): THREE.Mesh | null {
   const bbox = face.bounding_box;
   if (!bbox || bbox.length !== 6) return null;
@@ -400,18 +492,7 @@ function createFaceHighlightMesh(object: THREE.Object3D, face: BrepFaceEntity, t
   const highlightGeometry = new THREE.BufferGeometry();
   highlightGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   highlightGeometry.computeVertexNormals();
-  const highlightMaterial = new THREE.MeshBasicMaterial({
-    color: 0xfacc15,
-    transparent: true,
-    opacity: 0.62,
-    depthTest: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: -6,
-    polygonOffsetUnits: -6,
-  });
-  const mesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
+  const mesh = new THREE.Mesh(highlightGeometry, makeHighlightMaterial());
   mesh.renderOrder = 1000;
   return mesh;
 }
@@ -460,6 +541,10 @@ export function ModelViewer({
   // Viewer↔model coordinate transform (see DisplayTransform). Held in a ref so
   // the click handler always reads the current value without re-binding.
   const displayTransformRef = useRef<DisplayTransform>(IDENTITY_TRANSFORM);
+  // Identity maps from displayed primitive ↔ B-Rep face (built once per load),
+  // so pick + highlight resolve exact faces instead of geometry-guessing.
+  const primitiveFaceRef = useRef<Map<THREE.Object3D, PickedFace>>(new Map());
+  const faceMeshesRef = useRef<Map<string, THREE.Mesh[]>>(new Map());
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
   const fieldDescriptorKey = fieldDescriptor
     ? [
@@ -641,8 +726,16 @@ export function ModelViewer({
         return;
       }
       const hit = intersects[0];
-      // Convert the viewer-frame hit point into the model frame the backend
-      // B-Rep faces live in (identity for STL, Y-up/metres→Z-up/mm for GLB).
+      // Fast path: the hit primitive is already mapped to its B-Rep face, so
+      // resolve the selection locally — exact face, no backend round-trip.
+      const mappedFace = primitiveFaceRef.current.get(hit.object);
+      if (mappedFace) {
+        onAddPickedFace(mappedFace);
+        setTooltipFace(mappedFace);
+        return;
+      }
+      // Fallback (older packages, or B-Rep snapshot not loaded yet): convert
+      // the hit point to the model frame and let the backend resolve the face.
       const pt = displayToModelPoint(hit.point, displayTransformRef.current);
       api.pickFace(projectId, pt.x, pt.y, pt.z)
         .then((data) => {
@@ -696,9 +789,15 @@ export function ModelViewer({
     const isGlb = (resolvedAssetFormat ?? "").toLowerCase() === "glb";
     if (!object || !isGlb) {
       displayTransformRef.current = IDENTITY_TRANSFORM;
+      primitiveFaceRef.current = new Map();
+      faceMeshesRef.current = new Map();
       return;
     }
-    displayTransformRef.current = { scale: deriveGlbScale(object, brepSnapshot), isGlb: true };
+    const transform: DisplayTransform = { scale: deriveGlbScale(object, brepSnapshot), isGlb: true };
+    displayTransformRef.current = transform;
+    const maps = brepSnapshot ? buildFaceIdentityMaps(object, brepSnapshot, transform) : null;
+    primitiveFaceRef.current = maps?.primitiveToFace ?? new Map();
+    faceMeshesRef.current = maps?.faceToPrimitives ?? new Map();
   }, [objectReadyKey, brepSnapshot, resolvedAssetFormat]);
 
   // Highlight effect: extracts displayed mesh triangles whose centroids match
@@ -712,8 +811,23 @@ export function ModelViewer({
       group.remove(child);
       disposeHighlightObject(child);
     }
-    if (!brepSnapshot || highlightedFaceIds.size === 0) return;
+    if (highlightedFaceIds.size === 0) return;
 
+    // Preferred: overlay the exact tessellated primitive for each selected face
+    // (works for planar and curved faces alike).
+    const faceMeshes = faceMeshesRef.current;
+    if (faceMeshes.size > 0) {
+      for (const faceId of highlightedFaceIds) {
+        for (const prim of faceMeshes.get(faceId) ?? []) {
+          group.add(createPrimitiveOverlay(prim));
+        }
+      }
+      return;
+    }
+
+    // Fallback: reconstruct the overlay by matching mesh triangles to the
+    // face bbox/normal (older packages without an identity map).
+    if (!brepSnapshot) return;
     const object = objectRef.current;
     if (!object) return;
     const transform = displayTransformRef.current;

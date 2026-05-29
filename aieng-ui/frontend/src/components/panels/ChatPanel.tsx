@@ -4,12 +4,20 @@ import { MarkdownText } from "../MarkdownText";
 import { PointerText } from "../PointerText";
 import { ActionIcon } from "../common";
 import { ApprovalCard } from "../agent/ApprovalCard";
+import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
 import { AgentPlanCard } from "../agent/AgentPlanCard";
 import { AgentResultCard } from "../agent/AgentResultCard";
 import { isLowRiskArtifactPath } from "../../appUtils";
 import type { AutopilotObservation, AutopilotRunState, ChatConnection, ProjectRecord, RuntimeRun } from "../../types";
 
 type SimulationProgress = { step: string; message: string };
+type CurrentActivity = {
+  title: string;
+  detail?: string;
+  tone: AgentActivityTone;
+  running: boolean;
+  elapsed?: string;
+};
 
 const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
 
@@ -41,7 +49,7 @@ function observationToolName(obs: AutopilotObservation): string | null {
   return typeof toolName === "string" && toolName ? toolName : null;
 }
 
-function currentAutopilotActivity(run: AutopilotRunState): { title: string; detail: string; tone: string } {
+function currentAutopilotActivity(run: AutopilotRunState): { title: string; detail: string; tone: AgentActivityTone } {
   const agentLabel = run.adapter_id === "llm-api" ? "LLM agent" : "local agent";
   if (run.status === "awaiting_approval" && run.pending_approval) {
     return {
@@ -79,6 +87,83 @@ function currentAutopilotActivity(run: AutopilotRunState): { title: string; deta
 
 function autopilotCardTitle(run: AutopilotRunState): string {
   return run.adapter_id === "llm-api" ? "LLM Agent" : "Local Agent";
+}
+
+function latestActiveAutopilotRun(chatHistory: ChatHistoryItem[]): AutopilotRunState | null {
+  return [...chatHistory]
+    .reverse()
+    .map((entry) => entry.autopilotRun)
+    .find((run): run is AutopilotRunState => Boolean(run && ACTIVE_AUTOPILOT_STATUSES.has(run.status))) ?? null;
+}
+
+function currentActivityLine({
+  cadGenerationProgress,
+  simulationProgress,
+  lastRuntimeRun,
+  activeAutopilotRun,
+  chatBusy,
+  nowMs,
+}: {
+  cadGenerationProgress: CadGenerationProgress | null;
+  simulationProgress: SimulationProgress | null;
+  lastRuntimeRun: RuntimeRun | null;
+  activeAutopilotRun: AutopilotRunState | null;
+  chatBusy: boolean;
+  nowMs: number;
+}): CurrentActivity | null {
+  if (cadGenerationProgress) {
+    const activeStage = cadGenerationProgress.stages.find((s) => s.id === cadGenerationProgress.activeStage);
+    const fallbackStage = cadGenerationProgress.stages[cadGenerationProgress.stages.length - 1];
+    const stage = activeStage ?? fallbackStage;
+    const fatalError = cadGenerationProgress.fatalError;
+    return {
+      title: fatalError ? "CAD generation needs attention" : activeStage ? `Generating CAD · ${stage.label}` : "CAD generation complete",
+      detail: activeStage?.message ?? fatalError ?? "Artifacts are ready in the viewer.",
+      tone: fatalError ? "error" : activeStage ? "running" : "done",
+      running: Boolean(activeStage && !fatalError),
+    };
+  }
+
+  if (simulationProgress) {
+    return {
+      title: `Running simulation · ${simulationProgress.step.replace(/_/g, " ")}`,
+      detail: simulationProgress.message,
+      tone: "running",
+      running: true,
+    };
+  }
+
+  if (activeAutopilotRun) {
+    const activity = currentAutopilotActivity(activeAutopilotRun);
+    return {
+      ...activity,
+      running: activeAutopilotRun.status === "running",
+      elapsed: formatElapsed(activeAutopilotRun.created_at, nowMs),
+    };
+  }
+
+  if (lastRuntimeRun?.status === "awaiting_approval") {
+    const pendingStep = typeof lastRuntimeRun.pending_step_index === "number"
+      ? lastRuntimeRun.plan[lastRuntimeRun.pending_step_index]
+      : null;
+    return {
+      title: "Waiting for approval",
+      detail: pendingStep ? `${pendingStep.name}: ${pendingStep.description}` : "Review the pending tool call before continuing.",
+      tone: "approval",
+      running: false,
+    };
+  }
+
+  if (chatBusy) {
+    return {
+      title: "Thinking through the next step",
+      detail: "The agent is reading context and preparing a response.",
+      tone: "running",
+      running: true,
+    };
+  }
+
+  return null;
 }
 
 type ChatPanelProps = {
@@ -259,6 +344,15 @@ export function ChatPanel({
   const sendLabel = chatBusy
     ? cadGenerating ? "Generating…" : "Thinking…"
     : "Send";
+  const activeAutopilotRun = latestActiveAutopilotRun(chatHistory);
+  const activityLine = currentActivityLine({
+    cadGenerationProgress,
+    simulationProgress,
+    lastRuntimeRun,
+    activeAutopilotRun,
+    chatBusy,
+    nowMs,
+  });
 
   return (
     <section className="chat-pane-body">
@@ -578,6 +672,16 @@ export function ChatPanel({
           </div>
         );
       })()}
+
+      {activityLine ? (
+        <AgentActivityLine
+          title={activityLine.title}
+          detail={activityLine.detail}
+          tone={activityLine.tone}
+          running={activityLine.running}
+          elapsed={activityLine.elapsed}
+        />
+      ) : null}
 
       <div className="chat-input-row">
         <div className="chat-input-wrap">

@@ -7,6 +7,9 @@ import type { PointerToken } from "../components/PointerText";
 
 type UseGeometryPointersArgs = {
   selectedId: string | null;
+  // Changes when the selected project's geometry is rebuilt; triggers a
+  // B-Rep snapshot re-fetch (without clearing the current selection).
+  geometryVersion?: string | null;
   setMessage: Dispatch<SetStateAction<string>>;
   setNotice: Dispatch<SetStateAction<Notice | null>>;
   executePreprocessFromPrompt(prompt: string): Promise<void>;
@@ -14,6 +17,7 @@ type UseGeometryPointersArgs = {
 
 export function useGeometryPointers({
   selectedId,
+  geometryVersion = null,
   setMessage,
   setNotice,
   executePreprocessFromPrompt,
@@ -47,7 +51,9 @@ export function useGeometryPointers({
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+    // geometryVersion re-fetches the graph after an in-place geometry rebuild
+    // (e.g. agent cad.execute_build123d) so highlight + pick track new faces.
+  }, [selectedId, geometryVersion]);
 
   function selectedGeometryContext(): SelectedGeometryContext | null {
     if (!pickedFaces.length) return null;

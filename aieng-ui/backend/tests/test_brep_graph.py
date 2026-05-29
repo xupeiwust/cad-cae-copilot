@@ -173,6 +173,38 @@ def test_brep_graph_endpoint_writes_artifacts(tmp_path: Path) -> None:
     assert get_resp.json()["entity_index"]["face_001"]["pointer"] == "@face:face_001"
 
 
+def test_brep_graph_and_pick_face_build_on_demand_without_persisted_graph(tmp_path: Path) -> None:
+    # Agent-built CAD writes topology + feature_graph but NOT the B-Rep graph.
+    # GET brep-graph and pick-face must build it on demand (not 404), so the
+    # viewer's face highlight + apply-load/support popup work on fresh geometry.
+    settings = _make_settings(tmp_path)
+    project_id, pkg_path = _make_project_with_package(
+        settings,
+        {
+            "geometry/topology_map.json": json.dumps(_sample_topology()).encode(),
+            "graph/feature_graph.json": json.dumps(_feature_graph()).encode(),
+        },
+    )
+    client = TestClient(create_app(settings))
+
+    # No persisted graph member exists yet.
+    with zipfile.ZipFile(pkg_path) as zf:
+        assert BREP_GRAPH_MEMBER not in zf.namelist()
+
+    # GET resolves a graph on demand (feeds the highlight's brepSnapshot).
+    get_resp = client.get(f"/api/projects/{project_id}/brep-graph")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["entity_index"]["face_001"]["pointer"] == "@face:face_001"
+
+    # pick-face resolves a face on demand (drives the apply-load/support popup).
+    pick_resp = client.post(
+        f"/api/projects/{project_id}/brep/pick-face",
+        json={"x": 50, "y": 25, "z": 0},
+    )
+    assert pick_resp.status_code == 200
+    assert pick_resp.json()["pointer"] == "@face:face_001"
+
+
 def test_context_block_includes_transient_brep_digest(tmp_path: Path) -> None:
     pkg = tmp_path / "model.aieng"
     with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:

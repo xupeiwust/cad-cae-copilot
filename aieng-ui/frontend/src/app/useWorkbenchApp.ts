@@ -147,6 +147,10 @@ export function useWorkbenchApp() {
     pointerContextValue,
   } = useGeometryPointers({
     selectedId,
+    // Bumps whenever the selected project's geometry is rebuilt (e.g. an agent
+    // cad.execute_build123d). Forces the B-Rep snapshot to re-fetch so the
+    // face highlight + pick work on freshly-built geometry without re-selecting.
+    geometryVersion: projects.find((item) => item.id === selectedId)?.updated_at ?? null,
     setMessage,
     setNotice,
     executePreprocessFromPrompt,

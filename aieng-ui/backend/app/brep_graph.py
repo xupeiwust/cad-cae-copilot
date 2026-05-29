@@ -28,6 +28,29 @@ ENTITY_INDEX_MEMBER = "graph/entity_index.json"
 BREP_DIGEST_MEMBER = "ai/brep_digest.md"
 
 
+def _load_or_build_brep_graph(package_path: Path) -> dict[str, Any] | None:
+    """Return the symbolic B-Rep graph for a package, building it on demand.
+
+    Reads the persisted ``graph/brep_graph.json`` if present; otherwise builds
+    the graph in-memory from ``geometry/topology_map.json``. Agent-built CAD
+    (cad.execute_build123d) writes topology + feature_graph but not the B-Rep
+    graph, and the graph is otherwise only built on an explicit
+    ``brep-graph/build`` call. Building on demand here lets pick-face and the
+    GET brep-graph endpoint work for freshly-built geometry without requiring
+    the project to be re-selected. Returns None only when there is no topology
+    to build from. Does not write to the package.
+    """
+    graph = _read_json_member(package_path, BREP_GRAPH_MEMBER)
+    if graph:
+        return graph
+    topo = _read_json_member(package_path, "geometry/topology_map.json")
+    if not topo:
+        return None
+    feature_graph = _read_json_member(package_path, "graph/feature_graph.json") or {}
+    built = build_brep_graph_from_topology(topo, feature_graph=feature_graph)
+    return built["brep_graph"]
+
+
 def build_brep_graph_for_project(
     settings: Any,
     project_id: str,
@@ -84,14 +107,24 @@ def get_brep_graph_for_project(settings: Any, project_id: str) -> dict[str, Any]
     graph = _read_json_member(package_path, BREP_GRAPH_MEMBER)
     index = _read_json_member(package_path, ENTITY_INDEX_MEMBER)
     digest_raw = _read_bytes_member(package_path, BREP_DIGEST_MEMBER)
+    digest = digest_raw.decode("utf-8", errors="replace") if digest_raw else ""
     if graph is None or index is None:
-        raise HTTPException(status_code=404, detail="B-Rep graph has not been built")
+        # Build on demand from topology so freshly-built (agent) geometry is
+        # pickable and highlightable without an explicit brep-graph/build call.
+        topo = _read_json_member(package_path, "geometry/topology_map.json")
+        if not topo:
+            raise HTTPException(status_code=404, detail="B-Rep graph has not been built")
+        feature_graph = _read_json_member(package_path, "graph/feature_graph.json") or {}
+        built = build_brep_graph_from_topology(topo, feature_graph=feature_graph)
+        graph = built["brep_graph"]
+        index = built["entity_index"]
+        digest = built["digest"]
     return {
         "schema_version": SCHEMA_VERSION,
         "project_id": project_id,
         "brep_graph": graph,
         "entity_index": index,
-        "digest": digest_raw.decode("utf-8", errors="replace") if digest_raw else "",
+        "digest": digest,
     }
 
 
@@ -591,7 +624,7 @@ def pick_face_at_point(
     - Cylindrical face: difference between radial distance and radius, plus Z-extent penalty.
     - Fallback: distance to face center.
     """
-    graph = _read_json_member(package_path, BREP_GRAPH_MEMBER)
+    graph = _load_or_build_brep_graph(package_path)
     if not graph:
         return None
     faces = (graph.get("entities") or {}).get("faces") or []

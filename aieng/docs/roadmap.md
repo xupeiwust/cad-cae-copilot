@@ -296,6 +296,19 @@ Unified Shape IR verification:
   types). `aieng.convert` runs it after conversion/execution and returns it as
   `shape_ir_verification`.
 
+Object registry (node ↔ entities):
+- `converters/shape_ir_object_registry.py` writes `registry/object_registry.json`
+  (distinct from the generic `objects/object_registry.json`). Keyed by Shape IR
+  node, each object carries: source JSON pointer, node type, runtime/backend,
+  representation_kind, capability_level, lossiness, cad_editable, editable
+  parameters, artifact refs, the resolved `topology_entities` /
+  `viewer_selectable_ids` / `mesh_entities`, and a `verification_status_ref`.
+  Node→entity linkage: `source_ir_node` (projected) → `name_match` (executed
+  B-Rep, because the build123d label = node id is recorded as the body name) →
+  `fused_mesh` (mesh backends fuse all nodes into one body) → `none`. Built on
+  top of the verifier and run by `aieng.convert` after it. This is the bridge
+  for viewer selection-by-node (PR3) and CAE result mapping (PR5).
+
 - Runtime dependencies (workbench only, not aieng core), in the `aieng311` env:
   `implicit_sdf` needs `sdf` (github.com/fogleman/sdf) + `scikit-image`;
   `manifold_mesh` needs `manifold3d`:

@@ -720,6 +720,7 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── graph/                   aag.json, feature_graph.json, interface_graph.json, brep_graph.json
 ├── state/                   revalidation_status.json (stale-artifact flags)
 ├── diagnostics/             shape_ir_verification.json (per-node + package verification)
+├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
 ├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd)
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json

@@ -4143,12 +4143,20 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         # Unified Shape IR verification: audit the (now final) package and write
         # diagnostics/shape_ir_verification.json. Best-effort — never fails convert.
         shape_ir_verification: dict[str, Any] | None = None
+        shape_ir_object_registry: dict[str, Any] | None = None
         if result.get("source_type") == "shape_ir":
             try:
                 from aieng.converters.shape_ir_verification import write_shape_ir_verification
                 shape_ir_verification = write_shape_ir_verification(out_path)
             except Exception as exc:  # noqa: BLE001
                 shape_ir_verification = {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+            # Object registry (depends on verification): links Shape IR nodes to
+            # topology/mesh/viewer entities + editable parameters.
+            try:
+                from aieng.converters.shape_ir_object_registry import write_shape_ir_object_registry
+                shape_ir_object_registry = write_shape_ir_object_registry(out_path)
+            except Exception as exc:  # noqa: BLE001
+                shape_ir_object_registry = {"error": f"{type(exc).__name__}: {exc}"}
 
         preview_result: dict[str, Any] | None = None
 
@@ -4174,6 +4182,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "converter_id": result.get("converter_id"),
             "shape_ir_execution": shape_ir_execution,
             "shape_ir_verification": shape_ir_verification,
+            "shape_ir_object_registry": shape_ir_object_registry,
             "preview": preview_result,
         }
 

@@ -4009,16 +4009,43 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
         shape_ir_execution: dict[str, Any] | None = None
 
+        class _ShapeIRRuntimeSkipped(Exception):
+            """Internal: the representation has no wired runtime — skip execution
+            cleanly without falling into the generic error handler."""
+
         if result.get("source_type") == "shape_ir" and execute_shape_ir:
             try:
                 import zipfile as _zipfile
                 from . import cad_generation as _cad_generation
+                from aieng.converters.shape_ir import shape_ir_representation as _shape_ir_rep
 
                 with _zipfile.ZipFile(out_path, "r") as _archive:
                     names = set(_archive.namelist())
-                    if "geometry/source.py" not in names:
-                        raise RuntimeError("Shape IR package did not contain geometry/source.py")
-                    source_code = _archive.read("geometry/source.py").decode("utf-8")
+                    _ir_payload = (
+                        json.loads(_archive.read("geometry/shape_ir.json").decode("utf-8"))
+                        if "geometry/shape_ir.json" in names else {}
+                    )
+                    representation = _shape_ir_rep(_ir_payload) if isinstance(_ir_payload, dict) else "brep_build123d"
+                    if representation == "brep_build123d":
+                        if "geometry/source.py" not in names:
+                            raise RuntimeError("Shape IR package did not contain geometry/source.py")
+                        source_code = _archive.read("geometry/source.py").decode("utf-8")
+
+                if representation != "brep_build123d":
+                    # Non-B-Rep representations (e.g. implicit_sdf) compile to a
+                    # different backend's source; their runner is not wired here yet.
+                    # Report honestly instead of forcing build123d execution.
+                    shape_ir_execution = {
+                        "status": "skipped",
+                        "code": "runtime_not_wired",
+                        "representation": representation,
+                        "message": (
+                            f"Shape IR uses the '{representation}' representation; its compiled "
+                            "source was emitted but the matching runner (e.g. SDF mesh -> STL/GLB) "
+                            "is not yet wired, so no executed geometry/preview was produced."
+                        ),
+                    }
+                    raise _ShapeIRRuntimeSkipped()
 
                 step_bytes, stl_bytes, glb_bytes, topo = _cad_generation._execute_build123d_code(
                     source_code,
@@ -4058,6 +4085,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     "geometry_report": _cad_generation._compute_geometry_report(topo),
                     "mesh_meta_available": mesh_meta is not None,
                 }
+            except _ShapeIRRuntimeSkipped:
+                pass  # shape_ir_execution already holds the honest "skipped" status
             except Exception as exc:  # noqa: BLE001 - return structured tool error, don't throw
                 shape_ir_execution = {
                     "status": "error",

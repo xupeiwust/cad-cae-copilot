@@ -127,12 +127,14 @@ class ShapeIRConverter:
         topology_map = _build_topology_map(payload, nodes)
         feature_graph = _build_feature_graph(payload, nodes)
         object_registry = _build_object_registry(nodes, topology_map, feature_graph)
-        build123d_source = compile_shape_ir_to_build123d_source(payload)
+        compiled = compile_shape_ir(payload)
+        representation = compiled["representation"]
+        compiled_source_path = compiled["source_path"]  # geometry/source.py | geometry/sdf_source.py
         readme = _build_readme(payload, source_path, nodes)
 
         package_files: dict[str, bytes] = {
             SHAPE_IR_SOURCE_PATH: (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(),
-            BUILD123D_SOURCE_PATH: build123d_source.encode(),
+            compiled_source_path: compiled["source"].encode(),
             TOPOLOGY_MAP_PATH: (json.dumps(topology_map, indent=2, sort_keys=True) + "\n").encode(),
             FEATURE_GRAPH_PATH: (json.dumps(feature_graph, indent=2, sort_keys=True) + "\n").encode(),
             OBJECT_REGISTRY_PATH: (json.dumps(object_registry, indent=2, sort_keys=True) + "\n").encode(),
@@ -142,10 +144,13 @@ class ShapeIRConverter:
         emitted = [
             EmittedResource(path=SHAPE_IR_SOURCE_PATH, kind="geometry", level=0),
             EmittedResource(
-                path=BUILD123D_SOURCE_PATH,
+                path=compiled_source_path,
                 kind="geometry",
                 level=4,
-                notes=("Generated build123d source; not executed by this converter.",),
+                notes=(
+                    f"Generated {compiled['runtime']} source ({representation}); "
+                    "not executed by this converter.",
+                ),
             ),
             EmittedResource(path=TOPOLOGY_MAP_PATH, kind="topology", level=1),
             EmittedResource(path=FEATURE_GRAPH_PATH, kind="feature_graph", level=3),
@@ -207,7 +212,12 @@ class ShapeIRConverter:
                 "shape_ir_format_version": str(payload.get("format_version", "")),
                 "declared_model_id": str(payload.get("model_id", "")),
                 "node_count": len(nodes),
-                "build123d_source_emitted": True,
+                "representation": representation,
+                "requested_representation": compiled["requested_representation"],
+                "compile_runtime": compiled["runtime"],
+                "representation_fallback": compiled["fallback"],
+                "compiled_source_path": compiled_source_path,
+                "build123d_source_emitted": representation == "brep_build123d",
             },
             declared_levels=declared_levels,
             achieved_levels=tuple(achieved_levels),
@@ -606,6 +616,7 @@ def _build_topology_map(payload: dict[str, Any], nodes: list[dict[str, Any]]) ->
             "extractor": "ShapeIRConverter",
             "extraction_backend": "shape_ir",
             "extraction_mode": "projected_from_shape_ir",
+            "representation": shape_ir_representation(payload),
             "real_step_parsing": False,
             "source_geometry": SHAPE_IR_SOURCE_PATH,
             "adjacency_evidence": "shape_ir_declared",
@@ -681,6 +692,7 @@ def _build_feature_graph(payload: dict[str, Any], nodes: list[dict[str, Any]]) -
         "metadata": {
             "recognizer": "ShapeIRConverter",
             "source_geometry": SHAPE_IR_SOURCE_PATH,
+            "representation": shape_ir_representation(payload),
             "model_kind": str(payload.get("model_kind") or "organic"),
             "limitations": [
                 "Feature semantics are declared by Shape IR, not inferred from exact geometry.",

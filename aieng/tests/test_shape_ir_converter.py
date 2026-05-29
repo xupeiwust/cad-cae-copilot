@@ -246,3 +246,29 @@ def test_compile_shape_ir_dispatch_routes_by_representation():
     assert unknown["representation"] == "brep_build123d"
     assert unknown["requested_representation"] == "nurbs_compas"
     assert unknown["fallback"] is True
+
+
+def test_shape_ir_converter_implicit_sdf_emits_sdf_source(tmp_path: Path):
+    """An implicit_sdf Shape IR converts to geometry/sdf_source.py (not source.py),
+    with honest representation metadata."""
+    payload = {
+        "representation": "implicit_sdf",
+        "model_id": "blob",
+        "parts": [
+            {"id": "a", "type": "sphere", "radius": 10},
+            {"id": "b", "type": "sphere", "radius": 8, "location": [0, 0, 15]},
+            {"id": "blob", "type": "organic_blend", "children": ["a", "b"], "radius": 3},
+        ],
+    }
+    p = tmp_path / "blob.shape_ir.json"
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    result = ShapeIRConverter().convert(p, model_id="blob")
+
+    assert "geometry/sdf_source.py" in result.package_files
+    assert "geometry/source.py" not in result.package_files
+    assert b"from sdf import *" in result.package_files["geometry/sdf_source.py"]
+    md = result.source_document_metadata
+    assert md["representation"] == "implicit_sdf"
+    assert md["compile_runtime"] == "sdf"
+    assert md["build123d_source_emitted"] is False
+    assert md["representation_fallback"] is False

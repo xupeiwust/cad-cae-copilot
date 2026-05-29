@@ -279,6 +279,33 @@ def representation_runtime(representation: str) -> str:
     return str(entry["runtime"]) if entry else "build123d"
 
 
+def resolve_representation(payload_or_name: Any) -> dict[str, Any]:
+    """Resolve a requested representation (or a Shape IR payload) to
+    ``{representation, requested_representation, runtime, source_path, fallback}``
+    WITHOUT compiling. Unknown requests resolve to build123d with fallback=True."""
+    if isinstance(payload_or_name, dict):
+        requested = shape_ir_representation(payload_or_name)
+    else:
+        requested = str(payload_or_name or "brep_build123d").lower()
+    entry = _COMPILER_REGISTRY.get(requested)
+    if entry is None:
+        brep = _COMPILER_REGISTRY.get("brep_build123d", {})
+        return {
+            "representation": "brep_build123d",
+            "requested_representation": requested,
+            "runtime": str(brep.get("runtime", "build123d")),
+            "source_path": str(brep.get("source_path", BUILD123D_SOURCE_PATH)),
+            "fallback": True,
+        }
+    return {
+        "representation": entry["canonical"],
+        "requested_representation": requested,
+        "runtime": entry["runtime"],
+        "source_path": entry["source_path"],
+        "fallback": False,
+    }
+
+
 def shape_ir_representation(payload: dict[str, Any]) -> str:
     """The requested compile target, lower-cased. Defaults to build123d B-Rep."""
     return str(payload.get("representation") or payload.get("target") or "brep_build123d").lower()

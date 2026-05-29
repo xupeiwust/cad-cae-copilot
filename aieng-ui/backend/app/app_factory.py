@@ -4140,6 +4140,16 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     "message": f"{type(exc).__name__}: {exc}",
                 }
 
+        # Unified Shape IR verification: audit the (now final) package and write
+        # diagnostics/shape_ir_verification.json. Best-effort — never fails convert.
+        shape_ir_verification: dict[str, Any] | None = None
+        if result.get("source_type") == "shape_ir":
+            try:
+                from aieng.converters.shape_ir_verification import write_shape_ir_verification
+                shape_ir_verification = write_shape_ir_verification(out_path)
+            except Exception as exc:  # noqa: BLE001
+                shape_ir_verification = {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+
         preview_result: dict[str, Any] | None = None
 
         # Update project aieng_file if project_id is available
@@ -4163,6 +4173,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "source_type": result.get("source_type"),
             "converter_id": result.get("converter_id"),
             "shape_ir_execution": shape_ir_execution,
+            "shape_ir_verification": shape_ir_verification,
             "preview": preview_result,
         }
 

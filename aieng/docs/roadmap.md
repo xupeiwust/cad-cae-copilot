@@ -285,6 +285,17 @@ Workbench runtime (`aieng-ui/backend`):
 - Honest representation contract: STEP/B-Rep is exact + analytic-face pickable;
   SDF is real mesh evidence but region-level faces only. Both are derived products
   of the same Shape IR source, at different evidence levels.
+Unified Shape IR verification:
+- `converters/shape_ir_verification.py` audits the final package and writes
+  `diagnostics/shape_ir_verification.json`. Per node: kind, representation_kind
+  (brep / nurbs_brep / mesh / implicit_field / unknown), compiled?, source_ir_node
+  mapped?, expected surface type. Per package: runtime/backend, executed/fallback,
+  geometry_kind, lossiness (none/low/medium/high), cad_editable, capability_level
+  (L0–L5), artifact existence, and honest integrity checks — notably
+  `brep_topology_not_faked` (a mesh result must not present analytic B-Rep face
+  types). `aieng.convert` runs it after conversion/execution and returns it as
+  `shape_ir_verification`.
+
 - Runtime dependencies (workbench only, not aieng core), in the `aieng311` env:
   `implicit_sdf` needs `sdf` (github.com/fogleman/sdf) + `scikit-image`;
   `manifold_mesh` needs `manifold3d`:

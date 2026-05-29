@@ -56,7 +56,8 @@ dependencies = [
   "PyYAML>=6.0",
   "jsonschema>=4.0",
   "trimesh>=4.0",
-  "build123d>=0.10.0"
+  "build123d>=0.10.0",
+  "cadquery>=2.7.0",
 ]
 
 [project.optional-dependencies]

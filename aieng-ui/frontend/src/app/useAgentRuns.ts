@@ -174,46 +174,6 @@ export function useAgentRuns({
     }
   }
 
-  async function pollAutopilotRun(runId: string) {
-    stopAutopilotPoll();
-    const poll = async () => {
-      try {
-        const run = await api.getAutopilotRun(runId);
-        onAutopilotRunUpdate?.(run);
-        setChatHistory((current) => {
-          const index = current.findIndex((item) => item.autopilotRun?.run_id === runId);
-          if (index === -1) return current;
-          const updated = [...current];
-          updated[index] = {
-            ...updated[index],
-            autopilotRun: run,
-            errors: run.errors,
-            body: summarizeAutopilotRun(run),
-          };
-          return updated;
-        });
-
-        if (run.status === "running") {
-          autopilotPollTimerRef.current = window.setTimeout(poll, 3000);
-        } else {
-          autopilotPollTimerRef.current = null;
-          setAgentBusy(false);
-          setNotice({
-            tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
-            title: `${autopilotAgentLabel(run)} — ${run.status}`,
-            detail: summarizeAutopilotRun(run),
-          });
-        }
-      } catch (err) {
-        autopilotPollTimerRef.current = null;
-        setAgentBusy(false);
-        const detail = err instanceof Error ? err.message : String(err);
-        setNotice({ tone: "error", title: "Agent poll failed", detail });
-      }
-    };
-    autopilotPollTimerRef.current = window.setTimeout(poll, 3000);
-  }
-
   async function runAutopilotAgent(promptOverride?: string, skipUserMsg = false) {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) {
@@ -282,9 +242,7 @@ export function useAgentRuns({
           errors: result.errors,
         },
       ]);
-      if (result.status === "running") {
-        void pollAutopilotRun(result.run_id);
-      } else {
+      if (result.status !== "running") {
         setAgentBusy(false);
         setNotice({
           tone: result.status === "completed" ? "success" : result.status === "awaiting_approval" ? "info" : "error",
@@ -320,9 +278,7 @@ export function useAgentRuns({
             }
           : entry
       )));
-      if (result.status === "running") {
-        void pollAutopilotRun(runId);
-      } else {
+      if (result.status !== "running") {
         setAgentBusy(false);
         setNotice({
           tone: result.status === "completed" ? "success" : result.status === "cancelled" ? "info" : "error",
@@ -347,7 +303,6 @@ export function useAgentRuns({
     runAgentChat,
     probeLocalAgents,
     runAutopilotAgent,
-    watchAutopilotRun: pollAutopilotRun,
     updateAutopilotRun,
     approveRun,
     rejectRun,

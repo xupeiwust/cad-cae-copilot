@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app import agent_activity
 from app.main import Settings, create_app, default_project, save_project
 
 
@@ -113,3 +114,30 @@ def test_project_chat_sessions_scope_messages_and_track_active_run(tmp_path: Pat
 
     sessions = client.get(f"/api/projects/{project_id}/chat-sessions").json()
     assert {session["id"] for session in sessions} == {first_id, second_id}
+
+
+def test_chat_session_and_message_changes_publish_sse_events(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    project = save_project(settings, default_project("session events"))
+    client = TestClient(create_app(settings))
+    project_id = project["id"]
+    q = agent_activity.subscribe()
+    try:
+        created = client.post(f"/api/projects/{project_id}/chat-sessions", json={"title": "Events"})
+        assert created.status_code == 200
+        session = created.json()
+        event = q.get(timeout=1)
+        assert event["type"] == "chat_session_changed"
+        assert event["action"] == "created"
+        assert event["session"]["id"] == session["id"]
+
+        message = client.post(
+            f"/api/projects/{project_id}/chat-messages",
+            json={"session_id": session["id"], "role": "user", "content": "hello stream"},
+        )
+        assert message.status_code == 200
+        events = [q.get(timeout=1), q.get(timeout=1)]
+        assert any(item["type"] == "chat_message" and item["chat_message"]["content"] == "hello stream" for item in events)
+        assert any(item["type"] == "chat_session_changed" and item["session"]["id"] == session["id"] for item in events)
+    finally:
+        agent_activity.unsubscribe(q)

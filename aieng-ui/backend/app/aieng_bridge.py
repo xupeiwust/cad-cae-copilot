@@ -8,7 +8,7 @@ so the service starts normally even when aieng is not installed.
 from __future__ import annotations
 
 import json
-import importlib.util
+import importlib
 import shutil
 import sys
 import tempfile
@@ -67,10 +67,20 @@ def _inject_aieng_src(aieng_root: str | Path) -> tuple[str, bool]:
 def _resolve_topology_backend(requested: str | None) -> str:
     value = str(requested or "auto").strip().lower()
     if value == "auto":
-        return "occ" if importlib.util.find_spec("OCP") is not None or importlib.util.find_spec("OCC") is not None else "mock"
+        return "occ" if _ocp_step_runtime_importable() else "mock"
     if value in {"mock", "occ"}:
         return value
     raise RuntimeError(f"Unsupported topology backend for import bridge: {value}")
+
+
+def _ocp_step_runtime_importable() -> bool:
+    """Return true only when the OCP STEP reader can actually be imported."""
+    try:
+        importlib.import_module("OCP.STEPControl")
+        importlib.import_module("OCP.IFSelect")
+    except Exception:
+        return False
+    return True
 
 
 def import_step_to_aieng(
@@ -141,6 +151,22 @@ def enrich_imported_package(
                 if resource_path == "README_FOR_AI.md":
                     generated_resources.append("ai/summary.md")
             except Exception as exc:
+                if resource_path == "geometry/topology_map.json" and resolved_backend == "occ":
+                    try:
+                        fn(pkg, overwrite=True, backend="mock")
+                        resolved_backend = "mock"
+                        generated_resources.append(resource_path)
+                        warnings.append(
+                            "geometry/topology_map.json: OCC topology extraction failed; "
+                            f"fell back to mock topology. Original error: {type(exc).__name__}: {exc}"
+                        )
+                        continue
+                    except Exception as fallback_exc:
+                        warnings.append(
+                            "geometry/topology_map.json: OCC topology extraction failed and mock fallback failed: "
+                            f"{type(fallback_exc).__name__}: {fallback_exc}; original error: {type(exc).__name__}: {exc}"
+                        )
+                        continue
                 warnings.append(f"{resource_path}: {type(exc).__name__}: {exc}")
 
         return {

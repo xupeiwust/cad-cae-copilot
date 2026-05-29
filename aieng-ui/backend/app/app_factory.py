@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from fastapi import Request
+
 
 def _sync_main_symbols() -> None:
     """Refresh globals from app.main so legacy monkeypatch points still work."""
@@ -200,6 +202,100 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
         return AutopilotStore(active_settings.data_root / "agent_autopilot" / "runs")
 
+    def _publish_live_event(event: dict[str, Any]) -> None:
+        try:
+            from . import agent_activity
+
+            agent_activity.publish(event)
+        except Exception:
+            pass
+
+    def _publish_chat_session_event(session: dict[str, Any], action: str = "updated") -> None:
+        _publish_live_event({
+            "type": "chat_session_changed",
+            "action": action,
+            "project_id": session.get("project_id"),
+            "session_id": session.get("id"),
+            "session": session,
+        })
+
+    def _publish_chat_message_event(message: dict[str, Any], action: str = "created") -> None:
+        _publish_live_event({
+            "type": "chat_message",
+            "action": action,
+            "project_id": message.get("project_id"),
+            "session_id": message.get("session_id"),
+            "chat_message": message,
+        })
+
+    def _run_session_status(status: str) -> str:
+        if status in {"running", "awaiting_approval", "chatting"}:
+            return "running"
+        if status in {"completed", "failed", "cancelled"}:
+            return status
+        return "idle"
+
+    def _publish_autopilot_state(state: Any) -> None:
+        payload = state.model_dump() if hasattr(state, "model_dump") else dict(state)
+        _publish_live_event({
+            "type": "autopilot_update",
+            "project_id": payload.get("project_id"),
+            "session_id": payload.get("session_id"),
+            "run_id": payload.get("run_id"),
+            "status": payload.get("status"),
+            "run": payload,
+        })
+
+    def _sync_autopilot_session(state: Any) -> None:
+        session_id = getattr(state, "session_id", None)
+        project_id = getattr(state, "project_id", None)
+        run_id = getattr(state, "run_id", None)
+        status = getattr(state, "status", None)
+        if not session_id or not project_id or not run_id or not status:
+            return
+        try:
+            from . import db
+
+            session = db.update_chat_session(
+                db_path,
+                str(session_id),
+                status=_run_session_status(str(status)),
+                active_run_id=str(run_id),
+            )
+            if session and session.get("project_id") == project_id:
+                _publish_chat_session_event(session)
+        except Exception:
+            pass
+
+    def _add_chat_message_and_publish(
+        *,
+        project_id: str,
+        role: str,
+        content: str,
+        session_id: str | None = None,
+        mode: str | None = None,
+        created_at: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        from . import db
+
+        row = db.add_chat_message(
+            db_path,
+            project_id=project_id,
+            session_id=session_id,
+            role=role,
+            content=content,
+            mode=mode,
+            created_at=created_at,
+            extra=extra,
+        )
+        _publish_chat_message_event(row)
+        if session_id:
+            session = db.get_chat_session(db_path, session_id)
+            if session:
+                _publish_chat_session_event(session)
+        return row
+
     def _write_autopilot_audit(project_id: str | None, event: str, payload: dict[str, Any]) -> None:
         if not project_id:
             return
@@ -244,6 +340,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(request.llm_config),
             agent_context=agent_context_snapshot,
+            on_state_update=_sync_autopilot_session,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -292,6 +389,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             )
         )
         store.save(state)
+        _sync_autopilot_session(state)
+        _publish_autopilot_state(state)
         _write_autopilot_audit(state.project_id, "agent_autopilot_started", {
             "run_id": state.run_id,
             "adapter_id": state.adapter_id,
@@ -314,6 +413,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 loaded.status = "failed"
                 loaded.errors.append(str(exc))
                 store.save(loaded)
+                _sync_autopilot_session(loaded)
+                _publish_autopilot_state(loaded)
 
         _start_autopilot_worker(_run_in_background)
         return state.model_dump()
@@ -353,17 +454,22 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             current.status = "running"
             current.updated_at = now_iso()
             store.save(current)
+            _sync_autopilot_session(current)
+            _publish_autopilot_state(current)
         elif current.status == "awaiting_approval":
             # Update status to running immediately so the client sees the transition
             current.status = "running"
             current.pending_approval = None
             current.updated_at = now_iso()
             store.save(current)
+            _sync_autopilot_session(current)
+            _publish_autopilot_state(current)
 
         engine = AutopilotEngine(
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(current.llm_config),
+            on_state_update=_sync_autopilot_session,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -384,6 +490,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 loaded.status = "failed"
                 loaded.errors.append(str(exc))
                 store.save(loaded)
+                _sync_autopilot_session(loaded)
+                _publish_autopilot_state(loaded)
 
         _start_autopilot_worker(_run_continue_in_background)
         return current.model_dump()
@@ -393,7 +501,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         from .agent_autopilot.engine import AutopilotEngine
 
         store = _autopilot_store()
-        engine = AutopilotEngine(store=store, runtime_tools=_rt.list_tools_for_mcp())
+        engine = AutopilotEngine(store=store, runtime_tools=_rt.list_tools_for_mcp(), on_state_update=_sync_autopilot_session)
         try:
             state = engine.cancel_run(run_id)
             _write_autopilot_audit(state.project_id, "agent_autopilot_cancelled", {
@@ -975,8 +1083,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if session_id is None:
             session_id = db.ensure_default_chat_session(db_path, project_id)["id"]
         if message:
-            db.add_chat_message(
-                db_path,
+            _add_chat_message_and_publish(
                 project_id=project_id,
                 session_id=session_id,
                 role="user",
@@ -991,8 +1098,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         )
         reply = result.get("reply", "")
         if reply:
-            db.add_chat_message(
-                db_path,
+            _add_chat_message_and_publish(
                 project_id=project_id,
                 session_id=session_id,
                 role="assistant",
@@ -1099,29 +1205,45 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     # ── live agent activity (Phase 2: external agents drive the workbench) ────
 
     @app.get("/api/agent-activity/stream")
-    def agent_activity_stream():
+    async def agent_activity_stream(request: Request):
         """SSE stream of live agent activity for the React UI to subscribe to.
 
         When an external agent (Claude Code/Codex/Copilot) forwards a tool call
         through /api/agent/invoke-tool, the resulting activity events are fanned
         out here so the UI can render them live (e.g. the CAD build animation).
         """
+        import asyncio as _asyncio
         import json as _json
         import queue as _queue
         from fastapi.responses import StreamingResponse
         from . import agent_activity
 
-        def gen():
+        async def gen():
             q = agent_activity.subscribe()
             try:
                 yield f"data: {_json.dumps({'type': 'connected'})}\n\n"
+                last_keepalive = 0.0
                 while True:
+                    if await request.is_disconnected():
+                        break
+
+                    emitted = False
                     try:
-                        event = q.get(timeout=15)
+                        event = q.get_nowait()
+                        emitted = True
                         yield f"data: {_json.dumps(event)}\n\n"
                     except _queue.Empty:
+                        pass
+
+                    now = _asyncio.get_running_loop().time()
+                    if not emitted and now - last_keepalive >= 15:
                         # SSE comment keeps the connection alive through proxies.
+                        last_keepalive = now
                         yield ": keepalive\n\n"
+
+                    await _asyncio.sleep(0.25)
+            except _asyncio.CancelledError:
+                raise
             finally:
                 agent_activity.unsubscribe(q)
 
@@ -1892,8 +2014,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if session_id is None:
             session_id = db.ensure_default_chat_session(db_path, project_id)["id"]
         if message:
-            db.add_chat_message(
-                db_path,
+            _add_chat_message_and_publish(
                 project_id=project_id,
                 session_id=session_id,
                 role="user",
@@ -1902,8 +2023,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         result = chat_orchestrator(active_settings, project_id, p)
         reply = result.get("reply", "")
         if reply:
-            db.add_chat_message(
-                db_path,
+            _add_chat_message_and_publish(
                 project_id=project_id,
                 session_id=session_id,
                 role="assistant",
@@ -1931,11 +2051,13 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         get_project(active_settings, project_id)
         p = payload or {}
         try:
-            return db.create_chat_session(
+            session = db.create_chat_session(
                 db_path,
                 project_id=project_id,
                 title=str(p.get("title") or "New session"),
             )
+            _publish_chat_session_event(session, "created")
+            return session
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1958,6 +2080,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         )
         if updated is None or updated["project_id"] != project_id:
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        _publish_chat_session_event(updated)
         return updated
 
     @app.delete("/api/projects/{project_id}/chat-sessions/{session_id}")
@@ -1967,6 +2090,11 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         get_project(active_settings, project_id)
         if not db.delete_chat_session(db_path, project_id, session_id):
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        _publish_live_event({
+            "type": "chat_session_deleted",
+            "project_id": project_id,
+            "session_id": session_id,
+        })
         return {"deleted": True, "project_id": project_id, "session_id": session_id}
 
     @app.get("/api/projects/{project_id}/chat-messages")
@@ -1991,8 +2119,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         get_project(active_settings, project_id)
         session_id = str(p.get("session_id") or "").strip() or None
         try:
-            return db.add_chat_message(
-                db_path,
+            return _add_chat_message_and_publish(
                 project_id=project_id,
                 session_id=session_id,
                 role=str(p.get("role", "user")),
@@ -2627,67 +2754,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise ValueError("project_id is required for aieng.refresh_semantics")
         return validate_aieng_file(active_settings, pid)
 
-    def _preview_from_package_glb(settings: Any, project_id: str) -> dict[str, Any] | None:
-        """If the package already has a preview GLB/STL, publish it to the viewer dir.
-
-        Returns a convert_asset-shaped dict on success, or None if the package has
-        no embedded preview (so the caller can fall back to the STEP pipeline).
-        """
-        import zipfile as _zip
-        from .project_io import get_project as _get, resolve_project_path as _resolve
-
-        try:
-            project = _get(settings, project_id)
-        except Exception:
-            return None
-        pkg_path = _resolve(settings, project_id, project.get("aieng_file"))
-        if pkg_path is None or not pkg_path.exists():
-            return None
-
-        member_fmt = None
-        for member, fmt in (("geometry/preview.glb", "glb"), ("geometry/preview.stl", "stl")):
-            try:
-                with _zip.ZipFile(pkg_path, "r") as zf:
-                    if member in zf.namelist():
-                        member_fmt = (member, fmt)
-                        data = zf.read(member)
-                        break
-            except Exception:
-                return None
-        if member_fmt is None:
-            return None
-
-        member, fmt = member_fmt
-        viewer_root = project_dir(active_settings, project_id) / "viewer"
-        viewer_root.mkdir(parents=True, exist_ok=True)
-        asset_path = viewer_root / f"model.{fmt}"
-        asset_path.write_bytes(data)
-
-        rel = project_relpath(active_settings, project_id, asset_path)
-        project["web_asset"] = rel
-        project["web_asset_format"] = fmt
-        project["status"] = f"viewer_ready_{fmt}"
-        project["last_error"] = None
-        save_project(active_settings, project)
-        return {
-            "status": "ok",
-            "asset_path": rel,
-            "asset_format": fmt,
-            "viewer_url": f"/assets/projects/{project_id}/{rel}",
-            "source": "package_preview",
-        }
-
     def _tool_generate_preview(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         pid = inp.get("project_id")
         if not pid:
             raise ValueError("project_id is required for aieng.generate_preview")
-        # build123d-generated projects already carry a preview GLB/STL inside the
-        # package (geometry/preview.glb). Use it directly instead of requiring a
-        # STEP source — convert_asset's STEP→STL→GLB path only handles imported
-        # STEP files and fails on agent-built geometry.
-        preview = _preview_from_package_glb(active_settings, pid)
-        if preview is not None:
-            return preview
+        # convert_asset first publishes embedded package previews (GLB/STL), then
+        # falls back to STEP conversion when the package has no viewer asset.
         return convert_asset(active_settings, pid)
 
     def _tool_read_audit_log(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:

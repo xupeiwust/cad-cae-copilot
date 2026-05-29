@@ -4,6 +4,8 @@ import { api } from "../api";
 import type { CadGenerationProgress, ChatHistoryItem, Notice } from "../appTypes";
 import type { AgentActivityEvent, LiveSyncStatus } from "../appUtils";
 import { applyAgentActivityEvent, createChatId } from "../appUtils";
+import type { AutopilotRunState } from "../types";
+import type { ChatSession, PersistedChatMessage } from "../api";
 import {
   autopilotAgentLabel,
   summarizeAutopilotRun,
@@ -11,11 +13,16 @@ import {
 
 type UseAgentActivityStreamArgs = {
   selectedId: string | null;
+  activeSessionId: string | null;
   agentBusy: boolean;
   cadGenerationProgress: CadGenerationProgress | null;
   refreshProjects(nextSelectedId?: string | null): Promise<void>;
   refreshViewerAsset(projectId: string, previewUrl?: string | null, previewFormat?: string | null): void;
   stopAutopilotPoll(): void;
+  onAutopilotRunUpdate(run: AutopilotRunState): void;
+  onChatMessage(message: PersistedChatMessage): void;
+  onChatSessionChange(session: ChatSession, action?: string | null): void;
+  onChatSessionDelete(sessionId: string): void;
   setAgentBusy: Dispatch<SetStateAction<boolean>>;
   setNotice: Dispatch<SetStateAction<Notice | null>>;
   setChatHistory: Dispatch<SetStateAction<ChatHistoryItem[]>>;
@@ -24,11 +31,16 @@ type UseAgentActivityStreamArgs = {
 
 export function useAgentActivityStream({
   selectedId,
+  activeSessionId,
   agentBusy,
   cadGenerationProgress,
   refreshProjects,
   refreshViewerAsset,
   stopAutopilotPoll,
+  onAutopilotRunUpdate,
+  onChatMessage,
+  onChatSessionChange,
+  onChatSessionDelete,
   setAgentBusy,
   setNotice,
   setChatHistory,
@@ -38,10 +50,26 @@ export function useAgentActivityStream({
   const [liveSyncDetail, setLiveSyncDetail] = useState("Connecting to backend activity stream...");
   const [liveSyncLastEventAt, setLiveSyncLastEventAt] = useState<string | null>(null);
   const selectedIdRef = useRef<string | null>(selectedId);
+  const activeSessionIdRef = useRef<string | null>(activeSessionId);
+  const onAutopilotRunUpdateRef = useRef(onAutopilotRunUpdate);
+  const onChatMessageRef = useRef(onChatMessage);
+  const onChatSessionChangeRef = useRef(onChatSessionChange);
+  const onChatSessionDeleteRef = useRef(onChatSessionDelete);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    onAutopilotRunUpdateRef.current = onAutopilotRunUpdate;
+    onChatMessageRef.current = onChatMessage;
+    onChatSessionChangeRef.current = onChatSessionChange;
+    onChatSessionDeleteRef.current = onChatSessionDelete;
+  }, [onAutopilotRunUpdate, onChatMessage, onChatSessionChange, onChatSessionDelete]);
 
   useEffect(() => {
     const url = `${api.base}/api/agent-activity/stream`;
@@ -65,6 +93,7 @@ export function useAgentActivityStream({
       }
 
       const current = selectedIdRef.current;
+      const currentSession = activeSessionIdRef.current;
       const isBuildDone =
         event.type === "tool_completed" &&
         event.tool === "cad.execute_build123d" &&
@@ -89,39 +118,72 @@ export function useAgentActivityStream({
       }
 
       if (event.type === "autopilot_update") {
-        const payload = event as unknown as Record<string, unknown>;
-        const runId = payload.run_id as string;
-        void (async () => {
-          try {
-            const run = await api.getAutopilotRun(runId);
-            setChatHistory((currentHistory) => {
-              const index = currentHistory.findIndex((item) => item.autopilotRun?.run_id === runId);
-              if (index === -1) return currentHistory;
-              const updated = [...currentHistory];
-              updated[index] = {
-                ...updated[index],
+        const run = event.run as AutopilotRunState | undefined;
+        if (!run?.run_id) return;
+        onAutopilotRunUpdateRef.current(run);
+        if (run.status !== "running") {
+          stopAutopilotPoll();
+          setAgentBusy(false);
+        }
+        if (run.project_id && current && run.project_id !== current) return;
+        if (run.session_id && currentSession && run.session_id !== currentSession) return;
+        setChatHistory((currentHistory) => {
+          const index = currentHistory.findIndex((item) => item.autopilotRun?.run_id === run.run_id);
+          if (index === -1) {
+            return [
+              ...currentHistory,
+              {
+                id: `run-${run.run_id}`,
+                role: "assistant",
+                body: summarizeAutopilotRun(run),
+                createdAt: run.created_at,
+                mode: "runtime",
                 autopilotRun: run,
                 errors: run.errors,
-                body: summarizeAutopilotRun(run),
-              };
-              return updated;
-            });
-            if (run.status === "chatting") {
-              stopAutopilotPoll();
-              setAgentBusy(false);
-            } else if (run.status !== "running") {
-              stopAutopilotPoll();
-              setAgentBusy(false);
-              setNotice({
-                tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
-                title: `${autopilotAgentLabel(run)} — ${run.status}`,
-                detail: summarizeAutopilotRun(run),
-              });
-            }
-          } catch {
-            // Next SSE event or poll tick will retry.
+              },
+            ];
           }
-        })();
+          const updated = [...currentHistory];
+          updated[index] = {
+            ...updated[index],
+            autopilotRun: run,
+            errors: run.errors,
+            body: summarizeAutopilotRun(run),
+          };
+          return updated;
+        });
+        if (run.status === "chatting") {
+          return;
+        } else if (run.status !== "running") {
+          setNotice({
+            tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
+            title: `${autopilotAgentLabel(run)} — ${run.status}`,
+            detail: summarizeAutopilotRun(run),
+          });
+        }
+        return;
+      }
+
+      if (event.type === "chat_message") {
+        const message = event.chat_message as PersistedChatMessage | undefined;
+        if (!message?.id) return;
+        if (message.project_id && current && message.project_id !== current) return;
+        if (message.session_id && currentSession && message.session_id !== currentSession) return;
+        onChatMessageRef.current(message);
+        return;
+      }
+
+      if (event.type === "chat_session_changed") {
+        const session = event.session as ChatSession | undefined;
+        if (!session?.id) return;
+        if (session.project_id && current && session.project_id !== current) return;
+        onChatSessionChangeRef.current(session, event.action);
+        return;
+      }
+
+      if (event.type === "chat_session_deleted") {
+        if (event.project_id && current && event.project_id !== current) return;
+        if (event.session_id) onChatSessionDeleteRef.current(event.session_id);
         return;
       }
 

@@ -276,7 +276,7 @@ export function RuntimeSettingsDrawer({
         <div className="drawer-header">
           <div>
             <h2>环境设置</h2>
-            <p>集中管理 LLM Provider 和 CAD Runtime。主工作区只显示当前状态与常用操作。</p>
+            <p>集中管理 LLM Provider、本地 Agent 和可选预览适配器。主工作区只显示当前状态与常用操作。</p>
           </div>
           <button type="button" className="ghost-button drawer-close" onClick={onClose}>
             关闭
@@ -405,14 +405,14 @@ export function RuntimeSettingsDrawer({
           <section className="drawer-section">
             <div className="drawer-section-heading">
               <div>
-                <h3>CAD Runtime</h3>
+                <h3>Preview Adapter</h3>
                 <p>AI 建模默认使用 build123d/OCP；FreeCAD 仅作为可选外部适配器配置。</p>
               </div>
             </div>
 
             <div className="runtime-config-grid">
               <label className="form-field">
-                <span>CAD Provider</span>
+                <span>Preview Provider</span>
                 <select
                   value={runtimeDraft?.provider ?? "build123d"}
                   disabled={runtimeBusy}

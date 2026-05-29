@@ -2966,10 +2966,20 @@ def test_import_aieng_file_uses_core_bridge_without_cad_provider(tmp_path: Path)
     assert "validation/completeness_report.json" in summary["members"]
 
 
-def test_convert_asset_reports_unavailable_honestly_without_provider(tmp_path: Path) -> None:
+def test_convert_asset_reports_unavailable_honestly_without_provider(monkeypatch, tmp_path: Path) -> None:
     from app.main import convert_asset
+    from app.services import platform_logic
 
     settings = _make_patch_settings(tmp_path)
+    monkeypatch.setattr(
+        platform_logic,
+        "_step_to_stl_via_build123d",
+        lambda *_args, **_kwargs: {
+            "status": "unavailable",
+            "code": "build123d_missing",
+            "message": "build123d not installed",
+        },
+    )
     write_json(settings.runtime_config_path, {
         "provider": "none",
         "aieng_root": str(settings.aieng_root),
@@ -2993,6 +3003,41 @@ def test_convert_asset_reports_unavailable_honestly_without_provider(tmp_path: P
     assert saved["web_asset"] is None
     assert saved["web_asset_format"] is None
     assert saved["status"] == "preview_unavailable"
+
+
+def test_convert_asset_publishes_embedded_package_preview_without_provider(tmp_path: Path) -> None:
+    from app.main import convert_asset
+
+    settings = _make_patch_settings(tmp_path)
+    write_json(settings.runtime_config_path, {
+        "provider": "none",
+        "aieng_root": str(settings.aieng_root),
+        "freecad_mcp_root": "",
+        "freecad_home": "",
+        "topology_backend": "auto",
+    })
+    project = save_project(settings, default_project("package-preview"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "packages" / "package-preview.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    preview_bytes = b"solid preview\nendsolid preview\n"
+    with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps({"schema_version": "0.1"}))
+        archive.writestr("geometry/preview.stl", preview_bytes)
+    project["aieng_file"] = "packages/package-preview.aieng"
+    save_project(settings, project)
+
+    result = convert_asset(settings, project_id)
+    saved = get_project(settings, project_id)
+    viewer_file = project_dir(settings, project_id) / "viewer" / "model.stl"
+
+    assert result["status"] == "ok"
+    assert result["asset_format"] == "stl"
+    assert result["source"] == "package_preview"
+    assert viewer_file.read_bytes() == preview_bytes
+    assert saved["web_asset"] == "viewer/model.stl"
+    assert saved["web_asset_format"] == "stl"
+    assert saved["status"] == "viewer_ready_stl"
 
 
 def test_runtime_snapshot_probe_uses_frontend_compatible_fields(tmp_path: Path) -> None:

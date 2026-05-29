@@ -89,7 +89,7 @@ export function isLlmConfigReady(config: LLMConfig) {
 }
 
 export function getRuntimeDetail(snapshot: RuntimeConfigSnapshot | null) {
-  if (!snapshot) return "正在读取 CAD 运行时配置";
+  if (!snapshot) return "正在读取预览适配器配置";
   if (snapshot.probe.ready) {
     return `${getProviderLabel(snapshot.config.provider)} / topology=${snapshot.probe.topology_backend_resolved}`;
   }
@@ -309,10 +309,17 @@ export function applyCadProgressEvent(
 // ── agent activity (Phase 2: external agents drive the workbench) ────────────
 
 export type AgentActivityEvent = {
-  type: string;            // connected | tool_* | project_changed | viewer_asset_changed
+  type: string;            // connected | tool_* | project_changed | viewer_asset_changed | autopilot_update | chat_*
   call_id?: string;
   tool?: string;
   project_id?: string | null;
+  session_id?: string | null;
+  action?: string | null;
+  run_id?: string | null;
+  run?: unknown;
+  session?: unknown;
+  message?: string | null;
+  chat_message?: unknown;
   code_preview?: string | null;
   phase?: string;          // building | writing
   elapsed_s?: number;
@@ -321,7 +328,6 @@ export type AgentActivityEvent = {
   preview_format?: string | null;
   topology_summary?: { face_count?: number; feature_count?: number } | null;
   source?: string | null;
-  message?: string | null;
 };
 
 export type LiveSyncStatus = "connecting" | "live" | "reconnecting" | "polling" | "offline";

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -23,16 +23,16 @@ class Build123dPreviewProvider:
         aieng_root = Path(str(self._config.get("aieng_root") or getattr(self._settings, "aieng_root", ""))).resolve()
         topology_requested = str(self._config.get("topology_backend") or "auto")
         topology_resolved = self._resolve_topology_backend(topology_requested)
-        build123d_available = importlib.util.find_spec("build123d") is not None
-        ocp_available = importlib.util.find_spec("OCP") is not None or importlib.util.find_spec("OCC") is not None
+        build123d_available, build123d_error = self._module_importable("build123d")
+        ocp_available, ocp_error = self._module_importable("OCP.STEPControl")
 
         issues: list[str] = []
         if build123d_available:
             issues.append("build123d ready for STEP preview export and agent CAD execution.")
         else:
-            issues.append("build123d is not installed; agent CAD execution and STEP preview export are unavailable.")
+            issues.append(f"build123d import failed; STEP preview export is unavailable. {build123d_error}")
         if not ocp_available:
-            issues.append("OCP/OCC was not detected; topology extraction may degrade to mock mode.")
+            issues.append(f"OCP STEP runtime is unavailable; topology extraction will degrade to mock mode. {ocp_error}")
 
         return {
             "provider": self.provider,
@@ -53,7 +53,7 @@ class Build123dPreviewProvider:
             "ocp_available": ocp_available,
             "ready": build123d_available,
             "issues": issues,
-            "bridge_error": None if build123d_available else "build123d is not importable in the backend Python.",
+            "bridge_error": None if build123d_available else build123d_error,
             "tools": ["cad_export_stl"] if build123d_available else [],
             "whitelisted_tools": whitelisted_tools,
         }
@@ -148,7 +148,15 @@ class Build123dPreviewProvider:
         value = str(requested or "auto").strip().lower()
         if value != "auto":
             return value
-        return "occ" if importlib.util.find_spec("OCP") is not None or importlib.util.find_spec("OCC") is not None else "mock"
+        return "occ" if Build123dPreviewProvider._module_importable("OCP.STEPControl")[0] else "mock"
+
+    @staticmethod
+    def _module_importable(module_name: str) -> tuple[bool, str | None]:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+        return True, None
 
     @staticmethod
     def _unavailable(op: str) -> dict[str, Any]:

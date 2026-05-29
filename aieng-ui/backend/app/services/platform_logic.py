@@ -336,13 +336,94 @@ def _step_to_stl_via_build123d(step_path: Path, stl_path: Path) -> dict[str, Any
         return {"status": "error", "code": "build123d_step_export_failed", "message": f"{type(exc).__name__}: {exc}"}
 
 
+def _publish_package_preview_asset(
+    settings: Settings,
+    project_id: str,
+    project: dict[str, Any],
+    metadata_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Publish an embedded package preview to the viewer directory if present."""
+    import zipfile
+
+    package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if package_path is None or not package_path.exists():
+        return None
+
+    candidates = (
+        ("geometry/preview.glb", "glb"),
+        ("preview.glb", "glb"),
+        ("viewer/model.glb", "glb"),
+        ("geometry/preview.stl", "stl"),
+        ("preview.stl", "stl"),
+        ("viewer/model.stl", "stl"),
+    )
+    try:
+        with zipfile.ZipFile(package_path, "r") as archive:
+            names = set(archive.namelist())
+            selected = next(((member, fmt) for member, fmt in candidates if member in names), None)
+            if selected is None:
+                return None
+            member, asset_format = selected
+            data = archive.read(member)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "asset_path": None,
+            "asset_format": None,
+            "viewer_url": None,
+            "message": f"Failed to read embedded preview asset: {type(exc).__name__}: {exc}",
+        }
+
+    viewer_root = project_dir(settings, project_id) / "viewer"
+    viewer_root.mkdir(parents=True, exist_ok=True)
+    asset_path = viewer_root / f"model.{asset_format}"
+    asset_path.write_bytes(data)
+    rel_asset = project_relpath(settings, project_id, asset_path)
+
+    source_step = resolve_project_path(settings, project_id, project.get("source_step"))
+    preview_info = {
+        "source_step": project_relpath(settings, project_id, source_step) if source_step and source_step.exists() else None,
+        "selected_asset": rel_asset,
+        "selected_format": asset_format,
+        "preview": {
+            "status": "ok",
+            "provider": "package_preview",
+            "member": member,
+            "package": project_relpath(settings, project_id, package_path),
+        },
+        "glb_attempt": None,
+    }
+    if metadata_path is not None:
+        write_json(metadata_path, preview_info)
+
+    project["web_asset"] = rel_asset
+    project["web_asset_format"] = asset_format
+    project["preview_info"] = preview_info
+    project["status"] = f"viewer_ready_{asset_format}"
+    project["last_error"] = None
+    save_project(settings, project)
+    return {
+        "status": "ok",
+        "asset_path": rel_asset,
+        "asset_format": asset_format,
+        "viewer_url": f"/assets/projects/{project_id}/{rel_asset}",
+        "preview_info": preview_info,
+        "source": "package_preview",
+    }
+
+
 def convert_asset(settings: Settings, project_id: str) -> dict[str, Any]:
     project = get_project(settings, project_id)
-    source = ensure_step_source(settings, project_id, project)
     viewer_root = project_dir(settings, project_id) / "viewer"
     stl_path = viewer_root / "model.stl"
     glb_path = viewer_root / "model.glb"
     metadata_path = viewer_root / "preview.json"
+
+    embedded_preview = _publish_package_preview_asset(settings, project_id, project, metadata_path)
+    if embedded_preview is not None:
+        return embedded_preview
+
+    source = ensure_step_source(settings, project_id, project)
 
     _, _, provider = resolve_provider_bundle(settings)
     preview_result = provider.export_step_preview_to_stl(step_path=source, stl_path=stl_path)
@@ -355,6 +436,9 @@ def convert_asset(settings: Settings, project_id: str) -> dict[str, Any]:
         if fallback.get("status") == "ok" and stl_path.exists():
             preview_result = fallback
             preview_status = "ok"
+        else:
+            preview_result = fallback
+            preview_status = str(fallback.get("status") or "unavailable")
 
     if preview_status != "ok" or not stl_path.exists():
         failure_status = "unavailable" if preview_status == "unavailable" else "error"

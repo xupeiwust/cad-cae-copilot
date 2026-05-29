@@ -195,11 +195,26 @@ export function useWorkbenchApp() {
         ? { ...session, status, active_run_id: run.run_id, updated_at: run.updated_at }
         : session
     )));
-    void api.updateChatSession(projectId, sessionId, {
-      status,
-      active_run_id: run.run_id,
-    }).catch(() => {});
   }, [activeSessionId, selectedId]);
+  const handleLiveChatMessage = useCallback((messageRecord: PersistedChatMessage) => {
+    setChatHistory((current) => upsertPersistedChatMessage(current, messageRecord));
+    persistedChatIdsRef.current.add(`db-${messageRecord.id}`);
+    const clientId = getPersistedClientId(messageRecord);
+    if (clientId) persistedChatIdsRef.current.add(clientId);
+  }, []);
+  const handleLiveChatSessionChange = useCallback((session: ChatSession) => {
+    setChatSessions((current) => {
+      const index = current.findIndex((item) => item.id === session.id);
+      if (index === -1) return [session, ...current];
+      const updated = [...current];
+      updated[index] = session;
+      return updated.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    });
+  }, []);
+  const handleLiveChatSessionDelete = useCallback((sessionId: string) => {
+    setChatSessions((current) => current.filter((session) => session.id !== sessionId));
+    setActiveSessionId((current) => current === sessionId ? null : current);
+  }, []);
   const selectedConnectionBlocked = selectedChatConnection.requires_project && !selectedId;
   const {
     agentBusy,
@@ -210,7 +225,6 @@ export function useWorkbenchApp() {
     runAgentChat,
     probeLocalAgents,
     runAutopilotAgent,
-    watchAutopilotRun,
     updateAutopilotRun,
     approveRun,
     rejectRun,
@@ -235,11 +249,16 @@ export function useWorkbenchApp() {
     liveSyncLastEventAt,
   } = useAgentActivityStream({
     selectedId,
+    activeSessionId,
     agentBusy,
     cadGenerationProgress,
     refreshProjects,
     refreshViewerAsset,
     stopAutopilotPoll,
+    onAutopilotRunUpdate: updateActiveSessionFromRun,
+    onChatMessage: handleLiveChatMessage,
+    onChatSessionChange: handleLiveChatSessionChange,
+    onChatSessionDelete: handleLiveChatSessionDelete,
     setAgentBusy,
     setNotice,
     setChatHistory: setPersistentChatHistory,
@@ -406,7 +425,7 @@ export function useWorkbenchApp() {
         previewStatus === "ok"
           ? "Preview asset ready"
           : previewStatus === "unavailable"
-            ? "Preview unavailable: configure a CAD runtime to export STEP into a web-viewable asset."
+            ? "Preview unavailable: no embedded GLB/STL preview was found, and STEP preview conversion is not available."
             : "Preview export failed; inspect the backend response for details.",
       );
 
@@ -422,7 +441,7 @@ export function useWorkbenchApp() {
           ? "Package upload completed. If preview is unavailable, the package is still loaded and usable in the workbench."
           : previewStatus === "ok"
             ? "STEP imported, packaged, validated, and previewed successfully."
-            : "STEP imported and validated, but preview export still needs a working CAD runtime.",
+            : "STEP imported and validated, but preview export still needs an embedded GLB/STL asset or a STEP preview converter.",
       });
     });
   }
@@ -620,9 +639,6 @@ export function useWorkbenchApp() {
         if (cancelled) return;
         updateActiveSessionFromRun(run);
         setChatHistory((current) => upsertAutopilotChatItem(current, run));
-        if (run.status === "running") {
-          void watchAutopilotRun(run.run_id);
-        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -768,11 +784,11 @@ function chatItemExtra(item: ChatHistoryItem): Record<string, unknown> | undefin
     ...extra
   } = item;
   const entries = Object.entries(extra).filter(([, value]) => value !== undefined);
-  return entries.length ? Object.fromEntries(entries) : undefined;
+  return Object.fromEntries([["client_id", item.id], ...entries]);
 }
 
 function persistedMessageToChatItem(message: PersistedChatMessage): ChatHistoryItem {
-  const extra = (message.extra ?? {}) as Partial<ChatHistoryItem>;
+  const { client_id: _clientId, ...extra } = (message.extra ?? {}) as Partial<ChatHistoryItem> & { client_id?: string };
   const role = message.role === "assistant" ? "assistant" : "user";
   const mode =
     message.mode === "plan" || message.mode === "execute" || message.mode === "runtime"
@@ -786,6 +802,25 @@ function persistedMessageToChatItem(message: PersistedChatMessage): ChatHistoryI
     createdAt: message.created_at,
     mode,
   };
+}
+
+function getPersistedClientId(message: PersistedChatMessage): string | null {
+  const clientId = (message.extra as { client_id?: unknown } | null | undefined)?.client_id;
+  return typeof clientId === "string" && clientId ? clientId : null;
+}
+
+function upsertPersistedChatMessage(current: ChatHistoryItem[], message: PersistedChatMessage): ChatHistoryItem[] {
+  const dbId = `db-${message.id}`;
+  const clientId = getPersistedClientId(message);
+  const index = current.findIndex((item) => item.id === dbId || (clientId ? item.id === clientId : false));
+  if (index === -1) return [...current, persistedMessageToChatItem(message)];
+  const updated = [...current];
+  updated[index] = {
+    ...updated[index],
+    ...persistedMessageToChatItem(message),
+    id: updated[index].id,
+  };
+  return updated;
 }
 
 function autopilotRunToChatItem(run: AutopilotRunState): ChatHistoryItem {

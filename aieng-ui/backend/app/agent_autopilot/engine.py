@@ -19,7 +19,7 @@ from .store import AutopilotStore
 
 
 def _publish_autopilot_update(state: AutopilotRunState) -> None:
-    """Push a lightweight notification so the UI knows to refresh the full run state."""
+    """Push the current run state over the shared UI SSE stream."""
     try:
         from .. import agent_activity
     except Exception:
@@ -27,8 +27,10 @@ def _publish_autopilot_update(state: AutopilotRunState) -> None:
     agent_activity.publish({
         "type": "autopilot_update",
         "project_id": state.project_id,
+        "session_id": state.session_id,
         "run_id": state.run_id,
         "status": state.status,
+        "run": state.model_dump(),
     })
 
 
@@ -50,12 +52,14 @@ class AutopilotEngine:
         adapters: dict[str, LocalAgentAdapter] | None = None,
         agent_context: dict[str, Any] | None = None,
         tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
+        on_state_update: Callable[[AutopilotRunState], None] | None = None,
     ) -> None:
         self.store = store
         self.runtime_tools = runtime_tools
         self.adapters = adapters or adapter_registry()
         self.agent_context = agent_context or {}
         self.tool_executor = tool_executor
+        self.on_state_update = on_state_update
 
     def start(self, request: AutopilotRunRequest, *, run_id: str | None = None) -> AutopilotRunState:
         adapters = adapter_registry(request.fake_actions)
@@ -66,6 +70,7 @@ class AutopilotEngine:
             state.status = "failed"
             state.errors.append(f"Unknown local agent adapter: {request.adapter_id}")
             self.store.save(state)
+            self._publish_state(state)
             return state
         state = self._new_state(request, run_id=run_id)
         state.observations.append(
@@ -83,7 +88,7 @@ class AutopilotEngine:
             self._bootstrap_project_context(state)
         self._step_loop(state, adapter, request.max_steps)
         self.store.save(state)
-        _publish_autopilot_update(state)
+        self._publish_state(state)
         return state
 
     def _new_state(self, request: AutopilotRunRequest, *, run_id: str | None = None) -> AutopilotRunState:
@@ -106,6 +111,14 @@ class AutopilotEngine:
     def _checkpoint(self, state: AutopilotRunState) -> None:
         state.updated_at = now_iso()
         self.store.save(state)
+        self._publish_state(state)
+
+    def _publish_state(self, state: AutopilotRunState) -> None:
+        if self.on_state_update is not None:
+            try:
+                self.on_state_update(state)
+            except Exception:
+                pass
         _publish_autopilot_update(state)
 
     def _bootstrap_project_context(self, state: AutopilotRunState) -> None:
@@ -407,12 +420,13 @@ class AutopilotEngine:
             state.status = "running"
             state.observations.append(_observation("user_message", user_message))
             self.store.save(state)
+            self._publish_state(state)
             adapter = self.adapters.get(state.adapter_id)
             if adapter is not None:
                 self._step_loop(state, adapter, max_steps)
             state.updated_at = now_iso()
             self.store.save(state)
-            _publish_autopilot_update(state)
+            self._publish_state(state)
             return state
 
         if state.status != "awaiting_approval" or state.pending_approval is None:
@@ -431,7 +445,7 @@ class AutopilotEngine:
             )
             state.updated_at = now_iso()
             self.store.save(state)
-            _publish_autopilot_update(state)
+            self._publish_state(state)
             return state
         state.status = "running"
         state.observations.append(
@@ -444,7 +458,7 @@ class AutopilotEngine:
             {"level": approval.level, "requires_approval": True, "explanation": approval.explanation},
         ):
             self.store.save(state)
-            _publish_autopilot_update(state)
+            self._publish_state(state)
             return state
         adapter = self.adapters.get(state.adapter_id)
         if adapter is None:
@@ -454,7 +468,7 @@ class AutopilotEngine:
             self._step_loop(state, adapter, max_steps)
         state.updated_at = now_iso()
         self.store.save(state)
-        _publish_autopilot_update(state)
+        self._publish_state(state)
         return state
 
     def cancel_run(self, run_id: str) -> AutopilotRunState:
@@ -464,5 +478,5 @@ class AutopilotEngine:
         state.updated_at = now_iso()
         state.observations.append(_observation("user_message", "Autopilot run cancelled."))
         self.store.save(state)
-        _publish_autopilot_update(state)
+        self._publish_state(state)
         return state

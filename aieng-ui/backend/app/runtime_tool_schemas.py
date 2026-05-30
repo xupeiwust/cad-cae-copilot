@@ -109,6 +109,33 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "minimization). Writes analysis/topology_optimization.json. No external solver."
         ),
     },
+    "opt.writeback_to_shape_ir": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "representation": {
+                "type": "string",
+                "description": (
+                    "Compile target for the optimized body (default manifold_mesh -> "
+                    "watertight voxel mesh; brep_build123d also supported)."
+                ),
+            },
+            "cell_size": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "In-plane voxel cell size [sx, sy] in mm (default [1, 1]).",
+            },
+            "thickness": {"type": "number", "description": "Extrusion depth in Z (default = larger cell edge)."},
+            "origin": {"type": "array", "items": {"type": "number"}, "description": "Field origin [x, y, z]."},
+            "node_id": {"type": "string", "description": "Override the generated Shape IR node id."},
+        },
+        "additionalProperties": True,
+        "description": (
+            "Author the topology-optimization result back into geometry/shape_ir.json as one "
+            "density_voxels node and recompile. Run opt.run_topology_optimization first."
+        ),
+    },
     "cae.map_results": {
         "type": "object",
         "required": ["project_id"],

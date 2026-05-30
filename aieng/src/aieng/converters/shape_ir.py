@@ -423,6 +423,10 @@ def _compile_node(
     params = dict(node.get("parameters") or {}) if isinstance(node.get("parameters"), dict) else {}
     merged = {**params, **node}
     color = _color(node)
+
+    if kind in _DENSITY_VOXEL_KINDS:
+        return _compile_density_voxels_b123d(node, node_id, var_name, label, color)
+
     transform = _transform_lines(var_name, node)
 
     expr = _build_expression(kind, merged, label, color, compiled_vars=compiled_vars or {})
@@ -437,6 +441,36 @@ def _compile_node(
     return lines
 
 
+def _compile_density_voxels_b123d(
+    node: dict[str, Any],
+    node_id: str,
+    var_name: str,
+    label: str,
+    color: list[float] | None,
+) -> list[str]:
+    """build123d source for a density-field node: a Compound of extruded voxel boxes.
+
+    The cells are grouped under one labelled Compound so the topology carries a
+    single named part (the optimized body) rather than hundreds of anonymous solids.
+    """
+    cells, (sx, sy, sz) = density_voxel_cells(node)
+    slug = _slug(node_id)
+    lines = [
+        f"# Shape IR node: {node_id} (density_voxels -> {len(cells)} solid cells, extruded {sz})",
+        f"_cells_{slug} = {_py(cells)}",
+        f"_boxes_{slug} = [_aieng_finish(Box({sx}, {sy}, {sz})).moved(Location((c[0], c[1], c[2]))) "
+        f"for c in _cells_{slug}]",
+        f"if _boxes_{slug}:",
+        f"    {var_name} = Compound(children=_boxes_{slug})",
+        f"else:",
+        f"    {var_name} = _aieng_finish(Box(0.001, 0.001, 0.001))",
+        f"{var_name}.label = {_py(label)}",
+    ]
+    if color is not None:
+        lines.append(f"{var_name}.color = Color(*{_py(color)})")
+    return lines
+
+
 def _node_kind(node: dict[str, Any]) -> str:
     return str(
         node.get("operation")
@@ -447,6 +481,47 @@ def _node_kind(node: dict[str, Any]) -> str:
         or node.get("surface_type")
         or "bbox"
     ).lower()
+
+
+# Node kinds that carry a thresholded density field (topology-optimization
+# writeback). Each compiler expands the solid cells into extruded voxel boxes.
+_DENSITY_VOXEL_KINDS = {"density_voxels", "optimized_topology", "voxel_field"}
+
+
+def density_voxel_cells(node: dict[str, Any]) -> tuple[list[list[float]], tuple[float, float, float]]:
+    """Expand a density-field node into solid voxel cell centres + cell size.
+
+    The 2D density grid (``density[j][i]``: rows = y, cols = x) is thresholded;
+    every cell at/above ``threshold`` becomes a box centred in the XY plane and
+    extruded along Z by ``thickness`` (default = the larger in-plane cell edge).
+    Cells are placed relative to ``origin``. Returns ``(centres, (sx, sy, sz))``
+    where each centre is ``[cx, cy, cz]`` — the position is baked in, so callers
+    must NOT additionally apply the node transform.
+    """
+    density = node.get("density") or node.get("density_grid") or []
+    if isinstance(density, dict):
+        density = density.get("values") or []
+    threshold = float(node.get("threshold", 0.5))
+    cell = node.get("cell_size") or [1.0, 1.0]
+    sx = float(cell[0])
+    sy = float(cell[1] if len(cell) > 1 else cell[0])
+    sz = float(node.get("thickness", node.get("depth", max(sx, sy))))
+    origin = node.get("origin") or [0.0, 0.0, 0.0]
+    ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+    cells: list[list[float]] = []
+    for j, row in enumerate(density):
+        for i, value in enumerate(row):
+            try:
+                solid = float(value) >= threshold
+            except (TypeError, ValueError):
+                solid = False
+            if solid:
+                cells.append([
+                    round(ox + (i + 0.5) * sx, 6),
+                    round(oy + (j + 0.5) * sy, 6),
+                    round(oz + sz / 2.0, 6),
+                ])
+    return cells, (sx, sy, sz)
 
 
 def _build_expression(

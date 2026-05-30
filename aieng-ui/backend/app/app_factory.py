@@ -1125,6 +1125,16 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             {},
         )
 
+    @app.post("/api/projects/{project_id}/topology-optimization/writeback")
+    def writeback_topology_optimization_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Author the topology-optimization result back into Shape IR + recompile.
+        Body: {representation?, cell_size?, thickness?, origin?, node_id?}."""
+        p = payload or {}
+        return _tool_opt_writeback_to_shape_ir({"project_id": project_id, **p}, {})
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,
@@ -4973,6 +4983,69 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "limitations). Optimizer is pluggable; optimizer=precomputed accepts a density grid."
         ),
         input_schema=_schema("opt.run_topology_optimization"),
+    )
+
+    def _tool_opt_writeback_to_shape_ir(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Author a topology-optimization result back into the project's Shape IR
+        (one density_voxels node) and recompile through runtime routing — so the
+        optimized body meshes/views and gets verification + object_registry."""
+        from aieng.converters.topology_optimization import write_shape_ir_from_topology_optimization
+        from . import cad_generation as _cad_generation
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+
+        representation = str(inp.get("representation") or "manifold_mesh")
+        cs = inp.get("cell_size") or [1.0, 1.0]
+        cell_size = (float(cs[0]), float(cs[1] if len(cs) > 1 else cs[0]))
+        thickness = inp.get("thickness")
+        origin = inp.get("origin") or [0.0, 0.0, 0.0]
+        try:
+            payload = write_shape_ir_from_topology_optimization(
+                pkg, representation=representation, cell_size=cell_size,
+                thickness=(float(thickness) if thickness is not None else None),
+                origin=(float(origin[0]), float(origin[1]), float(origin[2])),
+                node_id=(str(inp["node_id"]) if inp.get("node_id") else None),
+            )
+            recompile = _cad_generation.recompile_shape_ir_package(pkg, timeout=int(inp.get("timeout") or 120))
+        except FileNotFoundError as exc:
+            return {"status": "error", "code": "no_topology_optimization", "message": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "writeback_failed", "message": f"{type(exc).__name__}: {exc}"}
+
+        try:
+            proj = get_project(active_settings, pid)
+            proj["updated_at"] = now_iso()
+            save_project(active_settings, proj)
+        except Exception:
+            pass
+
+        return {
+            "status": "ok",
+            "tool": "opt.writeback_to_shape_ir",
+            "shape_ir": payload,
+            "recompile": recompile,
+        }
+
+    _rt.register_tool(
+        "opt.writeback_to_shape_ir",
+        _tool_opt_writeback_to_shape_ir,
+        description=(
+            "Author the project's topology-optimization result (analysis/"
+            "topology_optimization.json) back into geometry/shape_ir.json as one "
+            "density_voxels node, then recompile through runtime routing. The optimized "
+            "density field becomes re-compilable, viewable geometry (default representation "
+            "manifold_mesh -> watertight voxel mesh; brep_build123d also supported) with "
+            "topology + verification + object_registry, linked to its design_space_node. "
+            "Run opt.run_topology_optimization first."
+        ),
+        input_schema=_schema("opt.writeback_to_shape_ir"),
     )
 
     _rt.register_tool(

@@ -216,11 +216,28 @@ pluggable-backend pattern as solvers.
   observational design aid, not production).
 - Workbench `opt.run_topology_optimization` (tool + `POST .../topology-optimization`)
   runs it and writes the artifact. Consumes the design space + (future) loads from
-  the solver-neutral CAE map; re-authoring the optimized result into a new Shape
-  IR representation is the next step (not implemented here).
+  the solver-neutral CAE map.
+- **Writeback (closes the generative loop):** `topology_result_to_shape_ir` /
+  `write_shape_ir_from_topology_optimization` author the optimization result back
+  into `geometry/shape_ir.json` as ONE `density_voxels` node. A new
+  `density_voxels` node kind + compiler support in **both** backends
+  (`shape_ir.density_voxel_cells` thresholds the field; the build123d compiler
+  emits a labelled `Compound` of extruded boxes, the manifold compiler a CSG union
+  loop → watertight mesh) make the optimized field a first-class, re-compilable,
+  viewable shape that flows through the same pipeline as any Shape IR (compile →
+  mesh/GLB, topology, verification, object_registry) and stays linked to its
+  `design_space_node`. Workbench `opt.writeback_to_shape_ir`
+  (tool + `POST .../topology-optimization/writeback`) writes + recompiles;
+  default representation `manifold_mesh`, `brep_build123d` also supported.
 - Tests: SIMP lowers compliance + meets the volume budget (cantilever); contract
   + provenance + design_space_node passthrough; precomputed optimizer neutrality;
-  registry + unknown-optimizer fallback; artifact write; backend endpoint.
+  registry + unknown-optimizer fallback; artifact write; backend endpoint;
+  density_voxel thresholding/placement; writeback payload + density_voxels
+  compiles + executes in both backends (manifold vol>0, build123d labelled
+  Compound); writeback into package + recompile via the endpoint.
+- Next: drive the optimization `problem` (loads/supports) directly from the
+  solver-neutral CAE map instead of presets; 3D SIMP; smoother boundary
+  extraction (marching-squares contour) instead of blocky voxels.
 
 ## Phase 21: Shape IR converter + topology-first CAD compilation — COMPLETE (2026-05-30)
 

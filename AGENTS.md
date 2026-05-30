@@ -580,6 +580,7 @@ is possible).
 | `cae.extract_field_regions` | Cluster high-stress / high-displacement regions |
 | `cae.map_results` | Map stress/deflection results back to topology entities, object_registry objects, and `source_ir_node` → `analysis/cae_result_map.json` (unmapped regions reported honestly) |
 | `opt.run_topology_optimization` | Run topology optimization (built-in self-contained 2D SIMP, compliance-min, pure numpy — no external solver) → `analysis/topology_optimization.json`. Pluggable optimizer; honest 2D/coarse limitations recorded |
+| `opt.writeback_to_shape_ir` | Author the optimization result back into `geometry/shape_ir.json` as one `density_voxels` node, then recompile through runtime routing → the optimized body meshes/views + gets verification + object_registry, linked to its `design_space_node`. Default `manifold_mesh` (watertight voxel mesh); `brep_build123d` also supported |
 | `postprocess.generate_computed_metrics` | Import metrics from CSV/JSON |
 | `postprocess.refresh_cae_summary` | Regenerate result summary + evidence markdown |
 

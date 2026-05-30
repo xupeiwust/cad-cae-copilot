@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from .shape_ir import (
+    _DENSITY_VOXEL_KINDS,
     _bbox,
     _blend_child_ids,
     _dims,
@@ -25,6 +26,7 @@ from .shape_ir import (
     _py,
     _shape_nodes,
     _slug,
+    density_voxel_cells,
 )
 
 
@@ -75,10 +77,33 @@ def compile_shape_ir_to_manifold_source(payload: dict[str, Any]) -> str:
 
 def _compile_manifold_node(node: dict[str, Any], index: int, var: str) -> list[str]:
     node_id = _node_id(node, index)
+    if _node_kind(node) in _DENSITY_VOXEL_KINDS:
+        return _compile_density_voxels_manifold(node, node_id, var)
     expr = _manifold_expression(node) or _manifold_bbox_expression(node)
     out = [f"# Shape IR node: {node_id}", f"{var} = {expr}"]
     out.extend(_manifold_transform(var, node))
     return out
+
+
+def _compile_density_voxels_manifold(node: dict[str, Any], node_id: str, var: str) -> list[str]:
+    """Manifold source for a density-field node: a CSG union of extruded voxel cubes.
+
+    Emits a loop over the baked solid-cell centres (compact even for fine grids)
+    and produces one watertight Manifold. No transform is applied — the cell
+    positions already include the field origin.
+    """
+    cells, (sx, sy, sz) = density_voxel_cells(node)
+    slug = _slug(node_id)
+    return [
+        f"# Shape IR node: {node_id} (density_voxels -> {len(cells)} solid cells, extruded {sz})",
+        f"_cells_{slug} = {_py(cells)}",
+        f"{var} = None",
+        f"for _c in _cells_{slug}:",
+        f"    _v = Manifold.cube(({sx}, {sy}, {sz}), True).translate((_c[0], _c[1], _c[2]))",
+        f"    {var} = _v if {var} is None else ({var} + _v)",
+        f"if {var} is None:",
+        f"    {var} = Manifold.cube((0.001, 0.001, 0.001), True)",
+    ]
 
 
 def _compile_blend_node(

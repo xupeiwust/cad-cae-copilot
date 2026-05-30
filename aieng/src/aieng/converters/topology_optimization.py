@@ -9,9 +9,12 @@ Other optimizers (3D SIMP, ToPy, nTop, remote) can register and emit the same
 neutral result.
 
 Output: ``analysis/topology_optimization.json`` (optimizer provenance, objective
-history, achieved volume fraction, density grid, honest limitations). Mapping the
-result back into a new Shape IR representation is a later step — this prepares the
-optimization layer, it does not re-author geometry.
+history, achieved volume fraction, density grid, honest limitations). The result is
+also authored back into a Shape IR representation (``topology_result_to_shape_ir`` /
+``write_shape_ir_from_topology_optimization``): the density field becomes one
+``density_voxels`` node that the existing compilers expand into extruded voxel
+geometry, so the optimized body re-compiles, meshes, and views like any other Shape
+IR — and stays linked to its ``design_space_node``.
 
 Honest scope of the built-in optimizer: 2D, plane-stress, linear-elastic, single
 isotropic material, regular grid, coarse. It is an observational design aid, not a
@@ -283,6 +286,128 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
         ],
         "warnings": [],
     }
+
+
+# ── writeback: optimization result → Shape IR representation ─────────────────
+# Closes the generative loop. The optimizer emits a density field (analysis-level
+# evidence); to make that field a first-class, re-compilable, viewable shape we
+# author it back as ONE Shape IR ``density_voxels`` node. The existing compilers
+# (build123d / manifold) expand it into extruded voxel geometry, so the optimized
+# body flows through the same pipeline as any other Shape IR: compile → mesh/GLB,
+# topology, verification, object_registry — and stays linked to its source node.
+
+SHAPE_IR_PATH = "geometry/shape_ir.json"
+
+
+def topology_result_to_shape_ir(
+    topo_result: dict[str, Any], *,
+    representation: str = "manifold_mesh",
+    cell_size: tuple[float, float] = (1.0, 1.0),
+    thickness: float | None = None,
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    node_id: str | None = None,
+    model_id: str | None = None,
+    color: list[float] | None = None,
+) -> dict[str, Any]:
+    """Author an optimization result into a Shape IR payload (one density_voxels node).
+
+    Pure: maps the neutral topology-optimization result → a Shape IR document. The
+    density grid + threshold become a single ``density_voxels`` node that the
+    registered compilers expand into extruded voxel geometry. ``design_space_node``
+    is carried through so the optimized body stays linked to the design space it
+    came from.
+    """
+    result = topo_result.get("result") or {}
+    grid = result.get("density_grid") or {}
+    density = grid.get("values") or topo_result.get("density") or []
+    threshold = float(result.get("threshold", topo_result.get("threshold", 0.5)))
+    design_space_node = (
+        (topo_result.get("provenance") or {}).get("design_space_node")
+        or (topo_result.get("problem") or {}).get("design_space_node")
+    )
+    nid = node_id or (f"optimized_{design_space_node}" if design_space_node else "optimized_topology")
+    sx, sy = float(cell_size[0]), float(cell_size[1])
+    sz = float(thickness) if thickness is not None else max(sx, sy)
+
+    node: dict[str, Any] = {
+        "id": nid,
+        "label": nid,
+        "type": "density_voxels",
+        "density": density,
+        "threshold": threshold,
+        "cell_size": [sx, sy],
+        "thickness": sz,
+        "origin": [float(origin[0]), float(origin[1]), float(origin[2])],
+        "source_optimization": {
+            "optimizer": (topo_result.get("optimizer") or {}).get("name"),
+            "objective": topo_result.get("objective"),
+            "design_space_node": design_space_node,
+            "final_compliance": result.get("final_compliance"),
+            "achieved_volume_fraction": result.get("achieved_volume_fraction"),
+        },
+    }
+    if color is not None:
+        node["color"] = list(color)
+
+    return {
+        "format": "aieng.shape_ir",
+        "representation": representation,
+        "model_id": model_id or nid,
+        "parts": [node],
+        "provenance": {
+            "from_topology_optimization": True,
+            "optimizer": (topo_result.get("optimizer") or {}).get("name"),
+            "design_space_node": design_space_node,
+            "topopt_contract_version": topo_result.get("contract_version"),
+        },
+    }
+
+
+def write_shape_ir_from_topology_optimization(
+    package_path: str | Path, *,
+    representation: str = "manifold_mesh",
+    cell_size: tuple[float, float] = (1.0, 1.0),
+    thickness: float | None = None,
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    node_id: str | None = None,
+    color: list[float] | None = None,
+) -> dict[str, Any]:
+    """Read a package's topology-optimization result and (re)write geometry/shape_ir.json.
+
+    Reads ``analysis/topology_optimization.json``, authors the Shape IR document,
+    and writes it as ``geometry/shape_ir.json`` (replacing any existing member).
+    Does NOT compile — the caller (workbench) recompiles via the representation's
+    runtime to produce mesh/GLB + topology + verification + registry. Returns the
+    Shape IR payload.
+    """
+    package_path = Path(package_path)
+    with zipfile.ZipFile(package_path, "r") as zf:
+        if TOPOLOGY_OPTIMIZATION_PATH not in zf.namelist():
+            raise FileNotFoundError(
+                f"{TOPOLOGY_OPTIMIZATION_PATH} not in package — run topology optimization first"
+            )
+        topo_result = json.loads(zf.read(TOPOLOGY_OPTIMIZATION_PATH))
+
+    payload = topology_result_to_shape_ir(
+        topo_result, representation=representation, cell_size=cell_size,
+        thickness=thickness, origin=origin, node_id=node_id, color=color,
+    )
+    data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+    tmp = package_path.with_suffix(".tmp.aieng")
+    try:
+        with (
+            zipfile.ZipFile(package_path, "r") as src,
+            zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+        ):
+            for item in src.infolist():
+                if item.filename != SHAPE_IR_PATH:
+                    dst.writestr(item, src.read(item.filename))
+            dst.writestr(SHAPE_IR_PATH, data)
+        tmp.replace(package_path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return payload
 
 
 def write_topology_optimization(

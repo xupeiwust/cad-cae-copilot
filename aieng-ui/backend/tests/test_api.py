@@ -10459,3 +10459,18 @@ def test_topology_optimization_endpoint(tmp_path: Path) -> None:
     assert topo["provenance"]["design_space_node"] == "bracket"
     with _zip.ZipFile(pkg) as zf:
         assert "analysis/topology_optimization.json" in zf.namelist()
+
+    # writeback: author the optimization result back into Shape IR + recompile
+    wb = client.post(f"/api/projects/{pid}/topology-optimization/writeback",
+                     json={"representation": "manifold_mesh", "cell_size": [2.0, 2.0], "thickness": 4.0})
+    assert wb.status_code == 200
+    wbd = wb.json()
+    # shape_ir.json is rewritten before recompile, so it carries the density_voxels node
+    with _zip.ZipFile(pkg) as zf:
+        sir = _json.loads(zf.read("geometry/shape_ir.json"))
+    assert sir["representation"] == "manifold_mesh"
+    (node,) = sir["parts"]
+    assert node["type"] == "density_voxels"
+    assert sir["provenance"]["design_space_node"] == "bracket"
+    if wbd["status"] == "ok":
+        assert wbd["recompile"] is not None

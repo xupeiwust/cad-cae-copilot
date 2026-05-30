@@ -605,12 +605,13 @@ SHAPE_IR_PATH = "geometry/shape_ir.json"
 def topology_result_to_shape_ir(
     topo_result: dict[str, Any], *,
     representation: str = "manifold_mesh",
-    cell_size: tuple[float, float] = (1.0, 1.0),
+    cell_size: tuple[float, float] | None = None,
     thickness: float | None = None,
-    origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    origin: tuple[float, float, float] | None = None,
     node_id: str | None = None,
     model_id: str | None = None,
     color: list[float] | None = None,
+    use_frame: bool = True,
 ) -> dict[str, Any]:
     """Author an optimization result into a Shape IR payload (one density_voxels node).
 
@@ -619,6 +620,14 @@ def topology_result_to_shape_ir(
     registered compilers expand into extruded voxel geometry. ``design_space_node``
     is carried through so the optimized body stays linked to the design space it
     came from.
+
+    Placement: when the result carries a derivation ``frame`` (origin + in-plane
+    axes + cell size + thickness from ``derive_topopt_problem_from_package``) and
+    ``use_frame`` is set, the voxels are placed in the design space's own
+    coordinate frame — so the optimized body lands exactly where the design space
+    is, on the correct plane. Explicit ``cell_size``/``thickness``/``origin`` args
+    override the frame; without a frame they default to unit cells at the world
+    origin (an abstract grid).
     """
     result = topo_result.get("result") or {}
     grid = result.get("density_grid") or {}
@@ -629,8 +638,34 @@ def topology_result_to_shape_ir(
         or (topo_result.get("problem") or {}).get("design_space_node")
     )
     nid = node_id or (f"optimized_{design_space_node}" if design_space_node else "optimized_topology")
-    sx, sy = float(cell_size[0]), float(cell_size[1])
-    sz = float(thickness) if thickness is not None else max(sx, sy)
+
+    frame = ((topo_result.get("problem") or {}).get("derivation") or {}).get("frame") or {}
+    use_frame = use_frame and bool(frame)
+    f_cell = frame.get("cell_size") or [1.0, 1.0]
+    u_axis = str(frame.get("u_axis", "x")) if use_frame else "x"
+    v_axis = str(frame.get("v_axis", "y")) if use_frame else "y"
+
+    if cell_size is not None:
+        sx, sy = float(cell_size[0]), float(cell_size[1])
+    elif use_frame:
+        sx, sy = float(f_cell[0]), float(f_cell[1] if len(f_cell) > 1 else f_cell[0])
+    else:
+        sx, sy = 1.0, 1.0
+
+    if thickness is not None:
+        sz = float(thickness)
+    elif use_frame:
+        sz = float(frame.get("thickness", max(sx, sy)))
+    else:
+        sz = max(sx, sy)
+
+    if origin is not None:
+        o = [float(origin[0]), float(origin[1]), float(origin[2])]
+    elif use_frame:
+        fo = frame.get("origin") or [0.0, 0.0, 0.0]
+        o = [float(fo[0]), float(fo[1]), float(fo[2])]
+    else:
+        o = [0.0, 0.0, 0.0]
 
     node: dict[str, Any] = {
         "id": nid,
@@ -640,7 +675,10 @@ def topology_result_to_shape_ir(
         "threshold": threshold,
         "cell_size": [sx, sy],
         "thickness": sz,
-        "origin": [float(origin[0]), float(origin[1]), float(origin[2])],
+        "origin": o,
+        "u_axis": u_axis,
+        "v_axis": v_axis,
+        "placed_in_frame": use_frame,
         "source_optimization": {
             "optimizer": (topo_result.get("optimizer") or {}).get("name"),
             "objective": topo_result.get("objective"),
@@ -669,19 +707,22 @@ def topology_result_to_shape_ir(
 def write_shape_ir_from_topology_optimization(
     package_path: str | Path, *,
     representation: str = "manifold_mesh",
-    cell_size: tuple[float, float] = (1.0, 1.0),
+    cell_size: tuple[float, float] | None = None,
     thickness: float | None = None,
-    origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    origin: tuple[float, float, float] | None = None,
     node_id: str | None = None,
     color: list[float] | None = None,
+    use_frame: bool = True,
 ) -> dict[str, Any]:
     """Read a package's topology-optimization result and (re)write geometry/shape_ir.json.
 
     Reads ``analysis/topology_optimization.json``, authors the Shape IR document,
     and writes it as ``geometry/shape_ir.json`` (replacing any existing member).
-    Does NOT compile — the caller (workbench) recompiles via the representation's
-    runtime to produce mesh/GLB + topology + verification + registry. Returns the
-    Shape IR payload.
+    By default (``use_frame``) the optimized body is placed in the design space's
+    own coordinate frame when the result carries a derivation frame. Does NOT
+    compile — the caller (workbench) recompiles via the representation's runtime to
+    produce mesh/GLB + topology + verification + registry. Returns the Shape IR
+    payload.
     """
     package_path = Path(package_path)
     with zipfile.ZipFile(package_path, "r") as zf:
@@ -693,7 +734,7 @@ def write_shape_ir_from_topology_optimization(
 
     payload = topology_result_to_shape_ir(
         topo_result, representation=representation, cell_size=cell_size,
-        thickness=thickness, origin=origin, node_id=node_id, color=color,
+        thickness=thickness, origin=origin, node_id=node_id, color=color, use_frame=use_frame,
     )
     data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
     tmp = package_path.with_suffix(".tmp.aieng")

@@ -5069,16 +5069,20 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
 
         representation = str(inp.get("representation") or "manifold_mesh")
-        cs = inp.get("cell_size") or [1.0, 1.0]
-        cell_size = (float(cs[0]), float(cs[1] if len(cs) > 1 else cs[0]))
+        # By default the optimized body is placed in the design space's derivation
+        # frame; cell_size/thickness/origin are honored only if the caller overrides.
+        cs = inp.get("cell_size")
+        cell_size = (float(cs[0]), float(cs[1] if len(cs) > 1 else cs[0])) if cs else None
         thickness = inp.get("thickness")
-        origin = inp.get("origin") or [0.0, 0.0, 0.0]
+        org = inp.get("origin")
+        origin = (float(org[0]), float(org[1]), float(org[2])) if org else None
         try:
             payload = write_shape_ir_from_topology_optimization(
                 pkg, representation=representation, cell_size=cell_size,
                 thickness=(float(thickness) if thickness is not None else None),
-                origin=(float(origin[0]), float(origin[1]), float(origin[2])),
+                origin=origin,
                 node_id=(str(inp["node_id"]) if inp.get("node_id") else None),
+                use_frame=bool(inp.get("use_frame", True)),
             )
             recompile = _cad_generation.recompile_shape_ir_package(pkg, timeout=int(inp.get("timeout") or 120))
         except FileNotFoundError as exc:

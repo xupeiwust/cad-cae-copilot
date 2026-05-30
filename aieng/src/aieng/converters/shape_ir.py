@@ -488,26 +488,42 @@ def _node_kind(node: dict[str, Any]) -> str:
 _DENSITY_VOXEL_KINDS = {"density_voxels", "optimized_topology", "voxel_field"}
 
 
-def density_voxel_cells(node: dict[str, Any]) -> tuple[list[list[float]], tuple[float, float, float]]:
-    """Expand a density-field node into solid voxel cell centres + cell size.
+_AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
-    The 2D density grid (``density[j][i]``: rows = y, cols = x) is thresholded;
-    every cell at/above ``threshold`` becomes a box centred in the XY plane and
-    extruded along Z by ``thickness`` (default = the larger in-plane cell edge).
-    Cells are placed relative to ``origin``. Returns ``(centres, (sx, sy, sz))``
-    where each centre is ``[cx, cy, cz]`` — the position is baked in, so callers
-    must NOT additionally apply the node transform.
+
+def density_voxel_cells(node: dict[str, Any]) -> tuple[list[list[float]], tuple[float, float, float]]:
+    """Expand a density-field node into solid voxel cell centres + box size.
+
+    The 2D density grid (``density[j][i]``: rows = v, cols = u) is thresholded;
+    every cell at/above ``threshold`` becomes a box and is placed in the plane
+    spanned by world axes ``u_axis``/``v_axis`` (default x/y), extruded along the
+    remaining axis by ``thickness`` (default = the larger in-plane cell edge). The
+    in-plane cell size is ``cell_size`` = ``[su, sv]``; cells are placed relative
+    to the world ``origin`` (the design-space bbox corner when fed from a
+    derivation frame). Returns ``(centres, (sx, sy, sz))`` where the size and each
+    centre ``[cx, cy, cz]`` are in WORLD x/y/z order — positions are baked in, so
+    callers must NOT additionally apply the node transform.
     """
     density = node.get("density") or node.get("density_grid") or []
     if isinstance(density, dict):
         density = density.get("values") or []
     threshold = float(node.get("threshold", 0.5))
     cell = node.get("cell_size") or [1.0, 1.0]
-    sx = float(cell[0])
-    sy = float(cell[1] if len(cell) > 1 else cell[0])
-    sz = float(node.get("thickness", node.get("depth", max(sx, sy))))
+    su = float(cell[0])
+    sv = float(cell[1] if len(cell) > 1 else cell[0])
+    sw = float(node.get("thickness", node.get("depth", max(su, sv))))
+
+    ui = _AXIS_INDEX.get(str(node.get("u_axis", "x")).lower(), 0)
+    vi = _AXIS_INDEX.get(str(node.get("v_axis", "y")).lower(), 1)
+    if vi == ui:  # guard against a malformed frame
+        vi = (ui + 1) % 3
+    wi = ({0, 1, 2} - {ui, vi}).pop()
+
     origin = node.get("origin") or [0.0, 0.0, 0.0]
-    ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+    o = [float(origin[0]), float(origin[1]), float(origin[2])]
+    size = [0.0, 0.0, 0.0]
+    size[ui], size[vi], size[wi] = su, sv, sw
+
     cells: list[list[float]] = []
     for j, row in enumerate(density):
         for i, value in enumerate(row):
@@ -516,12 +532,12 @@ def density_voxel_cells(node: dict[str, Any]) -> tuple[list[list[float]], tuple[
             except (TypeError, ValueError):
                 solid = False
             if solid:
-                cells.append([
-                    round(ox + (i + 0.5) * sx, 6),
-                    round(oy + (j + 0.5) * sy, 6),
-                    round(oz + sz / 2.0, 6),
-                ])
-    return cells, (sx, sy, sz)
+                c = [0.0, 0.0, 0.0]
+                c[ui] = o[ui] + (i + 0.5) * su
+                c[vi] = o[vi] + (j + 0.5) * sv
+                c[wi] = o[wi] + sw / 2.0
+                cells.append([round(c[0], 6), round(c[1], 6), round(c[2], 6)])
+    return cells, (size[0], size[1], size[2])
 
 
 def _build_expression(

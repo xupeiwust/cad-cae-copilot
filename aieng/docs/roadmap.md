@@ -258,9 +258,23 @@ pluggable-backend pattern as solvers.
   node); purely-out-of-plane load is dropped + warned; in-plane load yields a
   usable problem that solves; no-BC package falls back to preset; backend derive
   endpoint + auto_derive run path.
+- **Frame-aware writeback (input frame → output placement):** the derivation
+  `frame` (design-space bbox origin + in-plane axes + cell size + thickness) now
+  flows through `run_topology_optimization` into the writeback, so the optimized
+  body lands in the design space's own coordinate frame instead of an abstract
+  unit grid at the world origin. `density_voxel_cells` was generalized to place
+  voxels on an arbitrary plane (the `density_voxels` node carries `u_axis`/
+  `v_axis`; the extrusion axis is the remainder), and `topology_result_to_shape_ir`
+  reads the frame by default (`use_frame`), with explicit
+  `cell_size`/`thickness`/`origin` still overriding. Verified e2e: a derived
+  120×80×10 plate writes back a body whose executed mesh bbox is exactly
+  `[0,0,0]..[120,80,10]`, not a 12×8 unit grid.
+- Tests (frame placement): `density_voxel_cells` honors a non-XY plane (XZ) with
+  origin offset; `topology_result_to_shape_ir` uses the frame by default, explicit
+  args override, no-frame falls back to a unit grid; full derive→run→writeback
+  tiles the design-space extents exactly.
 - Next: 3D SIMP; smoother boundary extraction (marching-squares contour) instead
-  of blocky voxels; feed the writeback `density_voxels` frame from the
-  derivation frame so the optimized body lands in the design space's coordinates.
+  of blocky voxels.
 
 ## Phase 21: Shape IR converter + topology-first CAD compilation — COMPLETE (2026-05-30)
 

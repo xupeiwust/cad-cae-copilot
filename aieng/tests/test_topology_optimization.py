@@ -111,6 +111,48 @@ def test_density_voxel_cells_thresholds_and_places():
     assert len(cells) == 2
 
 
+_TOPO_FRAMED = {
+    **_TOPO,
+    "problem": {
+        "design_space_node": "plate",
+        "derivation": {"frame": {
+            "origin": [5.0, 10.0, 0.0], "u_axis": "x", "v_axis": "y",
+            "cell_size": [40.0, 40.0], "thickness": 10.0}},
+    },
+}
+
+
+def test_density_voxel_cells_respects_frame_axes():
+    # XZ plane: u=x, v=z, extruded along y; origin offset baked in.
+    node = {"type": "density_voxels", "density": [[1.0, 0.0]],
+            "threshold": 0.5, "cell_size": [2.0, 3.0], "thickness": 4.0,
+            "origin": [10.0, 20.0, 30.0], "u_axis": "x", "v_axis": "z"}
+    cells, size = density_voxel_cells(node)
+    assert size == (2.0, 4.0, 3.0)            # world x=su, y=thickness, z=sv
+    assert cells == [[11.0, 22.0, 31.5]]      # x=10+1, z=30+1.5, y=20+2
+
+
+def test_topology_result_to_shape_ir_uses_frame():
+    payload = topology_result_to_shape_ir(_TOPO_FRAMED)
+    node = payload["parts"][0]
+    assert node["placed_in_frame"] is True
+    assert node["origin"] == [5.0, 10.0, 0.0]
+    assert node["cell_size"] == [40.0, 40.0] and node["thickness"] == 10.0
+    assert node["u_axis"] == "x" and node["v_axis"] == "y"
+
+
+def test_topology_result_to_shape_ir_explicit_args_override_frame():
+    payload = topology_result_to_shape_ir(_TOPO_FRAMED, cell_size=(2.0, 2.0), origin=(0.0, 0.0, 0.0))
+    node = payload["parts"][0]
+    assert node["cell_size"] == [2.0, 2.0] and node["origin"] == [0.0, 0.0, 0.0]
+
+
+def test_topology_result_to_shape_ir_no_frame_defaults_to_unit_grid():
+    node = topology_result_to_shape_ir(_TOPO)["parts"][0]   # _TOPO has no derivation frame
+    assert node["placed_in_frame"] is False
+    assert node["cell_size"] == [1.0, 1.0] and node["origin"] == [0.0, 0.0, 0.0]
+
+
 def test_topology_result_to_shape_ir_payload():
     payload = topology_result_to_shape_ir(_TOPO, representation="manifold_mesh")
     assert payload["representation"] == "manifold_mesh"
@@ -271,6 +313,25 @@ def test_derive_falls_back_to_preset_without_bcs(tmp_path: Path):
     assert any("falling back" in w for w in prob["derivation"]["warnings"])
     # still solves via the preset fallback
     assert run_topology_optimization(prob)["result"]["compliance_history"]
+
+
+def test_derive_run_writeback_places_body_in_design_space(tmp_path: Path):
+    """Full chain: derive (frame) -> run -> writeback. The density_voxels node lands
+    in the design-space frame, so nelx*su == design width and the body spans the bbox."""
+    pytest.importorskip("yaml")
+    pkg = tmp_path / "plate.aieng"
+    _write_cae_project(pkg)  # 120 x 80 x 10 plate, origin at 0
+    problem = derive_topopt_problem_from_package(pkg, resolution=12, max_iters=6)
+    res = run_topology_optimization(problem)
+    node = topology_result_to_shape_ir(res)["parts"][0]
+    nelx, nely = problem["grid"]["nelx"], problem["grid"]["nely"]
+    frame = problem["derivation"]["frame"]
+    assert node["placed_in_frame"] is True
+    assert node["origin"] == frame["origin"] == [0.0, 0.0, 0.0]
+    assert node["cell_size"] == frame["cell_size"] and node["thickness"] == 10.0
+    # the grid exactly tiles the in-plane design-space extents
+    assert abs(nelx * node["cell_size"][0] - 120) < 1e-6
+    assert abs(nely * node["cell_size"][1] - 80) < 1e-6
 
 
 def test_write_topology_optimization_into_package(tmp_path: Path):

@@ -7972,6 +7972,45 @@ textarea:focus,
   }
 }
 
+@keyframes streaming-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes streaming-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.2em;
+  background: var(--text-primary);
+  margin-left: 3px;
+  vertical-align: text-bottom;
+  animation: streaming-blink 1s step-end infinite;
+}
+
+.streaming-pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 8px;
+  animation: streaming-pulse 1.4s ease-in-out infinite;
+}
+
+.streaming-tool-hint {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-style: italic;
+  padding: 4px 0;
+}
+
 .agent-activity-copy {
   display: block;
   min-width: 0;

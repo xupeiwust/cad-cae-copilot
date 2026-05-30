@@ -1,10 +1,12 @@
 import { AlertCircle } from "lucide-react";
 
 import type { ChatTranscriptItem } from "../../app/chatTranscript";
+import type { StreamingState } from "../../app/useChatTranscript";
 import { PointerText } from "../PointerText";
 import { ApprovalLine } from "./ApprovalLine";
 import { ArtifactLine } from "./ArtifactLine";
 import { EventDetail } from "./EventDetail";
+import { StreamingMessage } from "./StreamingMessage";
 import { TranscriptMessage } from "./TranscriptMessage";
 import { StatusIcon } from "./ToolLine";
 import { ToolLine } from "./ToolLine";
@@ -12,6 +14,7 @@ import { ToolLine } from "./ToolLine";
 type ChatTranscriptProps = {
   items: ChatTranscriptItem[];
   busy: boolean;
+  streamingState: StreamingState;
   onViewArtifact(path: string): void;
   onApproveAutopilot(runId: string): void;
   onRejectAutopilot(runId: string): void;
@@ -22,6 +25,7 @@ type ChatTranscriptProps = {
 export function ChatTranscript({
   items,
   busy,
+  streamingState,
   onViewArtifact,
   onApproveAutopilot,
   onRejectAutopilot,
@@ -64,6 +68,7 @@ export function ChatTranscript({
           </div>
         );
       })}
+      {streamingState ? <StreamingMessage state={streamingState} /> : null}
     </div>
   );
 }

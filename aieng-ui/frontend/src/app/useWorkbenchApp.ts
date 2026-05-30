@@ -74,6 +74,8 @@ export function useWorkbenchApp() {
     handleLiveAgentEvent,
     appendRunToChatHistory,
     clearAgentEvents,
+    streamingState,
+    clearStreamingState,
   } = useChatTranscript({
     selectedId,
     activeSessionId,
@@ -244,6 +246,7 @@ export function useWorkbenchApp() {
     setChatHistory: setPersistentChatHistory,
     setCadGenerationProgress,
     clearAgentEvents,
+    clearStreamingState,
   });
   const chatBusy = agentBusy || busy;
   useEffect(() => {
@@ -429,6 +432,7 @@ export function useWorkbenchApp() {
 
   async function sendUnified(promptOverride?: string) {
     clearAgentEvents();
+    clearStreamingState();
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) return;
     renameActiveSessionForPrompt(prompt);
@@ -682,5 +686,6 @@ export function useWorkbenchApp() {
     setLocalAgentConfig,
     globalSettingsOpen,
     setGlobalSettingsOpen,
+    streamingState,
   };
 }

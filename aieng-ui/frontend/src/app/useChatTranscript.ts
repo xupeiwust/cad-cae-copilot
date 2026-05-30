@@ -25,6 +25,13 @@ type UseChatTranscriptArgs = {
   onAutopilotRunUpdate(run: AutopilotRunState): void;
 };
 
+export type StreamingState = {
+  text: string;
+  runId: string;
+  toolName?: string;
+  status: "streaming" | "tool_call";
+} | null;
+
 export function useChatTranscript({
   selectedId,
   activeSessionId,
@@ -34,6 +41,7 @@ export function useChatTranscript({
 }: UseChatTranscriptArgs) {
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
   const [agentEvents, setAgentEvents] = useState<AgentTranscriptEvent[]>([]);
+  const [streamingState, setStreamingState] = useState<StreamingState>(null);
   const persistedChatIdsRef = useRef<Set<string>>(new Set());
 
   const persistChatItem = useCallback((item: ChatHistoryItem) => {
@@ -70,6 +78,26 @@ export function useChatTranscript({
   }, []);
 
   const handleLiveAgentEvent = useCallback((event: AgentTranscriptEvent) => {
+    const content = event.content;
+    const runId = event.run_id;
+    if (event.type === "agent_message" && content && runId) {
+      setStreamingState((current) => {
+        if (!current || current.runId !== runId) {
+          return { text: content, runId, status: "streaming" };
+        }
+        return { ...current, text: content, status: "streaming" };
+      });
+    }
+    if (event.type === "tool_started" && runId) {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+      const toolName = (payload.tool_name as string) || (payload.tool as string) || "tool";
+      setStreamingState((current) => {
+        if (!current || current.runId !== runId) {
+          return { text: "", runId, toolName, status: "tool_call" };
+        }
+        return { ...current, toolName, status: "tool_call" };
+      });
+    }
     setAgentEvents((current) => upsertAgentEvent(current, event));
   }, []);
 
@@ -77,10 +105,15 @@ export function useChatTranscript({
     setPersistentChatHistory((current) => [...current, runtimeRunChatEntry(run)]);
   }, [setPersistentChatHistory]);
 
+  const clearStreamingState = useCallback(() => {
+    setStreamingState(null);
+  }, []);
+
   useEffect(() => {
     persistedChatIdsRef.current = new Set();
     setChatHistory([]);
     setAgentEvents([]);
+    setStreamingState(null);
   }, [selectedId]);
 
   useEffect(() => {
@@ -186,5 +219,7 @@ export function useChatTranscript({
     handleLiveAgentEvent,
     appendRunToChatHistory,
     clearAgentEvents,
+    streamingState,
+    clearStreamingState,
   };
 }

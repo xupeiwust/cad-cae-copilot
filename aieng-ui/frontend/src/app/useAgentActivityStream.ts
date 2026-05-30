@@ -30,6 +30,7 @@ type UseAgentActivityStreamArgs = {
   setChatHistory: Dispatch<SetStateAction<ChatHistoryItem[]>>;
   setCadGenerationProgress: Dispatch<SetStateAction<CadGenerationProgress | null>>;
   clearAgentEvents(): void;
+  clearStreamingState(): void;
 };
 
 export function useAgentActivityStream({
@@ -50,6 +51,7 @@ export function useAgentActivityStream({
   setChatHistory,
   setCadGenerationProgress,
   clearAgentEvents,
+  clearStreamingState,
 }: UseAgentActivityStreamArgs) {
   const [liveSyncStatus, setLiveSyncStatus] = useState<LiveSyncStatus>("connecting");
   const [liveSyncDetail, setLiveSyncDetail] = useState("Connecting to backend activity stream...");
@@ -132,6 +134,7 @@ export function useAgentActivityStream({
           stopAutopilotPoll();
           setAgentBusy(false);
           clearAgentEvents();
+          clearStreamingState();
         }
         if (run.project_id && current && run.project_id !== current) return;
         if (run.session_id && currentSession && run.session_id !== currentSession) return;
@@ -163,6 +166,7 @@ export function useAgentActivityStream({
         if (run.status === "chatting") {
           stopAutopilotPoll();
           setAgentBusy(false);
+          clearStreamingState();
           return;
         }
         if (run.status !== "running") {

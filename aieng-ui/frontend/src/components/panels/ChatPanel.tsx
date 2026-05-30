@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObjec
 import { Square } from "lucide-react";
 
 import { chatHistoryToTranscriptItems } from "../../app/chatTranscript";
+import type { StreamingState } from "../../app/useChatTranscript";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
 import type { AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
@@ -209,6 +210,7 @@ type ChatPanelProps = {
   approveSimulation(): void;
   rejectSimulation(): void;
   recentPickedFaces: PickedFace[];
+  streamingState: StreamingState;
 };
 
 export function ChatPanel({
@@ -238,6 +240,7 @@ export function ChatPanel({
   approveSimulation,
   rejectSimulation,
   recentPickedFaces,
+  streamingState,
 }: ChatPanelProps) {
   const [acOpen, setAcOpen] = useState(false);
   const [acQuery, setAcQuery] = useState("");
@@ -398,6 +401,7 @@ export function ChatPanel({
           <ChatTranscript
             items={transcriptItems}
             busy={chatBusy}
+            streamingState={streamingState}
             onViewArtifact={(path) => void viewArtifact(path)}
             onApproveAutopilot={approveAutopilot}
             onRejectAutopilot={rejectAutopilot}

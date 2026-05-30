@@ -38,6 +38,7 @@ from typing import Any, Callable
 import numpy as np
 
 from aieng import FORMAT_VERSION
+from aieng.converters.shape_ir import _AXIS_INDEX
 
 TOPOLOGY_OPTIMIZATION_PATH = "analysis/topology_optimization.json"
 TOPOPT_CONTRACT_VERSION = "0.1"
@@ -602,6 +603,40 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
 SHAPE_IR_PATH = "geometry/shape_ir.json"
 
 
+def extract_density_contours(
+    density: list[list[float]], threshold: float, *,
+    origin_u: float, origin_v: float, su: float, sv: float, simplify_tol: float = 0.75,
+) -> list[list[list[float]]]:
+    """Marching-squares contours of a thresholded density field → in-plane polygons.
+
+    Turns the blocky density grid into smooth boundary loops (the material's
+    silhouette + internal holes) instead of axis-aligned voxels. Coordinates are
+    returned in world (u, v) — each loop is a closed polygon in the design-space
+    plane, aligned with the voxel footprint (cell centres). The grid is zero-padded
+    so boundary loops close. Returns ``[]`` if scikit-image is unavailable or no
+    contour crosses the threshold (the caller can fall back to voxels).
+    """
+    try:
+        from skimage import measure  # optional dependency
+    except Exception:
+        return []
+    arr = np.asarray(density, dtype=float)
+    if arr.ndim != 2 or arr.size == 0:
+        return []
+    padded = np.pad(arr, 1, mode="constant", constant_values=0.0)
+    polys: list[list[list[float]]] = []
+    for loop in measure.find_contours(padded, level=float(threshold)):
+        if simplify_tol > 0:
+            loop = measure.approximate_polygon(loop, tolerance=simplify_tol)
+        pts: list[list[float]] = []
+        for rr, cc in loop:
+            i, j = cc - 1, rr - 1  # undo the pad
+            pts.append([round(origin_u + (i + 0.5) * su, 6), round(origin_v + (j + 0.5) * sv, 6)])
+        if len(pts) >= 4:  # >=3 distinct + closing vertex
+            polys.append(pts)
+    return polys
+
+
 def topology_result_to_shape_ir(
     topo_result: dict[str, Any], *,
     representation: str = "manifold_mesh",
@@ -612,14 +647,20 @@ def topology_result_to_shape_ir(
     model_id: str | None = None,
     color: list[float] | None = None,
     use_frame: bool = True,
+    method: str = "voxels",
+    simplify_tol: float = 0.75,
 ) -> dict[str, Any]:
-    """Author an optimization result into a Shape IR payload (one density_voxels node).
+    """Author an optimization result into a Shape IR payload (one shape node).
 
-    Pure: maps the neutral topology-optimization result → a Shape IR document. The
-    density grid + threshold become a single ``density_voxels`` node that the
-    registered compilers expand into extruded voxel geometry. ``design_space_node``
-    is carried through so the optimized body stays linked to the design space it
-    came from.
+    Pure: maps the neutral topology-optimization result → a Shape IR document.
+    ``method`` selects the geometry the body becomes:
+    - ``"voxels"`` (default): a ``density_voxels`` node — the thresholded grid as a
+      union of extruded voxel boxes (blocky, exact, no extra dependency).
+    - ``"contour"``: an ``extruded_region`` node — marching-squares boundary
+      polygons of the thresholded field, extruded; a smoother "design suggestion".
+      Falls back to voxels (with a note) if no contour can be extracted.
+    Either way it is a single labelled node; ``design_space_node`` is carried
+    through so the optimized body stays linked to the design space it came from.
 
     Placement: when the result carries a derivation ``frame`` (origin + in-plane
     axes + cell size + thickness from ``derive_topopt_problem_from_package``) and
@@ -667,26 +708,40 @@ def topology_result_to_shape_ir(
     else:
         o = [0.0, 0.0, 0.0]
 
-    node: dict[str, Any] = {
-        "id": nid,
-        "label": nid,
-        "type": "density_voxels",
-        "density": density,
-        "threshold": threshold,
-        "cell_size": [sx, sy],
-        "thickness": sz,
-        "origin": o,
-        "u_axis": u_axis,
-        "v_axis": v_axis,
-        "placed_in_frame": use_frame,
-        "source_optimization": {
-            "optimizer": (topo_result.get("optimizer") or {}).get("name"),
-            "objective": topo_result.get("objective"),
-            "design_space_node": design_space_node,
-            "final_compliance": result.get("final_compliance"),
-            "achieved_volume_fraction": result.get("achieved_volume_fraction"),
-        },
+    source_optimization = {
+        "optimizer": (topo_result.get("optimizer") or {}).get("name"),
+        "objective": topo_result.get("objective"),
+        "design_space_node": design_space_node,
+        "final_compliance": result.get("final_compliance"),
+        "achieved_volume_fraction": result.get("achieved_volume_fraction"),
     }
+
+    method = str(method or "voxels").lower()
+    polygons: list[list[list[float]]] = []
+    if method == "contour":
+        ui = _AXIS_INDEX.get(u_axis, 0)
+        vi = _AXIS_INDEX.get(v_axis, 1)
+        polygons = extract_density_contours(
+            density, threshold, origin_u=o[ui], origin_v=o[vi], su=sx, sv=sy, simplify_tol=simplify_tol)
+        if not polygons:
+            method = "voxels"  # honest fallback when no contour could be extracted
+            source_optimization["contour_fallback"] = "no contour extracted (empty field or skimage missing)"
+
+    if method == "contour":
+        node: dict[str, Any] = {
+            "id": nid, "label": nid, "type": "extruded_region",
+            "polygons": polygons, "thickness": sz, "origin": o,
+            "u_axis": u_axis, "v_axis": v_axis, "placed_in_frame": use_frame,
+            "source_optimization": source_optimization,
+        }
+    else:
+        node = {
+            "id": nid, "label": nid, "type": "density_voxels",
+            "density": density, "threshold": threshold,
+            "cell_size": [sx, sy], "thickness": sz, "origin": o,
+            "u_axis": u_axis, "v_axis": v_axis, "placed_in_frame": use_frame,
+            "source_optimization": source_optimization,
+        }
     if color is not None:
         node["color"] = list(color)
 
@@ -713,16 +768,19 @@ def write_shape_ir_from_topology_optimization(
     node_id: str | None = None,
     color: list[float] | None = None,
     use_frame: bool = True,
+    method: str = "voxels",
+    simplify_tol: float = 0.75,
 ) -> dict[str, Any]:
     """Read a package's topology-optimization result and (re)write geometry/shape_ir.json.
 
     Reads ``analysis/topology_optimization.json``, authors the Shape IR document,
     and writes it as ``geometry/shape_ir.json`` (replacing any existing member).
-    By default (``use_frame``) the optimized body is placed in the design space's
-    own coordinate frame when the result carries a derivation frame. Does NOT
-    compile — the caller (workbench) recompiles via the representation's runtime to
-    produce mesh/GLB + topology + verification + registry. Returns the Shape IR
-    payload.
+    ``method`` chooses ``"voxels"`` (blocky union) or ``"contour"`` (smooth
+    marching-squares boundary, extruded). By default (``use_frame``) the optimized
+    body is placed in the design space's own coordinate frame when the result
+    carries a derivation frame. Does NOT compile — the caller (workbench) recompiles
+    via the representation's runtime to produce mesh/GLB + topology + verification +
+    registry. Returns the Shape IR payload.
     """
     package_path = Path(package_path)
     with zipfile.ZipFile(package_path, "r") as zf:
@@ -735,6 +793,7 @@ def write_shape_ir_from_topology_optimization(
     payload = topology_result_to_shape_ir(
         topo_result, representation=representation, cell_size=cell_size,
         thickness=thickness, origin=origin, node_id=node_id, color=color, use_frame=use_frame,
+        method=method, simplify_tol=simplify_tol,
     )
     data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
     tmp = package_path.with_suffix(".tmp.aieng")

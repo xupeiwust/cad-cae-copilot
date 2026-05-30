@@ -5076,6 +5076,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         thickness = inp.get("thickness")
         org = inp.get("origin")
         origin = (float(org[0]), float(org[1]), float(org[2])) if org else None
+        method = str(inp.get("method") or "contour").lower()
         try:
             payload = write_shape_ir_from_topology_optimization(
                 pkg, representation=representation, cell_size=cell_size,
@@ -5083,6 +5084,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 origin=origin,
                 node_id=(str(inp["node_id"]) if inp.get("node_id") else None),
                 use_frame=bool(inp.get("use_frame", True)),
+                method=method,
             )
             recompile = _cad_generation.recompile_shape_ir_package(pkg, timeout=int(inp.get("timeout") or 120))
         except FileNotFoundError as exc:

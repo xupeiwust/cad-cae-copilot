@@ -13,6 +13,7 @@ from aieng.converters.shape_ir import (  # noqa: E402
     compile_shape_ir,
     compile_shape_ir_to_build123d_source,
     density_voxel_cells,
+    extruded_region_geometry,
 )
 from aieng.converters.shape_ir_manifold import (  # noqa: E402
     compile_shape_ir_to_manifold_source,
@@ -22,6 +23,7 @@ from aieng.converters.topology_optimization import (  # noqa: E402
     TOPOLOGY_OPTIMIZATION_PATH,
     available_optimizers,
     derive_topopt_problem_from_package,
+    extract_density_contours,
     run_topology_optimization,
     simp_2d,
     topology_result_to_shape_ir,
@@ -180,6 +182,87 @@ def test_density_voxels_compiles_in_both_backends():
     dispatched = compile_shape_ir(payload)
     assert dispatched["representation"] == "manifold_mesh"
     assert "Manifold.cube" in dispatched["source"]
+
+
+# ── contour-ized writeback (smooth boundary instead of voxels) ───────────────
+
+def test_extract_density_contours_returns_world_polygons():
+    pytest.importorskip("skimage")
+    # a solid 3x3 block in the middle of a 5x5 field -> one closed loop
+    grid = [[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]]
+    polys = extract_density_contours(grid, 0.5, origin_u=0.0, origin_v=0.0, su=2.0, sv=2.0)
+    assert len(polys) == 1
+    loop = polys[0]
+    assert len(loop) >= 4 and loop[0] == loop[-1]          # closed
+    xs = [p[0] for p in loop]; ys = [p[1] for p in loop]
+    # the loop hugs the solid block (cols/rows 1..3 -> world ~[1,7] at cell centres)
+    assert min(xs) >= 0.0 and max(xs) <= 10.0 and min(ys) >= 0.0 and max(ys) <= 10.0
+
+
+def test_extruded_region_geometry_bakes_plane_and_holes():
+    # XY plane: sign_v=+1, no flip; an outer square with an inner square hole
+    node = {"type": "extruded_region", "u_axis": "x", "v_axis": "y", "thickness": 5.0,
+            "origin": [0, 0, 2],
+            "polygons": [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+                         [[3, 3], [7, 3], [7, 7], [3, 7], [3, 3]]]}
+    g = extruded_region_geometry(node)
+    assert g["thickness"] == 5.0 and g["base"] == [0.0, 0.0, 2.0]   # base offset on w=z
+    assert g["w_vec"] == [0.0, 0.0, 1.0]
+    roles = sorted(is_hole for _pts, is_hole in g["classified"])
+    assert roles == [False, True]                                   # one solid, one hole
+
+
+def test_extruded_region_geometry_flips_v_on_xz_plane():
+    # XZ plane: y_dir = w×u = (0,1,0)×(1,0,0) = (0,0,-1) = -v -> sign_v=-1
+    node = {"type": "extruded_region", "u_axis": "x", "v_axis": "z", "thickness": 4.0,
+            "origin": [0, 6, 0], "polygons": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]}
+    g = extruded_region_geometry(node)
+    assert g["base"] == [0.0, 6.0, 0.0] and g["w_vec"] == [0.0, 1.0, 0.0]
+    # local v-coordinates are negated so the body lands on +z after the affine
+    assert all(pt[1] <= 0 for pt in g["local_polys"][0])
+
+
+def test_contour_writeback_emits_extruded_region_and_compiles():
+    pytest.importorskip("skimage")
+    framed = {**_TOPO_FRAMED, "result": {"threshold": 0.5, "density_grid": {
+        "nrows": 5, "ncols": 5,
+        "values": [[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]]}}}
+    payload = topology_result_to_shape_ir(framed, method="contour")
+    node = payload["parts"][0]
+    assert node["type"] == "extruded_region" and node["polygons"]
+    assert node["placed_in_frame"] is True
+    msrc = compile_shape_ir_to_manifold_source(payload)
+    assert "CrossSection" in msrc and ".transform(" in msrc
+    bsrc = compile_shape_ir_to_build123d_source(payload)
+    assert "BuildSketch(Plane(" in bsrc and "extrude(amount=" in bsrc
+
+
+def test_contour_writeback_falls_back_to_voxels_when_empty():
+    pytest.importorskip("skimage")
+    empty = {**_TOPO_FRAMED, "result": {"threshold": 0.5,
+             "density_grid": {"nrows": 2, "ncols": 2, "values": [[0.0, 0.0], [0.0, 0.0]]}}}
+    node = topology_result_to_shape_ir(empty, method="contour")["parts"][0]
+    assert node["type"] == "density_voxels"                          # honest fallback
+    assert "contour_fallback" in node["source_optimization"]
+
+
+def test_contour_executes_in_manifold_within_design_space(tmp_path: Path):
+    pytest.importorskip("skimage")
+    pytest.importorskip("manifold3d")
+    framed = {**_TOPO_FRAMED, "result": {"threshold": 0.5, "density_grid": {
+        "nrows": 5, "ncols": 5,
+        "values": [[0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]]}}}
+    # frame: origin [5,10,0], cell 40x40 -> design plane spans [5,205]x[10,210]
+    payload = topology_result_to_shape_ir(framed, method="contour")
+    src = compile_shape_ir_to_manifold_source(payload)
+    ns: dict = {}
+    exec(compile(src, "<m>", "exec"), ns)
+    m = ns["result"]
+    import numpy as np
+    verts = np.asarray(m.to_mesh().vert_properties)[:, :3]
+    assert m.volume() > 0
+    assert verts[:, 2].min() >= -1e-6 and verts[:, 2].max() <= 10.0 + 1e-6   # extruded along z by thickness
+    assert verts[:, 0].min() >= 5.0 - 1e-6 and verts[:, 1].min() >= 10.0 - 1e-6  # placed at frame origin
 
 
 def test_write_shape_ir_from_topology_optimization_into_package(tmp_path: Path):

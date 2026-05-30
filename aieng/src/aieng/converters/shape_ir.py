@@ -426,6 +426,8 @@ def _compile_node(
 
     if kind in _DENSITY_VOXEL_KINDS:
         return _compile_density_voxels_b123d(node, node_id, var_name, label, color)
+    if kind in _EXTRUDED_REGION_KINDS:
+        return _compile_extruded_region_b123d(node, node_id, var_name, label, color)
 
     transform = _transform_lines(var_name, node)
 
@@ -438,6 +440,138 @@ def _compile_node(
         f"{var_name} = {expr}",
     ]
     lines.extend(transform)
+    return lines
+
+
+# Node kinds that carry extruded 2D polygon regions (contour-ized topology-opt
+# writeback). Each compiler builds the solid by extruding the polygons (even-odd
+# nesting → holes) along the out-of-plane axis.
+_EXTRUDED_REGION_KINDS = {"extruded_region", "extruded_polygons", "density_contour"}
+
+
+def _plane_basis(u_axis: str, v_axis: str) -> dict[str, Any]:
+    """Right-handed placement basis for an in-plane (u,v) region.
+
+    Returns axis indices + world unit vectors and the ``sign_v`` that maps a
+    polygon's v-coordinate onto the sketch's local Y so the built solid lands on
+    the correct world plane with the right handedness. ``y_dir = w_vec × u_vec``
+    (the sketch's local-Y world direction); when that is -v̂ the caller negates the
+    polygon v-coordinate (sign_v = -1) to compensate.
+    """
+    ui = _AXIS_INDEX.get(str(u_axis).lower(), 0)
+    vi = _AXIS_INDEX.get(str(v_axis).lower(), 1)
+    if vi == ui:
+        vi = (ui + 1) % 3
+    wi = ({0, 1, 2} - {ui, vi}).pop()
+
+    def unit(k: int) -> list[float]:
+        return [1.0 if t == k else 0.0 for t in range(3)]
+
+    u_vec, v_vec, w_vec = unit(ui), unit(vi), unit(wi)
+    y_dir = [  # w_vec × u_vec
+        w_vec[1] * u_vec[2] - w_vec[2] * u_vec[1],
+        w_vec[2] * u_vec[0] - w_vec[0] * u_vec[2],
+        w_vec[0] * u_vec[1] - w_vec[1] * u_vec[0],
+    ]
+    sign_v = 1.0 if y_dir == v_vec else -1.0
+    return {"ui": ui, "vi": vi, "wi": wi, "u_vec": u_vec, "v_vec": v_vec,
+            "w_vec": w_vec, "y_dir": y_dir, "sign_v": sign_v}
+
+
+def _point_in_poly(poly: list[list[float]], pt: tuple[float, float]) -> bool:
+    """Ray-cast point-in-polygon (even-odd)."""
+    x, y = pt
+    inside = False
+    n = len(poly)
+    for k in range(n):
+        x1, y1 = poly[k][0], poly[k][1]
+        x2, y2 = poly[(k + 1) % n][0], poly[(k + 1) % n][1]
+        if (y1 > y) != (y2 > y):
+            xint = x1 + (y - y1) * (x2 - x1) / (y2 - y1) if (y2 - y1) else x1
+            if x < xint:
+                inside = not inside
+    return inside
+
+
+def _classify_polys(polys: list[list[list[float]]]) -> list[tuple[list[list[float]], bool]]:
+    """Tag each polygon as a hole (True) when its nesting depth is odd (even-odd)."""
+    out: list[tuple[list[list[float]], bool]] = []
+    for k, p in enumerate(polys):
+        if len(p) < 3:
+            continue
+        rep = (p[0][0], p[0][1])
+        depth = sum(1 for m, q in enumerate(polys) if m != k and len(q) >= 3 and _point_in_poly(q, rep))
+        out.append((p, depth % 2 == 1))
+    return out
+
+
+def extruded_region_geometry(node: dict[str, Any]) -> dict[str, Any]:
+    """Resolve an extruded-region node into everything a compiler needs.
+
+    Returns local-plane polygons (with ``sign_v`` baked into the v-coordinate and
+    any duplicate closing vertex stripped), the per-polygon hole flag (even-odd),
+    the extrusion thickness, the base point, and the world placement basis. The
+    local polygons + basis + base reproduce the world coordinate ``base + lx·û +
+    ly·ŷ + lz·ŵ`` in both the build123d sketch-plane and the manifold affine.
+    """
+    raw = node.get("polygons") or []
+    basis = _plane_basis(node.get("u_axis", "x"), node.get("v_axis", "y"))
+    sign_v = basis["sign_v"]
+    local: list[list[list[float]]] = []
+    for poly in raw:
+        pts = [[float(p[0]), sign_v * float(p[1])] for p in poly]
+        if len(pts) >= 2 and pts[0] == pts[-1]:  # drop duplicate closing vertex
+            pts = pts[:-1]
+        if len(pts) >= 3:
+            local.append(pts)
+    classified = _classify_polys(local)
+    origin = node.get("origin") or [0.0, 0.0, 0.0]
+    base = [0.0, 0.0, 0.0]
+    base[basis["wi"]] = float(origin[basis["wi"]])
+    return {
+        "local_polys": local,
+        "classified": classified,
+        "thickness": float(node.get("thickness", 1.0)),
+        "base": base,
+        "u_vec": basis["u_vec"], "y_dir": basis["y_dir"], "w_vec": basis["w_vec"],
+    }
+
+
+def _compile_extruded_region_b123d(
+    node: dict[str, Any], node_id: str, var_name: str, label: str, color: list[float] | None,
+) -> list[str]:
+    """build123d source for an extruded-region node: a sketch of polygons (holes
+    subtracted by even-odd nesting) extruded along the out-of-plane axis."""
+    g = extruded_region_geometry(node)
+    slug = _slug(node_id)
+    add = [pts for pts, is_hole in g["classified"] if not is_hole]
+    holes = [pts for pts, is_hole in g["classified"] if is_hole]
+    if not add:  # nothing solid -> tiny placeholder so the build still produces a part
+        lines = [
+            f"# Shape IR node: {node_id} (extruded_region -> empty, placeholder)",
+            f"{var_name} = _aieng_finish(Box(0.001, 0.001, 0.001))",
+            f"{var_name}.label = {_py(label)}",
+        ]
+        return lines
+    base, u_vec, w_vec = g["base"], g["u_vec"], g["w_vec"]
+    lines = [
+        f"# Shape IR node: {node_id} (extruded_region -> {len(add)} solid + {len(holes)} hole "
+        f"polygons, extruded {g['thickness']})",
+        f"_add_{slug} = {_py(add)}",
+        f"_holes_{slug} = {_py(holes)}",
+        f"with BuildPart() as _bp_{slug}:",
+        f"    with BuildSketch(Plane(origin={_py(tuple(base))}, x_dir={_py(tuple(u_vec))}, "
+        f"z_dir={_py(tuple(w_vec))})):",
+        f"        for _poly in _add_{slug}:",
+        f"            Polygon(*[tuple(p) for p in _poly], align=None, mode=Mode.ADD)",
+        f"        for _poly in _holes_{slug}:",
+        f"            Polygon(*[tuple(p) for p in _poly], align=None, mode=Mode.SUBTRACT)",
+        f"    extrude(amount={g['thickness']})",
+        f"{var_name} = _bp_{slug}.part",
+        f"{var_name}.label = {_py(label)}",
+    ]
+    if color is not None:
+        lines.append(f"{var_name}.color = Color(*{_py(color)})")
     return lines
 
 

@@ -273,8 +273,29 @@ pluggable-backend pattern as solvers.
   origin offset; `topology_result_to_shape_ir` uses the frame by default, explicit
   args override, no-frame falls back to a unit grid; full derive→run→writeback
   tiles the design-space extents exactly.
-- Next: 3D SIMP; smoother boundary extraction (marching-squares contour) instead
-  of blocky voxels.
+- **Contour-ized writeback (silhouette, not pixels):** the optimized field can be
+  written back as a smooth boundary instead of blocky voxels.
+  `extract_density_contours` runs marching squares (`skimage.measure.find_contours`
+  + `approximate_polygon`, on a zero-padded field) to get the material silhouette +
+  internal holes as in-plane polygons; a new `extruded_region` Shape IR node +
+  compiler in BOTH backends builds the solid by extruding them — build123d sketches
+  the polygons on a placed `Plane` (holes subtracted by even-odd nesting depth),
+  manifold builds a `CrossSection` (even-odd) extruded then placed by a single 3×4
+  affine. A shared `_plane_basis` (with `sign_v` to keep handedness) means both
+  paths reproduce the same world placement on any axis-aligned plane.
+  `topology_result_to_shape_ir(method=…)` selects `voxels` (default in the core fn)
+  or `contour`; the workbench `opt.writeback_to_shape_ir` defaults to `contour`
+  (the design suggestion) and falls back to voxels with a recorded note when no
+  contour can be extracted. Verified e2e: a 120×80×10 plate writes back a polygonal
+  body (a handful of loops, not hundreds of boxes) that executes in both runtimes
+  and lands in the design-space frame.
+- Tests (contour): marching-squares returns a closed world-space loop;
+  `extruded_region_geometry` bakes the plane basis + even-odd holes and flips v on
+  an XZ plane; contour writeback emits a compilable `extruded_region`; empty field
+  falls back to voxels; contour executes in manifold within the design space;
+  backend writeback default = contour.
+- Next: 3D SIMP (escape the plane-stress idealization); optional spline-fit of the
+  contour loops for fully curved boundaries.
 
 ## Phase 21: Shape IR converter + topology-first CAD compilation — COMPLETE (2026-05-30)
 

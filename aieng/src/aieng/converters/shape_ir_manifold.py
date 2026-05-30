@@ -17,6 +17,7 @@ from typing import Any
 
 from .shape_ir import (
     _DENSITY_VOXEL_KINDS,
+    _EXTRUDED_REGION_KINDS,
     _bbox,
     _blend_child_ids,
     _dims,
@@ -27,6 +28,7 @@ from .shape_ir import (
     _shape_nodes,
     _slug,
     density_voxel_cells,
+    extruded_region_geometry,
 )
 
 
@@ -77,8 +79,11 @@ def compile_shape_ir_to_manifold_source(payload: dict[str, Any]) -> str:
 
 def _compile_manifold_node(node: dict[str, Any], index: int, var: str) -> list[str]:
     node_id = _node_id(node, index)
-    if _node_kind(node) in _DENSITY_VOXEL_KINDS:
+    kind = _node_kind(node)
+    if kind in _DENSITY_VOXEL_KINDS:
         return _compile_density_voxels_manifold(node, node_id, var)
+    if kind in _EXTRUDED_REGION_KINDS:
+        return _compile_extruded_region_manifold(node, node_id, var)
     expr = _manifold_expression(node) or _manifold_bbox_expression(node)
     out = [f"# Shape IR node: {node_id}", f"{var} = {expr}"]
     out.extend(_manifold_transform(var, node))
@@ -103,6 +108,30 @@ def _compile_density_voxels_manifold(node: dict[str, Any], node_id: str, var: st
         f"    {var} = _v if {var} is None else ({var} + _v)",
         f"if {var} is None:",
         f"    {var} = Manifold.cube((0.001, 0.001, 0.001), True)",
+    ]
+
+
+def _compile_extruded_region_manifold(node: dict[str, Any], node_id: str, var: str) -> list[str]:
+    """Manifold source for an extruded-region node: a CrossSection of the polygon
+    loops (even-odd → holes) extruded along Z, then placed on the world plane by a
+    single 3x4 affine (columns û, ŷ, ŵ; translation = base)."""
+    g = extruded_region_geometry(node)
+    slug = _slug(node_id)
+    loops = g["local_polys"]
+    if not loops:
+        return [
+            f"# Shape IR node: {node_id} (extruded_region -> empty, placeholder)",
+            f"{var} = Manifold.cube((0.001, 0.001, 0.001), True)",
+        ]
+    u, y, w, b = g["u_vec"], g["y_dir"], g["w_vec"], g["base"]
+    matrix = [[u[r], y[r], w[r], b[r]] for r in range(3)]
+    return [
+        f"# Shape IR node: {node_id} (extruded_region -> {len(loops)} polygon loops, extruded {g['thickness']})",
+        "from manifold3d import CrossSection, FillRule",
+        f"_loops_{slug} = {_py(loops)}",
+        f"_cs_{slug} = CrossSection([[tuple(p) for p in _poly] for _poly in _loops_{slug}], FillRule.EvenOdd)",
+        f"{var} = Manifold.extrude(_cs_{slug}, {g['thickness']})",
+        f"{var} = {var}.transform({_py(matrix)})",
     ]
 
 

@@ -10460,9 +10460,10 @@ def test_topology_optimization_endpoint(tmp_path: Path) -> None:
     with _zip.ZipFile(pkg) as zf:
         assert "analysis/topology_optimization.json" in zf.namelist()
 
-    # writeback: author the optimization result back into Shape IR + recompile
+    # writeback (voxels): author the optimization result back into Shape IR + recompile
     wb = client.post(f"/api/projects/{pid}/topology-optimization/writeback",
-                     json={"representation": "manifold_mesh", "cell_size": [2.0, 2.0], "thickness": 4.0})
+                     json={"representation": "manifold_mesh", "method": "voxels",
+                           "cell_size": [2.0, 2.0], "thickness": 4.0})
     assert wb.status_code == 200
     wbd = wb.json()
     # shape_ir.json is rewritten before recompile, so it carries the density_voxels node
@@ -10474,6 +10475,14 @@ def test_topology_optimization_endpoint(tmp_path: Path) -> None:
     assert sir["provenance"]["design_space_node"] == "bracket"
     if wbd["status"] == "ok":
         assert wbd["recompile"] is not None
+
+    # writeback (contour, the default): smooth boundary -> an extruded_region node
+    wb2 = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={})
+    assert wb2.status_code == 200
+    with _zip.ZipFile(pkg) as zf:
+        sir2 = _json.loads(zf.read("geometry/shape_ir.json"))
+    (node2,) = sir2["parts"]
+    assert node2["type"] == "extruded_region" and node2["polygons"]
 
 
 def test_topology_optimization_derive_from_cae_endpoint(tmp_path: Path) -> None:

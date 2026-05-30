@@ -139,11 +139,20 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["project_id"],
         "properties": {
             "project_id": {"type": "string"},
+            "method": {
+                "type": "string",
+                "enum": ["contour", "voxels"],
+                "description": (
+                    "Geometry for the optimized body: 'contour' (default) = smooth "
+                    "marching-squares boundary polygons, extruded (a design suggestion); "
+                    "'voxels' = blocky union of the thresholded grid cells."
+                ),
+            },
             "representation": {
                 "type": "string",
                 "description": (
                     "Compile target for the optimized body (default manifold_mesh -> "
-                    "watertight voxel mesh; brep_build123d also supported)."
+                    "watertight mesh; brep_build123d also supported)."
                 ),
             },
             "cell_size": {

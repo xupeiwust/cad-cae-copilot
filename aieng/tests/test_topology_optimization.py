@@ -21,6 +21,7 @@ from aieng.converters.topology_optimization import (  # noqa: E402
     SHAPE_IR_PATH,
     TOPOLOGY_OPTIMIZATION_PATH,
     available_optimizers,
+    derive_topopt_problem_from_package,
     run_topology_optimization,
     simp_2d,
     topology_result_to_shape_ir,
@@ -159,6 +160,117 @@ def test_write_shape_ir_requires_prior_optimization(tmp_path: Path):
         zf.writestr("metadata.json", "{}")
     with pytest.raises(FileNotFoundError):
         write_shape_ir_from_topology_optimization(pkg)
+
+
+# ── derive a problem from CAE setup + geometry ───────────────────────────────
+
+def test_simp_2d_explicit_bcs_solve_and_reduce_compliance():
+    """A left-edge support + right-tip downward load (cell-based) behaves like a
+    cantilever, lowering compliance — proves explicit BCs feed the solver."""
+    nelx, nely = 24, 8
+    supports = [{"cells": [[0, j] for j in range(nely)]}]          # clamp left column
+    loads = [{"cells": [[nelx - 1, nely // 2]], "fx": 0.0, "fy": -1.0}]  # tip load down
+    out = simp_2d({"grid": {"nelx": nelx, "nely": nely}, "volfrac": 0.5, "max_iters": 20,
+                   "bcs": {"supports": supports, "loads": loads}})
+    assert out["bcs_source"] == "explicit" and out["bcs_preset"] is None
+    hist = out["compliance_history"]
+    assert hist[-1] < hist[0] and all(h > 0 for h in hist)
+
+
+def test_simp_2d_degenerate_explicit_falls_back_to_preset():
+    # support but no load -> degenerate -> preset fallback (still solves)
+    out = simp_2d({"grid": {"nelx": 12, "nely": 6}, "volfrac": 0.5, "max_iters": 6,
+                   "bcs": {"supports": [{"cells": [[0, 0]]}], "loads": []}})
+    assert out["bcs_source"] == "preset" and out["bcs_preset"] == "cantilever"
+
+
+def _write_cae_project(pkg: Path) -> None:
+    """A 120x80x10 plate: left face fixed, right face loaded -X... downward (-Z)."""
+    topo = {"entities": [
+        {"id": "body_plate", "type": "solid", "source_ir_node": "plate",
+         "bounding_box": [0, 0, 0, 120, 80, 10]},
+        {"id": "face_left", "type": "face", "body_id": "body_plate",
+         "bounding_box": [0, 0, 0, 0, 80, 10], "normal": [-1, 0, 0]},
+        {"id": "face_right", "type": "face", "body_id": "body_plate",
+         "bounding_box": [120, 0, 0, 120, 80, 10], "normal": [1, 0, 0]},
+    ]}
+    cae_map = {"mappings": [
+        {"maps_to": {"feature_id": "feat_fix"}, "cae_entity": "N_FIX", "face_ids": ["face_left"]},
+        {"maps_to": {"feature_id": "feat_load"}, "cae_entity": "N_LOAD", "face_ids": ["face_right"]},
+    ]}
+    setup = (
+        "boundary_conditions:\n"
+        "  - id: bc1\n    target_feature: feat_fix\n    type: fixed\n"
+        "loads:\n"
+        "  - id: ld1\n    target_feature: feat_load\n    type: force\n"
+        "    value_n: 500.0\n    direction: [0.0, 0.0, -1.0]\n"
+    )
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/topology_map.json", json.dumps(topo))
+        zf.writestr("simulation/cae_mapping.json", json.dumps(cae_map))
+        zf.writestr("simulation/setup.yaml", setup)
+
+
+def test_derive_problem_from_package_maps_supports_loads(tmp_path: Path):
+    pytest.importorskip("yaml")
+    pkg = tmp_path / "plate.aieng"
+    _write_cae_project(pkg)
+    prob = derive_topopt_problem_from_package(pkg, resolution=40)
+    d = prob["derivation"]
+    # plane = the two largest dims (x=120 > y=80 > z=10): u=x, v=y, out-of-plane=z
+    assert d["plane"] == {"u_axis": "x", "v_axis": "y", "out_of_plane_axis": "z"}
+    assert prob["grid"]["nelx"] == 40 and prob["grid"]["nely"] == round(40 * 80 / 120)
+    assert prob["design_space_node"] == "plate"
+    # support maps to the left column (i=0) — populated even though the load is dropped
+    sup_cells = prob["bcs"]["supports"][0]["cells"]
+    assert sup_cells and all(c[0] == 0 for c in sup_cells)
+    # the load is -Z (purely out-of-plane); in-plane fx,fy are 0 -> dropped + warned,
+    # so there is no usable load and the problem is NOT fully derived (preset fallback)
+    assert prob["bcs"]["loads"] == [] and d["derived"] is False
+    assert any("out-of-plane" in w for w in d["warnings"])
+    assert prob["bcs"]["preset"] == "cantilever"
+    # frame carries origin + cell size + thickness for a later writeback
+    assert d["frame"]["thickness"] == 10.0 and d["frame"]["cell_size"][0] == round(120 / 40, 6)
+
+
+def test_derive_in_plane_load_produces_usable_problem_and_solves(tmp_path: Path):
+    pytest.importorskip("yaml")
+    pkg = tmp_path / "plate2.aieng"
+    _write_cae_project(pkg)
+    # rewrite the load to act in-plane (-Y) so derivation yields a real load
+    setup = (
+        "boundary_conditions:\n  - {id: bc1, target_feature: feat_fix, type: fixed}\n"
+        "loads:\n  - {id: ld1, target_feature: feat_load, type: force, value_n: 500.0, direction: [0.0, -1.0, 0.0]}\n"
+    )
+    import zipfile as _z
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with _z.ZipFile(pkg) as src, _z.ZipFile(tmp, "w") as dst:
+        for it in src.infolist():
+            if it.filename != "simulation/setup.yaml":
+                dst.writestr(it, src.read(it.filename))
+        dst.writestr("simulation/setup.yaml", setup)
+    tmp.replace(pkg)
+
+    prob = derive_topopt_problem_from_package(pkg, resolution=24, max_iters=15)
+    assert prob["derivation"]["derived"] is True
+    assert prob["bcs"]["loads"][0]["fy"] == -500.0
+    res = run_topology_optimization(prob)
+    assert res["problem"]["bcs_source"] == "explicit"
+    assert res["problem"]["derivation"]["plane"]["u_axis"] == "x"
+    assert res["result"]["compliance_history"][-1] < res["result"]["compliance_history"][0]
+
+
+def test_derive_falls_back_to_preset_without_bcs(tmp_path: Path):
+    pkg = tmp_path / "bare.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/topology_map.json", json.dumps(
+            {"entities": [{"id": "b", "type": "solid", "bounding_box": [0, 0, 0, 30, 10, 5]}]}))
+    prob = derive_topopt_problem_from_package(pkg)
+    assert prob["derivation"]["derived"] is False
+    assert prob["bcs"]["preset"] == "cantilever"
+    assert any("falling back" in w for w in prob["derivation"]["warnings"])
+    # still solves via the preset fallback
+    assert run_topology_optimization(prob)["result"]["compliance_history"]
 
 
 def test_write_topology_optimization_into_package(tmp_path: Path):

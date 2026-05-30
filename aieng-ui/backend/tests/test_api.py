@@ -10474,3 +10474,48 @@ def test_topology_optimization_endpoint(tmp_path: Path) -> None:
     assert sir["provenance"]["design_space_node"] == "bracket"
     if wbd["status"] == "ok":
         assert wbd["recompile"] is not None
+
+
+def test_topology_optimization_derive_from_cae_endpoint(tmp_path: Path) -> None:
+    import json as _json, zipfile as _zip
+    from app.main import create_app, default_project, project_dir, save_project, get_project
+
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("topopt_derive"))["id"]
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    topo = {"entities": [
+        {"id": "body_plate", "type": "solid", "source_ir_node": "plate",
+         "bounding_box": [0, 0, 0, 120, 80, 10]},
+        {"id": "face_left", "type": "face", "bounding_box": [0, 0, 0, 0, 80, 10]},
+        {"id": "face_right", "type": "face", "bounding_box": [120, 0, 0, 120, 80, 10]},
+    ]}
+    cae_map = {"mappings": [
+        {"maps_to": {"feature_id": "feat_fix"}, "face_ids": ["face_left"]},
+        {"maps_to": {"feature_id": "feat_load"}, "face_ids": ["face_right"]},
+    ]}
+    setup = ("boundary_conditions:\n  - {id: bc1, target_feature: feat_fix, type: fixed}\n"
+             "loads:\n  - {id: ld1, target_feature: feat_load, type: force, value_n: 500.0, "
+             "direction: [0.0, -1.0, 0.0]}\n")
+    with _zip.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/topology_map.json", _json.dumps(topo))
+        zf.writestr("simulation/cae_mapping.json", _json.dumps(cae_map))
+        zf.writestr("simulation/setup.yaml", setup)
+    proj = get_project(settings, pid); proj["aieng_file"] = f"{pid}.aieng"; save_project(settings, proj)
+    client = TestClient(create_app(settings))
+
+    # read-only derive
+    d = client.post(f"/api/projects/{pid}/topology-optimization/derive", json={"resolution": 32})
+    assert d.status_code == 200 and d.json()["status"] == "ok"
+    prob = d.json()["problem"]
+    assert prob["derivation"]["derived"] is True
+    assert prob["derivation"]["plane"]["u_axis"] == "x"
+    assert prob["bcs"]["loads"][0]["fy"] == -500.0
+
+    # auto_derive run path: no problem in body -> derived + solved + bcs_source explicit
+    r = client.post(f"/api/projects/{pid}/topology-optimization", json={"auto_derive": True})
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+    topo_res = r.json()["topology_optimization"]
+    assert topo_res["problem"]["bcs_source"] == "explicit"
+    assert topo_res["result"]["compliance_history"][-1] < topo_res["result"]["compliance_history"][0]

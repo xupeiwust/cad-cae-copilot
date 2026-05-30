@@ -86,16 +86,24 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "opt.run_topology_optimization": {
         "type": "object",
-        "required": ["project_id", "problem"],
+        "required": ["project_id"],
         "properties": {
             "project_id": {"type": "string"},
             "problem": {
                 "type": "object",
                 "description": (
                     "Topology optimization problem: grid {nelx, nely}, volfrac, penalty, rmin, "
-                    "max_iters, bcs {preset: cantilever|mbb_beam}, optional design_space_node "
-                    "(a source_ir_node for provenance). For optimizer=precomputed, pass a 2D "
-                    "'density' grid instead of running a solve."
+                    "max_iters, bcs {preset: cantilever|mbb_beam, OR supports/loads cell lists}, "
+                    "optional design_space_node. For optimizer=precomputed, pass a 2D 'density' "
+                    "grid. Omit problem (or set auto_derive) to derive it from the CAE setup."
+                ),
+            },
+            "auto_derive": {
+                "type": "boolean",
+                "description": (
+                    "Derive supports/loads/design-space from the project's CAE setup + geometry "
+                    "(via opt.derive_problem_from_cae) before solving. Implied when problem is omitted; "
+                    "any provided problem fields override the derived ones."
                 ),
             },
             "optimizer": {
@@ -107,6 +115,23 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "description": (
             "Run topology optimization (built-in self-contained 2D SIMP, compliance "
             "minimization). Writes analysis/topology_optimization.json. No external solver."
+        ),
+    },
+    "opt.derive_problem_from_cae": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "resolution": {"type": "integer", "description": "Cells along the longest design-space axis (default 48)."},
+            "volfrac": {"type": "number", "description": "Target volume fraction (default 0.5)."},
+            "penalty": {"type": "number", "description": "SIMP penalization exponent (default 3.0)."},
+            "rmin": {"type": "number", "description": "Sensitivity filter radius in cells (default 1.5)."},
+            "max_iters": {"type": "integer", "description": "Optimizer iteration cap (default 40)."},
+        },
+        "additionalProperties": True,
+        "description": (
+            "Derive a 2D topology-optimization problem (grid + supports + loads + design space) "
+            "from the project's CAE setup + geometry. Read-only; returns problem + derivation block."
         ),
     },
     "opt.writeback_to_shape_ir": {

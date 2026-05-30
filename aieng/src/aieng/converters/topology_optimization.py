@@ -16,8 +16,15 @@ also authored back into a Shape IR representation (``topology_result_to_shape_ir
 geometry, so the optimized body re-compiles, meshes, and views like any other Shape
 IR — and stays linked to its ``design_space_node``.
 
+The problem itself can be DERIVED from the project's real CAE intent rather than a
+preset: ``derive_topopt_problem_from_package`` reads the design-space bbox + face
+geometry + supports/loads and projects them onto a 2D plane (the two largest
+design-space dims) as explicit cell-based ``bcs.supports``/``bcs.loads``, which
+``simp_2d`` consumes directly.
+
 Honest scope of the built-in optimizer: 2D, plane-stress, linear-elastic, single
-isotropic material, regular grid, coarse. It is an observational design aid, not a
+isotropic material, regular grid, coarse; 3D supports/loads are projected to the
+plane and out-of-plane force is dropped. It is an observational design aid, not a
 production optimizer.
 """
 from __future__ import annotations
@@ -94,6 +101,63 @@ def _boundary_conditions(nelx: int, nely: int, preset: str) -> tuple[np.ndarray,
     return np.array(sorted(set(fixed)), dtype=int), F
 
 
+def _explicit_bcs(nelx: int, nely: int, supports: list, loads: list) -> tuple[np.ndarray, np.ndarray]:
+    """Build (fixed_dofs, force_vector) from explicit cell-based BCs.
+
+    A support/load entry carries ``cells`` = list of ``[i, j]`` (i = column = elx,
+    j = row = ely). Support cells clamp both dofs of their 4 corner nodes; load
+    cells distribute ``(fx, fy)`` evenly over the union of their corner nodes.
+    This is what a derived problem (from real CAE supports/loads) feeds in instead
+    of a preset.
+    """
+    ndof = 2 * (nelx + 1) * (nely + 1)
+    F = np.zeros(ndof)
+
+    def node(elx: int, ely: int) -> int:
+        return (nely + 1) * elx + ely
+
+    def corners(i: int, j: int) -> list[int]:
+        i = min(max(int(i), 0), nelx - 1)
+        j = min(max(int(j), 0), nely - 1)
+        return [node(i, j), node(i + 1, j), node(i, j + 1), node(i + 1, j + 1)]
+
+    fixed: set[int] = set()
+    for s in supports or []:
+        for cell in s.get("cells", []):
+            for n in corners(cell[0], cell[1]):
+                fixed.add(2 * n)
+                fixed.add(2 * n + 1)
+
+    for ld in loads or []:
+        fx = float(ld.get("fx", 0.0))
+        fy = float(ld.get("fy", 0.0))
+        nodes: set[int] = set()
+        for cell in ld.get("cells", []):
+            nodes.update(corners(cell[0], cell[1]))
+        if nodes and (fx or fy):
+            per = 1.0 / len(nodes)
+            for n in nodes:
+                F[2 * n] += fx * per
+                F[2 * n + 1] += fy * per
+
+    return np.array(sorted(fixed), dtype=int), F
+
+
+def _resolve_bcs(nelx: int, nely: int, bcs: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, str | None]:
+    """Explicit supports/loads if present, else a named preset. Returns
+    (fixed_dofs, force_vector, preset_name) — preset_name is None when explicit."""
+    supports = bcs.get("supports")
+    loads = bcs.get("loads")
+    if supports or loads:
+        fixed, F = _explicit_bcs(nelx, nely, supports or [], loads or [])
+        if fixed.size and np.abs(F).sum() > 0:
+            return fixed, F, None
+        # degenerate explicit BCs (no support or no load) -> fall back to a preset
+    preset = str(bcs.get("preset") or "cantilever")
+    fixed, F = _boundary_conditions(nelx, nely, preset)
+    return fixed, F, preset
+
+
 def simp_2d(problem: dict[str, Any]) -> dict[str, Any]:
     """Classic 2D SIMP compliance minimization (OC update + sensitivity filter).
 
@@ -108,11 +172,12 @@ def simp_2d(problem: dict[str, Any]) -> dict[str, Any]:
     penal = float(problem.get("penalty", 3.0))
     rmin = float(problem.get("rmin", 1.5))
     max_iters = int(problem.get("max_iters", 40))
-    preset = str((problem.get("bcs") or {}).get("preset", "cantilever"))
+    bcs = problem.get("bcs") or {}
 
     KE = _element_stiffness()
     ndof = 2 * (nelx + 1) * (nely + 1)
-    fixed, F = _boundary_conditions(nelx, nely, preset)
+    fixed, F, preset = _resolve_bcs(nelx, nely, bcs)
+    bcs_source = "preset" if preset is not None else "explicit"
     free = np.setdiff1d(np.arange(ndof), fixed)
 
     # element -> global dof map
@@ -195,6 +260,7 @@ def simp_2d(problem: dict[str, Any]) -> dict[str, Any]:
         "achieved_volume_fraction": round(float(x.mean()), 4),
         "target_volume_fraction": volfrac,
         "bcs_preset": preset,
+        "bcs_source": bcs_source,
     }
 
 
@@ -221,6 +287,241 @@ def precomputed_optimizer(problem: dict[str, Any]) -> dict[str, Any]:
 
 register_optimizer("simp_2d", simp_2d, version="0.1", method="SIMP", dimension=2)
 register_optimizer("precomputed", precomputed_optimizer, version="0.1", method="precomputed", dimension=2)
+
+
+# ── derive a problem from a project's CAE setup + geometry ───────────────────
+# Connects "design space / supports / loads" (the project's real CAE intent) to
+# the topology-optimization problem, instead of a hand-picked preset. The built-in
+# optimizer is 2D, so 3D supports/loads are PROJECTED onto the plane of the two
+# largest design-space dimensions; out-of-plane components are dropped (plane
+# stress). This is honest 3D→2D — the projection + dropped components are recorded
+# in the returned `derivation` block, and missing/degenerate data falls back to a
+# preset with a warning rather than producing a silently-wrong problem.
+
+def _read_member_text(zf: zipfile.ZipFile, name: str) -> str | None:
+    try:
+        return zf.read(name).decode("utf-8")
+    except KeyError:
+        return None
+
+
+def _load_cae_setup(zf: zipfile.ZipFile) -> dict[str, Any]:
+    """CAE setup from simulation/setup.yaml (active) or a JSON setup, else {}."""
+    raw = (
+        _read_member_text(zf, "simulation/setup.yaml")
+        or _read_member_text(zf, "simulation/setup.json")
+        or _read_member_text(zf, "cae/setup.json")
+    )
+    if not raw:
+        return {}
+    if raw.lstrip().startswith("{"):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+    try:
+        import yaml  # lazy: only needed for YAML setups
+        return yaml.safe_load(raw) or {}
+    except Exception:
+        return {}
+
+
+def _bbox_center(bbox: Any) -> list[float] | None:
+    if not (isinstance(bbox, list) and len(bbox) >= 6):
+        return None
+    return [(bbox[0] + bbox[3]) / 2.0, (bbox[1] + bbox[4]) / 2.0, (bbox[2] + bbox[5]) / 2.0]
+
+
+def _topology_entities(topology_map: Any) -> list[dict[str, Any]]:
+    if isinstance(topology_map, list):
+        return [e for e in topology_map if isinstance(e, dict)]
+    if isinstance(topology_map, dict):
+        ents = topology_map.get("entities") or topology_map.get("topology") or []
+        return [e for e in ents if isinstance(e, dict)]
+    return []
+
+
+def _index_faces(topology_map: Any) -> tuple[dict[str, dict[str, Any]], list[float] | None, str | None]:
+    """Return (faces_by_id, overall_bbox, largest_solid_source_node)."""
+    faces: dict[str, dict[str, Any]] = {}
+    union: list[float] | None = None
+    best_solid: tuple[float, str] | None = None  # (volume, source_node)
+    overall: list[float] | None = None
+    for ent in _topology_entities(topology_map):
+        et = str(ent.get("type") or "").lower()
+        bb = ent.get("bounding_box") or ent.get("bbox")
+        if isinstance(bb, list) and len(bb) >= 6:
+            union = list(bb) if union is None else (
+                [min(union[k], bb[k]) for k in range(3)] + [max(union[k + 3], bb[k + 3]) for k in range(3)]
+            )
+        if et == "face" and ent.get("id") is not None:
+            faces[str(ent["id"])] = {
+                "bbox": bb,
+                "normal": ent.get("normal") or ent.get("proxy_normal"),
+                "center": ent.get("center") or _bbox_center(bb),
+            }
+        if et in {"solid", "body"} and isinstance(bb, list) and len(bb) >= 6:
+            vol = max(bb[3] - bb[0], 0) * max(bb[4] - bb[1], 0) * max(bb[5] - bb[2], 0)
+            node = str(ent.get("source_ir_node") or ent.get("name") or ent.get("id") or "")
+            if best_solid is None or vol > best_solid[0]:
+                best_solid = (vol, node)
+                overall = list(bb)
+    return faces, (overall or union), (best_solid[1] if best_solid else None)
+
+
+def _feature_to_faces(cae_mapping: Any) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for m in (cae_mapping or {}).get("mappings", []) or []:
+        fid = (m.get("maps_to") or {}).get("feature_id")
+        if fid:
+            out[str(fid)] = [str(x) for x in (m.get("face_ids") or [])]
+    return out
+
+
+def _resolve_target_faces(target: Any, feat_to_faces: dict[str, list[str]], faces: dict[str, Any]) -> list[str]:
+    t = str(target or "")
+    if t in feat_to_faces:
+        return [f for f in feat_to_faces[t] if f in faces]
+    if t in faces:  # target is itself a face id
+        return [t]
+    if f"face_{t}" in faces:
+        return [f"face_{t}"]
+    return []
+
+
+def _dedup_cells(cells: list[list[int]]) -> list[list[int]]:
+    seen: set[tuple[int, int]] = set()
+    out: list[list[int]] = []
+    for c in cells:
+        key = (int(c[0]), int(c[1]))
+        if key not in seen:
+            seen.add(key)
+            out.append([key[0], key[1]])
+    return out
+
+
+def derive_topopt_problem_from_package(
+    package_path: str | Path, *,
+    resolution: int = 48, volfrac: float = 0.5, penalty: float = 3.0,
+    rmin: float = 1.5, max_iters: int = 40, objective: str = "compliance_minimization",
+) -> dict[str, Any]:
+    """Derive a 2D topology-optimization problem from a project's CAE setup + geometry.
+
+    Reads geometry/topology_map.json (design-space bbox + face geometry),
+    simulation/cae_mapping.json (feature→face links) and the CAE setup
+    (supports + loads). Projects the supports/loads onto the plane of the two
+    largest design-space dimensions and maps them to grid cells, returning a
+    ``problem`` with explicit ``bcs.supports``/``bcs.loads``. The ``derivation``
+    block records the projection plane, the design-space frame (origin + cell
+    size + thickness, so a later writeback can place the optimized body), source
+    BC links, and warnings. If fewer than one support AND one load can be derived,
+    falls back to a preset (warned), so the optimizer still runs.
+    """
+    package_path = Path(package_path)
+    warnings: list[str] = []
+    with zipfile.ZipFile(package_path, "r") as zf:
+        topo_raw = _read_member_text(zf, "geometry/topology_map.json")
+        topology_map = json.loads(topo_raw) if topo_raw else {}
+        cae_raw = _read_member_text(zf, "simulation/cae_mapping.json")
+        cae_mapping = json.loads(cae_raw) if cae_raw else {}
+        setup = _load_cae_setup(zf)
+
+    faces, overall, solid_node = _index_faces(topology_map)
+    if not overall:
+        raise ValueError("cannot derive design space: no bounding box in geometry/topology_map.json")
+
+    feat_to_faces = _feature_to_faces(cae_mapping)
+    setup_bcs = setup.get("boundary_conditions") or []
+    setup_loads = setup.get("loads") or []
+    if not feat_to_faces and (setup_bcs or setup_loads):
+        warnings.append("no simulation/cae_mapping.json — resolving BC/load targets as face ids directly")
+
+    mins, maxs = overall[:3], overall[3:]
+    ext = [max(maxs[k] - mins[k], 1e-9) for k in range(3)]
+    u, v, w = sorted(range(3), key=lambda k: ext[k], reverse=True)
+    axis = ["x", "y", "z"]
+    nelx = max(int(resolution), 2)
+    nely = max(int(round(resolution * ext[v] / ext[u])), 2)
+    du, dv = ext[u] / nelx, ext[v] / nely
+
+    def cell_of_point(p: list[float]) -> tuple[int, int]:
+        i = int((p[u] - mins[u]) / ext[u] * nelx)
+        j = int((p[v] - mins[v]) / ext[v] * nely)
+        return min(max(i, 0), nelx - 1), min(max(j, 0), nely - 1)
+
+    def cells_of_bbox(bb: Any) -> list[list[int]]:
+        if not (isinstance(bb, list) and len(bb) >= 6):
+            return []
+        i0, j0 = cell_of_point([bb[0], bb[1], bb[2]])
+        i1, j1 = cell_of_point([bb[3], bb[4], bb[5]])
+        i0, i1 = sorted((i0, i1))
+        j0, j1 = sorted((j0, j1))
+        return [[i, j] for i in range(i0, i1 + 1) for j in range(j0, j1 + 1)]
+
+    supports: list[dict[str, Any]] = []
+    for bc in setup_bcs:
+        fids = _resolve_target_faces(bc.get("target_feature"), feat_to_faces, faces)
+        cells = _dedup_cells([c for fid in fids for c in cells_of_bbox(faces.get(fid, {}).get("bbox"))])
+        if cells:
+            supports.append({"cells": cells, "from": {
+                "target_feature": bc.get("target_feature"), "type": bc.get("type"), "face_ids": fids}})
+        else:
+            warnings.append(f"support '{bc.get('target_feature')}' resolved to no faces/cells — skipped")
+
+    loads: list[dict[str, Any]] = []
+    for ld in setup_loads:
+        fids = _resolve_target_faces(ld.get("target_feature"), feat_to_faces, faces)
+        cells = _dedup_cells([
+            list(cell_of_point(faces[fid]["center"])) for fid in fids if faces.get(fid, {}).get("center")
+        ])
+        direction = ld.get("direction") or [0.0, 0.0, -1.0]
+        mag = float(ld.get("value_n") or 1.0)
+        fx, fy, fw = mag * float(direction[u]), mag * float(direction[v]), mag * float(direction[w])
+        if cells and (fx or fy):
+            loads.append({"cells": cells, "fx": fx, "fy": fy, "from": {
+                "target_feature": ld.get("target_feature"), "value_n": mag, "direction": direction}})
+            if abs(fw) > max(abs(fx), abs(fy)):
+                warnings.append(
+                    f"load '{ld.get('target_feature')}' is mostly out-of-plane ({axis[w]}); "
+                    "the 2D problem keeps only the in-plane component")
+        elif abs(fw) > 0:
+            warnings.append(
+                f"load '{ld.get('target_feature')}' is purely out-of-plane ({axis[w]}); "
+                "no in-plane component for the 2D problem — skipped")
+        else:
+            warnings.append(f"load '{ld.get('target_feature')}' resolved to no force/cells — skipped")
+
+    bcs: dict[str, Any] = {"supports": supports, "loads": loads}
+    derived = bool(supports and loads)
+    if not derived:
+        bcs["preset"] = "cantilever"
+        warnings.append(
+            "insufficient derived BCs (need ≥1 support and ≥1 load) — falling back to the cantilever preset")
+
+    return {
+        "grid": {"nelx": nelx, "nely": nely},
+        "volfrac": volfrac, "penalty": penalty, "rmin": rmin, "max_iters": max_iters,
+        "objective": objective,
+        "bcs": bcs,
+        "design_space_node": solid_node,
+        "derivation": {
+            "source": "cae_setup+topology_map",
+            "derived": derived,
+            "plane": {"u_axis": axis[u], "v_axis": axis[v], "out_of_plane_axis": axis[w]},
+            "design_space_bbox": overall,
+            "frame": {
+                "origin": [mins[0], mins[1], mins[2]],
+                "u_axis": axis[u], "v_axis": axis[v],
+                "cell_size": [round(du, 6), round(dv, 6)], "thickness": round(ext[w], 6),
+            },
+            "support_count": len(supports), "load_count": len(loads),
+            "warnings": warnings,
+            "limitations": [
+                "3D supports/loads are projected onto the plane of the two largest design-space "
+                "dimensions; out-of-plane force components are dropped (plane-stress idealization).",
+            ],
+        },
+    }
 
 
 def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp_2d") -> dict[str, Any]:
@@ -259,7 +560,9 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
             "penalty": problem.get("penalty", 3.0),
             "rmin": problem.get("rmin", 1.5),
             "bcs_preset": opt.get("bcs_preset"),
+            "bcs_source": opt.get("bcs_source", "preset"),
             "design_space_node": problem.get("design_space_node"),
+            "derivation": problem.get("derivation"),
         },
         "result": {
             "iterations": opt.get("iterations"),

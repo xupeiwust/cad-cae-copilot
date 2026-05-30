@@ -579,7 +579,8 @@ is possible).
 | `cae.extract_solver_results` | Parse CalculiX FRD → `computed_metrics.json` |
 | `cae.extract_field_regions` | Cluster high-stress / high-displacement regions |
 | `cae.map_results` | Map stress/deflection results back to topology entities, object_registry objects, and `source_ir_node` → `analysis/cae_result_map.json` (unmapped regions reported honestly) |
-| `opt.run_topology_optimization` | Run topology optimization (built-in self-contained 2D SIMP, compliance-min, pure numpy — no external solver) → `analysis/topology_optimization.json`. Pluggable optimizer; honest 2D/coarse limitations recorded |
+| `opt.derive_problem_from_cae` | Derive a 2D topology-optimization problem (grid + supports + loads + design space) from a project's CAE setup (`simulation/setup.yaml`) + geometry (`topology_map` faces + design-space bbox). Read-only; returns the problem + a `derivation` block (projection plane, frame, source BC links, warnings). 3D supports/loads are projected onto the plane of the two largest dims; out-of-plane force is dropped (plane-stress) |
+| `opt.run_topology_optimization` | Run topology optimization (built-in self-contained 2D SIMP, compliance-min, pure numpy — no external solver) → `analysis/topology_optimization.json`. Pluggable optimizer; honest 2D/coarse limitations recorded. Set `auto_derive` (or omit `problem`) to derive supports/loads/design-space from the project's CAE setup instead of a preset |
 | `opt.writeback_to_shape_ir` | Author the optimization result back into `geometry/shape_ir.json` as one `density_voxels` node, then recompile through runtime routing → the optimized body meshes/views + gets verification + object_registry, linked to its `design_space_node`. Default `manifold_mesh` (watertight voxel mesh); `brep_build123d` also supported |
 | `postprocess.generate_computed_metrics` | Import metrics from CSV/JSON |
 | `postprocess.refresh_cae_summary` | Regenerate result summary + evidence markdown |

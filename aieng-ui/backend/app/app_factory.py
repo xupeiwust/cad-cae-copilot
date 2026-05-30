@@ -1118,12 +1118,22 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         project_id: str,
         payload: dict[str, Any] = Body(default=None),
     ) -> dict[str, Any]:
-        """Run topology optimization. Body: {problem: {...}, optimizer?: str}."""
+        """Run topology optimization. Body: {problem?, auto_derive?, optimizer?}."""
         p = payload or {}
         return _tool_opt_run_topology_optimization(
-            {"project_id": project_id, "problem": p.get("problem"), "optimizer": p.get("optimizer")},
+            {"project_id": project_id, "problem": p.get("problem"),
+             "auto_derive": p.get("auto_derive"), "optimizer": p.get("optimizer")},
             {},
         )
+
+    @app.post("/api/projects/{project_id}/topology-optimization/derive")
+    def derive_topology_optimization_problem_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Derive a topopt problem from the project's CAE setup + geometry (read-only).
+        Body: {resolution?, volfrac?, penalty?, rmin?, max_iters?}."""
+        return _tool_opt_derive_problem_from_cae({"project_id": project_id, **(payload or {})}, {})
 
     @app.post("/api/projects/{project_id}/topology-optimization/writeback")
     def writeback_topology_optimization_endpoint(
@@ -4952,21 +4962,61 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             return {"status": "error", "code": "map_failed", "message": f"{type(exc).__name__}: {exc}"}
         return {"status": "ok", "tool": "cae.map_results", "cae_result_map": result_map}
 
+    def _tool_opt_derive_problem_from_cae(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Derive a 2D topology-optimization problem (grid + supports + loads + design
+        space) from a project's CAE setup + geometry. Read-only (no mutation)."""
+        from aieng.converters.topology_optimization import derive_topopt_problem_from_package
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        kw: dict[str, Any] = {}
+        for k in ("resolution", "max_iters"):
+            if inp.get(k) is not None:
+                kw[k] = int(inp[k])
+        for k in ("volfrac", "penalty", "rmin"):
+            if inp.get(k) is not None:
+                kw[k] = float(inp[k])
+        try:
+            problem = derive_topopt_problem_from_package(pkg, **kw)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "derive_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": "ok", "tool": "opt.derive_problem_from_cae", "problem": problem,
+                "derivation": problem.get("derivation")}
+
     def _tool_opt_run_topology_optimization(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         """Run topology optimization (built-in 2D SIMP) on a project's design space;
-        write analysis/topology_optimization.json. No external solver."""
-        from aieng.converters.topology_optimization import write_topology_optimization
+        write analysis/topology_optimization.json. No external solver. If auto_derive
+        is set (or no problem is given), the problem is derived from the project's CAE
+        setup + geometry first."""
+        from aieng.converters.topology_optimization import (
+            derive_topopt_problem_from_package,
+            write_topology_optimization,
+        )
         from .project_io import get_project, resolve_project_path
 
         pid = str(inp.get("project_id") or "").strip()
         problem = inp.get("problem") if isinstance(inp.get("problem"), dict) else None
-        if not pid or problem is None:
-            return {"status": "error", "code": "bad_input", "message": "project_id and problem are required"}
+        auto_derive = bool(inp.get("auto_derive")) or problem is None
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
         project = get_project(active_settings, pid)
         pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
         if pkg is None or not pkg.exists():
             return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
         try:
+            if auto_derive:
+                derived = derive_topopt_problem_from_package(pkg)
+                if isinstance(problem, dict):  # caller overrides (volfrac, grid, ...) win
+                    derived.update({k: v for k, v in problem.items() if k != "bcs"})
+                    if isinstance(problem.get("bcs"), dict):
+                        derived["bcs"].update(problem["bcs"])
+                problem = derived
             result = write_topology_optimization(pkg, problem, optimizer=str(inp.get("optimizer") or "simp_2d"))
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "code": "optimization_failed", "message": f"{type(exc).__name__}: {exc}"}
@@ -4980,9 +5030,26 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "self-contained 2D SIMP (compliance minimization, pure numpy — no external "
             "solver). Writes analysis/topology_optimization.json (optimizer provenance, "
             "objective history, achieved volume fraction, density grid, honest 2D/coarse "
-            "limitations). Optimizer is pluggable; optimizer=precomputed accepts a density grid."
+            "limitations). Optimizer is pluggable; optimizer=precomputed accepts a density grid. "
+            "Set auto_derive=true (or omit problem) to derive supports/loads/design-space from "
+            "the project's CAE setup + geometry instead of a preset."
         ),
         input_schema=_schema("opt.run_topology_optimization"),
+    )
+
+    _rt.register_tool(
+        "opt.derive_problem_from_cae",
+        _tool_opt_derive_problem_from_cae,
+        description=(
+            "Derive a 2D topology-optimization problem (grid + supports + loads + design "
+            "space) from a project's CAE setup (simulation/setup.yaml supports/loads) + "
+            "geometry (topology_map faces + design-space bbox). Read-only — returns the "
+            "problem + a 'derivation' block (projection plane, frame, source BC links, "
+            "warnings). 3D supports/loads are projected onto the plane of the two largest "
+            "design-space dimensions; out-of-plane components are dropped (plane-stress). "
+            "Inspect this, then pass it to opt.run_topology_optimization."
+        ),
+        input_schema=_schema("opt.derive_problem_from_cae"),
     )
 
     def _tool_opt_writeback_to_shape_ir(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:

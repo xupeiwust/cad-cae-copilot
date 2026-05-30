@@ -235,9 +235,32 @@ pluggable-backend pattern as solvers.
   density_voxel thresholding/placement; writeback payload + density_voxels
   compiles + executes in both backends (manifold vol>0, build123d labelled
   Compound); writeback into package + recompile via the endpoint.
-- Next: drive the optimization `problem` (loads/supports) directly from the
-  solver-neutral CAE map instead of presets; 3D SIMP; smoother boundary
-  extraction (marching-squares contour) instead of blocky voxels.
+- **Problem derivation from CAE (closes the input side):**
+  `derive_topopt_problem_from_package` builds the optimization `problem` from the
+  project's real CAE intent instead of a preset — it reads
+  `geometry/topology_map.json` (design-space bbox + face geometry),
+  `simulation/cae_mapping.json` (feature→face links) and the CAE setup
+  (`simulation/setup.yaml` supports/loads), then PROJECTS the 3D supports/loads
+  onto the plane of the two largest design-space dimensions and maps them to grid
+  cells. `simp_2d` now consumes explicit cell-based `bcs.supports`/`bcs.loads`
+  (via `_resolve_bcs`/`_explicit_bcs`), not just presets. The result carries a
+  `derivation` block (projection plane, design-space frame = origin + cell size +
+  thickness for a later writeback, source BC links, warnings) and honest 3D→2D
+  limitations; out-of-plane force components are dropped (plane-stress) and
+  missing/degenerate BCs fall back to a preset with a warning. Workbench
+  `opt.derive_problem_from_cae` (read-only, tool + `POST .../topology-optimization/
+  derive`) returns the problem; `opt.run_topology_optimization` gained
+  `auto_derive` (implied when `problem` is omitted) to derive-then-solve in one
+  call.
+- Tests (problem derivation): explicit cell-based BCs solve + lower compliance;
+  degenerate explicit BCs fall back to preset; derive from a synthetic CAE
+  package (plane pick x>y>z, support→left column, load cells, frame, design space
+  node); purely-out-of-plane load is dropped + warned; in-plane load yields a
+  usable problem that solves; no-BC package falls back to preset; backend derive
+  endpoint + auto_derive run path.
+- Next: 3D SIMP; smoother boundary extraction (marching-squares contour) instead
+  of blocky voxels; feed the writeback `density_voxels` frame from the
+  derivation frame so the optimized body lands in the design space's coordinates.
 
 ## Phase 21: Shape IR converter + topology-first CAD compilation — COMPLETE (2026-05-30)
 

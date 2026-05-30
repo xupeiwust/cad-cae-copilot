@@ -1876,8 +1876,7 @@ input[type="file"] {
 }
 
 .approval-line-actions button,
-.transcript-artifact-button,
-.chat-stop-button {
+.transcript-artifact-button {
   min-height: 30px;
 }
 
@@ -7957,6 +7956,44 @@ textarea:focus,
   background: var(--surface-1);
   border-color: var(--border-hover);
   color: var(--text-primary);
+}
+
+.chat-pane-body .chat-action-button {
+  flex-shrink: 0;
+  align-self: flex-end;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.chat-pane-body .chat-action-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-pane-body .chat-action-button-send {
+  background: var(--accent);
+  color: #fff;
+}
+
+.chat-pane-body .chat-action-button-send:hover:not(:disabled) {
+  background: #b45309;
+}
+
+.chat-pane-body .chat-action-button-stop {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+
+.chat-pane-body .chat-action-button-stop:hover:not(:disabled) {
+  background: #991b1b;
 }
 
 .chat-quick-action-chip:disabled {

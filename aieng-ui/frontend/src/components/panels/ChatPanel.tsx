@@ -287,15 +287,6 @@ export function ChatPanel({
     f.pointer.toLowerCase().includes(acQuery.toLowerCase()) ||
     f.label.toLowerCase().includes(acQuery.toLowerCase()),
   );
-  const sendLabel = chatBusy
-    ? activeAutopilotRun?.status === "awaiting_approval"
-      ? "Ask revision"
-      : activeAutopilotRun
-        ? "Send follow-up"
-        : cadGenerating
-          ? "Generating..."
-          : "Thinking..."
-    : "Send";
   const activityLine = currentActivityLine({
     cadGenerationProgress,
     simulationProgress,
@@ -550,26 +541,27 @@ export function ChatPanel({
             </div>
           ) : null}
         </div>
-        <button
-          className="chat-send-button"
-          disabled={selectedConnectionBlocked || !message.trim()}
-          onClick={() => void sendUnified()}
-        >
-          <ActionIcon name="send" />
-          {sendLabel}
-        </button>
-        {activeAutopilotRun ? (
+        {activeAutopilotRun && !message.trim() ? (
           <button
             type="button"
-            className="ghost-button chat-stop-button"
+            className="chat-action-button chat-action-button-stop"
             disabled={!activeAutopilotRun.run_id}
             onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
             title="Stop active agent run"
           >
             <Square className="button-icon" />
-            Stop
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            className="chat-action-button chat-action-button-send"
+            disabled={selectedConnectionBlocked || !message.trim()}
+            onClick={() => void sendUnified()}
+            title="Send"
+          >
+            <ActionIcon name="send" />
+          </button>
+        )}
       </div>
     </section>
   );

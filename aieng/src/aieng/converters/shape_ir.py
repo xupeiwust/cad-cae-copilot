@@ -683,6 +683,38 @@ def density_voxel_cells(node: dict[str, Any]) -> tuple[list[list[float]], tuple[
     centre ``[cx, cy, cz]`` are in WORLD x/y/z order — positions are baked in, so
     callers must NOT additionally apply the node transform.
     """
+    # 3D density field (topology-opt 3D writeback): nested [nz][ny][nx]. Each solid
+    # voxel becomes a box at its world centre, sized by the per-axis cell_size.
+    dens3 = node.get("density_3d")
+    if dens3 is None:
+        d = node.get("density")
+        if isinstance(d, list) and d and isinstance(d[0], list) and d[0] and isinstance(d[0][0], list):
+            dens3 = d
+    if dens3 is not None or int(node.get("dimension", 0) or 0) == 3:
+        dens3 = dens3 or []
+        threshold = float(node.get("threshold", 0.5))
+        cell = node.get("cell_size") or [1.0, 1.0, 1.0]
+        sx = float(cell[0])
+        sy = float(cell[1] if len(cell) > 1 else cell[0])
+        sz = float(cell[2] if len(cell) > 2 else max(sx, sy))
+        origin = node.get("origin") or [0.0, 0.0, 0.0]
+        ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+        cells: list[list[float]] = []
+        for k, plane in enumerate(dens3):
+            for j, row in enumerate(plane):
+                for i, value in enumerate(row):
+                    try:
+                        solid = float(value) >= threshold
+                    except (TypeError, ValueError):
+                        solid = False
+                    if solid:
+                        cells.append([
+                            round(ox + (i + 0.5) * sx, 6),
+                            round(oy + (j + 0.5) * sy, 6),
+                            round(oz + (k + 0.5) * sz, 6),
+                        ])
+        return cells, (sx, sy, sz)
+
     density = node.get("density") or node.get("density_grid") or []
     if isinstance(density, dict):
         density = density.get("values") or []

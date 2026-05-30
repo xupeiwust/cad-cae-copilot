@@ -10528,3 +10528,83 @@ def test_topology_optimization_derive_from_cae_endpoint(tmp_path: Path) -> None:
     topo_res = r.json()["topology_optimization"]
     assert topo_res["problem"]["bcs_source"] == "explicit"
     assert topo_res["result"]["compliance_history"][-1] < topo_res["result"]["compliance_history"][0]
+
+
+def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
+    import json as _json, zipfile as _zip
+    from app.main import create_app, default_project, project_dir, save_project, get_project
+
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("topopt3d"))["id"]
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    topo = {"entities": [
+        {"id": "body_blk", "type": "solid", "source_ir_node": "blk",
+         "bounding_box": [0, 0, 0, 60, 40, 30]},
+        {"id": "face_left", "type": "face", "bounding_box": [0, 0, 0, 0, 40, 30]},
+        {"id": "face_right", "type": "face", "bounding_box": [60, 0, 0, 60, 40, 30]},
+    ]}
+    cae_map = {"mappings": [
+        {"maps_to": {"feature_id": "feat_fix"}, "face_ids": ["face_left"]},
+        {"maps_to": {"feature_id": "feat_load"}, "face_ids": ["face_right"]},
+    ]}
+    setup = ("boundary_conditions:\n  - {id: bc1, target_feature: feat_fix, type: fixed}\n"
+             "loads:\n  - {id: ld1, target_feature: feat_load, type: force, value_n: 800.0, "
+             "direction: [0.0, 0.0, -1.0]}\n")
+    with _zip.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/topology_map.json", _json.dumps(topo))
+        zf.writestr("simulation/cae_mapping.json", _json.dumps(cae_map))
+        zf.writestr("simulation/setup.yaml", setup)
+    proj = get_project(settings, pid); proj["aieng_file"] = f"{pid}.aieng"; save_project(settings, proj)
+    client = TestClient(create_app(settings))
+
+    # 3D derive: full 3D, support on x=0 layer, load with full -Z vector
+    d = client.post(f"/api/projects/{pid}/topology-optimization/derive",
+                    json={"dimension": "3d", "resolution_3d": 10})
+    assert d.status_code == 200 and d.json()["status"] == "ok"
+    prob = d.json()["problem"]
+    assert prob["dimension"] == "3d" and prob["frame"]["w_axis"] == "z"
+    assert prob["bcs"]["loads"][0]["fz"] == -800.0
+
+    # 3D run via optimizer=simp_3d (implies 3D derivation)
+    r = client.post(f"/api/projects/{pid}/topology-optimization",
+                    json={"auto_derive": True, "optimizer": "simp_3d",
+                          "problem": {"max_iters": 8, "volume_fraction": 0.4}})
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+    res = r.json()["topology_optimization"]
+    assert res["dimension"] == "3d"
+    assert res["optimizer"]["capability"]["production_ready"] is False
+    assert res["result"]["density_grid_3d"]["nx"] >= 2 and res["result"]["solid_voxel_count"] >= 0
+    assert res["result"]["compliance_history"][-1] < res["result"]["compliance_history"][0]
+
+    # 3D writeback -> manifold mesh by default, viewer refreshes
+    wb = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={})
+    assert wb.status_code == 200 and wb.json()["status"] == "ok"
+    sir = wb.json()["shape_ir"]
+    assert sir["representation"] == "manifold_mesh"          # 3D defaults to mesh, not B-Rep
+    node = sir["parts"][0]
+    assert node["type"] == "density_voxels" and node["dimension"] == 3
+    assert "not_production_cad" in node["tags"]
+    assert (project_dir(settings, pid) / "viewer" / "model.glb").exists()
+
+
+def test_topology_optimization_3d_needs_user_input(tmp_path: Path) -> None:
+    import json as _json, zipfile as _zip
+    from app.main import create_app, default_project, project_dir, save_project, get_project
+
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("topopt3dbare"))["id"]
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    with _zip.ZipFile(pkg, "w") as zf:   # geometry only, no CAE setup
+        zf.writestr("geometry/topology_map.json", _json.dumps(
+            {"entities": [{"id": "b", "type": "solid", "bounding_box": [0, 0, 0, 30, 20, 10]}]}))
+    proj = get_project(settings, pid); proj["aieng_file"] = f"{pid}.aieng"; save_project(settings, proj)
+    client = TestClient(create_app(settings))
+
+    d = client.post(f"/api/projects/{pid}/topology-optimization/derive", json={"dimension": "3d"})
+    assert d.status_code == 200
+    body = d.json()
+    assert body["status"] == "needs_user_input" and body["diagnostics"]

@@ -47,9 +47,17 @@ _OPTIMIZER_REGISTRY: dict[str, dict[str, Any]] = {}
 
 
 def register_optimizer(name: str, fn: Callable[[dict[str, Any]], dict[str, Any]], *,
-                       version: str = "0.1", method: str = "", dimension: int = 0) -> None:
-    """Register an optimizer. ``fn(problem) -> optimizer_result`` dict."""
-    _OPTIMIZER_REGISTRY[name] = {"fn": fn, "version": version, "method": method, "dimension": dimension}
+                       version: str = "0.1", method: str = "", dimension: int = 0,
+                       capability: dict[str, Any] | None = None) -> None:
+    """Register an optimizer. ``fn(problem) -> optimizer_result`` dict.
+
+    ``capability`` is an optional honest self-description (dimension, method, physics,
+    mesh, material, backend, engineering_level, production_ready) echoed into the
+    result's optimizer block so downstream tools know what they are looking at."""
+    entry: dict[str, Any] = {"fn": fn, "version": version, "method": method, "dimension": dimension}
+    if capability:
+        entry["capability"] = dict(capability)
+    _OPTIMIZER_REGISTRY[name] = entry
 
 
 def available_optimizers() -> list[str]:
@@ -286,8 +294,259 @@ def precomputed_optimizer(problem: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ── 3D SIMP (experimental structured-voxel reference optimizer) ──────────────
+# Self-contained 8-node hex (H8) SIMP on a structured voxel grid: pure numpy,
+# dense FE solve, classic OC update + sensitivity filter. Experimental reference
+# only — small grids, single linear-elastic isotropic material. NOT production.
+
+def _hex8_stiffness(nu: float, E: float = 1.0) -> np.ndarray:
+    """24x24 stiffness for a unit (1x1x1) 8-node trilinear hex, isotropic, 2x2x2 Gauss.
+
+    Local node order (x,y,z natural coords ±1): 0(-,-,-) 1(+,-,-) 2(+,+,-) 3(-,+,-)
+    4(-,-,+) 5(+,-,+) 6(+,+,+) 7(-,+,+); per node dofs (ux,uy,uz)."""
+    nodes = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+                      [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], dtype=float)
+    g = 1.0 / np.sqrt(3.0)
+    gauss = [(sx * g, sy * g, sz * g) for sz in (-1, 1) for sy in (-1, 1) for sx in (-1, 1)]
+    c = E / ((1 + nu) * (1 - 2 * nu))
+    s = (1 - 2 * nu) / 2.0
+    D = c * np.array([
+        [1 - nu, nu, nu, 0, 0, 0],
+        [nu, 1 - nu, nu, 0, 0, 0],
+        [nu, nu, 1 - nu, 0, 0, 0],
+        [0, 0, 0, s, 0, 0],
+        [0, 0, 0, 0, s, 0],
+        [0, 0, 0, 0, 0, s],
+    ])
+    KE = np.zeros((24, 24))
+    inv_j = 2.0   # physical cube [0,1]: d/dx = 2 * d/dxi
+    det_j = 1.0 / 8.0
+    for xi, eta, ze in gauss:
+        dN = np.zeros((3, 8))
+        for a in range(8):
+            xa, ya, za = nodes[a]
+            dN[0, a] = 0.125 * xa * (1 + ya * eta) * (1 + za * ze)
+            dN[1, a] = 0.125 * ya * (1 + xa * xi) * (1 + za * ze)
+            dN[2, a] = 0.125 * za * (1 + xa * xi) * (1 + ya * eta)
+        dNdx = dN * inv_j
+        B = np.zeros((6, 24))
+        for a in range(8):
+            bx, by, bz = dNdx[:, a]
+            B[0, 3 * a] = bx
+            B[1, 3 * a + 1] = by
+            B[2, 3 * a + 2] = bz
+            B[3, 3 * a] = by
+            B[3, 3 * a + 1] = bx
+            B[4, 3 * a + 1] = bz
+            B[4, 3 * a + 2] = by
+            B[5, 3 * a] = bz
+            B[5, 3 * a + 2] = bx
+        KE += (B.T @ D @ B) * det_j
+    return KE
+
+
+def _hex_corner_nodes(ix: int, iy: int, iz: int, nnx: int, nny: int) -> list[int]:
+    """Global node ids of the 8 corners of element (ix,iy,iz), in the H8 local order
+    used by _hex8_stiffness. node(x,y,z) = x + nnx*y + nnx*nny*z (x fastest)."""
+    def n(x: int, y: int, z: int) -> int:
+        return x + nnx * y + nnx * nny * z
+    return [n(ix, iy, iz), n(ix + 1, iy, iz), n(ix + 1, iy + 1, iz), n(ix, iy + 1, iz),
+            n(ix, iy, iz + 1), n(ix + 1, iy, iz + 1), n(ix + 1, iy + 1, iz + 1), n(ix, iy + 1, iz + 1)]
+
+
+def _voxel_corner_nodes(i: int, j: int, k: int, nx: int, ny: int, nz: int, nnx: int, nny: int) -> list[int]:
+    i = min(max(int(i), 0), nx - 1)
+    j = min(max(int(j), 0), ny - 1)
+    k = min(max(int(k), 0), nz - 1)
+    return _hex_corner_nodes(i, j, k, nnx, nny)
+
+
+def _explicit_bcs_3d(nx: int, ny: int, nz: int, supports: list, loads: list) -> tuple[np.ndarray, np.ndarray]:
+    """(fixed_dofs, force_vector) from explicit 3D cell-based BCs. Cells are [i,j,k];
+    supports clamp the 3 dofs of a voxel's 8 corner nodes; loads distribute (fx,fy,fz)
+    over the union of their corner nodes."""
+    nnx, nny, nnz = nx + 1, ny + 1, nz + 1
+    ndof = 3 * nnx * nny * nnz
+    F = np.zeros(ndof)
+    fixed: set[int] = set()
+    for sup in supports or []:
+        for cell in sup.get("cells", []):
+            for n in _voxel_corner_nodes(cell[0], cell[1], cell[2], nx, ny, nz, nnx, nny):
+                fixed.update((3 * n, 3 * n + 1, 3 * n + 2))
+    for ld in loads or []:
+        fx = float(ld.get("fx", 0.0))
+        fy = float(ld.get("fy", 0.0))
+        fz = float(ld.get("fz", 0.0))
+        nodes: set[int] = set()
+        for cell in ld.get("cells", []):
+            nodes.update(_voxel_corner_nodes(cell[0], cell[1], cell[2], nx, ny, nz, nnx, nny))
+        if nodes and (fx or fy or fz):
+            per = 1.0 / len(nodes)
+            for n in nodes:
+                F[3 * n] += fx * per
+                F[3 * n + 1] += fy * per
+                F[3 * n + 2] += fz * per
+    return np.array(sorted(fixed), dtype=int), F
+
+
+def _resolve_bcs_3d(nx: int, ny: int, nz: int, bcs: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, str | None]:
+    """Explicit 3D supports/loads if present, else the cantilever_3d preset
+    (x=0 face fully clamped, -Y tip load at the far-end mid voxel)."""
+    supports = bcs.get("supports")
+    loads = bcs.get("loads")
+    if supports or loads:
+        fixed, F = _explicit_bcs_3d(nx, ny, nz, supports or [], loads or [])
+        if fixed.size and np.abs(F).sum() > 0:
+            return fixed, F, None
+    nnx, nny, nnz = nx + 1, ny + 1, nz + 1
+    ndof = 3 * nnx * nny * nnz
+    F = np.zeros(ndof)
+    fixed: set[int] = set()
+    for iy in range(nny):
+        for iz in range(nnz):
+            n = 0 + nnx * iy + nnx * nny * iz   # x=0 face
+            fixed.update((3 * n, 3 * n + 1, 3 * n + 2))
+    nload = nx + nnx * (ny // 2) + nnx * nny * (nz // 2)
+    F[3 * nload + 1] = -1.0
+    return np.array(sorted(fixed), dtype=int), F, "cantilever_3d"
+
+
+def _sensitivity_filter_3d(nx: int, ny: int, nz: int, rmin: float, x: np.ndarray, dc: np.ndarray) -> np.ndarray:
+    """Classic mesh-independence sensitivity filter over a 3D voxel neighbourhood."""
+    out = np.zeros_like(dc)
+    r = int(np.ceil(rmin))
+
+    def eid(i: int, j: int, k: int) -> int:
+        return i + nx * j + nx * ny * k
+
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
+                s = 0.0
+                acc = 0.0
+                for kk in range(max(k - r, 0), min(k + r + 1, nz)):
+                    for jj in range(max(j - r, 0), min(j + r + 1, ny)):
+                        for ii in range(max(i - r, 0), min(i + r + 1, nx)):
+                            fac = rmin - float(np.sqrt((i - ii) ** 2 + (j - jj) ** 2 + (k - kk) ** 2))
+                            if fac > 0:
+                                e = eid(ii, jj, kk)
+                                s += fac
+                                acc += fac * x[e] * dc[e]
+                e0 = eid(i, j, k)
+                out[e0] = acc / (x[e0] * s) if s > 0 else dc[e0]
+    return out
+
+
+def simp_3d(problem: dict[str, Any]) -> dict[str, Any]:
+    """Experimental 3D SIMP (H8 hex, dense numpy FE, OC update + sensitivity filter).
+
+    problem.grid = {nx, ny, nz}; volume_fraction (or volfrac), penalty (3), rmin (1.5),
+    max_iters (30). bcs: explicit {supports, loads} (3D cells) or the cantilever_3d
+    preset. Small grids only. Returns density_3d as nested [nz][ny][nx]."""
+    grid = problem.get("grid") or {}
+    nx = int(grid.get("nx", 16))
+    ny = int(grid.get("ny", 10))
+    nz = int(grid.get("nz", 6))
+    volfrac = float(problem.get("volume_fraction", problem.get("volfrac", 0.3)))
+    penal = float(problem.get("penalty", 3.0))
+    rmin = float(problem.get("rmin", 1.5))
+    max_iters = int(problem.get("max_iters", 30))
+    nu = float(problem.get("poisson_ratio", 0.3))
+
+    KE = _hex8_stiffness(nu, 1.0)
+    nnx, nny, nnz = nx + 1, ny + 1, nz + 1
+    ndof = 3 * nnx * nny * nnz
+    nele = nx * ny * nz
+
+    def eid(i: int, j: int, k: int) -> int:
+        return i + nx * j + nx * ny * k
+
+    edof = np.zeros((nele, 24), dtype=int)
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
+                dofs: list[int] = []
+                for n in _hex_corner_nodes(i, j, k, nnx, nny):
+                    dofs += [3 * n, 3 * n + 1, 3 * n + 2]
+                edof[eid(i, j, k)] = dofs
+
+    fixed, F, preset = _resolve_bcs_3d(nx, ny, nz, problem.get("bcs") or {})
+    free = np.setdiff1d(np.arange(ndof), fixed)
+
+    warnings: list[str] = []
+    x = np.full(nele, volfrac)
+    history: list[float] = []
+    change = 1.0
+    it = 0
+    while change > 0.01 and it < max_iters:
+        it += 1
+        xpen = x ** penal
+        K = np.zeros((ndof, ndof))
+        for e in range(nele):
+            ed = edof[e]
+            K[np.ix_(ed, ed)] += xpen[e] * KE
+        U = np.zeros(ndof)
+        try:
+            U[free] = np.linalg.solve(K[np.ix_(free, free)], F[free])
+        except np.linalg.LinAlgError:
+            warnings.append("singular stiffness (under-constrained BCs); stopping early")
+            break
+        c = 0.0
+        dc = np.zeros(nele)
+        for e in range(nele):
+            ue = U[edof[e]]
+            ce = float(ue @ KE @ ue)
+            c += xpen[e] * ce
+            dc[e] = -penal * (x[e] ** (penal - 1)) * ce
+        history.append(round(c, 6))
+        dc = _sensitivity_filter_3d(nx, ny, nz, rmin, x, dc)
+        l1, l2, move = 1e-9, 1e9, 0.2
+        xnew = x.copy()
+        while (l2 - l1) / (l1 + l2) > 1e-3:
+            lmid = 0.5 * (l1 + l2)
+            xnew = np.clip(
+                x * np.sqrt(np.maximum(-dc, 0) / lmid),
+                np.maximum(x - move, 0.001), np.minimum(x + move, 1.0))
+            if xnew.mean() - volfrac > 0:
+                l1 = lmid
+            else:
+                l2 = lmid
+        change = float(np.abs(xnew - x).max())
+        x = xnew
+
+    if it < 3:
+        warnings.append("very few iterations completed — result may be unconverged")
+    if nele < 200:
+        warnings.append("coarse grid (<200 voxels) — result is indicative, not quantitative")
+    if len(history) >= 2 and history[-1] >= history[0]:
+        warnings.append("compliance did not decrease — check boundary conditions / grid")
+
+    dens3 = [[[round(float(x[eid(i, j, k)]), 4) for i in range(nx)] for j in range(ny)] for k in range(nz)]
+    return {
+        "density_3d": dens3,
+        "nx": nx, "ny": ny, "nz": nz,
+        "iterations": it,
+        "compliance_history": history,
+        "final_compliance": history[-1] if history else None,
+        "achieved_volume_fraction": round(float(x.mean()), 4),
+        "target_volume_fraction": volfrac,
+        "bcs_preset": preset,
+        "bcs_source": "preset" if preset is not None else "explicit",
+        "warnings": warnings,
+    }
+
+
 register_optimizer("simp_2d", simp_2d, version="0.1", method="SIMP", dimension=2)
 register_optimizer("precomputed", precomputed_optimizer, version="0.1", method="precomputed", dimension=2)
+register_optimizer(
+    "simp_3d", simp_3d, version="0.1", method="SIMP", dimension=3,
+    capability={
+        "dimension": "3d", "method": "SIMP", "physics": "linear_elastic",
+        "mesh": "structured_voxel_grid", "material": "single_material",
+        "backend": "builtin_numpy", "engineering_level": "experimental_reference",
+        "production_ready": False,
+    },
+)
 
 
 # ── derive a problem from a project's CAE setup + geometry ───────────────────
@@ -391,22 +650,28 @@ def _resolve_target_faces(target: Any, feat_to_faces: dict[str, list[str]], face
 
 
 def _dedup_cells(cells: list[list[int]]) -> list[list[int]]:
-    seen: set[tuple[int, int]] = set()
+    """Dedup grid cells, preserving dimensionality (2D [i,j] or 3D [i,j,k])."""
+    seen: set[tuple[int, ...]] = set()
     out: list[list[int]] = []
     for c in cells:
-        key = (int(c[0]), int(c[1]))
+        key = tuple(int(v) for v in c)
         if key not in seen:
             seen.add(key)
-            out.append([key[0], key[1]])
+            out.append([int(v) for v in c])
     return out
 
 
 def derive_topopt_problem_from_package(
     package_path: str | Path, *,
-    resolution: int = 48, volfrac: float = 0.5, penalty: float = 3.0,
+    dimension: str = "2d", resolution: int = 48, resolution_3d: int = 16,
+    volfrac: float = 0.5, penalty: float = 3.0,
     rmin: float = 1.5, max_iters: int = 40, objective: str = "compliance_minimization",
 ) -> dict[str, Any]:
     """Derive a 2D topology-optimization problem from a project's CAE setup + geometry.
+
+    With ``dimension="3d"`` the 3D derivation path is used instead (structured voxel
+    grid, full 3D supports/loads, no projection); see
+    ``derive_topopt_problem_3d_from_package``.
 
     Reads geometry/topology_map.json (design-space bbox + face geometry),
     simulation/cae_mapping.json (feature→face links) and the CAE setup
@@ -418,6 +683,11 @@ def derive_topopt_problem_from_package(
     BC links, and warnings. If fewer than one support AND one load can be derived,
     falls back to a preset (warned), so the optimizer still runs.
     """
+    if str(dimension) == "3d":
+        return derive_topopt_problem_3d_from_package(
+            package_path, resolution=resolution_3d, volfrac=volfrac, penalty=penalty,
+            rmin=rmin, max_iters=max_iters, objective=objective)
+
     package_path = Path(package_path)
     warnings: list[str] = []
     with zipfile.ZipFile(package_path, "r") as zf:
@@ -525,6 +795,170 @@ def derive_topopt_problem_from_package(
     }
 
 
+def _face_boundary_voxels(
+    fbb: list[float], mins: list[float], ext: list[float], dims: tuple[int, int, int],
+) -> tuple[list[list[int]], int, int] | None:
+    """Map a planar face to a layer of boundary voxels (no projection — full 3D).
+
+    Finds the face's normal axis (its thin extent), checks the face sits on a
+    design-space boundary (near min or max along that axis), and returns the voxel
+    cells covering the face's footprint on that boundary layer. Returns None if the
+    face is interior (not safely on a boundary) so the caller can ask the user."""
+    extents = [fbb[a + 3] - fbb[a] for a in range(3)]
+    ax = min(range(3), key=lambda a: extents[a])           # normal axis = thinnest
+    coord = (fbb[ax] + fbb[ax + 3]) / 2.0
+    rel = (coord - mins[ax]) / ext[ax]
+    if min(rel, 1.0 - rel) > 0.15:                         # not near a boundary plane
+        return None
+    layer = 0 if rel < 0.5 else dims[ax] - 1
+    others = [a for a in range(3) if a != ax]
+
+    def crange(a: int) -> range:
+        i0 = int((fbb[a] - mins[a]) / ext[a] * dims[a])
+        i1 = int((fbb[a + 3] - mins[a]) / ext[a] * dims[a])
+        i0 = min(max(i0, 0), dims[a] - 1)
+        i1 = min(max(min(i1, dims[a] - 1), 0), dims[a] - 1)
+        return range(min(i0, i1), max(i0, i1) + 1)
+
+    a0, a1 = others
+    cells: list[list[int]] = []
+    for c0 in crange(a0):
+        for c1 in crange(a1):
+            cell = [0, 0, 0]
+            cell[ax] = layer
+            cell[a0] = c0
+            cell[a1] = c1
+            cells.append(cell)
+    return cells, ax, layer
+
+
+def derive_topopt_problem_3d_from_package(
+    package_path: str | Path, *,
+    resolution: int = 16, volfrac: float = 0.3, penalty: float = 3.0,
+    rmin: float = 1.5, max_iters: int = 30, objective: str = "compliance_minimization",
+) -> dict[str, Any]:
+    """Derive a full-3D topology-optimization problem from a project's CAE + geometry.
+
+    Builds a structured voxel grid over the design-space bbox (no 2D projection),
+    maps fixed/support faces to boundary voxel layers and load faces to boundary
+    voxel cells with the FULL 3D force vector. If a usable support AND load cannot
+    be mapped, returns ``{"status": "needs_user_input", ...}`` with diagnostics
+    rather than guessing."""
+    package_path = Path(package_path)
+    with zipfile.ZipFile(package_path, "r") as zf:
+        topo_raw = _read_member_text(zf, "geometry/topology_map.json")
+        topology_map = json.loads(topo_raw) if topo_raw else {}
+        cae_raw = _read_member_text(zf, "simulation/cae_mapping.json")
+        cae_mapping = json.loads(cae_raw) if cae_raw else {}
+        setup = _load_cae_setup(zf)
+
+    faces, overall, solid_node = _index_faces(topology_map)
+    if not overall:
+        raise ValueError("cannot derive design space: no bounding box in geometry/topology_map.json")
+
+    feat_to_faces = _feature_to_faces(cae_mapping)
+    setup_bcs = setup.get("boundary_conditions") or []
+    setup_loads = setup.get("loads") or []
+
+    mins, maxs = overall[:3], overall[3:]
+    ext = [max(maxs[k] - mins[k], 1e-9) for k in range(3)]
+    longest = max(ext)
+    res = max(int(resolution), 2)
+    nx = max(round(res * ext[0] / longest), 2)
+    ny = max(round(res * ext[1] / longest), 2)
+    nz = max(round(res * ext[2] / longest), 2)
+    dims = (nx, ny, nz)
+    cell_size = [round(ext[0] / nx, 6), round(ext[1] / ny, 6), round(ext[2] / nz, 6)]
+    frame = {
+        "origin": [mins[0], mins[1], mins[2]],
+        "u_axis": "x", "v_axis": "y", "w_axis": "z",
+        "cell_size": cell_size,
+        "cell_size_x": cell_size[0], "cell_size_y": cell_size[1], "cell_size_z": cell_size[2],
+    }
+
+    diagnostics: list[str] = []
+    supports: list[dict[str, Any]] = []
+    for bc in setup_bcs:
+        fids = _resolve_target_faces(bc.get("target_feature"), feat_to_faces, faces)
+        cells: list[list[int]] = []
+        for fid in fids:
+            mapped = _face_boundary_voxels(faces.get(fid, {}).get("bbox") or [], mins, ext, dims)
+            if mapped:
+                cells.extend(mapped[0])
+            else:
+                diagnostics.append(
+                    f"support '{bc.get('target_feature')}' face {fid} is not on a design-space "
+                    "boundary — cannot map to boundary voxels")
+        cells = _dedup_cells(cells)
+        if cells:
+            supports.append({"cells": cells, "from": {
+                "target_feature": bc.get("target_feature"), "type": bc.get("type"), "face_ids": fids}})
+        elif not fids:
+            diagnostics.append(f"support '{bc.get('target_feature')}' resolved to no faces")
+
+    loads: list[dict[str, Any]] = []
+    for ld in setup_loads:
+        fids = _resolve_target_faces(ld.get("target_feature"), feat_to_faces, faces)
+        cells = []
+        for fid in fids:
+            mapped = _face_boundary_voxels(faces.get(fid, {}).get("bbox") or [], mins, ext, dims)
+            if mapped:
+                cells.extend(mapped[0])
+            else:
+                diagnostics.append(
+                    f"load '{ld.get('target_feature')}' face {fid} is not on a design-space boundary")
+        cells = _dedup_cells(cells)
+        direction = ld.get("direction") or [0.0, 0.0, -1.0]
+        mag = float(ld.get("value_n") or 1.0)
+        fx, fy, fz = mag * float(direction[0]), mag * float(direction[1]), mag * float(direction[2])
+        if cells and (fx or fy or fz):
+            loads.append({"cells": cells, "fx": fx, "fy": fy, "fz": fz, "from": {
+                "target_feature": ld.get("target_feature"), "value_n": mag, "direction": direction}})
+        elif not fids:
+            diagnostics.append(f"load '{ld.get('target_feature')}' resolved to no faces")
+
+    if not supports or not loads:
+        return {
+            "status": "needs_user_input",
+            "dimension": "3d",
+            "reason": "could not map a usable support AND load onto design-space boundary voxels",
+            "diagnostics": diagnostics or [
+                "no boundary_conditions/loads found in the CAE setup — define fixed supports "
+                "and at least one load on design-space boundary faces, then retry"],
+            "grid": {"nx": nx, "ny": ny, "nz": nz},
+            "frame": frame,
+            "design_space_node": solid_node,
+            "design_space_bbox": overall,
+            "support_count": len(supports), "load_count": len(loads),
+        }
+
+    return {
+        "status": "ok",
+        "dimension": "3d",
+        "grid": {"nx": nx, "ny": ny, "nz": nz},
+        "volume_fraction": volfrac, "volfrac": volfrac,
+        "penalty": penalty, "rmin": rmin, "max_iters": max_iters,
+        "objective": objective,
+        "bcs": {"supports": supports, "loads": loads},
+        "design_space_node": solid_node,
+        "source_ir_node": solid_node,
+        "frame": frame,
+        "derivation": {
+            "source": "cae_setup+topology_map",
+            "derived": True,
+            "dimension": "3d",
+            "design_space_bbox": overall,
+            "frame": frame,
+            "support_count": len(supports), "load_count": len(loads),
+            "warnings": diagnostics,
+            "limitations": [
+                "Full-3D structured-voxel idealization: supports/loads are snapped to the nearest "
+                "design-space boundary voxel layer; experimental reference, not production.",
+            ],
+        },
+    }
+
+
 def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp_2d") -> dict[str, Any]:
     """Run an optimizer and wrap its output in the neutral result contract."""
     requested = str(optimizer or "simp_2d")
@@ -539,56 +973,87 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
 
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     threshold = float(problem.get("threshold", 0.5))
-    density = opt.get("density") or []
-    solid = sum(1 for row in density for v in row if v >= threshold)
+    is_3d = "density_3d" in opt
+    optimizer_block: dict[str, Any] = {
+        "name": requested_name,
+        "version": entry["version"],
+        "method": entry["method"],
+        "dimension": entry["dimension"],
+        "requested": requested,
+        "fallback": fallback,
+    }
+    if entry.get("capability"):
+        optimizer_block["capability"] = entry["capability"]
+
+    problem_block: dict[str, Any] = {
+        "volfrac": opt.get("target_volume_fraction"),
+        "penalty": problem.get("penalty", 3.0),
+        "rmin": problem.get("rmin", 1.5),
+        "bcs_preset": opt.get("bcs_preset"),
+        "bcs_source": opt.get("bcs_source", "preset"),
+        "design_space_node": problem.get("design_space_node"),
+        "source_ir_node": problem.get("source_ir_node") or problem.get("design_space_node"),
+        "load_case_id": problem.get("load_case_id"),
+        "material": problem.get("material"),
+        "constraints": problem.get("constraints"),
+        "derivation": problem.get("derivation"),
+    }
+    frame = problem.get("frame") or (problem.get("derivation") or {}).get("frame")
+    result_block: dict[str, Any] = {
+        "iterations": opt.get("iterations"),
+        "final_compliance": opt.get("final_compliance"),
+        "compliance_history": opt.get("compliance_history"),
+        "objective_history": opt.get("compliance_history"),
+        "achieved_volume_fraction": opt.get("achieved_volume_fraction"),
+        "threshold": threshold,
+    }
+
+    if is_3d:
+        dens3 = opt.get("density_3d") or []
+        solid = sum(1 for plane in dens3 for row in plane for val in row if val >= threshold)
+        problem_block["grid"] = {"nx": opt.get("nx"), "ny": opt.get("ny"), "nz": opt.get("nz")}
+        result_block["solid_voxel_count"] = solid
+        result_block["density_grid_3d"] = {
+            "nx": opt.get("nx"), "ny": opt.get("ny"), "nz": opt.get("nz"), "values": dens3,
+        }
+        limitations = [
+            "Experimental 3D SIMP: structured voxel grid, linear-elastic, single isotropic material.",
+            "Coarse reference optimizer — not production-grade; voxelized result is a design suggestion.",
+        ]
+    else:
+        density = opt.get("density") or []
+        solid = sum(1 for row in density for v in row if v >= threshold)
+        problem_block["grid"] = {"nelx": opt.get("nelx"), "nely": opt.get("nely")}
+        result_block["solid_element_count"] = solid
+        result_block["density_grid"] = {
+            "nrows": opt.get("nely"), "ncols": opt.get("nelx"), "values": density,
+        }
+        limitations = [
+            "2D plane-stress, linear-elastic, single isotropic material, regular grid.",
+            "Coarse, observational design aid — not a production-grade optimizer.",
+        ]
+
     return {
         "format": "aieng.topology_optimization",
         "schema_version": TOPOPT_CONTRACT_VERSION,
         "contract_version": TOPOPT_CONTRACT_VERSION,
         "generated_at_utc": now,
-        "optimizer": {
-            "name": requested_name,
-            "version": entry["version"],
-            "method": entry["method"],
-            "dimension": entry["dimension"],
-            "requested": requested,
-            "fallback": fallback,
-        },
+        "dimension": "3d" if is_3d else "2d",
+        "optimizer": optimizer_block,
         "objective": str(problem.get("objective") or "compliance_minimization"),
-        "problem": {
-            "grid": {"nelx": opt.get("nelx"), "nely": opt.get("nely")},
-            "volfrac": opt.get("target_volume_fraction"),
-            "penalty": problem.get("penalty", 3.0),
-            "rmin": problem.get("rmin", 1.5),
-            "bcs_preset": opt.get("bcs_preset"),
-            "bcs_source": opt.get("bcs_source", "preset"),
-            "design_space_node": problem.get("design_space_node"),
-            "derivation": problem.get("derivation"),
-        },
-        "result": {
-            "iterations": opt.get("iterations"),
-            "final_compliance": opt.get("final_compliance"),
-            "compliance_history": opt.get("compliance_history"),
-            "achieved_volume_fraction": opt.get("achieved_volume_fraction"),
-            "threshold": threshold,
-            "solid_element_count": solid,
-            "density_grid": {
-                "nrows": opt.get("nely"),
-                "ncols": opt.get("nelx"),
-                "values": density,
-            },
-        },
+        "frame": frame,
+        "problem": problem_block,
+        "result": result_block,
         "provenance": {
             "optimizer_name": requested_name,
             "optimizer_version": entry["version"],
             "design_space_node": problem.get("design_space_node"),
+            "source_ir_node": problem.get("source_ir_node") or problem.get("design_space_node"),
+            "load_case_id": problem.get("load_case_id"),
             "contract_version": TOPOPT_CONTRACT_VERSION,
         },
-        "limitations": [
-            "2D plane-stress, linear-elastic, single isotropic material, regular grid.",
-            "Coarse, observational design aid — not a production-grade optimizer.",
-        ],
-        "warnings": [],
+        "limitations": limitations,
+        "warnings": list(opt.get("warnings") or []),
     }
 
 
@@ -702,14 +1167,68 @@ def topology_result_to_shape_ir(
     origin (an abstract grid).
     """
     result = topo_result.get("result") or {}
-    grid = result.get("density_grid") or {}
-    density = grid.get("values") or topo_result.get("density") or []
     threshold = float(result.get("threshold", topo_result.get("threshold", 0.5)))
     design_space_node = (
         (topo_result.get("provenance") or {}).get("design_space_node")
         or (topo_result.get("problem") or {}).get("design_space_node")
     )
     nid = node_id or (f"optimized_{design_space_node}" if design_space_node else "optimized_topology")
+
+    # ── 3D writeback: a 3D density field → one voxelized density_voxels node ──
+    # No contour/spline smoothing in 3D (this PR); default runtime is manifold_mesh.
+    is_3d = topo_result.get("dimension") == "3d" or "density_grid_3d" in result
+    if is_3d:
+        grid3 = result.get("density_grid_3d") or {}
+        dens3 = grid3.get("values") or topo_result.get("density_3d") or []
+        frame3 = (topo_result.get("frame")
+                  or ((topo_result.get("problem") or {}).get("derivation") or {}).get("frame") or {})
+        fo = frame3.get("origin") or [0.0, 0.0, 0.0]
+        o3 = list(origin) if origin is not None else [float(fo[0]), float(fo[1]), float(fo[2])]
+        fc = frame3.get("cell_size") or [1.0, 1.0, 1.0]
+        if cell_size is not None:
+            cs3 = [float(cell_size[0]), float(cell_size[1]),
+                   float(cell_size[2] if len(cell_size) > 2 else cell_size[1])]
+        else:
+            cs3 = [float(fc[0]), float(fc[1] if len(fc) > 1 else fc[0]),
+                   float(fc[2] if len(fc) > 2 else fc[0])]
+        node3: dict[str, Any] = {
+            "id": nid, "label": nid, "type": "density_voxels", "dimension": 3,
+            "density_3d": dens3, "threshold": threshold,
+            "cell_size": cs3, "origin": o3,
+            "u_axis": str(frame3.get("u_axis", "x")), "v_axis": str(frame3.get("v_axis", "y")),
+            "w_axis": str(frame3.get("w_axis", "z")),
+            "placed_in_frame": bool(frame3),
+            "tags": ["preview", "design_suggestion", "voxelized", "lossy", "not_production_cad"],
+            "source_optimization": {
+                "optimizer": (topo_result.get("optimizer") or {}).get("name"),
+                "objective": topo_result.get("objective"),
+                "design_space_node": design_space_node,
+                "final_compliance": result.get("final_compliance"),
+                "achieved_volume_fraction": result.get("achieved_volume_fraction"),
+                "dimension": "3d",
+            },
+        }
+        if color is not None:
+            node3["color"] = list(color)
+        return {
+            "format": "aieng.shape_ir",
+            "representation": representation or "manifold_mesh",
+            "model_id": model_id or nid,
+            "parts": [node3],
+            "provenance": {
+                "from_topology_optimization": True,
+                "dimension": "3d",
+                "optimizer": (topo_result.get("optimizer") or {}).get("name"),
+                "design_space_node": design_space_node,
+                "source_ir_node": (topo_result.get("provenance") or {}).get("source_ir_node")
+                or design_space_node,
+                "topopt_contract_version": topo_result.get("contract_version"),
+                "evidence": "voxelized_preview",
+            },
+        }
+
+    grid = result.get("density_grid") or {}
+    density = grid.get("values") or topo_result.get("density") or []
 
     frame = ((topo_result.get("problem") or {}).get("derivation") or {}).get("frame") or {}
     use_frame = use_frame and bool(frame)

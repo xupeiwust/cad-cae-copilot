@@ -106,9 +106,22 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "any provided problem fields override the derived ones."
                 ),
             },
+            "dimension": {
+                "type": "string",
+                "enum": ["2d", "3d"],
+                "description": (
+                    "Problem dimension for auto_derive (default 2d). 3d uses the experimental "
+                    "structured-voxel simp_3d optimizer and a full-3D derivation (no projection); "
+                    "if BCs can't be safely mapped it returns status=needs_user_input. Implied 3d "
+                    "when optimizer=simp_3d."
+                ),
+            },
             "optimizer": {
                 "type": "string",
-                "description": "Optimizer backend (default simp_2d). Unknown names fall back to simp_2d.",
+                "description": (
+                    "Optimizer backend (default simp_2d, or simp_3d when dimension=3d). simp_3d is "
+                    "experimental/structured-voxel/not-production. Unknown names fall back to simp_2d."
+                ),
             },
         },
         "additionalProperties": True,
@@ -122,16 +135,20 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["project_id"],
         "properties": {
             "project_id": {"type": "string"},
-            "resolution": {"type": "integer", "description": "Cells along the longest design-space axis (default 48)."},
-            "volfrac": {"type": "number", "description": "Target volume fraction (default 0.5)."},
+            "dimension": {"type": "string", "enum": ["2d", "3d"],
+                          "description": "2d (default) projects to a plane; 3d builds a structured voxel grid (no projection). 3d returns status=needs_user_input if BCs can't be safely mapped."},
+            "resolution": {"type": "integer", "description": "2D: cells along the longest design-space axis (default 48)."},
+            "resolution_3d": {"type": "integer", "description": "3D: voxels along the longest axis (default 16) — keep small."},
+            "volfrac": {"type": "number", "description": "Target volume fraction (default 0.5; 0.3 for 3d)."},
             "penalty": {"type": "number", "description": "SIMP penalization exponent (default 3.0)."},
             "rmin": {"type": "number", "description": "Sensitivity filter radius in cells (default 1.5)."},
-            "max_iters": {"type": "integer", "description": "Optimizer iteration cap (default 40)."},
+            "max_iters": {"type": "integer", "description": "Optimizer iteration cap (default 40; 30 for 3d)."},
         },
         "additionalProperties": True,
         "description": (
-            "Derive a 2D topology-optimization problem (grid + supports + loads + design space) "
-            "from the project's CAE setup + geometry. Read-only; returns problem + derivation block."
+            "Derive a topology-optimization problem (grid + supports + loads + design space) from "
+            "the project's CAE setup + geometry. dimension=2d (default) projects to a plane; 3d "
+            "keeps the full 3D layout. Read-only; returns problem + derivation (or needs_user_input)."
         ),
     },
     "opt.writeback_to_shape_ir": {

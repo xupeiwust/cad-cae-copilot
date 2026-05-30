@@ -197,6 +197,41 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 23: Experimental 3D SIMP topology optimization — COMPLETE (2026-05-30)
+
+Plugs a self-contained 3D optimizer into the existing topology-optimization
+registry and reuses the Shape IR writeback/viewer pipeline. Experimental
+structured-voxel reference — NOT production.
+
+- `register_optimizer` gained an optional `capability` block (dimension, method,
+  physics, mesh, material, backend, engineering_level, production_ready) echoed
+  into the result's `optimizer`. `simp_3d` registers as
+  `experimental_reference` / `production_ready:false`.
+- `simp_3d`: 8-node hex (H8) SIMP on a structured voxel grid — KE built by 2×2×2
+  Gauss integration, dense numpy FE solve on free dofs, classic OC update +
+  3D sensitivity filter, pure numpy (no scipy/solver). Explicit 3D `bcs.supports`/
+  `bcs.loads` (voxel cells, full 3D force) or a `cantilever_3d` preset; honest
+  warnings on weak convergence / coarse grids. Returns `density_3d` ([nz][ny][nx]).
+- Contract: `run_topology_optimization` detects 3D and emits `dimension:3d`,
+  `density_grid_3d`, `solid_voxel_count`, `objective/compliance_history`, `frame`,
+  `bcs_source`, `design_space_node`/`source_ir_node`, `load_case_id`, and 3D
+  limitations.
+- 3D derivation (`derive_topopt_problem_3d_from_package`): structured voxel grid
+  from the design-space bbox (no projection); fixed/support faces → boundary voxel
+  layers, load faces → boundary cells with the FULL 3D force vector. If a usable
+  support AND load can't be mapped, returns `status:needs_user_input` + diagnostics
+  instead of guessing.
+- Writeback: `density_voxel_cells` + `topology_result_to_shape_ir` extended to 3D
+  density grids — placed in the design-space frame, default runtime `manifold_mesh`,
+  tagged `preview/design_suggestion/voxelized/lossy/not_production_cad`. No
+  spline/contour smoothing for 3D in this PR. Workbench `dimension=3d` routing in
+  derive/run; writeback auto-defaults 3D to mesh; viewer asset refreshes.
+- Tests: simp_3d registered w/ capability; 3D cantilever lowers compliance + meets
+  volfrac; explicit 3D BCs respected; contract has density_grid_3d/frame; 3D voxel
+  placement; manifold compile yields a non-empty body in the frame; 3D derive maps
+  supports/loads (full vector) + solves; needs_user_input without BCs; backend 3D
+  endpoint (derive→run→writeback→viewer) + needs_user_input. No 2D regression.
+
 ## Phase 22: Topology optimization (contract + 2D SIMP) — COMPLETE (2026-05-30)
 
 CAE-driven generative step after analysis, following the same contract-first,

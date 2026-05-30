@@ -4988,8 +4988,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
         if pkg is None or not pkg.exists():
             return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
-        kw: dict[str, Any] = {}
-        for k in ("resolution", "max_iters"):
+        kw: dict[str, Any] = {"dimension": str(inp.get("dimension") or "2d").lower()}
+        for k in ("resolution", "resolution_3d", "max_iters"):
             if inp.get(k) is not None:
                 kw[k] = int(inp[k])
         for k in ("volfrac", "penalty", "rmin"):
@@ -4999,6 +4999,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             problem = derive_topopt_problem_from_package(pkg, **kw)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "code": "derive_failed", "message": f"{type(exc).__name__}: {exc}"}
+        # 3D derivation may honestly decline to guess BCs.
+        if problem.get("status") == "needs_user_input":
+            return {"status": "needs_user_input", "tool": "opt.derive_problem_from_cae",
+                    "problem": problem, "diagnostics": problem.get("diagnostics")}
         return {"status": "ok", "tool": "opt.derive_problem_from_cae", "problem": problem,
                 "derivation": problem.get("derivation")}
 
@@ -5016,21 +5020,30 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         pid = str(inp.get("project_id") or "").strip()
         problem = inp.get("problem") if isinstance(inp.get("problem"), dict) else None
         auto_derive = bool(inp.get("auto_derive")) or problem is None
+        dimension = str(inp.get("dimension") or "2d").lower()
+        # An explicit 3D optimizer implies 3D derivation.
+        if str(inp.get("optimizer") or "").lower() == "simp_3d":
+            dimension = "3d"
         if not pid:
             return {"status": "error", "code": "bad_input", "message": "project_id is required"}
         project = get_project(active_settings, pid)
         pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
         if pkg is None or not pkg.exists():
             return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        optimizer = str(inp.get("optimizer") or ("simp_3d" if dimension == "3d" else "simp_2d"))
         try:
             if auto_derive:
-                derived = derive_topopt_problem_from_package(pkg)
+                derived = derive_topopt_problem_from_package(pkg, dimension=dimension)
+                # 3D derivation may honestly decline to guess BCs — surface it, don't solve.
+                if derived.get("status") == "needs_user_input":
+                    return {"status": "needs_user_input", "tool": "opt.run_topology_optimization",
+                            "problem": derived, "diagnostics": derived.get("diagnostics")}
                 if isinstance(problem, dict):  # caller overrides (volfrac, grid, ...) win
                     derived.update({k: v for k, v in problem.items() if k != "bcs"})
                     if isinstance(problem.get("bcs"), dict):
-                        derived["bcs"].update(problem["bcs"])
+                        derived.setdefault("bcs", {}).update(problem["bcs"])
                 problem = derived
-            result = write_topology_optimization(pkg, problem, optimizer=str(inp.get("optimizer") or "simp_2d"))
+            result = write_topology_optimization(pkg, problem, optimizer=optimizer)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "code": "optimization_failed", "message": f"{type(exc).__name__}: {exc}"}
         return {"status": "ok", "tool": "opt.run_topology_optimization", "topology_optimization": result}
@@ -5081,11 +5094,24 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if pkg is None or not pkg.exists():
             return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
 
-        # Default to B-Rep: a topology-optimization result is a design suggestion an
-        # engineer inspects, picks faces on, and exports to STEP / feeds back into
-        # CAD/CAE — all of which need analytic faces. manifold_mesh is offered as a
-        # robust fallback (and auto-used if the B-Rep build fails to execute).
-        representation = str(inp.get("representation") or "brep_build123d")
+        # Default to B-Rep for 2D (analytic faces an engineer picks / exports to STEP;
+        # manifold_mesh is the robust fallback, auto-used if the B-Rep build fails).
+        # 3D voxel results default to manifold_mesh — a B-Rep Compound of hundreds of
+        # voxel boxes is heavy and beside the point; 3D is a voxelized preview here.
+        req_rep = inp.get("representation")
+        if req_rep:
+            representation = str(req_rep)
+        else:
+            _dim3 = False
+            try:
+                import zipfile as _zfd
+                with _zfd.ZipFile(pkg, "r") as _z:
+                    if "analysis/topology_optimization.json" in _z.namelist():
+                        _topo = json.loads(_z.read("analysis/topology_optimization.json"))
+                        _dim3 = _topo.get("dimension") == "3d" or "density_grid_3d" in (_topo.get("result") or {})
+            except Exception:
+                _dim3 = False
+            representation = "manifold_mesh" if _dim3 else "brep_build123d"
         # The optimized body is placed in the design space's derivation frame;
         # cell_size/thickness/origin are honored only if the caller overrides.
         cs = inp.get("cell_size")

@@ -27,10 +27,114 @@ from aieng.converters.topology_optimization import (  # noqa: E402
     extract_density_contours,
     run_topology_optimization,
     simp_2d,
+    derive_topopt_problem_3d_from_package,
+    simp_3d,
     topology_result_to_shape_ir,
     write_shape_ir_from_topology_optimization,
     write_topology_optimization,
 )
+
+
+# ── experimental 3D SIMP ─────────────────────────────────────────────────────
+
+def test_simp_3d_registered_with_capability():
+    assert "simp_3d" in available_optimizers()
+    res = run_topology_optimization(
+        {"grid": {"nx": 8, "ny": 5, "nz": 3}, "volume_fraction": 0.4, "max_iters": 6},
+        optimizer="simp_3d")
+    cap = res["optimizer"]["capability"]
+    assert res["optimizer"]["name"] == "simp_3d"
+    assert cap["dimension"] == "3d" and cap["method"] == "SIMP"
+    assert cap["physics"] == "linear_elastic" and cap["mesh"] == "structured_voxel_grid"
+    assert cap["material"] == "single_material" and cap["backend"] == "builtin_numpy"
+    assert cap["engineering_level"] == "experimental_reference" and cap["production_ready"] is False
+
+
+def test_simp_3d_cantilever_reduces_compliance_and_meets_volume():
+    out = simp_3d({"grid": {"nx": 12, "ny": 6, "nz": 4}, "volume_fraction": 0.4, "max_iters": 12})
+    h = out["compliance_history"]
+    assert len(h) > 1 and h[-1] < h[0] and all(v > 0 for v in h)
+    assert abs(out["achieved_volume_fraction"] - 0.4) < 0.05
+    assert out["bcs_source"] == "preset" and out["bcs_preset"] == "cantilever_3d"
+    assert len(out["density_3d"]) == 4 and len(out["density_3d"][0]) == 6 and len(out["density_3d"][0][0]) == 12
+    assert all(0.0 <= v <= 1.0 for pl in out["density_3d"] for row in pl for v in row)
+
+
+def test_simp_3d_explicit_bcs_respected():
+    nx, ny, nz = 10, 5, 4
+    supports = [{"cells": [[0, j, k] for j in range(ny) for k in range(nz)]}]   # clamp x=0 layer
+    loads = [{"cells": [[nx - 1, ny // 2, nz // 2]], "fx": 0.0, "fy": -1.0, "fz": 0.0}]
+    out = simp_3d({"grid": {"nx": nx, "ny": ny, "nz": nz}, "volume_fraction": 0.4,
+                   "max_iters": 10, "bcs": {"supports": supports, "loads": loads}})
+    assert out["bcs_source"] == "explicit" and out["bcs_preset"] is None
+    assert out["compliance_history"][-1] < out["compliance_history"][0]
+
+
+def test_run_topology_optimization_3d_contract():
+    res = run_topology_optimization(
+        {"grid": {"nx": 10, "ny": 6, "nz": 3}, "volume_fraction": 0.35, "max_iters": 8,
+         "design_space_node": "blk", "source_ir_node": "blk", "load_case_id": "lc1",
+         "frame": {"origin": [0, 0, 0], "u_axis": "x", "v_axis": "y", "w_axis": "z",
+                   "cell_size": [4.0, 4.0, 4.0]}},
+        optimizer="simp_3d")
+    assert res["dimension"] == "3d"
+    g = res["result"]["density_grid_3d"]
+    assert g["nx"] == 10 and g["ny"] == 6 and g["nz"] == 3
+    assert res["result"]["solid_voxel_count"] >= 0
+    assert res["result"]["objective_history"] and res["result"]["compliance_history"]
+    assert res["problem"]["bcs_source"] == "preset"
+    assert res["frame"]["cell_size"] == [4.0, 4.0, 4.0]
+    assert res["provenance"]["source_ir_node"] == "blk"
+    assert res["provenance"]["load_case_id"] == "lc1"
+    assert res["limitations"]
+
+
+_TOPO3D = {
+    "format": "aieng.topology_optimization", "contract_version": "0.1", "dimension": "3d",
+    "optimizer": {"name": "simp_3d"}, "objective": "compliance_minimization",
+    "provenance": {"design_space_node": "blk", "source_ir_node": "blk"},
+    "frame": {"origin": [10.0, 20.0, 0.0], "u_axis": "x", "v_axis": "y", "w_axis": "z",
+              "cell_size": [2.0, 2.0, 3.0]},
+    "result": {"threshold": 0.5, "final_compliance": 5.0, "achieved_volume_fraction": 0.5,
+               "density_grid_3d": {"nx": 2, "ny": 2, "nz": 2, "values": [
+                   [[1.0, 0.0], [0.0, 1.0]], [[1.0, 1.0], [0.0, 0.0]]]}},
+}
+
+
+def test_density_voxel_cells_3d_places_in_frame():
+    node = {"type": "density_voxels", "dimension": 3,
+            "density_3d": [[[1.0, 0.0], [0.0, 1.0]]],   # nz=1, ny=2, nx=2
+            "threshold": 0.5, "cell_size": [2.0, 3.0, 4.0], "origin": [10.0, 20.0, 30.0]}
+    cells, size = density_voxel_cells(node)
+    assert size == (2.0, 3.0, 4.0)
+    # (k=0,j=0,i=0) -> x=10+1, y=20+1.5, z=30+2 ; (k=0,j=1,i=1) -> x=10+3, y=20+4.5, z=30+2
+    assert [11.0, 21.5, 32.0] in cells and [13.0, 24.5, 32.0] in cells and len(cells) == 2
+
+
+def test_topology_result_to_shape_ir_3d_node():
+    payload = topology_result_to_shape_ir(_TOPO3D)
+    assert payload["representation"] == "manifold_mesh"   # 3D default runtime
+    assert payload["provenance"]["dimension"] == "3d"
+    node = payload["parts"][0]
+    assert node["type"] == "density_voxels" and node["dimension"] == 3
+    assert node["cell_size"] == [2.0, 2.0, 3.0] and node["origin"] == [10.0, 20.0, 0.0]
+    assert set(["preview", "voxelized", "lossy", "not_production_cad"]).issubset(node["tags"])
+    assert node["density_3d"] == _TOPO3D["result"]["density_grid_3d"]["values"]
+
+
+def test_3d_voxels_compile_and_execute_in_manifold():
+    pytest.importorskip("manifold3d")
+    payload = topology_result_to_shape_ir(_TOPO3D)
+    src = compile_shape_ir_to_manifold_source(payload)
+    assert "Manifold.cube" in src
+    ns: dict = {}
+    exec(compile(src, "<m>", "exec"), ns)
+    m = ns["result"]
+    import numpy as np
+    verts = np.asarray(m.to_mesh().vert_properties)[:, :3]
+    assert m.volume() > 0                                  # non-empty watertight voxel body
+    # placed in the frame: origin [10,20,0], cells 2x2x3 -> within [10,14]x[20,24]x[0,6]
+    assert verts[:, 0].min() >= 10.0 - 1e-6 and verts[:, 2].min() >= -1e-6
 
 
 def test_simp_2d_reduces_compliance_and_meets_volume():
@@ -491,6 +595,38 @@ def test_derive_in_plane_load_produces_usable_problem_and_solves(tmp_path: Path)
     assert res["problem"]["bcs_source"] == "explicit"
     assert res["problem"]["derivation"]["plane"]["u_axis"] == "x"
     assert res["result"]["compliance_history"][-1] < res["result"]["compliance_history"][0]
+
+
+def test_derive_3d_maps_supports_loads_full_vector(tmp_path: Path):
+    pytest.importorskip("yaml")
+    pkg = tmp_path / "plate3d.aieng"
+    _write_cae_project(pkg)   # 120x80x10, left face fixed, right face load -Y
+    prob = derive_topopt_problem_from_package(pkg, dimension="3d", resolution_3d=12)
+    assert prob["status"] == "ok" and prob["dimension"] == "3d"
+    g = prob["grid"]
+    assert g["nx"] >= 2 and g["ny"] >= 2 and g["nz"] >= 2
+    assert prob["frame"]["w_axis"] == "z" and len(prob["frame"]["cell_size"]) == 3
+    sup = prob["bcs"]["supports"][0]["cells"]
+    assert all(c[0] == 0 for c in sup)                 # left boundary layer (x=0)
+    ld = prob["bcs"]["loads"][0]
+    # the -Z load is KEPT in 3D (full vector), unlike 2D which would drop the out-of-plane part
+    assert ld["fz"] == -500.0 and ld["fx"] == 0.0 and ld["fy"] == 0.0
+    assert all(c[0] == g["nx"] - 1 for c in ld["cells"])                 # right boundary layer
+    # and it actually solves
+    res = run_topology_optimization(prob, optimizer="simp_3d")
+    assert res["dimension"] == "3d"
+    assert res["result"]["compliance_history"][-1] < res["result"]["compliance_history"][0]
+
+
+def test_derive_3d_needs_user_input_without_bcs(tmp_path: Path):
+    pkg = tmp_path / "bare3d.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/topology_map.json", json.dumps(
+            {"entities": [{"id": "b", "type": "solid", "bounding_box": [0, 0, 0, 30, 20, 10]}]}))
+    out = derive_topopt_problem_3d_from_package(pkg, resolution=10)
+    assert out["status"] == "needs_user_input"
+    assert out["dimension"] == "3d" and out["diagnostics"]
+    assert out["grid"]["nx"] >= 2                       # still reports the grid it would use
 
 
 def test_derive_falls_back_to_preset_without_bcs(tmp_path: Path):

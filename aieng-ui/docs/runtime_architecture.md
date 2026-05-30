@@ -102,6 +102,40 @@ human-in-the-loop confirmation pattern.
 
 ---
 
+## Chat transcript events
+
+The chat transcript is now driven by append-only event rows as well as legacy
+chat messages. User and assistant compatibility text remains in `chat_messages`;
+fine-grained agent progress lives in `agent_events`:
+
+```
+agent_events
+  event_id      unique idempotency key
+  run_id        Autopilot run id
+  project_id    project scope
+  session_id    chat session scope
+  type          agent_message | tool_started | tool_completed | ...
+  status        running | done | failed | approval | queued
+  content       short display text
+  payload_json  raw structured payload for collapsed details
+  created_at    stable replay order
+```
+
+The frontend loads both sources on session open, maps them through
+`frontend/src/app/chatTranscript.ts`, and renders compact rows from
+`frontend/src/components/chat/`. `autopilot_update` remains a snapshot fallback
+for older runs or backends that do not publish typed events.
+
+Approval and conversation are intentionally separate API concepts:
+
+- `POST /api/agent/autopilot/runs/{run_id}/continue` approves or rejects.
+- `POST /api/agent/autopilot/runs/{run_id}/reply` sends normal user text or an
+  approval revision request.
+- `POST /api/agent/autopilot/runs/{run_id}/follow-up` queues text while a tool
+  or adapter step is running.
+
+---
+
 ## What is implemented now (Phase 0 + Phase 1 + Phase 2 + Phase 2.5)
 
 | Component | Status |

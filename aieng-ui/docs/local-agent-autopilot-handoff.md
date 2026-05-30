@@ -1,6 +1,6 @@
 # Local Agent Autopilot Handoff
 
-Last updated: 2026-05-28
+Last updated: 2026-05-30
 
 ## Current Implementation State
 
@@ -12,6 +12,8 @@ Local Agent Autopilot is implemented through:
   - `POST /api/agent/autopilot/runs`
   - `GET /api/agent/autopilot/runs/{run_id}`
   - `POST /api/agent/autopilot/runs/{run_id}/continue`
+  - `POST /api/agent/autopilot/runs/{run_id}/reply`
+  - `POST /api/agent/autopilot/runs/{run_id}/follow-up`
   - `POST /api/agent/autopilot/runs/{run_id}/cancel`
 - Frontend connection id: `local-agent`
 - Run state directory: `aieng-ui/data/agent_autopilot/runs/`
@@ -26,7 +28,35 @@ Current CAD behavior:
 - CAD source is expected to use named parameters, `.label`, `.color`, and `Compound(children=[...])`; exports remain the runner's responsibility.
 - `cad.execute_build123d` remains approval-gated. After approval and successful execution, the engine automatically runs read-only `cad.critique` when the tool is registered.
 - Critique observations are compacted before being sent back to the local agent so prompt growth stays bounded.
-- The React UI shows a product-facing Agent card by default; raw adapter, step, event, and observation details are folded under `Run details`.
+- The React UI now uses the compact transcript UI as the sole chat rendering
+  path; the temporary `aieng-ui.chat-transcript-v2` fallback setting and legacy
+  Agent card path have been removed.
+
+## Chat Transcript Architecture
+
+Transcript rendering is split into three layers:
+
+- `frontend/src/app/chatTranscript.ts` is a pure mapper for persisted chat
+  messages, Autopilot run snapshots, and typed agent events.
+- `frontend/src/components/chat/` contains focused transcript components for
+  messages, tool rows, approvals, artifact rows, and collapsed details.
+- `backend/app/db.py` persists append-only `agent_events`; the frontend fetches
+  them through `GET /api/projects/{project_id}/agent-events`.
+
+The backend still publishes `autopilot_update` snapshots for compatibility, but
+new transcript rows should come from typed events when possible:
+`agent_message`, `tool_started`, `tool_completed`, `tool_failed`,
+`approval_requested`, `approval_resolved`, `artifact_ready`,
+`run_status_changed`, and `run_cancelled`.
+
+Normal conversation is no longer routed through approval continuation:
+
+- `continue` is for approve/reject and backwards compatibility.
+- `reply` resumes chatting/blocked/approval-revision runs without approving.
+- `follow-up` queues text while a run is already working.
+
+To reset replay state during local development, clear chat rows through the UI
+or delete the local sqlite database under `aieng-ui/data/aieng.db`.
 
 ## Adapter Configuration
 

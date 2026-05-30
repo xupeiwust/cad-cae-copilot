@@ -102,6 +102,12 @@ class AutopilotApproval(StrictModel):
     input: dict[str, Any] = Field(default_factory=dict)
     level: str
     explanation: str
+    side_effect_summary: str | None = None
+    risk_summary: str | None = None
+    target_project_id: str | None = None
+    code_preview: str | None = None
+    artifact_preview: str | None = None
+    recommended_action: str | None = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -152,6 +158,7 @@ class AutopilotRunState(StrictModel):
     pending_approval: AutopilotApproval | None = None
     final_message: str | None = None
     errors: list[str] = Field(default_factory=list)
+    queued_user_messages: list[str] = Field(default_factory=list)
 
 
 class LocalAgentCapability(StrictModel):

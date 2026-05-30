@@ -141,3 +141,55 @@ def test_chat_session_and_message_changes_publish_sse_events(tmp_path: Path) -> 
         assert any(item["type"] == "chat_session_changed" and item["session"]["id"] == session["id"] for item in events)
     finally:
         agent_activity.unsubscribe(q)
+
+
+def test_agent_event_persistence_is_ordered_and_idempotent(tmp_path: Path) -> None:
+    from app import db
+
+    settings = _make_settings(tmp_path)
+    project = save_project(settings, default_project("agent events"))
+    client = TestClient(create_app(settings))
+    project_id = project["id"]
+    session = client.post(f"/api/projects/{project_id}/chat-sessions", json={"title": "Events"}).json()
+
+    first = db.add_agent_event(
+        settings.data_root / "aieng.db",
+        event_id="evt-1",
+        event_type="tool_started",
+        project_id=project_id,
+        session_id=session["id"],
+        run_id="run-1",
+        status="running",
+        content="Starting",
+        payload={"tool_name": "aieng.agent_context"},
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    duplicate = db.add_agent_event(
+        settings.data_root / "aieng.db",
+        event_id="evt-1",
+        event_type="tool_started",
+        project_id=project_id,
+        session_id=session["id"],
+        run_id="run-1",
+        payload={"tool_name": "changed"},
+        created_at="2026-01-01T00:00:01+00:00",
+    )
+    db.add_agent_event(
+        settings.data_root / "aieng.db",
+        event_id="evt-2",
+        event_type="tool_completed",
+        project_id=project_id,
+        session_id=session["id"],
+        run_id="run-1",
+        status="done",
+        content="Done",
+        payload={"tool_name": "aieng.agent_context"},
+        created_at="2026-01-01T00:00:02+00:00",
+    )
+
+    assert duplicate["payload"] == first["payload"]
+    response = client.get(f"/api/projects/{project_id}/agent-events?session_id={session['id']}")
+    assert response.status_code == 200
+    rows = response.json()
+    assert [row["event_id"] for row in rows] == ["evt-1", "evt-2"]
+    assert rows[0]["payload"]["tool_name"] == "aieng.agent_context"

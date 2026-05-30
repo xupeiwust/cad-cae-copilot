@@ -1,14 +1,12 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { Square } from "lucide-react";
+
+import { chatHistoryToTranscriptItems } from "../../app/chatTranscript";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
-import { MarkdownText } from "../MarkdownText";
-import { PointerText } from "../PointerText";
-import { ActionIcon } from "../common";
-import { ApprovalCard } from "../agent/ApprovalCard";
+import type { AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
-import { AgentPlanCard } from "../agent/AgentPlanCard";
-import { AgentResultCard } from "../agent/AgentResultCard";
-import { isLowRiskArtifactPath } from "../../appUtils";
-import type { AutopilotObservation, AutopilotRunState, ChatConnection, ProjectRecord, RuntimeRun } from "../../types";
+import { ChatTranscript } from "../chat/ChatTranscript";
+import { ActionIcon } from "../common";
 
 type SimulationProgress = { step: string; message: string };
 type CurrentActivity = {
@@ -31,22 +29,56 @@ function formatElapsed(createdAt: string | undefined, nowMs: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function statusLabel(status: string): string {
-  switch (status) {
-    case "running": return "Working";
-    case "awaiting_approval": return "Needs approval";
-    case "completed": return "Done";
-    case "failed": return "Failed";
-    case "blocked": return "Blocked";
-    case "cancelled": return "Cancelled";
-    case "chatting": return "Ready";
-    default: return status.replace(/_/g, " ");
-  }
+type QuickAction = { label: string; prompt: string };
+
+function hasCadResult(history: ChatHistoryItem[]): boolean {
+  return history.some((e) =>
+    Boolean(e.cadResult) ||
+    (e.artifactPaths && e.artifactPaths.length > 0) ||
+    e.autopilotRun?.observations?.some(
+      (o) =>
+        o.kind === "tool_result" &&
+        ((o.data?.output as Record<string, unknown>)?.named_parts as string[] | undefined)?.length,
+    ),
+  );
 }
 
-function observationToolName(obs: AutopilotObservation): string | null {
-  const toolName = obs.data?.tool_name;
-  return typeof toolName === "string" && toolName ? toolName : null;
+function hasSimulationResult(history: ChatHistoryItem[]): boolean {
+  return history.some((e) => e.simulationResult?.status === "completed");
+}
+
+function buildQuickActions(history: ChatHistoryItem[]): QuickAction[] {
+  const hasCad = hasCadResult(history);
+  const hasSim = hasSimulationResult(history);
+  const actions: QuickAction[] = [];
+
+  if (hasSim) {
+    actions.push(
+      { label: "查看应力热点", prompt: "Show me the stress hotspots and regions with high von Mises stress in the model" },
+      { label: "生成报告", prompt: "Generate an engineering analysis report summarizing the simulation results and key findings" },
+      { label: "优化设计", prompt: "Based on the simulation results, suggest design improvements to reduce stress concentrations" },
+    );
+  } else if (hasCad) {
+    actions.push(
+      { label: "运行仿真", prompt: "Run a structural FEA simulation on this geometry using Gmsh + CalculiX" },
+      { label: "修改参数", prompt: "Show me the available editable parameters for this geometry" },
+      { label: "检查模型", prompt: "Review the current geometry and point out any potential issues" },
+    );
+  }
+
+  actions.push(
+    { label: "继续", prompt: "Continue with the next step" },
+    { label: "描述修改", prompt: "I would like to make some changes. What options do I have?" },
+  );
+
+  return actions.slice(0, 5);
+}
+
+function latestActiveAutopilotRun(chatHistory: ChatHistoryItem[]): AutopilotRunState | null {
+  return [...chatHistory]
+    .reverse()
+    .map((entry) => entry.autopilotRun)
+    .find((run): run is AutopilotRunState => Boolean(run && ACTIVE_AUTOPILOT_STATUSES.has(run.status))) ?? null;
 }
 
 function currentAutopilotActivity(run: AutopilotRunState): { title: string; detail: string; tone: AgentActivityTone } {
@@ -85,17 +117,6 @@ function currentAutopilotActivity(run: AutopilotRunState): { title: string; deta
   };
 }
 
-function autopilotCardTitle(run: AutopilotRunState): string {
-  return run.adapter_id === "llm-api" ? "LLM Agent" : "Local Agent";
-}
-
-function latestActiveAutopilotRun(chatHistory: ChatHistoryItem[]): AutopilotRunState | null {
-  return [...chatHistory]
-    .reverse()
-    .map((entry) => entry.autopilotRun)
-    .find((run): run is AutopilotRunState => Boolean(run && ACTIVE_AUTOPILOT_STATUSES.has(run.status))) ?? null;
-}
-
 function currentActivityLine({
   cadGenerationProgress,
   simulationProgress,
@@ -123,7 +144,6 @@ function currentActivityLine({
       running: Boolean(activeStage && !fatalError),
     };
   }
-
   if (simulationProgress) {
     return {
       title: `Running simulation · ${simulationProgress.step.replace(/_/g, " ")}`,
@@ -132,7 +152,6 @@ function currentActivityLine({
       running: true,
     };
   }
-
   if (activeAutopilotRun) {
     const activity = currentAutopilotActivity(activeAutopilotRun);
     return {
@@ -141,7 +160,6 @@ function currentActivityLine({
       elapsed: formatElapsed(activeAutopilotRun.created_at, nowMs),
     };
   }
-
   if (lastRuntimeRun?.status === "awaiting_approval") {
     const pendingStep = typeof lastRuntimeRun.pending_step_index === "number"
       ? lastRuntimeRun.plan[lastRuntimeRun.pending_step_index]
@@ -153,7 +171,6 @@ function currentActivityLine({
       running: false,
     };
   }
-
   if (chatBusy) {
     return {
       title: "Thinking through the next step",
@@ -162,7 +179,6 @@ function currentActivityLine({
       running: true,
     };
   }
-
   return null;
 }
 
@@ -170,7 +186,6 @@ type ChatPanelProps = {
   chatConnections: ChatConnection[];
   selectedChatConnectionId: string;
   selectedConnectionBlocked: boolean;
-  selectedProject: ProjectRecord | null;
   selectedId: string | null;
   chatBusy: boolean;
   cadGenerating: boolean;
@@ -184,7 +199,7 @@ type ChatPanelProps = {
   setSelectedChatConnectionId(value: string): void;
   setSettingsOpen(value: boolean): void;
   setMessage(value: string): void;
-  sendUnified(): Promise<void>;
+  sendUnified(promptOverride?: string): Promise<void>;
   viewArtifact(path: string): Promise<void>;
   approveRun(): Promise<void>;
   rejectRun(): Promise<void>;
@@ -193,9 +208,6 @@ type ChatPanelProps = {
   cancelAutopilot(runId: string): void;
   approveSimulation(): void;
   rejectSimulation(): void;
-  heatmapActive: boolean;
-  heatmapRange: { min: number; max: number } | null;
-  onViewHeatmap(): void;
   recentPickedFaces: PickedFace[];
 };
 
@@ -225,48 +237,70 @@ export function ChatPanel({
   cancelAutopilot,
   approveSimulation,
   rejectSimulation,
-  heatmapActive,
-  heatmapRange,
-  onViewHeatmap,
   recentPickedFaces,
 }: ChatPanelProps) {
   const [acOpen, setAcOpen] = useState(false);
   const [acQuery, setAcQuery] = useState("");
   const [acIndex, setAcIndex] = useState(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [newActivityAvailable, setNewActivityAvailable] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const acCursorRef = useRef<{ start: number; end: number } | null>(null);
+  const wasNearBottomRef = useRef(true);
+
+  const activeAutopilotRun = latestActiveAutopilotRun(chatHistory);
+  const transcriptItems = useMemo(
+    () => chatHistoryToTranscriptItems(chatHistory).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.sourceId.localeCompare(b.sourceId)),
+    [chatHistory],
+  );
 
   useEffect(() => {
-    const hasActiveAutopilot = chatHistory.some((entry) =>
-      entry.autopilotRun && ACTIVE_AUTOPILOT_STATUSES.has(entry.autopilotRun.status),
-    );
-    if (!hasActiveAutopilot) return;
+    if (!activeAutopilotRun) return;
     setNowMs(Date.now());
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [chatHistory]);
+  }, [activeAutopilotRun]);
 
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    if (!message) {
-      el.style.height = "auto";
-    }
+    if (!message) el.style.height = "auto";
   }, [message]);
+
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const wasNearBottom = wasNearBottomRef.current || distanceFromBottom < 120;
+    if (wasNearBottom) {
+      el.scrollTop = el.scrollHeight;
+      setNewActivityAvailable(false);
+    } else {
+      setNewActivityAvailable(true);
+    }
+  }, [chatHistory, transcriptItems.length, chatLogRef]);
 
   const acMatches = recentPickedFaces.filter((f) =>
     f.pointer.toLowerCase().includes(acQuery.toLowerCase()) ||
     f.label.toLowerCase().includes(acQuery.toLowerCase()),
   );
-
-  function openAutocomplete(cursorStart: number, query: string) {
-    if (recentPickedFaces.length === 0) return;
-    acCursorRef.current = { start: cursorStart, end: cursorStart };
-    setAcQuery(query);
-    setAcIndex(0);
-    setAcOpen(true);
-  }
+  const sendLabel = chatBusy
+    ? activeAutopilotRun?.status === "awaiting_approval"
+      ? "Ask revision"
+      : activeAutopilotRun
+        ? "Send follow-up"
+        : cadGenerating
+          ? "Generating..."
+          : "Thinking..."
+    : "Send";
+  const activityLine = currentActivityLine({
+    cadGenerationProgress,
+    simulationProgress,
+    lastRuntimeRun,
+    activeAutopilotRun,
+    chatBusy,
+    nowMs,
+  });
 
   function closeAutocomplete() {
     setAcOpen(false);
@@ -306,9 +340,7 @@ export function ChatPanel({
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        if (acMatches[acIndex]) {
-          insertAutocomplete(acMatches[acIndex]);
-        }
+        if (acMatches[acIndex]) insertAutocomplete(acMatches[acIndex]);
         return;
       }
       if (e.key === "Escape") {
@@ -318,7 +350,7 @@ export function ChatPanel({
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!chatBusy && message.trim()) void sendUnified();
+      if (message.trim()) void sendUnified();
     }
   }
 
@@ -329,252 +361,48 @@ export function ChatPanel({
     const cursor = el.selectionStart;
     const textBefore = value.slice(0, cursor);
     const atIdx = textBefore.lastIndexOf("@");
-    if (atIdx !== -1 && !textBefore.slice(atIdx + 1).includes(" ")) {
-      const query = textBefore.slice(atIdx + 1);
-      openAutocomplete(atIdx + 1, query);
+    if (atIdx !== -1 && !textBefore.slice(atIdx + 1).includes(" ") && recentPickedFaces.length) {
+      acCursorRef.current = { start: atIdx + 1, end: atIdx + 1 };
+      setAcQuery(textBefore.slice(atIdx + 1));
+      setAcIndex(0);
+      setAcOpen(true);
     } else {
       closeAutocomplete();
     }
   }
 
-  const inputPlaceholder = selectedConnectionBlocked
-    ? "Select a project to start…"
-    : "";
+  function markScrollPosition() {
+    const el = chatLogRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    wasNearBottomRef.current = nearBottom;
+    if (nearBottom) setNewActivityAvailable(false);
+  }
 
-  const sendLabel = chatBusy
-    ? cadGenerating ? "Generating…" : "Thinking…"
-    : "Send";
-  const activeAutopilotRun = latestActiveAutopilotRun(chatHistory);
-  const activityLine = currentActivityLine({
-    cadGenerationProgress,
-    simulationProgress,
-    lastRuntimeRun,
-    activeAutopilotRun,
-    chatBusy,
-    nowMs,
-  });
+  function scrollToBottom() {
+    const el = chatLogRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    wasNearBottomRef.current = true;
+    setNewActivityAvailable(false);
+  }
+
+  const selectedConn = chatConnections.find((c) => c.id === selectedChatConnectionId);
+  const connStatus = selectedConn?.status ?? "blocked";
+  const statusText = connStatus === "ready" ? "Ready" : connStatus === "blocked" ? "Unavailable" : connStatus.replace(/_/g, " ");
 
   return (
     <section className="chat-pane-body">
-      <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>}>
-        {chatHistory.length ? (
-          chatHistory.map((entry) => (
-            <article
-              key={entry.id}
-              className={entry.role === "assistant" ? "chat-bubble assistant" : "chat-bubble user"}
-            >
-              <header>
-                <strong>{entry.role === "assistant" ? "Workbench" : "You"}</strong>
-                {entry.mode ? (
-                  <span className="chat-mode-tag">{entry.mode}</span>
-                ) : null}
-              </header>
-
-              <MarkdownText text={entry.body} />
-
-              <AgentResultCard
-                cadResult={entry.cadResult}
-                heatmapActive={heatmapActive}
-                heatmapRange={heatmapRange}
-                onViewHeatmap={onViewHeatmap}
-                simulationResult={entry.simulationResult}
-              />
-
-              {entry.targetResult ? (
-                <div className="chat-target-result">
-                  <span className={`chat-target-badge chat-target-badge-${entry.targetResult.action}`}>
-                    {entry.targetResult.action === "added" ? "Target added" : "Target updated"}
-                  </span>
-                  <span className="chat-target-detail">
-                    {entry.targetResult.label}
-                    {" "}
-                    <code>{entry.targetResult.operator} {entry.targetResult.value}{entry.targetResult.unit ? " " + entry.targetResult.unit : ""}</code>
-                  </span>
-                  <span className="chat-target-count">{entry.targetResult.total_targets} target{entry.targetResult.total_targets !== 1 ? "s" : ""} total</span>
-                </div>
-              ) : null}
-
-              {entry.preprocessResult ? (
-                <div className="chat-preprocess-result">
-                  <div className="chat-preprocess-stats">
-                    <span className="chat-preprocess-material">{entry.preprocessResult.material}</span>
-                    <span>{entry.preprocessResult.bc_count} BC{entry.preprocessResult.bc_count !== 1 ? "s" : ""}</span>
-                    <span>{entry.preprocessResult.load_count} load{entry.preprocessResult.load_count !== 1 ? "s" : ""}</span>
-                    <span>mesh {entry.preprocessResult.mesh_size_mm}mm</span>
-                  </div>
-                  {entry.preprocessResult.written_artifacts.length > 0 ? (
-                    <div className="chat-preprocess-files">
-                      {entry.preprocessResult.written_artifacts.map((f) => (
-                        <span key={f} className="chat-preprocess-file">{f}</span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {entry.preprocessResult.warnings.length > 0 ? (
-                    <details>
-                      <summary>{entry.preprocessResult.warnings.length} warning{entry.preprocessResult.warnings.length !== 1 ? "s" : ""}</summary>
-                      <ul className="chat-preprocess-warnings">
-                        {entry.preprocessResult.warnings.map((w, i) => (
-                          <li key={i}>{w}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {entry.advisoryItems?.length ? (
-                <div className="chat-advisory-card">
-                  <div className="chat-advisory-header">Engineering Advisory</div>
-                  <ul className="chat-advisory-list">
-                    {entry.advisoryItems.map((item, i) => (
-                      <li key={i} className="chat-advisory-item">{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {entry.plan?.length ? (
-                <AgentPlanCard steps={entry.plan} />
-              ) : null}
-
-              {entry.autopilotRun ? (
-                <div className={`autopilot-run-card autopilot-run-${entry.autopilotRun.status}`}>
-                  <div className="autopilot-run-header">
-                    <span className="autopilot-run-title">
-                      {ACTIVE_AUTOPILOT_STATUSES.has(entry.autopilotRun.status) ? (
-                        <span className="autopilot-live-dot" aria-hidden="true" />
-                      ) : null}
-                      {autopilotCardTitle(entry.autopilotRun)}
-                    </span>
-                    <code>{statusLabel(entry.autopilotRun.status)}</code>
-                  </div>
-                  {(() => {
-                    const activity = currentAutopilotActivity(entry.autopilotRun!);
-                    return (
-                      <div className={`autopilot-current autopilot-current-${activity.tone}`}>
-                        <div>
-                          <strong>{activity.title}</strong>
-                          <span><PointerText text={activity.detail} /></span>
-                        </div>
-                        <time>{formatElapsed(entry.autopilotRun!.created_at, nowMs)}</time>
-                      </div>
-                    );
-                  })()}
-                  {entry.autopilotRun.pending_approval ? (
-                    <div className="autopilot-approval-note">
-                      <strong>Review before applying changes</strong>
-                      <span>{entry.autopilotRun.pending_approval.explanation}</span>
-                      <code>{entry.autopilotRun.pending_approval.tool_name}</code>
-                      <div className="chat-approval-actions">
-                        <button disabled={chatBusy} onClick={() => approveAutopilot(entry.autopilotRun!.run_id)}>
-                          <ActionIcon name="approve" />
-                          Approve
-                        </button>
-                        <button disabled={chatBusy} className="ghost-button" onClick={() => rejectAutopilot(entry.autopilotRun!.run_id)}>
-                          <ActionIcon name="reject" />
-                          Reject
-                        </button>
-                        <button disabled={chatBusy} className="ghost-button" onClick={() => cancelAutopilot(entry.autopilotRun!.run_id)}>
-                          <ActionIcon name="reject" />
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  {ACTIVE_AUTOPILOT_STATUSES.has(entry.autopilotRun.status) && !entry.autopilotRun.pending_approval ? (
-                    <div className="autopilot-inline-actions">
-                      <button
-                        disabled={chatBusy && entry.autopilotRun.status !== "running"}
-                        className="ghost-button"
-                        onClick={() => cancelAutopilot(entry.autopilotRun!.run_id)}
-                      >
-                        <ActionIcon name="reject" />
-                        Cancel
-                      </button>
-                    </div>
-                  ) : null}
-                  <details className="autopilot-details">
-                    <summary>Run details</summary>
-                    <div className="autopilot-run-meta">
-                      <span>{entry.autopilotRun.adapter_id}</span>
-                      <span>{entry.autopilotRun.steps.length} step{entry.autopilotRun.steps.length === 1 ? "" : "s"}</span>
-                      <span>{entry.autopilotRun.observations.length} event{entry.autopilotRun.observations.length === 1 ? "" : "s"}</span>
-                      {entry.autopilotRun.pending_approval ? (
-                        <span>{entry.autopilotRun.pending_approval.level}</span>
-                      ) : null}
-                    </div>
-                    {entry.autopilotRun.observations.length ? (
-                      <ul className="autopilot-observation-list">
-                        {entry.autopilotRun.observations.slice(-4).map((obs) => (
-                          <li key={obs.id} className={`autopilot-observation-${obs.kind}`}>
-                            <span>{obs.kind.replace(/_/g, " ")}</span>
-                            <div>
-                              <PointerText text={obs.summary} />
-                              {observationToolName(obs) ? <code>{observationToolName(obs)}</code> : null}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </details>
-                </div>
-              ) : null}
-
-              {entry.errors?.length ? (
-                <div className="chat-error-list">
-                  {entry.errors.map((err, i) => (
-                    <small key={`${entry.id}-err-${i}`}>{err}</small>
-                  ))}
-                </div>
-              ) : null}
-
-              {entry.artifactDiffs?.length ? (
-                <div className="chat-artifact-diffs">
-                  <small>Changes:</small>
-                  {entry.artifactDiffs.map((diff, idx) => (
-                    <div key={`${diff.path}-${idx}`} className="chat-diff-item">
-                      <div className="chat-diff-header">
-                        {isLowRiskArtifactPath(diff.path) ? (
-                          <button
-                            type="button"
-                            className="artifact-link"
-                            onClick={() => void viewArtifact(diff.path)}
-                          >
-                            {diff.path}
-                          </button>
-                        ) : (
-                          <span>{diff.path}</span>
-                        )}
-                        <span className="chat-diff-op">{diff.operation}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {entry.artifactPaths?.filter(isLowRiskArtifactPath).length ? (
-                <div className="chat-artifact-links">
-                  <small>Changed files:</small>
-                  {entry.artifactPaths.filter(isLowRiskArtifactPath).map((path) => (
-                    <button
-                      key={path}
-                      type="button"
-                      className="ghost-button chat-artifact-link"
-                      onClick={() => void viewArtifact(path)}
-                    >
-                      {path}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-
-              {entry.auditLogUrl ? (
-                <a className="chat-audit-link" href={entry.auditLogUrl} target="_blank" rel="noreferrer">
-                  View audit log
-                </a>
-              ) : null}
-            </article>
-          ))
+      <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>} onScroll={markScrollPosition}>
+        {transcriptItems.length ? (
+          <ChatTranscript
+            items={transcriptItems}
+            busy={chatBusy}
+            onViewArtifact={(path) => void viewArtifact(path)}
+            onApproveAutopilot={approveAutopilot}
+            onRejectAutopilot={rejectAutopilot}
+            onCancelAutopilot={cancelAutopilot}
+          />
         ) : (
           <div className="summary-note summary-muted chat-empty-state">
             <strong>Engineering Agent ready</strong>
@@ -586,46 +414,37 @@ export function ChatPanel({
           </div>
         )}
 
-        {cadGenerationProgress ? (
-          <div className="chat-progress-card chat-cad-progress">
-            <div className="chat-progress-spinner" />
-            <div className="chat-progress-text">
-              <span className="chat-progress-title">Agent is generating CAD</span>
-              <span className="chat-progress-step">
-                {cadGenerationProgress.activeStage ?? (cadGenerationProgress.fatalError ? "error" : "done")}
-              </span>
-              <span className="chat-progress-message">
-                {cadGenerationProgress.stages.find((s) => s.id === cadGenerationProgress.activeStage)?.message
-                  ?? cadGenerationProgress.fatalError
-                  ?? "CAD generation complete"}
-              </span>
-            </div>
-          </div>
-        ) : null}
-
-        {simulationProgress ? (
-          <div className="chat-progress-card">
-            <div className="chat-progress-spinner" />
-            <div className="chat-progress-text">
-              <span className="chat-progress-step">{simulationProgress.step.replace(/_/g, " ")}</span>
-              <span className="chat-progress-message">{simulationProgress.message}</span>
-            </div>
-          </div>
-        ) : null}
-
         {lastRuntimeRun?.status === "awaiting_approval" ? (
-          <ApprovalCard
-            busy={chatBusy}
-            run={lastRuntimeRun}
-            onApprove={() => void approveRun()}
-            onReject={() => void rejectRun()}
-          />
+          <div className="approval-line runtime-approval-line">
+            <div className="approval-line-main">
+              <span className="approval-line-badge">runtime</span>
+              <strong>Review pending runtime step</strong>
+              <span>
+                {typeof lastRuntimeRun.pending_step_index === "number"
+                  ? lastRuntimeRun.plan[lastRuntimeRun.pending_step_index]?.description
+                  : "Approve or reject the pending runtime action."}
+              </span>
+            </div>
+            <div className="approval-line-actions">
+              <button type="button" disabled={chatBusy} onClick={() => void approveRun()}>
+                <ActionIcon name="approve" />
+                Approve
+              </button>
+              <button type="button" className="ghost-button" disabled={chatBusy} onClick={() => void rejectRun()}>
+                <ActionIcon name="reject" />
+                Reject
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {simulationPending ? (
-          <div className="chat-approval-card chat-sim-approval">
-            <span>Run Gmsh mesh + CalculiX solver on this geometry?</span>
-            <div className="chat-approval-actions">
+          <div className="approval-line chat-sim-approval">
+            <div className="approval-line-main">
+              <span className="approval-line-badge">solver</span>
+              <strong>Run Gmsh mesh + CalculiX solver on this geometry?</strong>
+            </div>
+            <div className="approval-line-actions">
               <button disabled={chatBusy} onClick={approveSimulation}>
                 <ActionIcon name="approve" />
                 Run Simulation
@@ -647,41 +466,54 @@ export function ChatPanel({
             elapsed={activityLine.elapsed}
           />
         ) : null}
+        {newActivityAvailable ? (
+          <button type="button" className="new-activity-button" onClick={scrollToBottom}>
+            New activity
+          </button>
+        ) : null}
       </div>
 
-      {(() => {
-        const selectedConn = chatConnections.find((c) => c.id === selectedChatConnectionId);
-        const connStatus = selectedConn?.status ?? "blocked";
-        const statusText = connStatus === "ready" ? "Ready" : connStatus === "blocked" ? "Unavailable" : connStatus.replace(/_/g, " ");
-        const statusClass = `connection-status status-${connStatus}`;
-        return (
-          <div className="chat-input-toolbar">
-            <select
-              className="chat-connection-select"
-              value={selectedChatConnectionId}
-              onChange={(e) => setSelectedChatConnectionId(e.target.value)}
-            >
-              {chatConnections.map((conn) => (
-                <option key={conn.id} value={conn.id}>
-                  {conn.status === "ready" ? "●" : conn.status === "blocked" ? "○" : "◐"} {conn.label}
-                </option>
-              ))}
-            </select>
-            <span className={statusClass} title={selectedConn?.detail ?? ""}>
-              {statusText}
-            </span>
+      {activeAutopilotRun?.status === "chatting" ? (
+        <div className="chat-quick-actions">
+          {buildQuickActions(chatHistory).map((action) => (
             <button
+              key={action.label}
               type="button"
-              className="ghost-button icon-only-button"
-              onClick={() => setSettingsOpen(true)}
-              title="Settings"
-              style={{ marginLeft: "auto" }}
+              className="chat-quick-action-chip"
+              disabled={chatBusy}
+              onClick={() => void sendUnified(action.prompt)}
             >
-              <ActionIcon name="settings" />
+              {action.label}
             </button>
-          </div>
-        );
-      })()}
+          ))}
+        </div>
+      ) : null}
+
+      <div className="chat-input-toolbar">
+        <select
+          className="chat-connection-select"
+          value={selectedChatConnectionId}
+          onChange={(e) => setSelectedChatConnectionId(e.target.value)}
+        >
+          {chatConnections.map((conn) => (
+            <option key={conn.id} value={conn.id}>
+              {conn.status === "ready" ? "●" : conn.status === "blocked" ? "○" : "◐"} {conn.label}
+            </option>
+          ))}
+        </select>
+        <span className={`connection-status status-${connStatus}`} title={selectedConn?.detail ?? ""}>
+          {statusText}
+        </span>
+        <button
+          type="button"
+          className="ghost-button icon-only-button"
+          onClick={() => setSettingsOpen(true)}
+          title="Settings"
+          style={{ marginLeft: "auto" }}
+        >
+          <ActionIcon name="settings" />
+        </button>
+      </div>
 
       <div className="chat-input-row">
         <div className="chat-input-wrap">
@@ -694,10 +526,10 @@ export function ChatPanel({
               e.target.style.height = `${e.target.scrollHeight}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder={inputPlaceholder}
-            disabled={chatBusy}
+            placeholder={selectedConnectionBlocked ? "Select a project to start..." : ""}
+            disabled={selectedConnectionBlocked}
           />
-          {acOpen && acMatches.length > 0 && (
+          {acOpen && acMatches.length > 0 ? (
             <div className="chat-autocomplete">
               {acMatches.map((f, i) => (
                 <button
@@ -712,16 +544,28 @@ export function ChatPanel({
                 </button>
               ))}
             </div>
-          )}
+          ) : null}
         </div>
         <button
           className="chat-send-button"
-          disabled={chatBusy || !message.trim()}
+          disabled={selectedConnectionBlocked || !message.trim()}
           onClick={() => void sendUnified()}
         >
           <ActionIcon name="send" />
           {sendLabel}
         </button>
+        {activeAutopilotRun ? (
+          <button
+            type="button"
+            className="ghost-button chat-stop-button"
+            disabled={!activeAutopilotRun.run_id}
+            onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
+            title="Stop active agent run"
+          >
+            <Square className="button-icon" />
+            Stop
+          </button>
+        ) : null}
       </div>
     </section>
   );

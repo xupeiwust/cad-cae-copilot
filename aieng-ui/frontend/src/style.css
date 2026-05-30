@@ -1714,6 +1714,216 @@ input[type="file"] {
   color: #e8f1ff;
 }
 
+.chat-transcript {
+  display: grid;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.transcript-message {
+  display: grid;
+  gap: 6px;
+  max-width: min(92%, 680px);
+  line-height: 1.58;
+  color: #e8f1ff;
+}
+
+.transcript-message-user {
+  justify-self: end;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, 0.34);
+}
+
+.transcript-message-agent {
+  justify-self: stretch;
+  padding: 4px 2px 8px;
+}
+
+.transcript-speaker {
+  color: #8da2c3;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.transcript-queued {
+  width: fit-content;
+  padding: 2px 6px;
+  border: 1px solid rgba(217, 164, 65, 0.34);
+  border-radius: 999px;
+  color: #fde68a;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.tool-line,
+.artifact-line,
+.transcript-status-line,
+.transcript-error-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 0 4px 14px;
+  border-left: 1px solid rgba(148, 163, 184, 0.24);
+  color: #b9c9e3;
+  font-size: 12px;
+}
+
+.tool-line code,
+.artifact-line code {
+  padding: 1px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 5px;
+  background: rgba(2, 6, 23, 0.32);
+  color: #c4d6f4;
+}
+
+.tool-line-running .transcript-status-icon {
+  color: #38bdf8;
+}
+
+.tool-line-done .transcript-status-icon,
+.transcript-status-done .transcript-status-icon {
+  color: #34d399;
+}
+
+.tool-line-failed .transcript-status-icon,
+.transcript-error-line .transcript-status-icon {
+  color: #fb7185;
+}
+
+.transcript-status-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: #94a3b8;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.approval-line {
+  display: grid;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid rgba(217, 164, 65, 0.32);
+  border-radius: 8px;
+  background: rgba(24, 18, 8, 0.52);
+}
+
+.approval-line-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #f7e7b0;
+  font-size: 12px;
+}
+
+.approval-line-main strong {
+  color: #fff6d6;
+}
+
+.approval-line-main small {
+  color: #d9b96d;
+}
+
+.approval-line-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(217, 164, 65, 0.16);
+  color: #fde68a;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.approval-line-actions,
+.artifact-link-row,
+.artifact-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.approval-line-actions button,
+.transcript-artifact-button,
+.chat-stop-button {
+  min-height: 30px;
+}
+
+.approval-code-preview pre,
+.event-detail pre {
+  max-height: 260px;
+  max-width: 100%;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.62);
+  color: #d9e7ff;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.event-detail {
+  width: 100%;
+  color: #8fa5c4;
+}
+
+.event-detail summary,
+.approval-code-preview summary {
+  cursor: pointer;
+  color: #91a7c7;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.artifact-chip {
+  padding: 2px 7px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 999px;
+  background: rgba(8, 47, 73, 0.22);
+  color: #bae6fd;
+  font-size: 11px;
+}
+
+.new-activity-button {
+  position: sticky;
+  bottom: 8px;
+  align-self: center;
+  padding: 6px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 999px;
+  background: rgba(8, 47, 73, 0.9);
+  color: #e0f2fe;
+  font-size: 12px;
+  font-weight: 850;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.32);
+}
+
+.setting-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #dbeafe;
+  font-weight: 750;
+}
+
 .markdown-text {
   display: grid;
   gap: 8px;
@@ -1788,25 +1998,6 @@ input[type="file"] {
   flex-direction: column;
   gap: 8px;
 }
-
-.chat-plan-item,
-.agent-plan-step,
-.cae-list-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(71, 85, 105, 0.35);
-  background: rgba(2, 6, 23, 0.45);
-}
-
-.agent-plan-step.status-approval {
-  border-color: rgba(217, 164, 65, 0.38);
-  background: rgba(217, 164, 65, 0.1);
-}
-
-
 .live-sync-pill {
   display: inline-flex;
   align-items: center;
@@ -1862,258 +2053,6 @@ input[type="file"] {
   background: #ef4444;
 }
 
-.autopilot-run-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(56, 189, 248, 0.28);
-  border-radius: 8px;
-  background: rgba(8, 20, 36, 0.62);
-}
-
-.autopilot-run-failed {
-  border-color: rgba(248, 113, 113, 0.34);
-}
-
-.autopilot-run-awaiting_approval {
-  border-color: rgba(217, 164, 65, 0.42);
-}
-
-.autopilot-run-header,
-.autopilot-run-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.autopilot-run-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: #eaf6ff;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.autopilot-live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #38bdf8;
-  box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.55);
-  animation: autopilot-pulse 1.5s ease-out infinite;
-}
-
-@keyframes autopilot-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(56, 189, 248, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
-  }
-}
-
-.autopilot-run-header code,
-.autopilot-run-meta span {
-  padding: 2px 6px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 6px;
-  color: #9fb1cc;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.autopilot-current {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 12px;
-  align-items: start;
-  padding: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(2, 6, 23, 0.28);
-}
-
-.autopilot-current > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.autopilot-current strong {
-  color: #eaf6ff;
-  font-size: 12px;
-}
-
-.autopilot-current span {
-  color: #b7c8e2;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.autopilot-current time {
-  min-width: 48px;
-  padding: 3px 6px;
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  border-radius: 6px;
-  color: #7dd3fc;
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  font-weight: 800;
-  text-align: center;
-}
-
-.autopilot-current-approval time {
-  border-color: rgba(217, 164, 65, 0.3);
-  color: #f8e7b4;
-}
-
-.autopilot-current-error time {
-  border-color: rgba(248, 113, 113, 0.28);
-  color: #fecaca;
-}
-
-.autopilot-inline-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.autopilot-approval-note {
-  display: grid;
-  gap: 4px;
-  padding: 8px;
-  border-left: 3px solid #d9a441;
-  background: rgba(217, 164, 65, 0.08);
-  color: #f8e7b4;
-}
-
-.autopilot-approval-note strong,
-.autopilot-approval-note span {
-  overflow-wrap: anywhere;
-}
-
-
-.autopilot-details {
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
-  padding-top: 8px;
-}
-
-.autopilot-details summary {
-  cursor: pointer;
-  color: #8fa3bf;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  list-style-position: inside;
-}
-
-.autopilot-details[open] summary {
-  margin-bottom: 8px;
-  color: #c7d2fe;
-}
-
-.autopilot-approval-note code {
-  align-self: flex-start;
-  padding: 2px 6px;
-  border: 1px solid rgba(217, 164, 65, 0.28);
-  border-radius: 6px;
-  color: #f8d886;
-  font-size: 10px;
-}
-
-.autopilot-observation-list {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.autopilot-observation-list li {
-  display: grid;
-  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  color: #dbeafe;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.autopilot-observation-list li > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.autopilot-observation-list li > span:first-child {
-  color: #7dd3fc;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.autopilot-observation-list li code {
-  width: fit-content;
-  max-width: 100%;
-  overflow: hidden;
-  padding: 1px 5px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 5px;
-  color: #9fb1cc;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.autopilot-observation-tool_error > span:first-child {
-  color: #fca5a5;
-}
-
-.autopilot-observation-approval_required > span:first-child {
-  color: #f8e7b4;
-}
-
-.agent-plan-step-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.agent-plan-step-head code {
-  overflow: hidden;
-  color: #eaf6ff;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-plan-step-status {
-  flex: 0 0 auto;
-  padding: 2px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  color: #9fb1cc;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.agent-plan-step-status.status-approval {
-  border-color: rgba(217, 164, 65, 0.42);
-  color: #fde68a;
-}
-
-.chat-plan-item span,
-.agent-plan-step span,
 .cae-list-item small,
 .cae-chip-card small {
   color: #96a9c7;
@@ -2271,15 +2210,6 @@ input[type="file"] {
   border-color: rgba(168, 85, 247, 0.4);
   background: rgba(88, 28, 135, 0.15);
 }
-
-.chat-cad-progress .chat-progress-step {
-  color: #d8b4fe;
-}
-
-.chat-cad-progress .chat-progress-message {
-  color: #e9d5ff;
-}
-
 .viewer-cad-progress-overlay {
   position: absolute;
   inset: 0;
@@ -2332,279 +2262,6 @@ input[type="file"] {
   padding: 8px 18px;
 }
 
-.chat-cad-result {
-  margin-top: 8px;
-  border: 1px solid rgba(45, 212, 191, 0.2);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: rgba(13, 148, 136, 0.06);
-}
-
-.chat-cad-stats {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-
-.chat-cad-stats span {
-  font-size: 12px;
-  color: #6ee7d9;
-}
-
-.chat-cad-code {
-  font-size: 0.78em;
-  overflow-x: auto;
-  padding: 8px;
-  background: rgba(3, 7, 18, 0.6);
-  border-radius: 4px;
-  margin-top: 6px;
-  white-space: pre;
-}
-
-.chat-approval-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(251, 191, 36, 0.28);
-  background: rgba(120, 53, 15, 0.16);
-  margin-top: 8px;
-}
-
-.chat-approval-card span {
-  font-size: 13px;
-  color: #fde68a;
-  flex: 1;
-  min-width: 0;
-}
-
-.approval-card {
-  align-items: flex-start;
-}
-
-.approval-card-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.approval-card-copy strong {
-  color: #fef3c7;
-  font-size: 13px;
-}
-
-.approval-card-copy small {
-  color: #f8df9f;
-  line-height: 1.45;
-}
-
-.approval-card-eyebrow {
-  flex: 0 0 auto;
-  color: #facc15;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.chat-approval-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.chat-preprocess-result {
-  margin-top: 8px;
-  border: 1px solid rgba(99, 102, 241, 0.24);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: rgba(49, 46, 129, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.chat-preprocess-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
-.chat-preprocess-material {
-  font-weight: 600;
-  color: #a5b4fc;
-}
-
-.chat-preprocess-stats span {
-  font-size: 12px;
-  color: #94a3c8;
-}
-
-.chat-preprocess-files {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.chat-preprocess-file {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  color: #818cf8;
-  background: rgba(99, 102, 241, 0.1);
-  border-radius: 4px;
-  padding: 2px 7px;
-}
-
-.chat-preprocess-warnings {
-  margin: 4px 0 0;
-  padding-left: 16px;
-  font-size: 12px;
-  color: #fbbf24;
-}
-
-/* ── simulation result card (dark theme) ───────────────────────────────────── */
-.chat-sim-result {
-  margin-top: 8px;
-  border: 1px solid rgba(52, 211, 153, 0.24);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: rgba(6, 78, 59, 0.18);
-  font-size: 13px;
-}
-
-.chat-sim-result-error {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: rgba(127, 29, 29, 0.18);
-}
-
-.chat-sim-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.chat-sim-stats span {
-  font-variant-numeric: tabular-nums;
-  color: #6ee7b7;
-  background: rgba(52, 211, 153, 0.1);
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-/* ── Factor-of-Safety badge (v0.49) ───────────────────────────────────── */
-
-.chat-fos-badge {
-  font-variant-numeric: tabular-nums;
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.chat-fos-safe {
-  color: #6ee7b7;
-  background: rgba(52, 211, 153, 0.15);
-}
-.chat-fos-marginal {
-  color: #fcd34d;
-  background: rgba(245, 158, 11, 0.15);
-}
-.chat-fos-critical {
-  color: #f87171;
-  background: rgba(239, 68, 68, 0.15);
-}
-.chat-fos-unknown {
-  color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-/* ── Stress heatmap button + colorbar (dark theme) ─────────────────────────── */
-.chat-heatmap-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-}
-.chat-heatmap-btn {
-  padding: 4px 10px;
-  border-radius: 5px;
-  border: 1px solid rgba(129, 140, 248, 0.45);
-  background: rgba(99, 102, 241, 0.12);
-  color: #a5b4fc;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-  white-space: nowrap;
-}
-.chat-heatmap-btn:hover {
-  background: rgba(99, 102, 241, 0.22);
-  border-color: rgba(129, 140, 248, 0.7);
-}
-.chat-heatmap-btn.active {
-  background: rgba(99, 102, 241, 0.28);
-  border-color: #818cf8;
-  color: #e0e7ff;
-}
-.chat-heatmap-colorbar {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.chat-heatmap-colorbar-label {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.45);
-}
-.chat-heatmap-colorbar-strip {
-  width: 80px;
-  height: 8px;
-  border-radius: 4px;
-  background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-/* ── FoS engineering advisory card (dark theme) ────────────────────────────── */
-.chat-advisory-card {
-  margin-top: 8px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  background: rgba(120, 53, 15, 0.18);
-}
-.chat-advisory-header {
-  margin-bottom: 6px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #fbbf24;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.chat-advisory-list {
-  margin: 0;
-  padding-left: 16px;
-}
-.chat-advisory-item {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.75);
-  line-height: 1.55;
-  margin-bottom: 4px;
-}
-.chat-advisory-item:last-child {
-  margin-bottom: 0;
-}
-
-.chat-sim-missing {
-  color: #fca5a5;
-  margin: 0;
-  font-size: 12px;
-}
-
 .chat-sim-approval {
   border-color: rgba(52, 211, 153, 0.3);
   background: rgba(6, 78, 59, 0.22);
@@ -2612,221 +2269,6 @@ input[type="file"] {
 
 .chat-sim-approval span {
   color: #6ee7b7;
-}
-
-/* ── Solver diagnosis list (v0.47) ────────────────────────────────────── */
-
-.chat-sim-diagnosis {
-  margin: 0.35rem 0 0 0;
-  padding-left: 1.1rem;
-  color: #fca5a5;
-  font-size: 0.78rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-/* ── Design target card (v0.47) ───────────────────────────────────────── */
-
-.chat-target-result {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  margin-top: 0.4rem;
-  padding: 0.4rem 0.55rem;
-  border-radius: 0.4rem;
-  border: 1px solid rgba(99, 102, 241, 0.3);
-  background: rgba(79, 70, 229, 0.12);
-}
-.chat-target-badge {
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 0.15rem 0.4rem;
-  border-radius: 0.25rem;
-  text-transform: uppercase;
-}
-.chat-target-badge-added {
-  background: rgba(99, 102, 241, 0.25);
-  color: #a5b4fc;
-}
-.chat-target-badge-updated {
-  background: rgba(251, 191, 36, 0.2);
-  color: #fde68a;
-}
-.chat-target-detail {
-  flex: 1;
-  font-size: 0.82rem;
-  color: #c7d2fe;
-}
-.chat-target-detail code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 0.1rem 0.3rem;
-  border-radius: 0.2rem;
-}
-.chat-target-count {
-  font-size: 0.74rem;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-/* ── Simulation progress card (v0.48) ─────────────────────────────────── */
-
-.chat-progress-card {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.55rem 0.85rem;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  margin: 0.4rem 0;
-}
-
-.chat-progress-spinner {
-  width: 15px;
-  height: 15px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  border-top-color: #818cf8;
-  border-radius: 50%;
-  animation: chat-spin 0.75s linear infinite;
-  flex-shrink: 0;
-}
-
-@keyframes chat-spin {
-  to { transform: rotate(360deg); }
-}
-
-.chat-progress-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  min-width: 0;
-}
-
-.chat-progress-title {
-  color: #e8f4ff;
-  font-size: 0.76rem;
-  font-weight: 800;
-}
-
-.chat-progress-step {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #818cf8;
-}
-
-.chat-progress-message {
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.7);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ── Simulation verdict card (v0.45) ──────────────────────────────────── */
-
-.chat-verdict {
-  margin-top: 0.5rem;
-  padding: 0.5rem 0.6rem;
-  border-radius: 0.4rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.chat-verdict-pass {
-  border-color: rgba(52, 211, 153, 0.35);
-  background: rgba(6, 78, 59, 0.18);
-}
-.chat-verdict-fail {
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(127, 29, 29, 0.18);
-}
-.chat-verdict-partial {
-  border-color: rgba(251, 191, 36, 0.35);
-  background: rgba(120, 53, 15, 0.18);
-}
-.chat-verdict-unknown {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-}
-.chat-verdict-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.chat-verdict-badge {
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  padding: 0.15rem 0.45rem;
-  border-radius: 0.25rem;
-  background: rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
-}
-.chat-verdict-pass .chat-verdict-badge {
-  background: rgba(52, 211, 153, 0.25);
-  color: #6ee7b7;
-}
-.chat-verdict-fail .chat-verdict-badge {
-  background: rgba(239, 68, 68, 0.25);
-  color: #fca5a5;
-}
-.chat-verdict-partial .chat-verdict-badge {
-  background: rgba(251, 191, 36, 0.25);
-  color: #fde68a;
-}
-.chat-verdict-counts {
-  font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.55);
-}
-.chat-verdict-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-  padding: 0.2rem 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-.chat-verdict-item-label {
-  flex: 1;
-  color: #cbd5e1;
-}
-.chat-verdict-item-values {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
-  color: #94a3b8;
-}
-.chat-verdict-item-status {
-  font-size: 0.7rem;
-  font-weight: 600;
-  min-width: 4rem;
-  text-align: right;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.chat-verdict-suggestions {
-  font-size: 0.78rem;
-  margin-top: 0.1rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 0.3rem;
-}
-.chat-verdict-suggestions summary {
-  cursor: pointer;
-  color: rgba(255, 255, 255, 0.6);
-}
-.chat-verdict-suggestions ul {
-  margin: 0.3rem 0 0 0;
-  padding-left: 1.1rem;
-  color: #94a3b8;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
 }
 
 .cae-overview-grid {
@@ -3872,31 +3314,6 @@ textarea {
 .cae-list-item span {
   color: #6b7480;
 }
-
-.side-pane .project-item,
-.workflow-item,
-.project-metadata div,
-.semantic-overview div,
-.summary-note,
-.fold-block,
-.chat-window,
-.chat-bubble,
-.chat-plan-item,
-.agent-plan-step,
-.cae-list-item,
-.cae-overview-grid div,
-.cae-field-shell,
-.cae-chip-card,
-.capability-detail,
-.capability-facts div,
-.semantic-map-item,
-.workflow-step-item,
-.chat-diff-item,
-.agent-plan-preview {
-  border-color: rgba(34, 39, 47, 0.08);
-  background: rgba(248, 244, 235, 0.68);
-}
-
 .side-pane .project-item.active {
   outline: 0;
   border-color: rgba(188, 122, 34, 0.44);
@@ -3936,136 +3353,11 @@ textarea {
   border-color: rgba(34, 39, 47, 0.08);
   background: rgba(241, 237, 226, 0.72);
 }
-
-.chat-cad-result {
-  border-color: rgba(47, 143, 101, 0.24);
-  background: rgba(229, 241, 232, 0.56);
-}
-
-.agent-result-card {
-  margin-top: 8px;
-}
-
-.chat-cad-stats span {
-  color: #2f7a58;
-}
-
-.chat-approval-card {
-  border-color: rgba(188, 122, 34, 0.3);
-  background: rgba(255, 243, 210, 0.72);
-}
-
-.chat-approval-card span {
-  color: #7c4e10;
-}
-
-.approval-card-copy strong {
-  color: #5f3d0f;
-}
-
-.approval-card-copy small,
-.approval-card-eyebrow {
-  color: #7c4e10;
-}
-
 .chat-connection-select {
   color: #e2e8f0;
   border-color: #d9d1c2;
   background: rgba(255, 253, 247, 0.92);
 }
-
-.chat-preprocess-result {
-  border-color: rgba(79, 70, 229, 0.2);
-  background: rgba(238, 242, 255, 0.72);
-}
-
-.chat-preprocess-material {
-  color: #4338ca;
-}
-
-.chat-preprocess-stats span {
-  color: #4b5563;
-}
-
-.chat-preprocess-file {
-  color: #4f46e5;
-  background: rgba(99, 102, 241, 0.08);
-}
-
-.chat-preprocess-warnings {
-  color: #92400e;
-}
-
-.chat-sim-result {
-  border-color: rgba(16, 185, 129, 0.25);
-  background: rgba(236, 253, 245, 0.8);
-}
-
-.chat-sim-result-error {
-  border-color: rgba(239, 68, 68, 0.25);
-  background: rgba(254, 242, 242, 0.8);
-}
-
-.chat-sim-stats span {
-  color: #065f46;
-  background: rgba(16, 185, 129, 0.1);
-}
-
-.chat-fos-safe {
-  color: #065f46;
-  background: rgba(16, 185, 129, 0.12);
-}
-.chat-fos-marginal {
-  color: #92400e;
-  background: rgba(245, 158, 11, 0.12);
-}
-.chat-fos-critical {
-  color: #991b1b;
-  background: rgba(239, 68, 68, 0.12);
-}
-.chat-fos-unknown {
-  color: #6b7280;
-  background: rgba(0, 0, 0, 0.06);
-}
-
-/* ── Stress heatmap button + colorbar (light theme) ────────────────────────── */
-.chat-heatmap-btn {
-  border-color: rgba(79, 70, 229, 0.35);
-  background: rgba(79, 70, 229, 0.08);
-  color: #4338ca;
-}
-.chat-heatmap-btn:hover {
-  background: rgba(79, 70, 229, 0.14);
-  border-color: rgba(79, 70, 229, 0.6);
-}
-.chat-heatmap-btn.active {
-  background: rgba(79, 70, 229, 0.18);
-  border-color: #4f46e5;
-  color: #3730a3;
-}
-.chat-heatmap-colorbar-label {
-  color: #6b7280;
-}
-.chat-heatmap-colorbar-strip {
-  border-color: rgba(0, 0, 0, 0.1);
-}
-
-/* ── FoS engineering advisory card (light theme) ────────────────────────────── */
-.chat-advisory-card {
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(254, 243, 199, 0.6);
-}
-.chat-advisory-header {
-  color: #b45309;
-}
-.chat-advisory-item {
-  color: #78350f;
-}
-
-.chat-sim-missing {
-  color: #b91c1c;
-}
-
 .chat-sim-approval {
   border-color: rgba(16, 185, 129, 0.3);
   background: rgba(236, 253, 245, 0.85);
@@ -4074,103 +3366,6 @@ textarea {
 .chat-sim-approval span {
   color: #065f46;
 }
-
-.chat-sim-diagnosis {
-  color: #991b1b;
-}
-
-.chat-target-result {
-  border-color: rgba(99, 102, 241, 0.25);
-  background: rgba(238, 242, 255, 0.7);
-}
-.chat-target-badge-added {
-  background: rgba(99, 102, 241, 0.15);
-  color: #4338ca;
-}
-.chat-target-badge-updated {
-  background: rgba(245, 158, 11, 0.15);
-  color: #92400e;
-}
-.chat-target-detail {
-  color: #312e81;
-}
-.chat-target-detail code {
-  background: rgba(99, 102, 241, 0.1);
-  color: #4338ca;
-}
-.chat-target-count {
-  color: #6b7280;
-}
-
-.chat-progress-card {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.1);
-}
-.chat-progress-spinner {
-  border-color: rgba(0, 0, 0, 0.12);
-  border-top-color: #6366f1;
-}
-.chat-progress-step {
-  color: #6366f1;
-}
-.chat-progress-title {
-  color: #0f172a;
-}
-.chat-progress-message {
-  color: #e2e8f0;
-}
-
-.chat-verdict {
-  border-color: rgba(0, 0, 0, 0.1);
-  background: rgba(0, 0, 0, 0.03);
-}
-.chat-verdict-pass {
-  border-color: rgba(16, 185, 129, 0.35);
-  background: rgba(209, 250, 229, 0.6);
-}
-.chat-verdict-fail {
-  border-color: rgba(239, 68, 68, 0.35);
-  background: rgba(254, 226, 226, 0.6);
-}
-.chat-verdict-partial {
-  border-color: rgba(245, 158, 11, 0.35);
-  background: rgba(254, 243, 199, 0.6);
-}
-.chat-verdict-badge {
-  background: rgba(0, 0, 0, 0.08);
-  color: #1e293b;
-}
-.chat-verdict-pass .chat-verdict-badge {
-  background: rgba(16, 185, 129, 0.2);
-  color: #065f46;
-}
-.chat-verdict-fail .chat-verdict-badge {
-  background: rgba(239, 68, 68, 0.2);
-  color: #991b1b;
-}
-.chat-verdict-partial .chat-verdict-badge {
-  background: rgba(245, 158, 11, 0.2);
-  color: #78350f;
-}
-.chat-verdict-counts {
-  color: #64748b;
-}
-.chat-verdict-item {
-  border-top-color: rgba(0, 0, 0, 0.06);
-}
-.chat-verdict-item-label {
-  color: #334155;
-}
-.chat-verdict-item-values {
-  color: #475569;
-}
-.chat-verdict-suggestions summary {
-  color: #64748b;
-}
-.chat-verdict-suggestions ul {
-  color: #475569;
-}
-
 .fold-summary {
   color: #e2e8f0;
 }
@@ -4402,41 +3597,6 @@ body {
   background-size: 88px 88px, 88px 88px, auto, auto;
   mask-image: linear-gradient(180deg, black, rgba(0, 0, 0, 0.72));
 }
-
-.control-pane-header,
-.control-pane-tabs,
-.side-pane .card,
-.settings-drawer,
-.drawer-section,
-.project-item,
-.workflow-item,
-.project-metadata div,
-.semantic-overview div,
-.summary-note,
-.fold-block,
-.chat-window,
-.chat-bubble,
-.chat-plan-item,
-.cae-list-item,
-.cae-overview-grid div,
-.cae-field-shell,
-.cae-chip-card,
-.capability-detail,
-.capability-facts div,
-.semantic-map-item,
-.workflow-step-item,
-.chat-diff-item,
-.agent-plan-preview,
-.side-pane .chat-connection-card,
-.side-pane .capability-item {
-  border-color: var(--glass-line);
-  background: var(--glass-panel);
-  backdrop-filter: blur(20px) saturate(1.18);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.075),
-    0 20px 44px rgba(0, 0, 0, 0.22);
-}
-
 .control-pane-header {
   background: rgba(16, 22, 33, 0.76);
 }
@@ -4823,31 +3983,6 @@ textarea {
 .notification-card {
   border-radius: var(--radius-xl);
 }
-
-.control-pane-tab,
-.side-pane .chat-connection-card,
-.side-pane .capability-item,
-.project-item,
-.workflow-item,
-.project-metadata div,
-.semantic-overview div,
-.summary-note,
-.fold-block,
-.chat-bubble,
-.chat-plan-item,
-.agent-plan-step,
-.cae-list-item,
-.cae-overview-grid div,
-.cae-chip-card,
-.capability-facts div,
-.semantic-map-item,
-.workflow-step-item,
-.chat-diff-item,
-.chat-diff-before,
-.chat-diff-after {
-  border-radius: var(--radius-lg);
-}
-
 .side-pane .control-pane-tab.active {
   border-color: var(--active-border);
   background: var(--active-bg);
@@ -5648,18 +4783,6 @@ button:has(.button-icon) {
 .badge-muted {
   opacity: 0.65;
 }
-.approval-card,
-.copilot-loop__subcard {
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: #111827;
-  border-radius: 12px;
-  padding: 10px;
-  margin-top: 8px;
-}
-.approval-card {
-  border-color: rgba(251, 191, 36, 0.3);
-  background: rgba(251, 191, 36, 0.08);
-}
 .danger {
   color: #f87171;
   border-color: rgba(248, 113, 113, 0.3);
@@ -5881,11 +5004,6 @@ button:has(.button-icon) {
   background: rgba(255, 255, 255, 0.02);
   border-style: dashed;
   color: rgba(241, 245, 249, 0.35);
-}
-.copilot-loop-panel .approval-card--rejected {
-  border-color: rgba(248, 113, 113, 0.3);
-  background: rgba(248, 113, 113, 0.08);
-  color: #f87171;
 }
 .copilot-loop-panel .copilot-loop__history,
 .copilot-loop-panel .copilot-loop__compare {
@@ -7696,49 +6814,6 @@ body {
 .control-pane-tab-copy span {
   display: none;
 }
-
-/* ── Cards / Panels ── */
-.card,
-.side-pane .card,
-.chat-window,
-.chat-bubble,
-.project-item,
-.workflow-item,
-.project-metadata div,
-.semantic-overview div,
-.summary-note,
-.fold-block,
-.chat-plan-item,
-.agent-plan-step,
-.cae-list-item,
-.cae-overview-grid div,
-.cae-field-shell,
-.cae-chip-card,
-.capability-detail,
-.capability-facts div,
-.semantic-map-item,
-.workflow-step-item,
-.chat-diff-item,
-.agent-plan-preview,
-.agent-chat-strip,
-.selection-inspector-card,
-.viewer-toolbar-block,
-.insight-card,
-.viewer-overlay,
-.runtime-pill,
-.viewer-stage-badge,
-.notification-card,
-.drawer-section,
-.dropzone,
-.settings-drawer,
-.advanced-panel-intro {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
 .card h2,
 .side-pane .card h2,
 .dropzone-content strong,
@@ -8189,36 +7264,10 @@ textarea:focus,
 .cae-legend {
   border-color: var(--border-subtle);
 }
-
-/* Chat progress cards */
-.chat-progress-card {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-}
-
 .chat-cad-progress {
   border-color: rgba(168, 85, 247, 0.25);
   background: rgba(168, 85, 247, 0.06);
 }
-
-/* Advisory card */
-.chat-advisory-card {
-  border-color: rgba(251, 191, 36, 0.2);
-  background: rgba(251, 191, 36, 0.04);
-}
-
-/* Approval cards */
-.chat-approval-card,
-.approval-card {
-  border-color: rgba(251, 191, 36, 0.2);
-  background: rgba(251, 191, 36, 0.04);
-}
-
-.autopilot-approval-note {
-  border-left-color: var(--warning);
-  background: rgba(245, 158, 11, 0.04);
-}
-
 /* Result banners */
 .result-success {
   background: rgba(34, 197, 94, 0.06);
@@ -8257,67 +7306,6 @@ textarea:focus,
   border-color: rgba(142, 202, 230, 0.15);
   background: rgba(142, 202, 230, 0.04);
 }
-
-/* Target result */
-.chat-target-result {
-  border-color: rgba(99, 102, 241, 0.2);
-  background: rgba(99, 102, 241, 0.04);
-}
-
-/* Preprocess result */
-.chat-preprocess-result {
-  border-color: rgba(99, 102, 241, 0.15);
-  background: rgba(99, 102, 241, 0.03);
-}
-
-/* Sim result */
-.chat-sim-result {
-  border-color: rgba(34, 197, 94, 0.15);
-  background: rgba(34, 197, 94, 0.03);
-}
-
-.chat-sim-result-error {
-  border-color: rgba(239, 68, 68, 0.15);
-  background: rgba(239, 68, 68, 0.03);
-}
-
-/* Verdict cards */
-.chat-verdict-pass {
-  border-color: rgba(34, 197, 94, 0.2);
-  background: rgba(34, 197, 94, 0.03);
-}
-
-.chat-verdict-fail {
-  border-color: rgba(239, 68, 68, 0.2);
-  background: rgba(239, 68, 68, 0.03);
-}
-
-.chat-verdict-partial {
-  border-color: rgba(251, 191, 36, 0.2);
-  background: rgba(251, 191, 36, 0.03);
-}
-
-.chat-verdict-unknown {
-  border-color: var(--border-subtle);
-  background: transparent;
-}
-
-/* FOS badge */
-.chat-fos-safe {
-  color: var(--success);
-  background: rgba(34, 197, 94, 0.1);
-}
-
-.chat-fos-marginal {
-  color: var(--warning);
-  background: rgba(245, 158, 11, 0.1);
-}
-
-.chat-fos-critical {
-  color: var(--danger);
-  background: rgba(239, 68, 68, 0.1);
-}
-
 /* Summary notes */
 .summary-primary {
   border-color: rgba(142, 202, 230, 0.15);
@@ -8427,30 +7415,6 @@ textarea:focus,
 .viewer-face-action-btn:hover:not(:disabled) {
   background: var(--bg-elevated);
 }
-
-/* Autopilot run card */
-.autopilot-run-card {
-  background: var(--bg-elevated);
-  border-color: var(--border-subtle);
-}
-
-.autopilot-run-card.autopilot-run-awaiting_approval {
-  border-color: rgba(251, 191, 36, 0.25);
-}
-
-.autopilot-run-card.autopilot-run-failed {
-  border-color: rgba(239, 68, 68, 0.25);
-}
-
-.autopilot-current {
-  background: var(--bg-surface);
-  border-color: var(--border-subtle);
-}
-
-.autopilot-details {
-  border-top-color: var(--border-subtle);
-}
-
 /* Chat artifact links */
 .chat-artifact-link,
 .artifact-link {
@@ -8461,25 +7425,6 @@ textarea:focus,
 .artifact-link:hover {
   color: var(--text-primary);
 }
-
-/* Heatmap button */
-.chat-heatmap-btn {
-  border-color: var(--border-medium);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
-
-.chat-heatmap-btn:hover {
-  background: var(--bg-elevated);
-  border-color: var(--border-medium);
-}
-
-.chat-heatmap-btn.active {
-  background: var(--bg-elevated);
-  border-color: var(--text-secondary);
-  color: var(--text-primary);
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
    New 3-column layout: Sessions | Viewer | Chat
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -8967,6 +7912,40 @@ textarea:focus,
   align-items: flex-end;
   padding: 0 0 16px;
   margin: 0;
+}
+
+.chat-pane-body .chat-quick-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0;
+  margin: 0;
+}
+
+.chat-quick-action-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-1) 60%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.chat-quick-action-chip:hover:not(:disabled) {
+  background: var(--surface-1);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.chat-quick-action-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .agent-activity-line {

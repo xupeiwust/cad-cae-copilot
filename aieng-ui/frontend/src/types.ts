@@ -1249,6 +1249,12 @@ export type AutopilotApproval = {
   input: Record<string, unknown>;
   level: string;
   explanation: string;
+  side_effect_summary?: string | null;
+  risk_summary?: string | null;
+  target_project_id?: string | null;
+  code_preview?: string | null;
+  artifact_preview?: string | null;
+  recommended_action?: string | null;
   created_at: string;
 };
 
@@ -1275,6 +1281,7 @@ export type AutopilotRunState = {
   pending_approval?: AutopilotApproval | null;
   final_message?: string | null;
   errors: string[];
+  queued_user_messages?: string[];
 };
 
 export type ChatConnection = {

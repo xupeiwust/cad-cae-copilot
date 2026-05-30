@@ -24,6 +24,19 @@ export type ChatSession = {
   updated_at: string;
 };
 
+export type PersistedAgentEvent = {
+  id: number;
+  event_id: string;
+  run_id?: string | null;
+  project_id?: string | null;
+  session_id?: string | null;
+  type: string;
+  status?: string | null;
+  content?: string | null;
+  payload?: Record<string, unknown> | null;
+  created_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const timeoutMs = init?.timeoutMs ?? 30000;
   const controller = new AbortController();
@@ -156,6 +169,20 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ approved, user_message: userMessage ?? undefined }),
+      timeoutMs: 300000,
+    }),
+  replyAutopilot: (runId: string, message: string) =>
+    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+      timeoutMs: 300000,
+    }),
+  followUpAutopilot: (runId: string, message: string) =>
+    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/follow-up`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
       timeoutMs: 300000,
     }),
   getAutopilotRun: (runId: string) =>
@@ -545,6 +572,10 @@ export const api = {
   getChatMessages: (projectId: string, sessionId?: string | null) =>
     request<PersistedChatMessage[]>(
       `/api/projects/${projectId}/chat-messages${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,
+    ),
+  getAgentEvents: (projectId: string, sessionId?: string | null) =>
+    request<PersistedAgentEvent[]>(
+      `/api/projects/${projectId}/agent-events${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,
     ),
   saveChatMessage: (
     projectId: string,

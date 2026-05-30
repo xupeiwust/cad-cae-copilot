@@ -261,12 +261,16 @@ export function useAgentRuns({
     }
   }
 
-  async function updateAutopilotRun(runId: string, action: "approve" | "reject" | "cancel", userMessage?: string) {
+  async function updateAutopilotRun(runId: string, action: "approve" | "reject" | "cancel" | "reply" | "follow-up", userMessage?: string) {
     setAgentBusy(true);
     try {
       const result = action === "cancel"
         ? await api.cancelAutopilot(runId)
-        : await api.continueAutopilot(runId, action === "approve", userMessage || null);
+        : action === "reply"
+          ? await api.replyAutopilot(runId, userMessage || "")
+          : action === "follow-up"
+            ? await api.followUpAutopilot(runId, userMessage || "")
+            : await api.continueAutopilot(runId, action === "approve", userMessage || null);
       onAutopilotRunUpdate?.(result);
       setChatHistory((current) => current.map((entry) => (
         entry.autopilotRun?.run_id === runId

@@ -332,3 +332,79 @@ def test_solver_slice_runs_postprocess_followups_after_approval(tmp_path: Path) 
         "cae.extract_field_regions",
         "postprocess.refresh_cae_summary",
     ]
+
+
+def test_reply_to_chatting_run_resumes_without_approval(tmp_path: Path) -> None:
+    class ChatThenFinalAdapter:
+        adapter_id = "chatty"
+        label = "Chatty"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            action = (
+                {"action": {"type": "chat", "message": "What size bracket do you need?"}}
+                if self.calls == 1
+                else {"action": {"type": "final", "message": "Follow-up received."}, "done": True}
+            )
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(action),
+            )
+
+    adapter = ChatThenFinalAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"chatty": adapter},
+    )
+    state = engine.start(AutopilotRunRequest(message="make a bracket", adapter_id="chatty"))
+    assert state.status == "chatting"
+
+    resumed = engine.reply_to_run(state.run_id, "120mm wide")
+    assert resumed.status == "completed"
+    assert resumed.final_message == "Follow-up received."
+    assert any(obs.data.get("reply") is True for obs in resumed.observations)
+
+
+def test_follow_up_running_run_is_queued(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    state = engine.start(
+        AutopilotRunRequest(
+            message="wait",
+            fake_actions=[{"action": {"type": "pause", "reason": "Need more context."}}],
+        )
+    )
+    state.status = "running"
+    engine.store.save(state)
+
+    queued = engine.follow_up_run(state.run_id, "also add ribs")
+    assert queued.status == "running"
+    assert queued.queued_user_messages == ["also add ribs"]
+    assert any(obs.data.get("queued") is True for obs in queued.observations)
+
+
+def test_cancel_marker_stops_before_next_adapter_step(tmp_path: Path) -> None:
+    class FinalAdapter:
+        adapter_id = "finalizer"
+        label = "Finalizer"
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300):  # type: ignore[no-untyped-def]
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(
+                    {"action": {"type": "final", "message": "Should not run."}, "done": True}
+                ),
+            )
+
+    store = AutopilotStore(tmp_path / "runs")
+    engine = AutopilotEngine(store=store, runtime_tools=RUNTIME_TOOLS, adapters={"finalizer": FinalAdapter()})
+    state = engine.start(AutopilotRunRequest(message="x", adapter_id="finalizer", max_steps=1))
+    state.status = "running"
+    store.save(state)
+    store.request_cancel(state.run_id)
+
+    engine._step_loop(state, FinalAdapter(), 1)  # exercise the cooperative check directly
+    assert state.status == "cancelled"

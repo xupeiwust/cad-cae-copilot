@@ -112,7 +112,6 @@ export function AppChrome({ app }: AppChromeProps) {
               chatConnections={app.chatConnections}
               selectedChatConnectionId={app.selectedChatConnectionId}
               selectedConnectionBlocked={app.selectedConnectionBlocked}
-              selectedProject={app.selectedProject}
               selectedId={app.selectedId}
               chatBusy={app.chatBusy}
               cadGenerating={app.cadGenerating}
@@ -135,9 +134,6 @@ export function AppChrome({ app }: AppChromeProps) {
               cancelAutopilot={(runId) => void app.updateAutopilotRun(runId, "cancel")}
               approveSimulation={() => void app.executeSimulation()}
               rejectSimulation={() => app.setSimulationPending(false)}
-              heatmapActive={app.heatmapActive}
-              heatmapRange={app.heatmapRange}
-              onViewHeatmap={() => void app.viewStressHeatmap()}
               recentPickedFaces={app.pickedFaces}
             />
           </div>

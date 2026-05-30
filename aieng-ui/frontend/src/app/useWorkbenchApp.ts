@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, type ChatSession, type PersistedChatMessage } from "../api";
+import { api } from "../api";
 import {
   BASE_STAGES,
   DEFAULT_CHAT_CONNECTIONS,
   EMPTY_CAE_FIELDS,
 } from "../appConstants";
-import type { ChatHistoryItem, Notice, ShapeIrObject, StageItem, StageState } from "../appTypes";
+import type { Notice, ShapeIrObject, StageItem, StageState } from "../appTypes";
 import {
   createChatId,
   projectViewerUrl,
@@ -19,33 +19,29 @@ import type {
   ProjectRecord,
   ProjectSummary,
   RuntimeConfigSnapshot,
-  RuntimeRun,
   SolverFieldDescriptor,
-  AutopilotRunState,
 } from "../types";
 import { useAgentActivityStream } from "./useAgentActivityStream";
 import { useAgentRuns } from "./useAgentRuns";
-import { mergeLocalAgentCapabilities, summarizeAutopilotRun } from "./workbenchHelpers";
+import { mergeLocalAgentCapabilities } from "./workbenchHelpers";
 import { resolveEngineeringIntent } from "./engineeringIntent";
 import { buildFallbackSummary } from "./projectSummary";
-import { runtimeRunChatEntry } from "./runtimeRunChat";
 import { useEngineeringActions } from "./useEngineeringActions";
 import { useGeometryPointers } from "./useGeometryPointers";
 import { useObjectRegistry } from "./useObjectRegistry";
 import { useRuntimeSettings } from "./useRuntimeSettings";
+import { useChatSessions } from "./useChatSessions";
+import { useChatTranscript } from "./useChatTranscript";
 
 export function useWorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [projectName, setProjectName] = useState("STEP workbench project");
   const [message, setMessage] = useState("Check the current project status and generate a reviewable engineering execution plan.");
-  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -58,38 +54,33 @@ export function useWorkbenchApp() {
   const [artifactViewerData, setArtifactViewerData] = useState<ArtifactResponse | null>(null);
   const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
-  const persistedChatIdsRef = useRef<Set<string>>(new Set());
-  // Tracks which project the currently-loaded chatSessions/activeSessionId belong
-  // to. Set synchronously (a ref, not state) so the message-fetch effect can tell,
-  // within the same commit as a project switch, that activeSessionId is still the
-  // PREVIOUS project's session — and skip fetching it (which would 404). Without
-  // this, both the session-reset and message-fetch effects run in one commit and
-  // the fetch sees the stale session id for one render.
-  const sessionsProjectRef = useRef<string | null>(null);
-  const persistChatItem = useCallback((item: ChatHistoryItem) => {
-    if (!selectedId || !activeSessionId || persistedChatIdsRef.current.has(item.id)) return;
-    persistedChatIdsRef.current.add(item.id);
-    void api.saveChatMessage(selectedId, {
-      session_id: activeSessionId,
-      role: item.role,
-      content: item.body,
-      mode: item.mode,
-      created_at: item.createdAt,
-      extra: chatItemExtra(item),
-    }).catch(() => {
-      persistedChatIdsRef.current.delete(item.id);
-    });
-  }, [activeSessionId, selectedId]);
-  const setPersistentChatHistory = useCallback((value: SetStateAction<ChatHistoryItem[]>) => {
-    setChatHistory((current) => {
-      const next = typeof value === "function" ? value(current) : value;
-      const currentIds = new Set(current.map((item) => item.id));
-      for (const item of next) {
-        if (!currentIds.has(item.id)) persistChatItem(item);
-      }
-      return next;
-    });
-  }, [persistChatItem]);
+  const {
+    chatSessions,
+    activeSessionId,
+    activeSession,
+    sessionsReady,
+    createChatSession,
+    selectChatSession,
+    updateActiveSessionFromRun,
+    handleLiveChatSessionChange,
+    handleLiveChatSessionDelete,
+    renameActiveSessionForPrompt,
+  } = useChatSessions({ selectedId });
+  const {
+    chatHistory,
+    setChatHistory,
+    setPersistentChatHistory,
+    handleLiveChatMessage,
+    handleLiveAgentEvent,
+    appendRunToChatHistory,
+    clearAgentEvents,
+  } = useChatTranscript({
+    selectedId,
+    activeSessionId,
+    activeRunId: activeSession?.active_run_id,
+    sessionsReady,
+    onAutopilotRunUpdate: updateActiveSessionFromRun,
+  });
   const runtimeSettings = useRuntimeSettings({ setSummary });
   const {
     runtime,
@@ -203,49 +194,6 @@ export function useWorkbenchApp() {
     () => chatConnections.find((item) => item.id === selectedChatConnectionId) ?? chatConnections[0] ?? DEFAULT_CHAT_CONNECTIONS[0],
     [chatConnections, selectedChatConnectionId],
   );
-  const activeSession = useMemo(
-    () => chatSessions.find((item) => item.id === activeSessionId) ?? null,
-    [activeSessionId, chatSessions],
-  );
-  const updateActiveSessionFromRun = useCallback((run: AutopilotRunState) => {
-    const projectId = run.project_id ?? selectedId;
-    const sessionId = run.session_id ?? activeSessionId;
-    if (!projectId || !sessionId) return;
-    const status =
-      run.status === "running" || run.status === "awaiting_approval" || run.status === "chatting"
-        ? "running"
-        : run.status === "completed"
-          ? "completed"
-          : run.status === "cancelled"
-            ? "cancelled"
-            : run.status === "failed"
-              ? "failed"
-              : "idle";
-    setChatSessions((current) => current.map((session) => (
-      session.id === sessionId
-        ? { ...session, status, active_run_id: run.run_id, updated_at: run.updated_at }
-        : session
-    )));
-  }, [activeSessionId, selectedId]);
-  const handleLiveChatMessage = useCallback((messageRecord: PersistedChatMessage) => {
-    setChatHistory((current) => upsertPersistedChatMessage(current, messageRecord));
-    persistedChatIdsRef.current.add(`db-${messageRecord.id}`);
-    const clientId = getPersistedClientId(messageRecord);
-    if (clientId) persistedChatIdsRef.current.add(clientId);
-  }, []);
-  const handleLiveChatSessionChange = useCallback((session: ChatSession) => {
-    setChatSessions((current) => {
-      const index = current.findIndex((item) => item.id === session.id);
-      if (index === -1) return [session, ...current];
-      const updated = [...current];
-      updated[index] = session;
-      return updated.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-    });
-  }, []);
-  const handleLiveChatSessionDelete = useCallback((sessionId: string) => {
-    setChatSessions((current) => current.filter((session) => session.id !== sessionId));
-    setActiveSessionId((current) => current === sessionId ? null : current);
-  }, []);
   const selectedConnectionBlocked = selectedChatConnection.requires_project && !selectedId;
   const {
     agentBusy,
@@ -290,10 +238,12 @@ export function useWorkbenchApp() {
     onChatMessage: handleLiveChatMessage,
     onChatSessionChange: handleLiveChatSessionChange,
     onChatSessionDelete: handleLiveChatSessionDelete,
+    onAgentEvent: handleLiveAgentEvent,
     setAgentBusy,
     setNotice,
     setChatHistory: setPersistentChatHistory,
     setCadGenerationProgress,
+    clearAgentEvents,
   });
   const chatBusy = agentBusy || busy;
   useEffect(() => {
@@ -477,28 +427,32 @@ export function useWorkbenchApp() {
     });
   }
 
-  async function sendUnified() {
-    const prompt = message.trim();
+  async function sendUnified(promptOverride?: string) {
+    clearAgentEvents();
+    const prompt = (promptOverride ?? message).trim();
     if (!prompt) return;
-    if (selectedId && activeSessionId && activeSession && /^default session|new session$/i.test(activeSession.title)) {
-      const title = prompt.length > 54 ? `${prompt.slice(0, 51)}...` : prompt;
-      setChatSessions((current) => current.map((session) => (
-        session.id === activeSessionId ? { ...session, title } : session
-      )));
-      void api.updateChatSession(selectedId, activeSessionId, { title }).catch(() => {});
-    }
+    renameActiveSessionForPrompt(prompt);
     if (selectedChatConnection.id === "local-agent" || selectedChatConnection.id === "llm-api") {
-      const chattingRun = chatHistory
+      const activeAutopilotRun = chatHistory
         .slice()
         .reverse()
-        .find((item) => item.autopilotRun?.status === "chatting")?.autopilotRun;
-      if (chattingRun) {
+        .find((item) => item.autopilotRun && ["running", "awaiting_approval", "chatting", "blocked"].includes(item.autopilotRun.status))?.autopilotRun;
+      if (activeAutopilotRun) {
         setPersistentChatHistory((current) => [
           ...current,
-          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+          {
+            id: createChatId(),
+            role: "user",
+            body: prompt,
+            createdAt: new Date().toISOString(),
+            mode: "runtime",
+          },
         ]);
         setMessage("");
-        await updateAutopilotRun(chattingRun.run_id, "approve", prompt);
+        const action = activeAutopilotRun.status === "running"
+          ? "follow-up"
+          : "reply";
+        await updateAutopilotRun(activeAutopilotRun.run_id, action, prompt);
         return;
       }
       setPersistentChatHistory((current) => [
@@ -613,156 +567,11 @@ export function useWorkbenchApp() {
   }, [selectedId, selectedCaeField, hasCaeResultArtifacts, renderableCaeFields]);
 
   useEffect(() => {
-    if (!selectedId) {
-      persistedChatIdsRef.current = new Set();
-      sessionsProjectRef.current = null;
-      setChatSessions([]);
-      setActiveSessionId(null);
-      setChatHistory([]);
-      return;
-    }
-    // Reset session state immediately so the next effect does not fire
-    // getChatMessages with a stale session id from the previous project.
-    // Invalidate the ref synchronously: until this project's sessions load,
-    // the message-fetch effect sees ref !== selectedId and skips.
-    sessionsProjectRef.current = null;
-    setActiveSessionId(null);
-    setChatHistory([]);
-    let cancelled = false;
-    void api.getChatSessions(selectedId)
-      .then((sessions) => {
-        if (cancelled) return;
-        sessionsProjectRef.current = selectedId;
-        setChatSessions(sessions);
-        setActiveSessionId((current) => (
-          current && sessions.some((session) => session.id === current)
-            ? current
-            : sessions[0]?.id ?? null
-        ));
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setChatSessions([]);
-          setActiveSessionId(null);
-          setChatHistory([]);
-        }
-      });
-    return () => { cancelled = true; };
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (!selectedId || !activeSessionId) {
-      persistedChatIdsRef.current = new Set();
-      setChatHistory([]);
-      return;
-    }
-    // Guard against the project-switch race: activeSessionId may still hold the
-    // previous project's session for one render. Only fetch once this project's
-    // sessions have loaded (ref === selectedId), so we never query a session id
-    // that belongs to another project (which the backend correctly 404s).
-    if (sessionsProjectRef.current !== selectedId) {
-      return;
-    }
-    const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
-    let cancelled = false;
-    void api.getChatMessages(selectedId, activeSessionId)
-      .then((messages) => {
-        if (cancelled) return;
-        const items = messages.map(persistedMessageToChatItem);
-        persistedChatIdsRef.current = new Set(items.map((item) => item.id));
-        setChatHistory(items);
-        // Refresh any stale in-progress autopilot runs that were snapshotted
-        // into the DB before the run reached a terminal state.
-        const staleRunIds = new Set<string>();
-        for (const item of items) {
-          if (item.autopilotRun?.run_id && ACTIVE_AUTOPILOT_STATUSES.has(item.autopilotRun.status)) {
-            staleRunIds.add(item.autopilotRun.run_id);
-          }
-        }
-        for (const runId of staleRunIds) {
-          api.getAutopilotRun(runId)
-            .then((run) => {
-              if (!cancelled) {
-                setChatHistory((current) => upsertAutopilotChatItem(current, run));
-              }
-            })
-            .catch(() => {
-              if (cancelled) return;
-              setChatHistory((current) => current.map((item) => {
-                if (item.autopilotRun?.run_id !== runId) return item;
-                if (!ACTIVE_AUTOPILOT_STATUSES.has(item.autopilotRun.status)) return item;
-                return {
-                  ...item,
-                  body: `${item.body}\n\n*(Run state is no longer available; status may be stale.)*`,
-                  autopilotRun: {
-                    ...item.autopilotRun,
-                    status: "failed" as const,
-                    errors: [...(item.autopilotRun.errors || []), "Run state is no longer available."],
-                  },
-                };
-              }));
-            });
-        }
-      })
-      .catch(() => {
-        persistedChatIdsRef.current = new Set();
-        if (!cancelled) setChatHistory([]);
-      });
-    return () => { cancelled = true; };
-  }, [activeSessionId, selectedId]);
-
-  useEffect(() => {
-    if (!activeSession?.active_run_id) return;
-    const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
-    let cancelled = false;
-    void api.getAutopilotRun(activeSession.active_run_id)
-      .then((run) => {
-        if (cancelled) return;
-        updateActiveSessionFromRun(run);
-        setChatHistory((current) => upsertAutopilotChatItem(current, run));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        const runId = activeSession.active_run_id;
-        setChatHistory((current) => current.map((item) => {
-          const run = item.autopilotRun;
-          if (!run || run.run_id !== runId) return item;
-          if (!ACTIVE_AUTOPILOT_STATUSES.has(run.status)) return item;
-          return {
-            ...item,
-            body: `${item.body}\n\n*(Run state is no longer available; status may be stale.)*`,
-            autopilotRun: {
-              ...run,
-              status: "failed" as const,
-              errors: [...(run.errors || []), "Run state is no longer available."],
-            },
-          };
-        }));
-      });
-    return () => { cancelled = true; };
-  }, [activeSession?.active_run_id, updateActiveSessionFromRun]);
-
-  useEffect(() => {
-    if (!chatLogRef.current) return;
-    chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight;
+    const el = chatLogRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [chatHistory]);
-
-  function appendRunToChatHistory(run: RuntimeRun) {
-    setPersistentChatHistory((current) => [...current, runtimeRunChatEntry(run)]);
-  }
-
-  async function createChatSession(title?: string) {
-    if (!selectedId) return;
-    const session = await api.createChatSession(selectedId, title ?? "New session");
-    setChatSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
-    setActiveSessionId(session.id);
-    persistedChatIdsRef.current = new Set();
-    setChatHistory([]);
-  }
-
-  function selectChatSession(sessionId: string) {
-    setActiveSessionId(sessionId);
-  }
 
   async function viewArtifact(path: string) {
     if (!selectedId || !path.trim()) return;
@@ -875,81 +684,3 @@ export function useWorkbenchApp() {
     setGlobalSettingsOpen,
   };
 }
-
-function chatItemExtra(item: ChatHistoryItem): Record<string, unknown> | undefined {
-  const {
-    id: _id,
-    role: _role,
-    body: _body,
-    createdAt: _createdAt,
-    mode: _mode,
-    ...extra
-  } = item;
-  const entries = Object.entries(extra).filter(([, value]) => value !== undefined);
-  return Object.fromEntries([["client_id", item.id], ...entries]);
-}
-
-function persistedMessageToChatItem(message: PersistedChatMessage): ChatHistoryItem {
-  const { client_id: _clientId, ...extra } = (message.extra ?? {}) as Partial<ChatHistoryItem> & { client_id?: string };
-  const role = message.role === "assistant" ? "assistant" : "user";
-  const mode =
-    message.mode === "plan" || message.mode === "execute" || message.mode === "runtime"
-      ? message.mode
-      : undefined;
-  return {
-    ...extra,
-    id: `db-${message.id}`,
-    role,
-    body: message.content,
-    createdAt: message.created_at,
-    mode,
-  };
-}
-
-function getPersistedClientId(message: PersistedChatMessage): string | null {
-  const clientId = (message.extra as { client_id?: unknown } | null | undefined)?.client_id;
-  return typeof clientId === "string" && clientId ? clientId : null;
-}
-
-function upsertPersistedChatMessage(current: ChatHistoryItem[], message: PersistedChatMessage): ChatHistoryItem[] {
-  const dbId = `db-${message.id}`;
-  const clientId = getPersistedClientId(message);
-  const index = current.findIndex((item) => item.id === dbId || (clientId ? item.id === clientId : false));
-  if (index === -1) return [...current, persistedMessageToChatItem(message)];
-  const updated = [...current];
-  updated[index] = {
-    ...updated[index],
-    ...persistedMessageToChatItem(message),
-    id: updated[index].id,
-  };
-  return updated;
-}
-
-function autopilotRunToChatItem(run: AutopilotRunState): ChatHistoryItem {
-  return {
-    id: `run-${run.run_id}`,
-    role: "assistant",
-    body: summarizeAutopilotRun(run),
-    createdAt: run.created_at,
-    mode: "runtime",
-    autopilotRun: run,
-    errors: run.errors,
-  };
-}
-
-function upsertAutopilotChatItem(current: ChatHistoryItem[], run: AutopilotRunState): ChatHistoryItem[] {
-  const index = current.findIndex((item) => item.autopilotRun?.run_id === run.run_id);
-  if (index === -1) {
-    return [...current, autopilotRunToChatItem(run)];
-  }
-  const updated = [...current];
-  updated[index] = {
-    ...updated[index],
-    body: summarizeAutopilotRun(run),
-    autopilotRun: run,
-    errors: run.errors,
-  };
-  return updated;
-}
-
-

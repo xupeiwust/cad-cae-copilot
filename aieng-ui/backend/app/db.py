@@ -44,6 +44,21 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS agent_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT UNIQUE NOT NULL,
+    run_id TEXT,
+    project_id TEXT,
+    session_id TEXT,
+    type TEXT NOT NULL,
+    status TEXT,
+    content TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_events_project_session ON agent_events(project_id, session_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_agent_events_run ON agent_events(run_id, created_at, id);
 """
 
 
@@ -56,6 +71,8 @@ def init_db(db_path: Path) -> None:
         conn.executescript(_DB_INIT_SQL)
         _ensure_column(conn, "chat_messages", "session_id", "TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id, created_at, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_events_project_session ON agent_events(project_id, session_id, created_at, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_events_run ON agent_events(run_id, created_at, id)")
         conn.commit()
     finally:
         conn.close()
@@ -219,8 +236,9 @@ def delete_project_chat(db_path: Path, project_id: str) -> int:
     try:
         c1 = conn.execute("DELETE FROM chat_messages WHERE project_id = ?", (project_id,))
         c2 = conn.execute("DELETE FROM chat_sessions WHERE project_id = ?", (project_id,))
+        c3 = conn.execute("DELETE FROM agent_events WHERE project_id = ?", (project_id,))
         conn.commit()
-        return (c1.rowcount or 0) + (c2.rowcount or 0)
+        return (c1.rowcount or 0) + (c2.rowcount or 0) + (c3.rowcount or 0)
     finally:
         conn.close()
 
@@ -370,6 +388,100 @@ def _message_row_to_dict(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
         "mode": row[5],
         "created_at": row[6],
         "extra": json.loads(row[7]) if row[7] else None,
+    }
+
+
+# agent_events CRUD
+
+
+def add_agent_event(
+    db_path: Path,
+    *,
+    event_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    run_id: str | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    status: str | None = None,
+    content: str | None = None,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Insert an append-only agent transcript event idempotently."""
+    from .config import now_iso
+
+    event_id = event_id.strip()
+    event_type = event_type.strip()
+    if not event_id:
+        raise ValueError("event_id is required")
+    if not event_type:
+        raise ValueError("event_type is required")
+    created_at = created_at or now_iso()
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO agent_events
+                (event_id, run_id, project_id, session_id, type, status, content, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (event_id, run_id, project_id, session_id, event_type, status, content, payload_json, created_at),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT id, event_id, run_id, project_id, session_id, type, status, content, payload_json, created_at
+            FROM agent_events
+            WHERE event_id = ?
+            """,
+            (event_id,),
+        ).fetchone()
+        return _agent_event_row_to_dict(row)
+    finally:
+        conn.close()
+
+
+def get_agent_events(db_path: Path, project_id: str, session_id: str | None = None) -> list[dict[str, Any]]:
+    conn = _conn(db_path)
+    try:
+        if session_id:
+            rows = conn.execute(
+                """
+                SELECT id, event_id, run_id, project_id, session_id, type, status, content, payload_json, created_at
+                FROM agent_events
+                WHERE project_id = ? AND session_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (project_id, session_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, event_id, run_id, project_id, session_id, type, status, content, payload_json, created_at
+                FROM agent_events
+                WHERE project_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [_agent_event_row_to_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def _agent_event_row_to_dict(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "event_id": row[1],
+        "run_id": row[2],
+        "project_id": row[3],
+        "session_id": row[4],
+        "type": row[5],
+        "status": row[6],
+        "content": row[7],
+        "payload": json.loads(row[8]) if row[8] else {},
+        "created_at": row[9],
     }
 
 

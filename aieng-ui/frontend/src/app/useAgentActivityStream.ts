@@ -6,6 +6,7 @@ import type { AgentActivityEvent, LiveSyncStatus } from "../appUtils";
 import { applyAgentActivityEvent, createChatId } from "../appUtils";
 import type { AutopilotRunState } from "../types";
 import type { ChatSession, PersistedChatMessage } from "../api";
+import type { AgentTranscriptEvent } from "./chatTranscript";
 import {
   autopilotAgentLabel,
   summarizeAutopilotRun,
@@ -23,10 +24,12 @@ type UseAgentActivityStreamArgs = {
   onChatMessage(message: PersistedChatMessage): void;
   onChatSessionChange(session: ChatSession, action?: string | null): void;
   onChatSessionDelete(sessionId: string): void;
+  onAgentEvent(event: AgentTranscriptEvent): void;
   setAgentBusy: Dispatch<SetStateAction<boolean>>;
   setNotice: Dispatch<SetStateAction<Notice | null>>;
   setChatHistory: Dispatch<SetStateAction<ChatHistoryItem[]>>;
   setCadGenerationProgress: Dispatch<SetStateAction<CadGenerationProgress | null>>;
+  clearAgentEvents(): void;
 };
 
 export function useAgentActivityStream({
@@ -41,10 +44,12 @@ export function useAgentActivityStream({
   onChatMessage,
   onChatSessionChange,
   onChatSessionDelete,
+  onAgentEvent,
   setAgentBusy,
   setNotice,
   setChatHistory,
   setCadGenerationProgress,
+  clearAgentEvents,
 }: UseAgentActivityStreamArgs) {
   const [liveSyncStatus, setLiveSyncStatus] = useState<LiveSyncStatus>("connecting");
   const [liveSyncDetail, setLiveSyncDetail] = useState("Connecting to backend activity stream...");
@@ -55,6 +60,7 @@ export function useAgentActivityStream({
   const onChatMessageRef = useRef(onChatMessage);
   const onChatSessionChangeRef = useRef(onChatSessionChange);
   const onChatSessionDeleteRef = useRef(onChatSessionDelete);
+  const onAgentEventRef = useRef(onAgentEvent);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -69,7 +75,8 @@ export function useAgentActivityStream({
     onChatMessageRef.current = onChatMessage;
     onChatSessionChangeRef.current = onChatSessionChange;
     onChatSessionDeleteRef.current = onChatSessionDelete;
-  }, [onAutopilotRunUpdate, onChatMessage, onChatSessionChange, onChatSessionDelete]);
+    onAgentEventRef.current = onAgentEvent;
+  }, [onAutopilotRunUpdate, onChatMessage, onChatSessionChange, onChatSessionDelete, onAgentEvent]);
 
   useEffect(() => {
     const url = `${api.base}/api/agent-activity/stream`;
@@ -124,6 +131,7 @@ export function useAgentActivityStream({
         if (run.status !== "running") {
           stopAutopilotPoll();
           setAgentBusy(false);
+          clearAgentEvents();
         }
         if (run.project_id && current && run.project_id !== current) return;
         if (run.session_id && currentSession && run.session_id !== currentSession) return;
@@ -153,8 +161,13 @@ export function useAgentActivityStream({
           return updated;
         });
         if (run.status === "chatting") {
+          stopAutopilotPoll();
+          setAgentBusy(false);
           return;
-        } else if (run.status !== "running") {
+        }
+        if (run.status !== "running") {
+          stopAutopilotPoll();
+          setAgentBusy(false);
           setNotice({
             tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
             title: `${autopilotAgentLabel(run)} — ${run.status}`,
@@ -184,6 +197,23 @@ export function useAgentActivityStream({
       if (event.type === "chat_session_deleted") {
         if (event.project_id && current && event.project_id !== current) return;
         if (event.session_id) onChatSessionDeleteRef.current(event.session_id);
+        return;
+      }
+
+      if (
+        event.type === "agent_message" ||
+        event.type === "tool_started" ||
+        event.type === "tool_completed" ||
+        event.type === "tool_failed" ||
+        event.type === "approval_requested" ||
+        event.type === "approval_resolved" ||
+        event.type === "artifact_ready" ||
+        event.type === "run_status_changed" ||
+        event.type === "run_cancelled"
+      ) {
+        if (event.project_id && current && event.project_id !== current) return;
+        if (event.session_id && currentSession && event.session_id !== currentSession) return;
+        onAgentEventRef.current(event as AgentTranscriptEvent);
         return;
       }
 

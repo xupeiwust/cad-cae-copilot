@@ -203,12 +203,72 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         return AutopilotStore(active_settings.data_root / "agent_autopilot" / "runs")
 
     def _publish_live_event(event: dict[str, Any]) -> None:
+        if event.get("type") in {
+            "agent_message",
+            "tool_started",
+            "tool_completed",
+            "tool_failed",
+            "approval_requested",
+            "approval_resolved",
+            "artifact_ready",
+            "viewer_asset_changed",
+            "run_status_changed",
+            "run_cancelled",
+        } and event.get("project_id"):
+            try:
+                from . import db
+
+                event_id = str(event.get("event_id") or f"{event.get('type')}-{event.get('call_id') or uuid.uuid4().hex[:12]}")
+                payload = event.get("payload") if isinstance(event.get("payload"), dict) else {
+                    k: v for k, v in event.items() if k not in {"payload"}
+                }
+                db.add_agent_event(
+                    db_path,
+                    event_id=event_id,
+                    event_type=str(event.get("type")),
+                    payload=payload,
+                    run_id=str(event.get("run_id")) if event.get("run_id") else None,
+                    project_id=str(event.get("project_id")) if event.get("project_id") else None,
+                    session_id=str(event.get("session_id")) if event.get("session_id") else None,
+                    status=str(event.get("status")) if event.get("status") else None,
+                    content=str(event.get("content") or event.get("message")) if event.get("content") or event.get("message") else None,
+                    created_at=str(event.get("created_at")) if event.get("created_at") else None,
+                )
+                event.setdefault("event_id", event_id)
+            except Exception:
+                pass
         try:
             from . import agent_activity
 
             agent_activity.publish(event)
         except Exception:
             pass
+
+    def _publish_agent_event(event: dict[str, Any]) -> None:
+        from . import db
+
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {
+            k: v for k, v in event.items() if k not in {"payload"}
+        }
+        event_id = str(event.get("event_id") or uuid.uuid4().hex[:16])
+        event_type = str(event.get("type") or "agent_event")
+        try:
+            row = db.add_agent_event(
+                db_path,
+                event_id=event_id,
+                event_type=event_type,
+                payload=payload,
+                run_id=str(event.get("run_id")) if event.get("run_id") else None,
+                project_id=str(event.get("project_id")) if event.get("project_id") else None,
+                session_id=str(event.get("session_id")) if event.get("session_id") else None,
+                status=str(event.get("status")) if event.get("status") else None,
+                content=str(event.get("content")) if event.get("content") else None,
+                created_at=str(event.get("created_at")) if event.get("created_at") else None,
+            )
+            event = {**event, **{k: row[k] for k in ("event_id", "created_at") if k in row}}
+        except Exception:
+            pass
+        _publish_live_event(event)
 
     def _publish_chat_session_event(session: dict[str, Any], action: str = "updated") -> None:
         _publish_live_event({
@@ -341,6 +401,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             adapters=_autopilot_adapters(request.llm_config),
             agent_context=agent_context_snapshot,
             on_state_update=_sync_autopilot_session,
+            on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -391,6 +452,17 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         store.save(state)
         _sync_autopilot_session(state)
         _publish_autopilot_state(state)
+        _publish_agent_event({
+            "event_id": f"{state.run_id}-started",
+            "type": "run_status_changed",
+            "project_id": state.project_id,
+            "session_id": state.session_id,
+            "run_id": state.run_id,
+            "status": state.status,
+            "content": "Autopilot run started.",
+            "payload": {"message": state.message, "adapter_id": state.adapter_id},
+            "created_at": state.created_at,
+        })
         _write_autopilot_audit(state.project_id, "agent_autopilot_started", {
             "run_id": state.run_id,
             "adapter_id": state.adapter_id,
@@ -470,6 +542,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(current.llm_config),
             on_state_update=_sync_autopilot_session,
+            on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -496,12 +569,86 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         _start_autopilot_worker(_run_continue_in_background)
         return current.model_dump()
 
+    @app.post("/api/agent/autopilot/runs/{run_id}/reply")
+    def reply_agent_autopilot_run(
+        run_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from .agent_autopilot.engine import AutopilotEngine
+
+        data = payload or {}
+        message = str(data.get("message") or "").strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="message is required")
+        store = _autopilot_store()
+        try:
+            current = store.load(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if current.status in ("completed", "failed", "cancelled"):
+            return current.model_dump()
+        current.status = "running"
+        current.updated_at = now_iso()
+        store.save(current)
+        _sync_autopilot_session(current)
+        _publish_autopilot_state(current)
+        engine = AutopilotEngine(
+            store=store,
+            runtime_tools=_rt.list_tools_for_mcp(),
+            adapters=_autopilot_adapters(current.llm_config),
+            on_state_update=_sync_autopilot_session,
+            on_event=_publish_agent_event,
+            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                tool_name,
+                tool_input,
+                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+            ),
+        )
+
+        def _run_reply_in_background() -> None:
+            try:
+                engine.reply_to_run(run_id, message)
+            except Exception as exc:
+                loaded = store.load(run_id)
+                loaded.status = "failed"
+                loaded.errors.append(str(exc))
+                store.save(loaded)
+                _sync_autopilot_session(loaded)
+                _publish_autopilot_state(loaded)
+
+        _start_autopilot_worker(_run_reply_in_background)
+        return current.model_dump()
+
+    @app.post("/api/agent/autopilot/runs/{run_id}/follow-up")
+    def follow_up_agent_autopilot_run(
+        run_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from .agent_autopilot.engine import AutopilotEngine
+
+        message = str((payload or {}).get("message") or "").strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="message is required")
+        store = _autopilot_store()
+        engine = AutopilotEngine(
+            store=store,
+            runtime_tools=_rt.list_tools_for_mcp(),
+            adapters=_autopilot_adapters(),
+            on_state_update=_sync_autopilot_session,
+            on_event=_publish_agent_event,
+        )
+        try:
+            state = engine.follow_up_run(run_id, message)
+            return state.model_dump()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/agent/autopilot/runs/{run_id}/cancel")
     def cancel_agent_autopilot_run(run_id: str) -> dict[str, Any]:
         from .agent_autopilot.engine import AutopilotEngine
 
         store = _autopilot_store()
-        engine = AutopilotEngine(store=store, runtime_tools=_rt.list_tools_for_mcp(), on_state_update=_sync_autopilot_session)
+        engine = AutopilotEngine(store=store, runtime_tools=_rt.list_tools_for_mcp(), on_state_update=_sync_autopilot_session, on_event=_publish_agent_event)
         try:
             state = engine.cancel_run(run_id)
             _write_autopilot_audit(state.project_id, "agent_autopilot_cancelled", {
@@ -2155,6 +2302,17 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             if session is None or session["project_id"] != project_id:
                 raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
         return db.get_chat_messages(db_path, project_id, session_id=session_id)
+
+    @app.get("/api/projects/{project_id}/agent-events")
+    def list_agent_events(project_id: str, session_id: str | None = None) -> list[dict[str, Any]]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        if session_id:
+            session = db.get_chat_session(db_path, session_id)
+            if session is None or session["project_id"] != project_id:
+                raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        return db.get_agent_events(db_path, project_id, session_id=session_id)
 
     @app.post("/api/projects/{project_id}/chat-messages")
     def create_chat_message(

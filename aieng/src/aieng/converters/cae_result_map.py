@@ -1,17 +1,16 @@
-"""Map CAE (CalculiX) results back to Shape IR objects.
+"""Map (solver-neutral) CAE results back to Shape IR objects.
 
-Bridges solver results to the model's authoring intent: it takes
-``results/computed_metrics.json`` (scalar extrema per load case) and
-``results/field_regions.json`` (spatial clusters of high stress/displacement) and
-maps each region through ``geometry/topology_map.json`` and
-``registry/object_registry.json`` to a ``source_ir_node`` where resolvable.
+Consumes ONLY the neutral CAE contract artifacts — ``analysis/computed_metrics.json``
+and ``analysis/field_regions.json`` (see ``cae_result_contract``) — plus
+``geometry/topology_map.json`` and ``registry/object_registry.json``. It never
+reads solver-native files (.frd/.dat/.inp) or knows any solver's naming; that is
+the adapters'/normalizers' job. This is what makes the mapping solver-neutral:
+CalculiX, Code_Aster, Elmer, FEniCSx or a remote solver all map identically once
+their results are normalized.
 
-Output: ``analysis/cae_result_map.json``. This is observational and runs no
-solver/mesher — it only correlates already-produced results with geometry.
-Regions that cannot be tied to a node are reported honestly as ``unmapped``.
-
-This map is the substrate for later topology optimization (loads/hotspots tied to
-editable Shape IR nodes) — but optimization is NOT implemented here.
+Output: ``analysis/cae_result_map.json`` (ties results to topology entities,
+object_registry objects, and source_ir_node where resolvable; unmapped regions
+are reported honestly). This is observational and runs no solver/mesher.
 """
 from __future__ import annotations
 
@@ -24,24 +23,14 @@ from typing import Any
 
 from aieng import FORMAT_VERSION
 
-CAE_RESULT_MAP_PATH = "analysis/cae_result_map.json"
+from .cae_result_contract import CAE_CONTRACT_VERSION, load_neutral_cae_artifacts
 
-_COMPUTED_METRICS_MEMBER = "results/computed_metrics.json"
-_FIELD_REGIONS_MEMBER = "results/field_regions.json"
+CAE_RESULT_MAP_PATH = "analysis/cae_result_map.json"
 _TOPOLOGY_MEMBER = "geometry/topology_map.json"
 _OBJECT_REGISTRY_MEMBER = "registry/object_registry.json"
 
-# FRD field code -> result type
-_FIELD_RESULT_TYPE = {"S": "stress", "U": "displacement", "DISP": "displacement", "E": "strain"}
-# computed_metrics metric name -> result type
-_METRIC_RESULT_TYPE = {
-    "max_von_mises_stress": "stress", "min_von_mises_stress": "stress",
-    "max_displacement": "displacement", "max_deflection": "deflection",
-    "max_principal_stress": "stress", "max_strain": "strain",
-}
 
-
-def _bbox_contains(bbox: list[float], p: tuple[float, float, float], pad: float = 1e-6) -> bool:
+def _bbox_contains(bbox: Any, p: tuple[float, float, float], pad: float = 1e-6) -> bool:
     if not isinstance(bbox, list) or len(bbox) != 6:
         return False
     return all(bbox[i] - pad <= p[i] <= bbox[i + 3] + pad for i in range(3))
@@ -52,13 +41,8 @@ def _bbox_center(bbox: list[float]) -> tuple[float, float, float]:
 
 
 def _resolve_entity(solids: list[dict[str, Any]], point: tuple[float, float, float]) -> tuple[dict[str, Any] | None, str]:
-    """Find the topology solid a region location belongs to: prefer bbox
-    containment, else nearest centre. Returns (solid, method)."""
-    contained = [s for s in solids if _bbox_contains(s.get("bounding_box", []), point)]
-    if len(contained) == 1:
-        return contained[0], "bbox_contains"
+    contained = [s for s in solids if _bbox_contains(s.get("bounding_box"), point)]
     if contained:
-        # multiple containers -> pick the smallest (tightest) bbox
         def _vol(s: dict[str, Any]) -> float:
             b = s.get("bounding_box") or [0, 0, 0, 0, 0, 0]
             return abs((b[3] - b[0]) * (b[4] - b[1]) * (b[5] - b[2]))
@@ -76,13 +60,10 @@ def _resolve_entity(solids: list[dict[str, Any]], point: tuple[float, float, flo
 
 
 def _node_for_entity(objects: list[dict[str, Any]], entity_id: str) -> tuple[str | None, str | None, str]:
-    """Map a topology entity id to a Shape IR node via the object registry.
-    Returns (node_id, linkage, status) where status is resolved | ambiguous | none."""
     matches = [o for o in objects if entity_id in (o.get("topology_entities") or [])]
     if len(matches) == 1:
         return matches[0].get("node_id"), matches[0].get("linkage"), "resolved"
     if len(matches) > 1:
-        # e.g. fused mesh: many nodes share one body -> can't single out a node
         return None, (matches[0].get("linkage") if matches else None), "ambiguous"
     return None, None, "none"
 
@@ -90,111 +71,121 @@ def _node_for_entity(objects: list[dict[str, Any]], entity_id: str) -> tuple[str
 def map_cae_results(
     *,
     computed_metrics: dict[str, Any] | None,
-    field_regions_docs: list[dict[str, Any]] | None,
+    field_regions: dict[str, Any] | None,
     topology_map: dict[str, Any] | None,
     object_registry: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Correlate CAE results with Shape IR nodes. Pure; inputs are dicts."""
+    """Correlate NEUTRAL CAE results with Shape IR nodes. Pure; neutral dicts in.
+
+    ``computed_metrics`` is a neutral computed_metrics doc (load_cases[].results[]);
+    ``field_regions`` is a neutral field_regions doc (regions[]).
+    """
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     computed_metrics = computed_metrics or {}
-    field_regions_docs = [d for d in (field_regions_docs or []) if isinstance(d, dict)]
+    field_regions = field_regions or {}
     entities = (topology_map or {}).get("entities") or []
     solids = [e for e in entities if isinstance(e, dict) and e.get("type") == "solid"]
     objects = (object_registry or {}).get("objects") or []
 
-    load_cases = computed_metrics.get("load_cases") or []
     units: dict[str, str] = {}
-
-    # ── overall scalar extrema per load case (from computed_metrics) ──
     overall: list[dict[str, Any]] = []
-    for lc in load_cases:
+    load_case_ids: list[str] = []
+    for lc in computed_metrics.get("load_cases") or []:
         if not isinstance(lc, dict):
             continue
         lc_id = str(lc.get("id") or "load_case_1")
-        for name, mv in (lc.get("metrics") or {}).items():
-            if not isinstance(mv, dict):
+        if lc_id not in load_case_ids:
+            load_case_ids.append(lc_id)
+        for r in lc.get("results") or []:
+            if not isinstance(r, dict):
                 continue
-            rtype = _METRIC_RESULT_TYPE.get(name, name.replace("max_", "").replace("min_", ""))
-            unit = mv.get("unit")
-            if unit:
-                units.setdefault(rtype, unit)
+            rtype = str(r.get("result_type") or "unknown")
+            if r.get("unit"):
+                units.setdefault(rtype, r["unit"])
             overall.append({
                 "load_case_id": lc_id,
                 "result_type": rtype,
-                "metric": name,
-                "max": mv.get("value"),
-                "min": None,       # computed_metrics records extrema only
-                "average": None,   # not available without per-node aggregation
-                "unit": unit,
+                "metric": r.get("metric"),
+                "max": r.get("max"),
+                "min": r.get("min"),
+                "average": r.get("average"),
+                "unit": r.get("unit"),
             })
 
-    default_lc = str(load_cases[0]["id"]) if load_cases and isinstance(load_cases[0], dict) and load_cases[0].get("id") else "load_case_1"
+    default_lc = load_case_ids[0] if load_case_ids else "load_case_1"
 
-    # ── spatial regions -> topology entity -> Shape IR node ──
     mapped: list[dict[str, Any]] = []
     unmapped: list[dict[str, Any]] = []
-    for doc in field_regions_docs:
-        field = str(doc.get("field") or "").upper()
-        rtype = _FIELD_RESULT_TYPE.get(field, field.lower() or "unknown")
-        lc_id = str(doc.get("load_case_id") or default_lc)
-        for cluster in doc.get("clusters") or []:
-            if not isinstance(cluster, dict):
-                continue
-            loc = cluster.get("location") or {}
-            point = (float(loc.get("x", 0.0)), float(loc.get("y", 0.0)), float(loc.get("z", 0.0)))
-            mag = cluster.get("magnitude") or {}
-            unit = mag.get("unit")
-            if unit:
-                units.setdefault(rtype, unit)
-            base = {
-                "load_case_id": lc_id,
-                "result_type": rtype,
-                "cluster_id": cluster.get("id"),
-                "value": mag.get("value"),
-                "unit": unit,
-                "location": {"x": point[0], "y": point[1], "z": point[2]},
-                "node_count": cluster.get("node_count"),
-            }
-            solid, method = _resolve_entity(solids, point) if solids else (None, "none")
-            if solid is None:
-                unmapped.append({**base, "reason": "no topology solid near the result location"})
-                continue
-            node_id, linkage, status = _node_for_entity(objects, str(solid.get("id")))
-            affected = [str(solid.get("id"))] + [str(f) for f in (solid.get("face_ids") or [])]
-            if status == "resolved":
-                confidence = "high" if (method == "bbox_contains" and linkage in ("name_match", "source_ir_node")) else "medium"
-            elif status == "ambiguous":
-                confidence = "low"  # fused mesh / shared body — region known, node not unique
-            else:
-                confidence = "low"
-            entry = {
-                **base,
-                "affected_topology_entities": affected,
-                "source_ir_node": node_id,
-                "node_linkage": linkage,
-                "mapping_method": method,
-                "confidence": confidence,
-            }
-            if node_id is None:
-                entry["note"] = (
-                    "region mapped to a topology body but not to a unique Shape IR node "
-                    f"({status}; e.g. fused mesh)."
-                )
-            mapped.append(entry)
+    methods: set[str] = set()
+    for region in field_regions.get("regions") or []:
+        if not isinstance(region, dict):
+            continue
+        rtype = str(region.get("result_type") or "unknown")
+        lc_id = str(region.get("load_case_id") or default_lc)
+        if lc_id not in load_case_ids:
+            load_case_ids.append(lc_id)
+        center = region.get("center") or {}
+        point = (float(center.get("x", 0.0)), float(center.get("y", 0.0)), float(center.get("z", 0.0)))
+        value = region.get("value") or {}
+        unit = value.get("unit")
+        if unit:
+            units.setdefault(rtype, unit)
+        base = {
+            "load_case_id": lc_id,
+            "result_type": rtype,
+            "region_id": region.get("id"),
+            "value": value.get("peak", value.get("max")),
+            "value_range": {"min": value.get("min"), "max": value.get("max")},
+            "unit": unit,
+            "location": {"x": point[0], "y": point[1], "z": point[2]},
+            "node_count": region.get("node_count"),
+        }
+        solid, method = _resolve_entity(solids, point) if solids else (None, "none")
+        if solid is None:
+            unmapped.append({**base, "reason": "no topology solid near the result location"})
+            continue
+        methods.add(method)
+        node_id, linkage, status = _node_for_entity(objects, str(solid.get("id")))
+        affected = [str(solid.get("id"))] + [str(f) for f in (solid.get("face_ids") or [])]
+        if status == "resolved":
+            confidence = "high" if (method == "bbox_contains" and linkage in ("name_match", "source_ir_node")) else "medium"
+        else:
+            confidence = "low"
+        entry = {
+            **base,
+            "affected_topology_entities": affected,
+            "source_ir_node": node_id,
+            "node_linkage": linkage,
+            "mapping_method": method,
+            "confidence": confidence,
+        }
+        if node_id is None:
+            entry["note"] = f"region mapped to a topology body but not to a unique Shape IR node ({status})."
+        mapped.append(entry)
 
-    notes = [
-        "Observational CAE->Shape IR correlation; no solver/mesher executed.",
-        "Spatial regions are matched to topology bodies by location; node linkage uses the object registry.",
-    ]
-    if not field_regions_docs:
-        notes.append("No field_regions present — only scalar extrema were mapped (run cae.extract_field_regions).")
+    # ── provenance: solver/adapter, artifact versions, mapping methods, uncertainty ──
+    cm_solver = computed_metrics.get("solver") if isinstance(computed_metrics.get("solver"), dict) else {}
+    fr_solver = field_regions.get("solver") if isinstance(field_regions.get("solver"), dict) else {}
+    solver = fr_solver or cm_solver or {}
+    uncertain = (
+        [{"region_id": m.get("region_id"), "reason": "node not unique (low confidence)"}
+         for m in mapped if m["confidence"] == "low"]
+        + [{"region_id": u.get("region_id"), "reason": u.get("reason")} for u in unmapped]
+    )
+
+    notes = ["Observational, solver-neutral CAE->Shape IR correlation; no solver/mesher executed."]
+    if not (field_regions.get("regions")):
+        notes.append("No field regions present — only scalar extrema were mapped.")
     if not objects:
         notes.append("No object registry — regions could not be tied to Shape IR nodes.")
 
     return {
+        "format": "aieng.cae_result_map",
         "format_version": FORMAT_VERSION,
+        "contract_version": CAE_CONTRACT_VERSION,
         "generated_at_utc": now,
-        "load_cases": [o["load_case_id"] for o in overall] or ([default_lc] if field_regions_docs else []),
+        "solver": solver,
+        "load_cases": load_case_ids or [default_lc],
         "units": units,
         "overall": overall,
         "mapped_results": mapped,
@@ -204,43 +195,51 @@ def map_cae_results(
             "unmapped_count": len(unmapped),
             "resolved_to_node": sum(1 for m in mapped if m.get("source_ir_node")),
         },
+        "provenance": {
+            "solver_name": solver.get("name"),
+            "solver_version": solver.get("version"),
+            "adapter": solver.get("adapter"),
+            "computed_metrics_schema": computed_metrics.get("schema_version"),
+            "field_regions_schema": field_regions.get("schema_version"),
+            "mapping_methods": sorted(methods),
+            "unsupported_or_uncertain": uncertain,
+        },
         "notes": notes,
     }
 
 
-def _read_json(zf: zipfile.ZipFile, name: str, names: set[str]) -> Any:
-    if name not in names:
-        return None
-    try:
-        return json.loads(zf.read(name).decode("utf-8"))
-    except Exception:
-        return None
-
-
 def build_cae_result_map_for_package(package_path: str | Path) -> dict[str, Any]:
-    """Read CAE + geometry artifacts from a package and build the result map."""
+    """Build the result map from a package's NEUTRAL CAE artifacts (normalizing
+    legacy CalculiX ``results/*`` on the fly when ``analysis/*`` is absent)."""
     package_path = Path(package_path)
     if not package_path.exists():
-        return {"format_version": FORMAT_VERSION, "error": f"package not found: {package_path}",
-                "mapped_results": [], "unmapped_regions": []}
+        return {"format": "aieng.cae_result_map", "format_version": FORMAT_VERSION,
+                "error": f"package not found: {package_path}", "mapped_results": [], "unmapped_regions": []}
+    neutral = load_neutral_cae_artifacts(package_path)
     with zipfile.ZipFile(package_path, "r") as zf:
         names = set(zf.namelist())
-        computed_metrics = _read_json(zf, _COMPUTED_METRICS_MEMBER, names)
-        field_regions = _read_json(zf, _FIELD_REGIONS_MEMBER, names)
-        topology_map = _read_json(zf, _TOPOLOGY_MEMBER, names)
-        object_registry = _read_json(zf, _OBJECT_REGISTRY_MEMBER, names)
-    docs = [field_regions] if isinstance(field_regions, dict) else []
-    return map_cae_results(
-        computed_metrics=computed_metrics,
-        field_regions_docs=docs,
+        topology_map = json.loads(zf.read(_TOPOLOGY_MEMBER).decode("utf-8")) if _TOPOLOGY_MEMBER in names else {}
+        object_registry = json.loads(zf.read(_OBJECT_REGISTRY_MEMBER).decode("utf-8")) if _OBJECT_REGISTRY_MEMBER in names else {}
+    result = map_cae_results(
+        computed_metrics=neutral["computed_metrics"],
+        field_regions=neutral["field_regions"],
         topology_map=topology_map,
         object_registry=object_registry,
     )
+    result["provenance"]["artifact_source"] = neutral["source"]
+    return result
 
 
 def write_cae_result_map(package_path: str | Path) -> dict[str, Any]:
-    """Build the CAE result map and write analysis/cae_result_map.json."""
+    """Persist neutral analysis/* (normalizing legacy CalculiX results/* if needed),
+    then build + write analysis/cae_result_map.json."""
     package_path = Path(package_path)
+    if package_path.exists():
+        try:
+            from .cae_result_contract import write_normalized_cae_artifacts
+            write_normalized_cae_artifacts(package_path)  # persist neutral analysis/* from results/*
+        except Exception:  # noqa: BLE001 - mapping still works via in-memory normalization
+            pass
     result_map = build_cae_result_map_for_package(package_path)
     if not package_path.exists():
         return result_map

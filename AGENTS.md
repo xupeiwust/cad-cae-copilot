@@ -724,7 +724,7 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── state/                   revalidation_status.json (stale-artifact flags)
 ├── diagnostics/             shape_ir_verification.json, shape_ir_patch_report.json
 ├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
-├── analysis/                cae_result_map.json (CAE stress/deflection ↔ topology/node mapping)
+├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node mapping)
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
 ├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd)
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json

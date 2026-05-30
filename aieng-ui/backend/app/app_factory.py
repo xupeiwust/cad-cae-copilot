@@ -1101,7 +1101,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if package_path is None or not package_path.exists():
             raise HTTPException(status_code=404, detail=".aieng package not found")
         with _zipfile.ZipFile(package_path, "r") as zf:
-            if "results/computed_metrics.json" not in zf.namelist() and "results/field_regions.json" not in zf.namelist():
+            names = set(zf.namelist())
+            cae_sources = (
+                "analysis/computed_metrics.json", "analysis/field_regions.json",
+                "results/computed_metrics.json", "results/field_regions.json",
+            )
+            if not any(m in names for m in cae_sources):
                 raise HTTPException(status_code=404, detail="no CAE results to map (run the solver + extract first)")
         try:
             return write_cae_result_map(package_path)

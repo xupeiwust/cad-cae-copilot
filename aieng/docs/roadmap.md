@@ -326,12 +326,24 @@ Shape IR patch format + apply:
   refreshes verification + object registry. `dry_run` validates + reports only
   (no writes, no recompile).
 
+Solver-neutral CAE result contract (CalculiX = first adapter):
+- Three layers: solver runner → result normalizer/adapter → Shape IR mapper. See
+  `docs/cae_result_contract.md`. The neutral artifacts are
+  `analysis/computed_metrics.json` and `analysis/field_regions.json` (each with a
+  `solver` provenance block + `result_type`); `converters/cae_result_contract.py`
+  holds the CalculiX adapter (`normalize_calculix_*`, `write_normalized_cae_artifacts`)
+  and the loader that prefers `analysis/*`, else normalizes legacy `results/*`.
+- `map_cae_results(...)` consumes ONLY neutral computed_metrics + field_regions +
+  topology_map + object_registry — no `.frd/.dat/.inp` or CalculiX naming (a
+  source-token + behavioral test guard against leaks). Code_Aster / Elmer /
+  FEniCSx / remote / mock solvers plug in by emitting the same neutral files; a
+  `generic_fake` solver fixture proves the path is solver-neutral.
+
 CAE result mapping (back to Shape IR):
-- `converters/cae_result_map.py`: `map_cae_results(...)` correlates
-  `results/computed_metrics.json` (scalar extrema per load case) +
-  `results/field_regions.json` (stress/displacement clusters) through
-  `geometry/topology_map.json` and `registry/object_registry.json` to a
-  `source_ir_node`. Each mapped result carries load_case_id, result_type
+- `converters/cae_result_map.py`: `map_cae_results(...)` correlates the neutral
+  computed_metrics (scalar extrema per load case) + field_regions (stress/
+  displacement regions) through `geometry/topology_map.json` and
+  `registry/object_registry.json` to a `source_ir_node`. Each mapped result carries load_case_id, result_type
   (stress/displacement/deflection/strain), value+unit, affected topology
   entities, source_ir_node, mapping_method (bbox_contains/nearest_center),
   and confidence (high/medium/low). Region location → topology body (bbox

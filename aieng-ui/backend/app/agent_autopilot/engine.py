@@ -626,7 +626,7 @@ class AutopilotEngine:
         run_id: str,
         *,
         approved: bool,
-        max_steps: int = 6,
+        max_steps: int = 10,
         user_message: str | None = None,
     ) -> AutopilotRunState:
         state = self.store.load(run_id)
@@ -705,7 +705,7 @@ class AutopilotEngine:
         self._publish_state(state)
         return state
 
-    def reply_to_run(self, run_id: str, message: str, *, max_steps: int = 6) -> AutopilotRunState:
+    def reply_to_run(self, run_id: str, message: str, *, max_steps: int = 10) -> AutopilotRunState:
         state = self.store.load(run_id)
         if state.status in {"completed", "failed", "cancelled"}:
             return state

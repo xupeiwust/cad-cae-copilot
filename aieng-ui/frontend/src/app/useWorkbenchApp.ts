@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import {
   BASE_STAGES,
+  CHAT_CONNECTION_ID_STORAGE_KEY,
   DEFAULT_CHAT_CONNECTIONS,
   EMPTY_CAE_FIELDS,
 } from "../appConstants";
@@ -30,6 +31,7 @@ import { useEngineeringActions } from "./useEngineeringActions";
 import { useGeometryPointers } from "./useGeometryPointers";
 import { useObjectRegistry } from "./useObjectRegistry";
 import { useRuntimeSettings } from "./useRuntimeSettings";
+import { useBrowserStorageState } from "./useBrowserStorageState";
 import { useChatSessions } from "./useChatSessions";
 import { useChatTranscript } from "./useChatTranscript";
 
@@ -41,7 +43,7 @@ export function useWorkbenchApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [projectName, setProjectName] = useState("STEP workbench project");
-  const [message, setMessage] = useState("Check the current project status and generate a reviewable engineering execution plan.");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -49,7 +51,11 @@ export function useWorkbenchApp() {
   const [selectedCaeField, setSelectedCaeField] = useState("stress");
   const [fieldDescriptor, setFieldDescriptor] = useState<SolverFieldDescriptor | null>(null);
   const [chatConnections, setChatConnections] = useState<ChatConnection[]>(DEFAULT_CHAT_CONNECTIONS);
-  const [selectedChatConnectionId, setSelectedChatConnectionId] = useState<string>("llm-api");
+  const [selectedChatConnectionId, setSelectedChatConnectionId] = useBrowserStorageState<string>(
+    CHAT_CONNECTION_ID_STORAGE_KEY,
+    "llm-api",
+    { storage: "local" },
+  );
   const [artifactViewerPath, setArtifactViewerPath] = useState("");
   const [artifactViewerData, setArtifactViewerData] = useState<ArtifactResponse | null>(null);
   const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);

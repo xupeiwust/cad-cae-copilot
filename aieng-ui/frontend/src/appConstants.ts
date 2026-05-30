@@ -14,6 +14,7 @@ export const CAD_PROVIDER_OPTIONS = [
 ] as const;
 export const LLM_CONFIG_STORAGE_KEY = "aieng-ui.llm-config";
 export const LOCAL_AGENT_CONFIG_STORAGE_KEY = "aieng-ui.local-agent-config";
+export const CHAT_CONNECTION_ID_STORAGE_KEY = "aieng-ui.chat-connection-id";
 export const LLM_PROVIDER_SUGGESTIONS = ["openai-compatible", "anthropic", "openai", "azure-openai"] as const;
 export const CHAT_SUGGESTIONS = [
   "总结当前模型的语义和主要风险",

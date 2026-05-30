@@ -72,7 +72,7 @@ class AutopilotAgentAction(StrictModel):
                         "message": {"type": "string"},
                         "reason": {"type": "string"},
                     },
-                    "required": ["type", "tool_name", "input_json", "question", "message", "reason"],
+                    "required": ["type"],
                 },
             },
             "required": ["thought_summary", "action", "done", "user_message"],
@@ -128,7 +128,7 @@ class AutopilotRunRequest(StrictModel):
     selected_geometry: dict[str, Any] = Field(default_factory=dict)
     llm_config: dict[str, Any] = Field(default_factory=dict)
     dry_run: bool = True
-    max_steps: int = Field(default=6, ge=1, le=20)
+    max_steps: int = Field(default=10, ge=1, le=20)
     fake_actions: list[dict[str, Any]] | None = None
 
 

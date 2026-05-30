@@ -521,7 +521,7 @@ export function ChatPanel({
               e.target.style.height = `${e.target.scrollHeight}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder={selectedConnectionBlocked ? "Select a project to start..." : ""}
+            placeholder={selectedConnectionBlocked ? "Select a project to start..." : "Check the current project status and generate a reviewable engineering execution plan."}
             disabled={selectedConnectionBlocked}
           />
           {acOpen && acMatches.length > 0 ? (

@@ -7,6 +7,7 @@ from .schema import AutopilotAgentAction
 
 
 CORE_TOOL_ORDER = [
+    "aieng.agent_readme",
     "aieng.agent_context",
     "aieng.inspect_package",
     "aieng.validate",
@@ -152,7 +153,7 @@ def _compact_tool_output(output: Any) -> Any:
 
 def _compact_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
-    for observation in observations[-8:]:
+    for observation in observations[-12:]:
         data = observation.get("data") if isinstance(observation.get("data"), dict) else {}
         next_item = {
             "kind": observation.get("kind"),
@@ -205,6 +206,7 @@ def build_action_prompt(
         "TOKEN BUDGET: be concise. Do not paste long source/context unless needed; prefer compact named parameters and brief validation notes.",
         "Retrieve facts before claims: use aieng.agent_context for model details; do not guess topology, dimensions, materials, or results.",
         "For greetings/meta questions use chat. For factual model work use tool_call.",
+        "When the user asks what tools are available or what the workbench can do, call aieng.agent_readme (do not guess or summarize from memory). Return the result via chat, not final.",
         "CAD BRIEF GATE: before cad.execute_build123d, internally form a compact brief: model, units/origin, key dimensions, features, labels, validation targets, assumptions. Put a <=900 char summary in user_message when requesting approval.",
         "For new CAD call cad.get_source first unless clearly starting empty. Then propose cad.execute_build123d with result bound to final geometry.",
         "CAD SOURCE STYLE: named parameters first; semantic .label and .color on each part; Compound(children=[...]); closed solids; no export/show calls.",

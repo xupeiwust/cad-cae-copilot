@@ -223,9 +223,20 @@ structured-voxel reference — NOT production.
   instead of guessing.
 - Writeback: `density_voxel_cells` + `topology_result_to_shape_ir` extended to 3D
   density grids — placed in the design-space frame, default runtime `manifold_mesh`,
-  tagged `preview/design_suggestion/voxelized/lossy/not_production_cad`. No
-  spline/contour smoothing for 3D in this PR. Workbench `dimension=3d` routing in
-  derive/run; writeback auto-defaults 3D to mesh; viewer asset refreshes.
+  tagged `preview/design_suggestion/voxelized/lossy/not_production_cad`. Workbench
+  `dimension=3d` routing in derive/run; writeback auto-defaults 3D to mesh; viewer
+  asset refreshes.
+- **3D smooth mesh proxy (follow-up):** `method=surface` (the 3D writeback default)
+  runs marching cubes (`skimage.measure.marching_cubes`, zero-padded) on the density
+  grid → a `surface_mesh` node (vertices/faces in the design-space frame, winding
+  oriented to a positive signed volume), compiled by the manifold runtime via
+  `Manifold(Mesh(...))`. Turns the blocky voxel preview into a smooth watertight mesh
+  — still tagged mesh / lossy / not production CAD. Falls back to voxels if no
+  isosurface crosses the threshold (or scikit-image is absent). B-Rep/NURBS
+  reconstruction of the voxel/mesh body remains a separate future milestone (no
+  spline/marching-cubes→CAD here). Tests: surface writeback emits a `surface_mesh`
+  with verts/faces; empty field → voxel fallback; manifold compile yields a
+  positive-volume watertight body.
 - Tests: simp_3d registered w/ capability; 3D cantilever lowers compliance + meets
   volfrac; explicit 3D BCs respected; contract has density_grid_3d/frame; 3D voxel
   placement; manifold compile yields a non-empty body in the frame; 3D derive maps

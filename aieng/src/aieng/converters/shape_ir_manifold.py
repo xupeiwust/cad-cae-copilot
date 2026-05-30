@@ -18,6 +18,7 @@ from typing import Any
 from .shape_ir import (
     _DENSITY_VOXEL_KINDS,
     _EXTRUDED_REGION_KINDS,
+    _SURFACE_MESH_KINDS,
     _bbox,
     _blend_child_ids,
     _dims,
@@ -85,6 +86,8 @@ def _compile_manifold_node(node: dict[str, Any], index: int, var: str) -> list[s
         return _compile_density_voxels_manifold(node, node_id, var)
     if kind in _EXTRUDED_REGION_KINDS:
         return _compile_extruded_region_manifold(node, node_id, var)
+    if kind in _SURFACE_MESH_KINDS:
+        return _compile_surface_mesh_manifold(node, node_id, var)
     expr = _manifold_expression(node) or _manifold_bbox_expression(node)
     out = [f"# Shape IR node: {node_id}", f"{var} = {expr}"]
     out.extend(_manifold_transform(var, node))
@@ -109,6 +112,29 @@ def _compile_density_voxels_manifold(node: dict[str, Any], node_id: str, var: st
         f"    {var} = _v if {var} is None else ({var} + _v)",
         f"if {var} is None:",
         f"    {var} = Manifold.cube((0.001, 0.001, 0.001), True)",
+    ]
+
+
+def _compile_surface_mesh_manifold(node: dict[str, Any], node_id: str, var: str) -> list[str]:
+    """Manifold source for a ready triangle mesh (marching-cubes proxy): build a
+    Manifold directly from the stored vertices/faces. Mesh evidence, not CSG."""
+    verts = node.get("vertices") or []
+    faces = node.get("faces") or []
+    slug = _slug(node_id)
+    if not verts or not faces:
+        return [
+            f"# Shape IR node: {node_id} (surface_mesh -> empty, placeholder)",
+            f"{var} = Manifold.cube((0.001, 0.001, 0.001), True)",
+        ]
+    return [
+        f"# Shape IR node: {node_id} (surface_mesh: marching-cubes proxy, "
+        f"{len(verts)} verts / {len(faces)} tris)",
+        "import numpy as _np",
+        "from manifold3d import Mesh as _Mesh",
+        f"_V_{slug} = {_py(verts)}",
+        f"_T_{slug} = {_py(faces)}",
+        f"{var} = Manifold(_Mesh(vert_properties=_np.asarray(_V_{slug}, dtype=_np.float32), "
+        f"tri_verts=_np.asarray(_T_{slug}, dtype=_np.uint32)))",
     ]
 
 

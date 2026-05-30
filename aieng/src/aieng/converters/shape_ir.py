@@ -448,6 +448,10 @@ def _compile_node(
 # nesting → holes) along the out-of-plane axis.
 _EXTRUDED_REGION_KINDS = {"extruded_region", "extruded_polygons", "density_contour"}
 
+# Node kinds carrying a ready triangle mesh (e.g. marching-cubes topology-opt
+# proxy). Mesh-runtime only — built directly from vertices/faces.
+_SURFACE_MESH_KINDS = {"surface_mesh", "mesh_proxy", "triangle_mesh"}
+
 
 def _plane_basis(u_axis: str, v_axis: str) -> dict[str, Any]:
     """Right-handed placement basis for an in-plane (u,v) region.

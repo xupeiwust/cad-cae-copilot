@@ -1068,6 +1068,53 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
 SHAPE_IR_PATH = "geometry/shape_ir.json"
 
 
+def marching_cubes_surface(
+    dens3: list, threshold: float, *,
+    origin: list[float], cell_size: list[float],
+) -> tuple[list[list[float]], list[list[int]]]:
+    """Marching-cubes smooth surface of a 3D density field → (vertices, faces).
+
+    Turns the blocky voxel field into a smooth triangle-mesh proxy (still mesh /
+    lossy / not production CAD). Vertices are returned in WORLD coordinates (placed
+    in the design-space frame via origin + per-axis cell size); triangle winding is
+    flipped to outward-facing so the manifold built from it has positive volume.
+    The grid is zero-padded so the surface closes. Returns ``([], [])`` if
+    scikit-image is unavailable or no isosurface crosses the threshold (the caller
+    can fall back to voxels)."""
+    try:
+        from skimage import measure  # optional dependency
+    except Exception:
+        return [], []
+    arr = np.asarray(dens3, dtype=float)
+    if arr.ndim != 3 or arr.size == 0 or float(arr.max()) < threshold:
+        return [], []
+    padded = np.pad(arr, 1, mode="constant", constant_values=0.0)
+    try:
+        v, f, _n, _val = measure.marching_cubes(padded, level=float(threshold))
+    except (ValueError, RuntimeError):
+        return [], []
+    if len(v) == 0 or len(f) == 0:
+        return [], []
+    ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+    sx, sy, sz = float(cell_size[0]), float(cell_size[1]), float(cell_size[2])
+    # padded array axes are (z, y, x); undo the pad and place at voxel-centre scale
+    vw = np.column_stack([
+        ox + (v[:, 2] - 0.5) * sx,
+        oy + (v[:, 1] - 0.5) * sy,
+        oz + (v[:, 0] - 0.5) * sz,
+    ])
+    fi = np.asarray(f, dtype=int)
+    # Orient outward: skimage's triangle winding is field/version dependent, so pick
+    # the winding that gives a positive signed volume (manifold needs outward normals).
+    a, b, c = vw[fi[:, 0]], vw[fi[:, 1]], vw[fi[:, 2]]
+    signed = float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum())
+    if signed < 0:
+        fi = fi[:, ::-1]
+    verts = [[float(round(x, 5)) for x in row] for row in vw]
+    faces = [[int(t[0]), int(t[1]), int(t[2])] for t in fi]
+    return verts, faces
+
+
 def extract_density_contours(
     density: list[list[float]], threshold: float, *,
     origin_u: float, origin_v: float, su: float, sv: float, simplify_tol: float = 0.75,
@@ -1174,8 +1221,10 @@ def topology_result_to_shape_ir(
     )
     nid = node_id or (f"optimized_{design_space_node}" if design_space_node else "optimized_topology")
 
-    # ── 3D writeback: a 3D density field → one voxelized density_voxels node ──
-    # No contour/spline smoothing in 3D (this PR); default runtime is manifold_mesh.
+    # ── 3D writeback: a 3D density field → one mesh node (manifold_mesh runtime) ──
+    # method "voxels" = blocky union of solid cells; method "surface" = a smooth
+    # marching-cubes proxy of the field (mesh / lossy / not production CAD). B-Rep/
+    # NURBS reconstruction is a separate future milestone.
     is_3d = topo_result.get("dimension") == "3d" or "density_grid_3d" in result
     if is_3d:
         grid3 = result.get("density_grid_3d") or {}
@@ -1191,23 +1240,46 @@ def topology_result_to_shape_ir(
         else:
             cs3 = [float(fc[0]), float(fc[1] if len(fc) > 1 else fc[0]),
                    float(fc[2] if len(fc) > 2 else fc[0])]
-        node3: dict[str, Any] = {
-            "id": nid, "label": nid, "type": "density_voxels", "dimension": 3,
-            "density_3d": dens3, "threshold": threshold,
-            "cell_size": cs3, "origin": o3,
-            "u_axis": str(frame3.get("u_axis", "x")), "v_axis": str(frame3.get("v_axis", "y")),
-            "w_axis": str(frame3.get("w_axis", "z")),
-            "placed_in_frame": bool(frame3),
-            "tags": ["preview", "design_suggestion", "voxelized", "lossy", "not_production_cad"],
-            "source_optimization": {
-                "optimizer": (topo_result.get("optimizer") or {}).get("name"),
-                "objective": topo_result.get("objective"),
-                "design_space_node": design_space_node,
-                "final_compliance": result.get("final_compliance"),
-                "achieved_volume_fraction": result.get("achieved_volume_fraction"),
-                "dimension": "3d",
-            },
+        m3 = str(method or "voxels").lower()
+        src_opt = {
+            "optimizer": (topo_result.get("optimizer") or {}).get("name"),
+            "objective": topo_result.get("objective"),
+            "design_space_node": design_space_node,
+            "final_compliance": result.get("final_compliance"),
+            "achieved_volume_fraction": result.get("achieved_volume_fraction"),
+            "dimension": "3d",
         }
+        tags = ["preview", "design_suggestion", "lossy", "not_production_cad"]
+
+        verts: list[list[float]] = []
+        faces: list[list[int]] = []
+        if m3 == "surface":
+            verts, faces = marching_cubes_surface(dens3, threshold, origin=o3, cell_size=cs3)
+            if not (verts and faces):
+                m3 = "voxels"   # honest fallback when no surface could be extracted
+                src_opt["surface_fallback"] = "marching cubes produced no surface (or skimage missing); using voxels"
+
+        if m3 == "surface":
+            node3: dict[str, Any] = {
+                "id": nid, "label": nid, "type": "surface_mesh", "dimension": 3,
+                "vertices": verts, "faces": faces, "origin": o3, "cell_size": cs3,
+                "u_axis": str(frame3.get("u_axis", "x")), "v_axis": str(frame3.get("v_axis", "y")),
+                "w_axis": str(frame3.get("w_axis", "z")), "placed_in_frame": bool(frame3),
+                "smoothing": "marching_cubes", "vertex_count": len(verts), "triangle_count": len(faces),
+                "tags": tags + ["surface_mesh"],
+                "source_optimization": src_opt,
+            }
+            evidence = "smooth_mesh_preview"
+        else:
+            node3 = {
+                "id": nid, "label": nid, "type": "density_voxels", "dimension": 3,
+                "density_3d": dens3, "threshold": threshold, "cell_size": cs3, "origin": o3,
+                "u_axis": str(frame3.get("u_axis", "x")), "v_axis": str(frame3.get("v_axis", "y")),
+                "w_axis": str(frame3.get("w_axis", "z")), "placed_in_frame": bool(frame3),
+                "tags": tags + ["voxelized"],
+                "source_optimization": src_opt,
+            }
+            evidence = "voxelized_preview"
         if color is not None:
             node3["color"] = list(color)
         return {
@@ -1223,7 +1295,7 @@ def topology_result_to_shape_ir(
                 "source_ir_node": (topo_result.get("provenance") or {}).get("source_ir_node")
                 or design_space_node,
                 "topopt_contract_version": topo_result.get("contract_version"),
-                "evidence": "voxelized_preview",
+                "evidence": evidence,
             },
         }
 

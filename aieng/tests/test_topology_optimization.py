@@ -122,6 +122,51 @@ def test_topology_result_to_shape_ir_3d_node():
     assert node["density_3d"] == _TOPO3D["result"]["density_grid_3d"]["values"]
 
 
+def test_3d_surface_marching_cubes_writeback():
+    pytest.importorskip("skimage")
+    # a solid core in a 5x5x5 field -> marching cubes yields a closed surface
+    vals = [[[1.0 if (1 <= i <= 3 and 1 <= j <= 3 and 1 <= k <= 3) else 0.0
+              for i in range(5)] for j in range(5)] for k in range(5)]
+    topo = {**_TOPO3D, "result": {"threshold": 0.5,
+            "density_grid_3d": {"nx": 5, "ny": 5, "nz": 5, "values": vals}}}
+    payload = topology_result_to_shape_ir(topo, method="surface")
+    assert payload["representation"] == "manifold_mesh"
+    assert payload["provenance"]["evidence"] == "smooth_mesh_preview"
+    node = payload["parts"][0]
+    assert node["type"] == "surface_mesh" and node["dimension"] == 3
+    assert node["smoothing"] == "marching_cubes"
+    assert node["vertex_count"] > 0 and node["triangle_count"] > 0
+    assert set(["lossy", "not_production_cad", "surface_mesh"]).issubset(node["tags"])
+    # placed in the frame (origin [10,20,0], cells 2x2x3)
+    assert all(v[0] >= 10.0 - 1e-3 and v[2] >= -1e-3 for v in node["vertices"])
+
+
+def test_3d_surface_falls_back_to_voxels_when_empty():
+    pytest.importorskip("skimage")
+    empty = {**_TOPO3D, "result": {"threshold": 0.5,
+             "density_grid_3d": {"nx": 2, "ny": 2, "nz": 2,
+                                 "values": [[[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]]]}}}
+    node = topology_result_to_shape_ir(empty, method="surface")["parts"][0]
+    assert node["type"] == "density_voxels"   # honest fallback (no isosurface)
+    assert "surface_fallback" in node["source_optimization"]
+
+
+def test_3d_surface_compiles_and_executes_in_manifold():
+    pytest.importorskip("skimage")
+    pytest.importorskip("manifold3d")
+    vals = [[[1.0 if (1 <= i <= 3 and 1 <= j <= 3 and 1 <= k <= 3) else 0.0
+              for i in range(5)] for j in range(5)] for k in range(5)]
+    topo = {**_TOPO3D, "result": {"threshold": 0.5,
+            "density_grid_3d": {"nx": 5, "ny": 5, "nz": 5, "values": vals}}}
+    payload = topology_result_to_shape_ir(topo, method="surface")
+    src = compile_shape_ir_to_manifold_source(payload)
+    assert "Mesh" in src and "Manifold(" in src
+    ns: dict = {}
+    exec(compile(src, "<m>", "exec"), ns)
+    m = ns["result"]
+    assert m.volume() > 0                       # non-empty watertight smooth mesh (winding flipped)
+
+
 def test_3d_voxels_compile_and_execute_in_manifold():
     pytest.importorskip("manifold3d")
     payload = topology_result_to_shape_ir(_TOPO3D)

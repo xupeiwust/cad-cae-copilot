@@ -5094,24 +5094,22 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if pkg is None or not pkg.exists():
             return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
 
+        # Detect a 3D result up front — it drives both the representation and method
+        # defaults (3D is a mesh preview, not a B-Rep / contour body).
+        _dim3 = False
+        try:
+            import zipfile as _zfd
+            with _zfd.ZipFile(pkg, "r") as _z:
+                if "analysis/topology_optimization.json" in _z.namelist():
+                    _topo = json.loads(_z.read("analysis/topology_optimization.json"))
+                    _dim3 = _topo.get("dimension") == "3d" or "density_grid_3d" in (_topo.get("result") or {})
+        except Exception:
+            _dim3 = False
         # Default to B-Rep for 2D (analytic faces an engineer picks / exports to STEP;
         # manifold_mesh is the robust fallback, auto-used if the B-Rep build fails).
-        # 3D voxel results default to manifold_mesh — a B-Rep Compound of hundreds of
-        # voxel boxes is heavy and beside the point; 3D is a voxelized preview here.
-        req_rep = inp.get("representation")
-        if req_rep:
-            representation = str(req_rep)
-        else:
-            _dim3 = False
-            try:
-                import zipfile as _zfd
-                with _zfd.ZipFile(pkg, "r") as _z:
-                    if "analysis/topology_optimization.json" in _z.namelist():
-                        _topo = json.loads(_z.read("analysis/topology_optimization.json"))
-                        _dim3 = _topo.get("dimension") == "3d" or "density_grid_3d" in (_topo.get("result") or {})
-            except Exception:
-                _dim3 = False
-            representation = "manifold_mesh" if _dim3 else "brep_build123d"
+        # 3D results default to manifold_mesh — a B-Rep Compound of hundreds of voxel
+        # boxes is heavy and beside the point; 3D is an explicitly meshed preview.
+        representation = str(inp.get("representation") or ("manifold_mesh" if _dim3 else "brep_build123d"))
         # The optimized body is placed in the design space's derivation frame;
         # cell_size/thickness/origin are honored only if the caller overrides.
         cs = inp.get("cell_size")
@@ -5119,7 +5117,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         thickness = inp.get("thickness")
         org = inp.get("origin")
         origin = (float(org[0]), float(org[1]), float(org[2])) if org else None
-        method = str(inp.get("method") or "contour").lower()
+        # 2D default: contour; 3D default: surface (smooth marching-cubes proxy).
+        method = str(inp.get("method") or ("surface" if _dim3 else "contour")).lower()
         boundary = str(inp.get("boundary") or "spline").lower()
         timeout = int(inp.get("timeout") or 120)
 

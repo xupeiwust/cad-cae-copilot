@@ -92,7 +92,13 @@ def build_shape_ir_object_registry(package_path: str | Path) -> dict[str, Any]:
     faces = [e for e in entities if isinstance(e, dict) and e.get("type") == "face"]
     repr_kind = report.get("representation_kind", "unknown")
     geometry_kind = report.get("geometry_kind", "none")
-    fused_mesh = geometry_kind == "mesh" and len(solids) <= 1 and bool(solids or faces)
+    # A mesh-representation package (Manifold/SDF) fuses all nodes into one body, so a
+    # node maps to the whole fused mesh. Key off the mesh-class representation_kind as
+    # well as the execution-derived geometry_kind: the conversion manifest (and thus the
+    # executed geometry_kind) may be absent after a lightweight recompile, but the
+    # representation + extracted mesh topology are enough to recognise the fused body.
+    is_mesh = geometry_kind == "mesh" or repr_kind in {"mesh", "implicit_field"}
+    fused_mesh = is_mesh and len(solids) <= 1 and bool(solids or faces)
 
     def _faces_of(solid_ids: set[str]) -> list[str]:
         out: list[str] = []

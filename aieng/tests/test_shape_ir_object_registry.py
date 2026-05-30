@@ -112,6 +112,31 @@ def test_registry_fused_mesh_maps_all_nodes_to_one_body(tmp_path: Path) -> None:
         assert o["viewer_selectable_ids"] == ["face_001"]
 
 
+def test_registry_manifold_mesh_without_manifest_is_fused_mesh(tmp_path: Path) -> None:
+    # A manifold mesh recompiled without a conversion manifest (so no executed
+    # geometry_kind) must still resolve to fused_mesh from its mesh representation +
+    # extracted topology — not fall through to linkage "none".
+    pkg = _pkg(tmp_path, {
+        "geometry/shape_ir.json": {"representation": "manifold_mesh", "parts": [
+            {"id": "optimized_blk", "type": "density_voxels", "dimension": 3},
+        ]},
+        "geometry/manifold_source.py": "# Shape IR node: optimized_blk\n",
+        "geometry/preview.glb": b"glTF",
+        "geometry/topology_map.json": {"metadata": {
+            "extractor": "ManifoldRunner", "extraction_mode": "mesh_region", "real_step_parsing": False,
+        }, "entities": [
+            {"id": "body_001", "type": "solid", "name": "manifold_body", "face_ids": ["face_001"]},
+            {"id": "face_001", "type": "face", "body_id": "body_001", "surface_type": "mesh_region"},
+        ]},
+        # NOTE: no provenance/conversion_manifest.json on purpose
+    })
+    reg = build_shape_ir_object_registry(pkg)
+    o = _obj(reg, "optimized_blk")
+    assert o["linkage"] == "fused_mesh"
+    assert o["topology_entities"] == ["body_001", "face_001"]
+    assert o["cad_editable"] is False
+
+
 def test_registry_nurbs_bspline_resolves(tmp_path: Path) -> None:
     pkg = _pkg(tmp_path, {
         "geometry/shape_ir.json": {"representation": "nurbs_brep", "parts": [

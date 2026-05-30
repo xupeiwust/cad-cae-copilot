@@ -354,7 +354,6 @@ const zhToEn: Record<string, string> = {
   "AI摘要": "AI summary",
   "仿真": "Simulation",
   "结果": "Results",
-  "有": "Present",
   "意图规划": "Intent Planner",
   "用自然语言描述工程任务...": "Describe the engineering task...",
   "未生成计划": "No plan yet",

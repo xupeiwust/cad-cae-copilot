@@ -396,7 +396,7 @@ export function ChatPanel({
 
   return (
     <section className="chat-pane-body">
-      <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>} onScroll={markScrollPosition}>
+      <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>} onScroll={markScrollPosition} data-i18n-skip>
         {transcriptItems.length ? (
           <ChatTranscript
             items={transcriptItems}

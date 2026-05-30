@@ -7958,19 +7958,31 @@ textarea:focus,
   color: var(--text-primary);
 }
 
+.chat-pane-body .chat-input-wrap textarea {
+  padding-right: 44px;
+}
+
 .chat-pane-body .chat-action-button {
-  flex-shrink: 0;
-  align-self: flex-end;
-  width: 40px;
-  height: 40px;
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 999px;
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
+  z-index: 2;
+}
+
+.chat-pane-body .chat-action-button .button-icon {
+  width: 16px;
+  height: 16px;
+  margin: 0;
 }
 
 .chat-pane-body .chat-action-button:disabled {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 
 import { chatHistoryToTranscriptItems } from "../../app/chatTranscript";
 import type { StreamingState } from "../../app/useChatTranscript";
@@ -540,28 +540,28 @@ export function ChatPanel({
               ))}
             </div>
           ) : null}
+          {activeAutopilotRun && !message.trim() ? (
+            <button
+              type="button"
+              className="chat-action-button chat-action-button-stop"
+              disabled={!activeAutopilotRun.run_id}
+              onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
+              title="Stop active agent run"
+            >
+              <Square className="button-icon" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="chat-action-button chat-action-button-send"
+              disabled={selectedConnectionBlocked || !message.trim()}
+              onClick={() => void sendUnified()}
+              title="Send"
+            >
+              <ArrowUp className="button-icon" />
+            </button>
+          )}
         </div>
-        {activeAutopilotRun && !message.trim() ? (
-          <button
-            type="button"
-            className="chat-action-button chat-action-button-stop"
-            disabled={!activeAutopilotRun.run_id}
-            onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
-            title="Stop active agent run"
-          >
-            <Square className="button-icon" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="chat-action-button chat-action-button-send"
-            disabled={selectedConnectionBlocked || !message.trim()}
-            onClick={() => void sendUnified()}
-            title="Send"
-          >
-            <ActionIcon name="send" />
-          </button>
-        )}
       </div>
     </section>
   );

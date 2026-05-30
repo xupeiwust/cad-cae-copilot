@@ -10431,3 +10431,31 @@ def test_cae_result_map_endpoint(tmp_path: Path) -> None:
         zf.writestr("geometry/topology_map.json", _json.dumps({"entities": []}))
     proj2 = get_project(settings, pid2); proj2["aieng_file"] = f"{pid2}.aieng"; save_project(settings, proj2)
     assert client.get(f"/api/projects/{pid2}/cae-result-map").status_code == 404
+
+
+def test_topology_optimization_endpoint(tmp_path: Path) -> None:
+    import json as _json, zipfile as _zip
+    from app.main import create_app, default_project, project_dir, save_project, get_project
+
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("topopt"))["id"]
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    with _zip.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/shape_ir.json", _json.dumps({"parts": [{"id": "bracket", "type": "box"}]}))
+    proj = get_project(settings, pid); proj["aieng_file"] = f"{pid}.aieng"; save_project(settings, proj)
+    client = TestClient(create_app(settings))
+
+    resp = client.post(f"/api/projects/{pid}/topology-optimization", json={
+        "problem": {"grid": {"nelx": 16, "nely": 8}, "volfrac": 0.5, "max_iters": 8,
+                    "bcs": {"preset": "cantilever"}, "design_space_node": "bracket"}})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    topo = data["topology_optimization"]
+    assert topo["optimizer"]["name"] == "simp_2d"
+    assert topo["result"]["compliance_history"][-1] < topo["result"]["compliance_history"][0]
+    assert topo["provenance"]["design_space_node"] == "bracket"
+    with _zip.ZipFile(pkg) as zf:
+        assert "analysis/topology_optimization.json" in zf.namelist()

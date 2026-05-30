@@ -579,6 +579,7 @@ is possible).
 | `cae.extract_solver_results` | Parse CalculiX FRD → `computed_metrics.json` |
 | `cae.extract_field_regions` | Cluster high-stress / high-displacement regions |
 | `cae.map_results` | Map stress/deflection results back to topology entities, object_registry objects, and `source_ir_node` → `analysis/cae_result_map.json` (unmapped regions reported honestly) |
+| `opt.run_topology_optimization` | Run topology optimization (built-in self-contained 2D SIMP, compliance-min, pure numpy — no external solver) → `analysis/topology_optimization.json`. Pluggable optimizer; honest 2D/coarse limitations recorded |
 | `postprocess.generate_computed_metrics` | Import metrics from CSV/JSON |
 | `postprocess.refresh_cae_summary` | Regenerate result summary + evidence markdown |
 
@@ -724,7 +725,7 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── state/                   revalidation_status.json (stale-artifact flags)
 ├── diagnostics/             shape_ir_verification.json, shape_ir_patch_report.json
 ├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
-├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node mapping)
+├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node), topology_optimization.json
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
 ├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd)
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json

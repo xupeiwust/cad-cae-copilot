@@ -197,6 +197,31 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 22: Topology optimization (contract + 2D SIMP) — COMPLETE (2026-05-30)
+
+CAE-driven generative step after analysis, following the same contract-first,
+pluggable-backend pattern as solvers.
+
+- `converters/topology_optimization.py`: neutral problem/result contract +
+  pluggable optimizer registry (`register_optimizer` / `available_optimizers` /
+  `run_topology_optimization`). Built-in `simp_2d` is a self-contained 2D SIMP
+  (compliance minimization, OC update + sensitivity filter, **pure numpy** — no
+  scipy/CalculiX/external solver), presets cantilever / mbb_beam. `precomputed`
+  optimizer ingests a density grid (proves the optimizer layer is neutral).
+- Output `analysis/topology_optimization.json`: optimizer provenance
+  (name/version/method/dimension/fallback), objective + compliance history,
+  achieved volume fraction, density grid, threshold/solid-element count, and a
+  `design_space_node` link back to a Shape IR node. Honest `limitations`
+  recorded (2D, plane-stress, linear-elastic, single material, coarse —
+  observational design aid, not production).
+- Workbench `opt.run_topology_optimization` (tool + `POST .../topology-optimization`)
+  runs it and writes the artifact. Consumes the design space + (future) loads from
+  the solver-neutral CAE map; re-authoring the optimized result into a new Shape
+  IR representation is the next step (not implemented here).
+- Tests: SIMP lowers compliance + meets the volume budget (cantilever); contract
+  + provenance + design_space_node passthrough; precomputed optimizer neutrality;
+  registry + unknown-optimizer fallback; artifact write; backend endpoint.
+
 ## Phase 21: Shape IR converter + topology-first CAD compilation — COMPLETE (2026-05-30)
 
 Goal: support complex/organic models that are awkward to author directly as

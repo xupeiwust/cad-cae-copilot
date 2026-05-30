@@ -84,6 +84,31 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
         "description": "Apply a surgical patch to a project's Shape IR (atomic, validated, recompiled).",
     },
+    "opt.run_topology_optimization": {
+        "type": "object",
+        "required": ["project_id", "problem"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "problem": {
+                "type": "object",
+                "description": (
+                    "Topology optimization problem: grid {nelx, nely}, volfrac, penalty, rmin, "
+                    "max_iters, bcs {preset: cantilever|mbb_beam}, optional design_space_node "
+                    "(a source_ir_node for provenance). For optimizer=precomputed, pass a 2D "
+                    "'density' grid instead of running a solve."
+                ),
+            },
+            "optimizer": {
+                "type": "string",
+                "description": "Optimizer backend (default simp_2d). Unknown names fall back to simp_2d.",
+            },
+        },
+        "additionalProperties": True,
+        "description": (
+            "Run topology optimization (built-in self-contained 2D SIMP, compliance "
+            "minimization). Writes analysis/topology_optimization.json. No external solver."
+        ),
+    },
     "cae.map_results": {
         "type": "object",
         "required": ["project_id"],

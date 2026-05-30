@@ -1113,6 +1113,18 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except Exception:  # noqa: BLE001 - fall back to a non-persisted build
             return build_cae_result_map_for_package(package_path)
 
+    @app.post("/api/projects/{project_id}/topology-optimization")
+    def run_topology_optimization_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Run topology optimization. Body: {problem: {...}, optimizer?: str}."""
+        p = payload or {}
+        return _tool_opt_run_topology_optimization(
+            {"project_id": project_id, "problem": p.get("problem"), "optimizer": p.get("optimizer")},
+            {},
+        )
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,
@@ -4929,6 +4941,39 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "code": "map_failed", "message": f"{type(exc).__name__}: {exc}"}
         return {"status": "ok", "tool": "cae.map_results", "cae_result_map": result_map}
+
+    def _tool_opt_run_topology_optimization(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Run topology optimization (built-in 2D SIMP) on a project's design space;
+        write analysis/topology_optimization.json. No external solver."""
+        from aieng.converters.topology_optimization import write_topology_optimization
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        problem = inp.get("problem") if isinstance(inp.get("problem"), dict) else None
+        if not pid or problem is None:
+            return {"status": "error", "code": "bad_input", "message": "project_id and problem are required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = write_topology_optimization(pkg, problem, optimizer=str(inp.get("optimizer") or "simp_2d"))
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "optimization_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": "ok", "tool": "opt.run_topology_optimization", "topology_optimization": result}
+
+    _rt.register_tool(
+        "opt.run_topology_optimization",
+        _tool_opt_run_topology_optimization,
+        description=(
+            "Run topology optimization on a project's design space using the built-in "
+            "self-contained 2D SIMP (compliance minimization, pure numpy — no external "
+            "solver). Writes analysis/topology_optimization.json (optimizer provenance, "
+            "objective history, achieved volume fraction, density grid, honest 2D/coarse "
+            "limitations). Optimizer is pluggable; optimizer=precomputed accepts a density grid."
+        ),
+        input_schema=_schema("opt.run_topology_optimization"),
+    )
 
     _rt.register_tool(
         "cae.map_results",

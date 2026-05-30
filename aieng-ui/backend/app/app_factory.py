@@ -4915,8 +4915,21 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             recompile = _cad_generation.recompile_shape_ir_package(pkg, timeout=int(inp.get("timeout") or 120))
             report["recompile"] = recompile
             _patch.write_patch_report(pkg, report)  # persist only when committed
+            # Publish the recompiled preview to viewer/model.* so the UI viewer shows
+            # the patched geometry (recompile only refreshes the in-package preview, not
+            # the on-disk viewer asset the frontend defaults to). Mirrors cad.execute.
             try:
+                glb_bytes = stl_bytes = None
+                with _zipfile.ZipFile(pkg, "r") as zf:
+                    names = zf.namelist()
+                    if "geometry/preview.glb" in names:
+                        glb_bytes = zf.read("geometry/preview.glb")
+                    if "geometry/preview.stl" in names:
+                        stl_bytes = zf.read("geometry/preview.stl")
                 proj = get_project(active_settings, pid)
+                if glb_bytes or stl_bytes:
+                    proj["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
+                    _cad_generation._publish_preview_to_viewer(active_settings, pid, proj, glb_bytes, stl_bytes)
                 proj["updated_at"] = now_iso()
                 save_project(active_settings, proj)
             except Exception:

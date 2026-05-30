@@ -38,7 +38,7 @@ from typing import Any, Callable
 import numpy as np
 
 from aieng import FORMAT_VERSION
-from aieng.converters.shape_ir import _AXIS_INDEX
+from aieng.converters.shape_ir import _AXIS_INDEX, sample_periodic_catmull_rom
 
 TOPOLOGY_OPTIMIZATION_PATH = "analysis/topology_optimization.json"
 TOPOPT_CONTRACT_VERSION = "0.1"
@@ -637,6 +637,32 @@ def extract_density_contours(
     return polys
 
 
+def _inplane_envelope(topo_result: dict[str, Any], polygons: list, u_axis: str, v_axis: str
+                      ) -> tuple[float, float, float, float] | None:
+    """In-plane (u,v) bounds of the design space — the hard envelope a spline must
+    not exceed. Only defined when the result carries a derivation design_space_bbox;
+    without a real design space there is no envelope to protect, so returns None
+    (and the spline is kept). ``polygons`` is unused but kept for signature symmetry."""
+    bb = ((topo_result.get("problem") or {}).get("derivation") or {}).get("design_space_bbox")
+    if not (isinstance(bb, list) and len(bb) >= 6):
+        return None
+    ui = _AXIS_INDEX.get(u_axis, 0)
+    vi = _AXIS_INDEX.get(v_axis, 1)
+    return (float(bb[ui]), float(bb[vi]), float(bb[ui + 3]), float(bb[vi + 3]))
+
+
+def _spline_overshoots(polygons: list, env: tuple[float, float, float, float], tol: float = 1e-6) -> bool:
+    """True if the periodic spline through any loop would leave the envelope. Uses
+    the same Catmull-Rom sampling the mesh backend uses as a proxy for the B-Rep
+    spline — both interpolating splines bulge at convex corners the same way."""
+    umin, vmin, umax, vmax = env
+    for poly in polygons:
+        for p in sample_periodic_catmull_rom([[float(x[0]), float(x[1])] for x in poly], subdiv=8):
+            if p[0] < umin - tol or p[0] > umax + tol or p[1] < vmin - tol or p[1] > vmax + tol:
+                return True
+    return False
+
+
 def topology_result_to_shape_ir(
     topo_result: dict[str, Any], *,
     representation: str = "manifold_mesh",
@@ -736,6 +762,16 @@ def topology_result_to_shape_ir(
         if not polygons:
             method = "voxels"  # honest fallback when no contour could be extracted
             source_optimization["contour_fallback"] = "no contour extracted (empty field or skimage missing)"
+        elif boundary == "spline":
+            # Geometry safety: a periodic spline can bulge past the design-space
+            # envelope. If it would, fall back to the polygon (which stays within its
+            # own points) rather than emitting a body that pokes outside the envelope.
+            env = _inplane_envelope(topo_result, polygons, u_axis, v_axis)
+            if env is not None and _spline_overshoots(polygons, env):
+                boundary = "polygon"
+                source_optimization["spline_fallback"] = (
+                    "periodic spline would overshoot the design-space envelope; "
+                    "using polygon boundary for geometry safety")
 
     if method == "contour":
         node: dict[str, Any] = {

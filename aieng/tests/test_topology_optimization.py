@@ -319,6 +319,44 @@ def test_spline_boundary_extracts_hole_and_subtracts():
     assert "make_face(mode=Mode.ADD)" in bsrc and "make_face(mode=Mode.SUBTRACT)" in bsrc
 
 
+def test_spline_falls_back_to_polygon_on_design_space_overshoot():
+    pytest.importorskip("skimage")
+    # design space exactly the solid block's extent -> a spline through boundary
+    # cell-centres bulges outside it -> must fall back to polygon for safety.
+    framed = {
+        "optimizer": {"name": "simp_2d"}, "objective": "compliance_minimization",
+        "provenance": {"design_space_node": "blk"},
+        "problem": {"design_space_node": "blk", "derivation": {
+            "design_space_bbox": [0, 0, 0, 50, 50, 10],
+            "frame": {"origin": [0, 0, 0], "u_axis": "x", "v_axis": "y",
+                      "cell_size": [10.0, 10.0], "thickness": 10.0}}},
+        "result": {"threshold": 0.5, "density_grid": {"nrows": 5, "ncols": 5, "values": [
+            [1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 0, 0, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]}},
+    }
+    node = topology_result_to_shape_ir(framed, method="contour", boundary="spline")["parts"][0]
+    assert node["type"] == "extruded_region"
+    assert node["boundary"] == "polygon"                       # fell back
+    assert "spline_fallback" in node["source_optimization"]
+
+
+def test_spline_kept_when_within_envelope():
+    pytest.importorskip("skimage")
+    # generous design space (margin around the part) -> spline stays inside -> kept.
+    framed = {
+        "optimizer": {"name": "simp_2d"}, "objective": "compliance_minimization",
+        "provenance": {"design_space_node": "blk"},
+        "problem": {"design_space_node": "blk", "derivation": {
+            "design_space_bbox": [-40, -40, 0, 90, 90, 10],
+            "frame": {"origin": [0, 0, 0], "u_axis": "x", "v_axis": "y",
+                      "cell_size": [10.0, 10.0], "thickness": 10.0}}},
+        "result": {"threshold": 0.5, "density_grid": {"nrows": 5, "ncols": 5, "values": [
+            [0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]]}},
+    }
+    node = topology_result_to_shape_ir(framed, method="contour", boundary="spline")["parts"][0]
+    assert node["boundary"] == "spline"                        # within envelope -> kept
+    assert "spline_fallback" not in node["source_optimization"]
+
+
 def test_spline_boundary_executes_in_manifold(tmp_path: Path):
     pytest.importorskip("skimage")
     pytest.importorskip("manifold3d")

@@ -60,6 +60,30 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
         "description": "Permanently delete a project (its directory + chat sessions). Approval required.",
     },
+    "aieng.apply_shape_ir_patch": {
+        "type": "object",
+        "required": ["project_id", "patch"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "patch": {
+                "type": "object",
+                "description": (
+                    "Shape IR patch: {operations: [...]}. Each op has 'op' (set_parameter | "
+                    "move_control_point | add_node | remove_node | replace_node | connect | "
+                    "disconnect | change_representation_backend) plus its fields (target, "
+                    "parameter, path, value/delta, node, connection, value) and optional 'reason'. "
+                    "Applied atomically against geometry/shape_ir.json; on success the package is "
+                    "recompiled through runtime routing."
+                ),
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "Validate + report the patch without writing or recompiling (default false).",
+            },
+        },
+        "additionalProperties": True,
+        "description": "Apply a surgical patch to a project's Shape IR (atomic, validated, recompiled).",
+    },
     "aieng.find_projects_by_part": {
         "type": "object",
         "required": ["query"],

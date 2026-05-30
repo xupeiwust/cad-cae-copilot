@@ -586,6 +586,7 @@ is possible).
 | Tool | Purpose |
 |------|---------|
 | `aieng.convert` | Import STEP/FCStd/Shape IR into a `.aieng` package. Shape IR compiles by `representation`: `brep_build123d` (default) → build123d STEP/B-Rep; `nurbs_brep` → OCP NURBS B-Rep surfaces (per-patch `bspline` faces); `implicit_sdf` → fogleman/sdf mesh; `manifold_mesh` → manifold3d CSG mesh. B-Rep reps give analytic per-face topology; mesh reps give region-level faces. Publishes a viewer preview |
+| `aieng.apply_shape_ir_patch` | **[APPROVAL]** Apply a surgical patch to a project's Shape IR (set_parameter / move_control_point / add_node / remove_node / replace_node / connect / disconnect / change_representation_backend). Atomic + validated; on success recompiles through runtime routing and refreshes verification + object registry. `dry_run` previews without writing |
 | `aieng.generate_preview` | Regenerate GLB/STL web preview from current STEP |
 | `aieng.refresh_semantics` | Re-validate and re-extract semantic labels |
 | `aieng.update_validation_status` | Write per-category validation flags |
@@ -675,7 +676,8 @@ process. Always: (1) explain the side effects to the user, (2) wait for explicit
 confirmation, (3) report the outcome after the call.
 
 Currently approval-gated: `cad.execute_build123d`, `cad.edit_parameter`,
-`cad.replace_part`, `cad.remove_part`, `cae.run_solver`, `aieng.delete_project`.
+`cad.replace_part`, `cad.remove_part`, `cae.run_solver`, `aieng.delete_project`,
+`aieng.apply_shape_ir_patch`.
 
 ---
 
@@ -719,7 +721,7 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── geometry/                source.py, sdf_source.py / manifold_source.py, shape_ir.json, generated.step, preview.stl/.glb, topology_map.json
 ├── graph/                   aag.json, feature_graph.json, interface_graph.json, brep_graph.json
 ├── state/                   revalidation_status.json (stale-artifact flags)
-├── diagnostics/             shape_ir_verification.json (per-node + package verification)
+├── diagnostics/             shape_ir_verification.json, shape_ir_patch_report.json
 ├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
 ├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd)

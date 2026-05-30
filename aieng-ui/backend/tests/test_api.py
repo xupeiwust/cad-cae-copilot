@@ -10347,3 +10347,40 @@ def test_object_registry_endpoint_404_without_registry(tmp_path: Path) -> None:
     pid = save_project(settings, default_project("empty"))["id"]
     client = TestClient(create_app(settings))
     assert client.get(f"/api/projects/{pid}/object-registry").status_code == 404
+
+
+def test_shape_ir_patch_endpoint_dry_run_and_reject(tmp_path: Path) -> None:
+    import json as _json, zipfile as _zip
+    from app.main import create_app, default_project, project_dir, save_project, get_project
+
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("patch"))["id"]
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    shape_ir = {"parts": [{"id": "plate", "type": "box", "parameters": {"RADIUS": 4}}]}
+    with _zip.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/shape_ir.json", _json.dumps(shape_ir))
+    proj = get_project(settings, pid); proj["aieng_file"] = f"{pid}.aieng"; save_project(settings, proj)
+    client = TestClient(create_app(settings))
+
+    # dry-run: report ok, shape_ir.json unchanged, no patch report written
+    resp = client.post(f"/api/projects/{pid}/shape-ir-patch", json={
+        "dry_run": True,
+        "patch": {"operations": [{"op": "set_parameter", "target": "plate", "parameter": "RADIUS", "value": 12}]},
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok" and data["dry_run"] is True
+    assert data["patch_report"]["applied_count"] == 1 and data["recompile"] is None
+    with _zip.ZipFile(pkg) as zf:
+        assert _json.loads(zf.read("geometry/shape_ir.json"))["parts"][0]["parameters"]["RADIUS"] == 4
+        assert "diagnostics/shape_ir_patch_report.json" not in zf.namelist()
+
+    # invalid patch (missing target) -> rejected, atomic (no change)
+    bad = client.post(f"/api/projects/{pid}/shape-ir-patch", json={
+        "patch": {"operations": [{"op": "set_parameter", "target": "ghost", "parameter": "X", "value": 1}]},
+    })
+    assert bad.status_code == 200 and bad.json()["status"] == "rejected"
+    with _zip.ZipFile(pkg) as zf:
+        assert _json.loads(zf.read("geometry/shape_ir.json"))["parts"][0]["parameters"]["RADIUS"] == 4

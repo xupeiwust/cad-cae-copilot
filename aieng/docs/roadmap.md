@@ -309,6 +309,23 @@ Object registry (node ↔ entities):
   top of the verifier and run by `aieng.convert` after it. This is the bridge
   for viewer selection-by-node (PR3) and CAE result mapping (PR5).
 
+Shape IR patch format + apply:
+- `converters/shape_ir_patch.py`: `apply_shape_ir_patch(payload, patch, dry_run)`
+  edits a Shape IR surgically instead of rewriting the whole JSON/source.
+  Operations: set_parameter, move_control_point, add_node, remove_node,
+  replace_node, connect, disconnect, change_representation_backend (each may
+  carry `reason`; patch carries `author`/`tool`). **Atomic + validated**: ops run
+  on a working copy, every op's outcome is recorded, and if any op fails or the
+  result isn't valid Shape IR the original is left untouched (never silently
+  overwrite). `build_patch_report` → `diagnostics/shape_ir_patch_report.json`
+  (applied/failed ops, validation, provenance, dry-run flag).
+- Workbench `aieng.apply_shape_ir_patch` (tool + `POST .../shape-ir-patch`,
+  approval-gated): reads geometry/shape_ir.json, applies the patch, and on
+  success commits it and calls `recompile_shape_ir_package` — which recompiles
+  through runtime routing, regenerates artifacts, reconciles provenance, and
+  refreshes verification + object registry. `dry_run` validates + reports only
+  (no writes, no recompile).
+
 - Runtime dependencies (workbench only, not aieng core), in the `aieng311` env:
   `implicit_sdf` needs `sdf` (github.com/fogleman/sdf) + `scikit-image`;
   `manifold_mesh` needs `manifold3d`:

@@ -1077,6 +1077,18 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail="object registry not found (not a Shape IR package?)")
         return {"object_registry": registry, "verification": verification}
 
+    @app.post("/api/projects/{project_id}/shape-ir-patch")
+    def apply_shape_ir_patch_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Apply a Shape IR patch. Body: {patch: {...}, dry_run?: bool}."""
+        p = payload or {}
+        return _tool_aieng_apply_shape_ir_patch(
+            {"project_id": project_id, "patch": p.get("patch"), "dry_run": bool(p.get("dry_run", False))},
+            {},
+        )
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,
@@ -4795,6 +4807,73 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "Confirm with the user before calling."
         ),
         input_schema=_schema("aieng.delete_project"),
+        requires_approval=True,
+    )
+
+    def _tool_aieng_apply_shape_ir_patch(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Apply a surgical patch to a project's Shape IR (atomic + validated),
+        then recompile through runtime routing. dry_run validates + reports only."""
+        import zipfile as _zipfile
+        from aieng.converters import shape_ir_patch as _patch
+        from . import cad_generation as _cad_generation
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        patch = inp.get("patch") if isinstance(inp.get("patch"), dict) else None
+        dry_run = bool(inp.get("dry_run", False))
+        if not pid or patch is None:
+            return {"status": "error", "code": "bad_input", "message": "project_id and patch are required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            with _zipfile.ZipFile(pkg, "r") as zf:
+                if "geometry/shape_ir.json" not in zf.namelist():
+                    return {"status": "error", "code": "not_shape_ir",
+                            "message": "project has no geometry/shape_ir.json"}
+                payload = json.loads(zf.read("geometry/shape_ir.json").decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "read_failed", "message": f"{type(exc).__name__}: {exc}"}
+
+        result = _patch.apply_shape_ir_patch(payload, patch, dry_run=dry_run)
+        report = _patch.build_patch_report(patch, result)
+        recompile: dict[str, Any] | None = None
+
+        if result["ok"] and not dry_run:
+            # Commit the patched Shape IR, then re-run the full pipeline.
+            _cad_generation._replace_member(
+                pkg, "geometry/shape_ir.json",
+                (json.dumps(result["new_payload"], indent=2, sort_keys=True) + "\n").encode(),
+            )
+            recompile = _cad_generation.recompile_shape_ir_package(pkg, timeout=int(inp.get("timeout") or 120))
+            report["recompile"] = recompile
+            _patch.write_patch_report(pkg, report)  # persist only when committed
+            try:
+                proj = get_project(active_settings, pid)
+                proj["updated_at"] = now_iso()
+                save_project(active_settings, proj)
+            except Exception:
+                pass
+
+        return {
+            "status": "ok" if result["ok"] else "rejected",
+            "dry_run": dry_run,
+            "patch_report": report,
+            "recompile": recompile,
+        }
+
+    _rt.register_tool(
+        "aieng.apply_shape_ir_patch",
+        _tool_aieng_apply_shape_ir_patch,
+        description=(
+            "[APPROVAL REQUIRED] Apply a surgical patch to a project's Shape IR "
+            "(set_parameter / move_control_point / add_node / remove_node / replace_node / "
+            "connect / disconnect / change_representation_backend). Atomic + validated: invalid "
+            "patches are rejected without overwriting. On success the package is recompiled through "
+            "runtime routing and verification/object-registry are refreshed. Use dry_run to preview."
+        ),
+        input_schema=_schema("aieng.apply_shape_ir_patch"),
         requires_approval=True,
     )
 

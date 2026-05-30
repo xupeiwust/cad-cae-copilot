@@ -2505,6 +2505,78 @@ def _execute_manifold_code(
         return stl_bytes, glb_bytes, topo
 
 
+def _replace_member(pkg_path: Path, name: str, data: bytes) -> None:
+    """Atomically write/replace a single member in a .aieng zip."""
+    if not pkg_path.exists():
+        return
+    tmp = pkg_path.with_suffix(".tmp.aieng")
+    try:
+        with (
+            zipfile.ZipFile(pkg_path, "r") as src,
+            zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+        ):
+            for item in src.infolist():
+                if item.filename != name:
+                    dst.writestr(item, src.read(item.filename))
+            dst.writestr(name, data)
+        tmp.replace(pkg_path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dict[str, Any]:
+    """Recompile + re-execute a package whose geometry/shape_ir.json changed.
+
+    Routes by the representation's runtime (build123d / sdf / manifold), writes
+    the compiled source + regenerated artifacts, reconciles provenance, and
+    refreshes shape_ir_verification + object_registry. Returns a summary. Reused
+    by the Shape IR patch apply path so an edit re-runs the full pipeline.
+    """
+    from aieng.converters.shape_ir import compile_shape_ir
+    from aieng.converters.shape_ir_object_registry import write_shape_ir_object_registry
+    from aieng.converters.shape_ir_verification import write_shape_ir_verification
+
+    package_path = Path(package_path)
+    with zipfile.ZipFile(package_path, "r") as zf:
+        payload = json.loads(zf.read("geometry/shape_ir.json").decode("utf-8"))
+    compiled = compile_shape_ir(payload)
+    representation, runtime, source = compiled["representation"], compiled["runtime"], compiled["source"]
+    _replace_member(package_path, compiled["source_path"], source.encode())
+
+    summary: dict[str, Any] = {"representation": representation, "runtime": runtime, "executed": False}
+    try:
+        if runtime == "build123d":
+            step, stl, glb, topo = _execute_build123d_code(source, timeout=timeout)
+            if isinstance(topo, dict):
+                topo.pop("_mesh_meta", None)
+            fg = _topology_to_feature_graph(topo, source_code=source, model_kind=str(payload.get("model_kind") or "auto"))
+            _write_cad_artifacts(package_path, step_bytes=step, stl_bytes=stl, topology_map=topo,
+                                 feature_graph=fg, generated_code=source, glb_bytes=glb)
+            reconcile_shape_ir_provenance(package_path, topo, fg, representation=representation,
+                                          backend="build123d", geometry_kind="brep")
+            summary.update(executed=True, geometry_kind="brep")
+        elif runtime in ("sdf", "manifold"):
+            runner = _execute_sdf_code if runtime == "sdf" else _execute_manifold_code
+            stl, glb, topo = runner(source, timeout=timeout)
+            fg = _mesh_feature_graph(topo)
+            _write_mesh_artifacts(package_path, stl, glb, topo, fg)
+            reconcile_shape_ir_provenance(package_path, topo, fg, representation=representation,
+                                          backend=runtime, geometry_kind="mesh")
+            summary.update(executed=True, geometry_kind="mesh")
+        else:
+            summary["skipped"] = True
+    except Exception as exc:  # noqa: BLE001 - report, don't raise into the patch flow
+        summary["error"] = f"{type(exc).__name__}: {exc}"
+    # Refresh diagnostics from the (re)generated package regardless of outcome.
+    for refresh in (write_shape_ir_verification, write_shape_ir_object_registry):
+        try:
+            refresh(package_path)
+        except Exception:  # noqa: BLE001
+            pass
+    return summary
+
+
 # ── backend class ─────────────────────────────────────────────────────────────
 
 class Build123dBackend:

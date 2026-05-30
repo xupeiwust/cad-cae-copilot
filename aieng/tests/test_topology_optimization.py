@@ -14,6 +14,7 @@ from aieng.converters.shape_ir import (  # noqa: E402
     compile_shape_ir_to_build123d_source,
     density_voxel_cells,
     extruded_region_geometry,
+    sample_periodic_catmull_rom,
 )
 from aieng.converters.shape_ir_manifold import (  # noqa: E402
     compile_shape_ir_to_manifold_source,
@@ -263,6 +264,75 @@ def test_contour_executes_in_manifold_within_design_space(tmp_path: Path):
     assert m.volume() > 0
     assert verts[:, 2].min() >= -1e-6 and verts[:, 2].max() <= 10.0 + 1e-6   # extruded along z by thickness
     assert verts[:, 0].min() >= 5.0 - 1e-6 and verts[:, 1].min() >= 10.0 - 1e-6  # placed at frame origin
+
+
+# ── spline / smooth-curve boundary (vs raw polyline) ─────────────────────────
+
+_RING = {**_TOPO_FRAMED, "result": {"threshold": 0.5, "density_grid": {
+    "nrows": 7, "ncols": 7, "values": [
+        [0, 0, 0, 0, 0, 0, 0],
+        [0, 1, 1, 1, 1, 1, 0],
+        [0, 1, 0, 0, 0, 1, 0],
+        [0, 1, 0, 0, 0, 1, 0],
+        [0, 1, 0, 0, 0, 1, 0],
+        [0, 1, 1, 1, 1, 1, 0],
+        [0, 0, 0, 0, 0, 0, 0]]}}}
+
+
+def test_sample_periodic_catmull_rom_densifies_and_stays_closed():
+    pts = [[0.0, 0.0], [10.0, 0.0], [10.0, 8.0], [0.0, 8.0]]
+    dense = sample_periodic_catmull_rom(pts, subdiv=8)
+    assert len(dense) == 4 * 8                       # subdiv per segment, periodic
+    assert dense[0] == [0.0, 0.0]                    # passes through the through-points
+    # stays within a sane neighbourhood of the loop (mild interpolant overshoot)
+    assert all(-3 <= p[0] <= 13 and -3 <= p[1] <= 11 for p in dense)
+
+
+def test_spline_boundary_emits_true_spline_in_brep_and_densifies_in_mesh():
+    pytest.importorskip("skimage")
+    payload = topology_result_to_shape_ir(_RING, method="contour", boundary="spline")
+    node = payload["parts"][0]
+    assert node["type"] == "extruded_region" and node["boundary"] == "spline"
+    bsrc = compile_shape_ir_to_build123d_source(payload)
+    assert "Spline(" in bsrc and "periodic=True" in bsrc and "make_face" in bsrc
+    assert "Polygon(" not in bsrc                     # spline path, not polyline
+    msrc = compile_shape_ir_to_manifold_source(payload)
+    assert "spline->densified" in msrc and "CrossSection" in msrc
+
+
+def test_polygon_boundary_fallback_preserved():
+    pytest.importorskip("skimage")
+    payload = topology_result_to_shape_ir(_RING, method="contour", boundary="polygon")
+    node = payload["parts"][0]
+    assert node["boundary"] == "polygon"
+    bsrc = compile_shape_ir_to_build123d_source(payload)
+    assert "Polygon(" in bsrc and "Spline(" not in bsrc   # raw polyline preserved
+
+
+def test_spline_boundary_extracts_hole_and_subtracts():
+    pytest.importorskip("skimage")
+    # a ring (solid border, hollow centre) -> outer + inner loop; inner is a hole
+    node = topology_result_to_shape_ir(_RING, method="contour", boundary="spline",
+                                       simplify_tol=0.4)["parts"][0]
+    assert len(node["polygons"]) == 2
+    bsrc = compile_shape_ir_to_build123d_source(node and {"parts": [node], "representation": "brep_build123d"})
+    assert "make_face(mode=Mode.ADD)" in bsrc and "make_face(mode=Mode.SUBTRACT)" in bsrc
+
+
+def test_spline_boundary_executes_in_manifold(tmp_path: Path):
+    pytest.importorskip("skimage")
+    pytest.importorskip("manifold3d")
+    payload = topology_result_to_shape_ir(_RING, method="contour", boundary="spline")
+    src = compile_shape_ir_to_manifold_source(payload)
+    ns: dict = {}
+    exec(compile(src, "<m>", "exec"), ns)
+    m = ns["result"]
+    import numpy as np
+    verts = np.asarray(m.to_mesh().vert_properties)[:, :3]
+    assert m.volume() > 0
+    # placed in the _TOPO_FRAMED frame (origin [5,10,0], thickness 10 along z)
+    assert verts[:, 2].min() >= -1e-6 and verts[:, 2].max() <= 10.0 + 1e-6
+    assert verts[:, 0].min() >= 5.0 - 1.0 and verts[:, 1].min() >= 10.0 - 1.0
 
 
 def test_write_shape_ir_from_topology_optimization_into_package(tmp_path: Path):

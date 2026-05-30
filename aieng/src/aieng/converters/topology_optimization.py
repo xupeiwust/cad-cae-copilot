@@ -648,7 +648,8 @@ def topology_result_to_shape_ir(
     color: list[float] | None = None,
     use_frame: bool = True,
     method: str = "voxels",
-    simplify_tol: float = 0.75,
+    boundary: str = "polygon",
+    simplify_tol: float | None = None,
 ) -> dict[str, Any]:
     """Author an optimization result into a Shape IR payload (one shape node).
 
@@ -656,9 +657,13 @@ def topology_result_to_shape_ir(
     ``method`` selects the geometry the body becomes:
     - ``"voxels"`` (default): a ``density_voxels`` node — the thresholded grid as a
       union of extruded voxel boxes (blocky, exact, no extra dependency).
-    - ``"contour"``: an ``extruded_region`` node — marching-squares boundary
-      polygons of the thresholded field, extruded; a smoother "design suggestion".
-      Falls back to voxels (with a note) if no contour can be extracted.
+    - ``"contour"``: an ``extruded_region`` node — marching-squares boundary loops
+      of the thresholded field, extruded; a smoother "design suggestion".
+      ``boundary`` then chooses how those loops are interpreted: ``"polygon"``
+      (straight segments) or ``"spline"`` (a closed periodic spline through the
+      simplified points — a CAD-friendly curve in the B-Rep/NURBS runtime, a
+      densified smooth polygon in the mesh runtime). Falls back to voxels (with a
+      note) if no contour can be extracted.
     Either way it is a single labelled node; ``design_space_node`` is carried
     through so the optimized body stays linked to the design space it came from.
 
@@ -717,6 +722,11 @@ def topology_result_to_shape_ir(
     }
 
     method = str(method or "voxels").lower()
+    boundary = "spline" if str(boundary).lower() == "spline" else "polygon"
+    # A spline through every marching-squares vertex would wiggle; simplify more
+    # aggressively so the curve has a few well-placed through-points.
+    if simplify_tol is None:
+        simplify_tol = 1.5 if boundary == "spline" else 0.75
     polygons: list[list[list[float]]] = []
     if method == "contour":
         ui = _AXIS_INDEX.get(u_axis, 0)
@@ -730,7 +740,7 @@ def topology_result_to_shape_ir(
     if method == "contour":
         node: dict[str, Any] = {
             "id": nid, "label": nid, "type": "extruded_region",
-            "polygons": polygons, "thickness": sz, "origin": o,
+            "polygons": polygons, "boundary": boundary, "thickness": sz, "origin": o,
             "u_axis": u_axis, "v_axis": v_axis, "placed_in_frame": use_frame,
             "source_optimization": source_optimization,
         }
@@ -769,14 +779,16 @@ def write_shape_ir_from_topology_optimization(
     color: list[float] | None = None,
     use_frame: bool = True,
     method: str = "voxels",
-    simplify_tol: float = 0.75,
+    boundary: str = "polygon",
+    simplify_tol: float | None = None,
 ) -> dict[str, Any]:
     """Read a package's topology-optimization result and (re)write geometry/shape_ir.json.
 
     Reads ``analysis/topology_optimization.json``, authors the Shape IR document,
     and writes it as ``geometry/shape_ir.json`` (replacing any existing member).
-    ``method`` chooses ``"voxels"`` (blocky union) or ``"contour"`` (smooth
-    marching-squares boundary, extruded). By default (``use_frame``) the optimized
+    ``method`` chooses ``"voxels"`` (blocky union) or ``"contour"`` (marching-squares
+    boundary, extruded); for a contour, ``boundary`` chooses ``"polygon"`` or
+    ``"spline"`` (smooth periodic curve). By default (``use_frame``) the optimized
     body is placed in the design space's own coordinate frame when the result
     carries a derivation frame. Does NOT compile — the caller (workbench) recompiles
     via the representation's runtime to produce mesh/GLB + topology + verification +
@@ -793,7 +805,7 @@ def write_shape_ir_from_topology_optimization(
     payload = topology_result_to_shape_ir(
         topo_result, representation=representation, cell_size=cell_size,
         thickness=thickness, origin=origin, node_id=node_id, color=color, use_frame=use_frame,
-        method=method, simplify_tol=simplify_tol,
+        method=method, boundary=boundary, simplify_tol=simplify_tol,
     )
     data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
     tmp = package_path.with_suffix(".tmp.aieng")

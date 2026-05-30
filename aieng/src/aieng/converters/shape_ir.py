@@ -478,6 +478,30 @@ def _plane_basis(u_axis: str, v_axis: str) -> dict[str, Any]:
             "w_vec": w_vec, "y_dir": y_dir, "sign_v": sign_v}
 
 
+def sample_periodic_catmull_rom(points: list[list[float]], subdiv: int = 8) -> list[list[float]]:
+    """Densify a closed loop of through-points into a smooth periodic Catmull-Rom
+    polyline. Used by mesh backends (which have no spline primitive) so a spline
+    boundary still renders as a smooth curve; B-Rep backends use a true spline."""
+    n = len(points)
+    if n < 3 or subdiv < 2:
+        return [list(p) for p in points]
+    out: list[list[float]] = []
+    for i in range(n):
+        p0, p1 = points[(i - 1) % n], points[i]
+        p2, p3 = points[(i + 1) % n], points[(i + 2) % n]
+        for s in range(subdiv):
+            t = s / subdiv
+            t2, t3 = t * t, t * t * t
+
+            def cr(a: float, b: float, c: float, d: float) -> float:
+                return 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2
+                              + (-a + 3 * b - 3 * c + d) * t3)
+
+            out.append([round(cr(p0[0], p1[0], p2[0], p3[0]), 6),
+                        round(cr(p0[1], p1[1], p2[1], p3[1]), 6)])
+    return out
+
+
 def _point_in_poly(poly: list[list[float]], pt: tuple[float, float]) -> bool:
     """Ray-cast point-in-polygon (even-odd)."""
     x, y = pt
@@ -528,9 +552,11 @@ def extruded_region_geometry(node: dict[str, Any]) -> dict[str, Any]:
     origin = node.get("origin") or [0.0, 0.0, 0.0]
     base = [0.0, 0.0, 0.0]
     base[basis["wi"]] = float(origin[basis["wi"]])
+    boundary = str(node.get("boundary", "polygon")).lower()
     return {
         "local_polys": local,
         "classified": classified,
+        "boundary": "spline" if boundary == "spline" else "polygon",
         "thickness": float(node.get("thickness", 1.0)),
         "base": base,
         "u_vec": basis["u_vec"], "y_dir": basis["y_dir"], "w_vec": basis["w_vec"],
@@ -554,18 +580,37 @@ def _compile_extruded_region_b123d(
         ]
         return lines
     base, u_vec, w_vec = g["base"], g["u_vec"], g["w_vec"]
+    is_spline = g["boundary"] == "spline"
+    kind_note = "spline" if is_spline else "polyline"
+    if is_spline:
+        # A true closed periodic B-Rep spline per loop (CAD-friendly curve, also a
+        # clean NURBS edge under the nurbs_brep runtime); holes via make_face SUBTRACT.
+        add_block = [
+            f"        for _loop in _add_{slug}:",
+            "            with BuildLine():",
+            "                Spline(*[tuple(p) for p in _loop], periodic=True)",
+            "            make_face(mode=Mode.ADD)",
+            f"        for _loop in _holes_{slug}:",
+            "            with BuildLine():",
+            "                Spline(*[tuple(p) for p in _loop], periodic=True)",
+            "            make_face(mode=Mode.SUBTRACT)",
+        ]
+    else:
+        add_block = [
+            f"        for _poly in _add_{slug}:",
+            "            Polygon(*[tuple(p) for p in _poly], align=None, mode=Mode.ADD)",
+            f"        for _poly in _holes_{slug}:",
+            "            Polygon(*[tuple(p) for p in _poly], align=None, mode=Mode.SUBTRACT)",
+        ]
     lines = [
-        f"# Shape IR node: {node_id} (extruded_region -> {len(add)} solid + {len(holes)} hole "
-        f"polygons, extruded {g['thickness']})",
+        f"# Shape IR node: {node_id} (extruded_region/{kind_note} -> {len(add)} solid + "
+        f"{len(holes)} hole loops, extruded {g['thickness']})",
         f"_add_{slug} = {_py(add)}",
         f"_holes_{slug} = {_py(holes)}",
         f"with BuildPart() as _bp_{slug}:",
         f"    with BuildSketch(Plane(origin={_py(tuple(base))}, x_dir={_py(tuple(u_vec))}, "
         f"z_dir={_py(tuple(w_vec))})):",
-        f"        for _poly in _add_{slug}:",
-        f"            Polygon(*[tuple(p) for p in _poly], align=None, mode=Mode.ADD)",
-        f"        for _poly in _holes_{slug}:",
-        f"            Polygon(*[tuple(p) for p in _poly], align=None, mode=Mode.SUBTRACT)",
+        *add_block,
         f"    extrude(amount={g['thickness']})",
         f"{var_name} = _bp_{slug}.part",
         f"{var_name}.label = {_py(label)}",

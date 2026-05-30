@@ -294,8 +294,24 @@ pluggable-backend pattern as solvers.
   an XZ plane; contour writeback emits a compilable `extruded_region`; empty field
   falls back to voxels; contour executes in manifold within the design space;
   backend writeback default = contour.
-- Next: 3D SIMP (escape the plane-stress idealization); optional spline-fit of the
-  contour loops for fully curved boundaries.
+- **Spline boundary (curve, not polyline):** a contour loop can be interpreted as a
+  closed periodic spline instead of straight segments. `extract_density_contours`
+  simplifies more aggressively for splines (sparse, well-placed through-points); the
+  `extruded_region` node carries `boundary: spline|polygon`. build123d builds a true
+  closed periodic `Spline` per loop (`periodic=True`) → `make_face` (holes subtracted
+  by even-odd) → extrude — a CAD-friendly curve / clean NURBS edge in the B-Rep
+  runtime; the mesh runtime has no spline primitive, so `sample_periodic_catmull_rom`
+  densifies each loop into a smooth polygon before the `CrossSection`. The raw
+  polygon path is preserved as a fallback (`boundary=polygon`). `topology_result_to_
+  shape_ir`/`write_shape_ir_from_topology_optimization` thread `boundary`; the
+  workbench `opt.writeback_to_shape_ir` defaults to `spline`. Verified e2e: a ring
+  field writes back outer+inner spline loops that extrude to a curved hollow body in
+  both runtimes, placed in the design-space frame.
+- Tests (spline): periodic Catmull-Rom densifies + stays closed; spline writeback
+  emits a true `Spline(periodic=True)`+`make_face` in B-Rep and a densified
+  `CrossSection` in mesh; polygon fallback preserved; ring extracts outer+inner loops
+  → ADD/SUBTRACT; spline executes in manifold within the design space.
+- Next: 3D SIMP (escape the plane-stress idealization).
 
 ## Phase 21: Shape IR converter + topology-first CAD compilation — COMPLETE (2026-05-30)
 

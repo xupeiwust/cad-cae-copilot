@@ -144,8 +144,18 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "enum": ["contour", "voxels"],
                 "description": (
                     "Geometry for the optimized body: 'contour' (default) = smooth "
-                    "marching-squares boundary polygons, extruded (a design suggestion); "
+                    "marching-squares boundary, extruded (a design suggestion); "
                     "'voxels' = blocky union of the thresholded grid cells."
+                ),
+            },
+            "boundary": {
+                "type": "string",
+                "enum": ["spline", "polygon"],
+                "description": (
+                    "For method=contour, how boundary loops are interpreted: 'spline' "
+                    "(default) = closed periodic spline (CAD-friendly curve / clean NURBS "
+                    "edge in B-Rep, densified smooth polygon in mesh); 'polygon' = straight "
+                    "segments."
                 ),
             },
             "representation": {

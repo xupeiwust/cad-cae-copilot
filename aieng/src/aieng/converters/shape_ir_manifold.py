@@ -29,6 +29,7 @@ from .shape_ir import (
     _slug,
     density_voxel_cells,
     extruded_region_geometry,
+    sample_periodic_catmull_rom,
 )
 
 
@@ -123,10 +124,16 @@ def _compile_extruded_region_manifold(node: dict[str, Any], node_id: str, var: s
             f"# Shape IR node: {node_id} (extruded_region -> empty, placeholder)",
             f"{var} = Manifold.cube((0.001, 0.001, 0.001), True)",
         ]
+    # Mesh backend has no spline primitive: densify a spline boundary into a smooth
+    # polygon (Catmull-Rom) at compile time so the extruded mesh reads as curved.
+    note = "polygon"
+    if g["boundary"] == "spline":
+        loops = [sample_periodic_catmull_rom(loop, subdiv=8) for loop in loops]
+        note = "spline->densified polygon"
     u, y, w, b = g["u_vec"], g["y_dir"], g["w_vec"], g["base"]
     matrix = [[u[r], y[r], w[r], b[r]] for r in range(3)]
     return [
-        f"# Shape IR node: {node_id} (extruded_region -> {len(loops)} polygon loops, extruded {g['thickness']})",
+        f"# Shape IR node: {node_id} (extruded_region/{note} -> {len(loops)} loops, extruded {g['thickness']})",
         "from manifold3d import CrossSection, FillRule",
         f"_loops_{slug} = {_py(loops)}",
         f"_cs_{slug} = CrossSection([[tuple(p) for p in _poly] for _poly in _loops_{slug}], FillRule.EvenOdd)",

@@ -326,6 +326,24 @@ Shape IR patch format + apply:
   refreshes verification + object registry. `dry_run` validates + reports only
   (no writes, no recompile).
 
+CAE result mapping (back to Shape IR):
+- `converters/cae_result_map.py`: `map_cae_results(...)` correlates
+  `results/computed_metrics.json` (scalar extrema per load case) +
+  `results/field_regions.json` (stress/displacement clusters) through
+  `geometry/topology_map.json` and `registry/object_registry.json` to a
+  `source_ir_node`. Each mapped result carries load_case_id, result_type
+  (stress/displacement/deflection/strain), value+unit, affected topology
+  entities, source_ir_node, mapping_method (bbox_contains/nearest_center),
+  and confidence (high/medium/low). Region location → topology body (bbox
+  containment, else nearest centre) → registry node; fused-mesh regions resolve
+  to the body but honestly leave source_ir_node null (low confidence). Regions
+  with no nearby geometry are reported in `unmapped_regions`. Output:
+  `analysis/cae_result_map.json`.
+- Workbench `cae.map_results` (tool + `GET .../cae-result-map`, read-only) writes
+  it; `cae.extract_field_regions` refreshes it automatically. This map is the
+  substrate for topology optimization (loads/hotspots tied to editable nodes) —
+  optimization itself is not implemented yet.
+
 - Runtime dependencies (workbench only, not aieng core), in the `aieng311` env:
   `implicit_sdf` needs `sdf` (github.com/fogleman/sdf) + `scikit-image`;
   `manifold_mesh` needs `manifold3d`:

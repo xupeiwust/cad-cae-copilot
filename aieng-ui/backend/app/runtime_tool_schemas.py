@@ -84,6 +84,17 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
         "description": "Apply a surgical patch to a project's Shape IR (atomic, validated, recompiled).",
     },
+    "cae.map_results": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {"project_id": {"type": "string"}},
+        "additionalProperties": True,
+        "description": (
+            "Map CAE results (computed_metrics + field_regions) back to topology "
+            "entities, object_registry objects, and source_ir_node. Writes "
+            "analysis/cae_result_map.json. Read-only analysis (no solver)."
+        ),
+    },
     "aieng.find_projects_by_part": {
         "type": "object",
         "required": ["query"],

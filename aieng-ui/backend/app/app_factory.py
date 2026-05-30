@@ -1089,6 +1089,25 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             {},
         )
 
+    @app.get("/api/projects/{project_id}/cae-result-map")
+    def get_cae_result_map_endpoint(project_id: str) -> dict[str, Any]:
+        """Build (and persist) the CAE -> Shape IR result map for a project."""
+        import zipfile as _zipfile
+        from aieng.converters.cae_result_map import build_cae_result_map_for_package, write_cae_result_map
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        with _zipfile.ZipFile(package_path, "r") as zf:
+            if "results/computed_metrics.json" not in zf.namelist() and "results/field_regions.json" not in zf.namelist():
+                raise HTTPException(status_code=404, detail="no CAE results to map (run the solver + extract first)")
+        try:
+            return write_cae_result_map(package_path)
+        except Exception:  # noqa: BLE001 - fall back to a non-persisted build
+            return build_cae_result_map_for_package(package_path)
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,
@@ -3403,6 +3422,15 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     f"Field regions were extracted, but field summary refresh failed: {type(exc).__name__}: {exc}"
                 )
 
+        # Refresh the CAE -> Shape IR result map so hotspots stay tied to nodes.
+        cae_result_map_status = "ok"
+        try:
+            from aieng.converters.cae_result_map import write_cae_result_map
+            write_cae_result_map(package_path_str)
+        except Exception as exc:  # noqa: BLE001
+            cae_result_map_status = "error"
+            warnings.append(f"cae_result_map refresh failed: {type(exc).__name__}: {exc}")
+
         return {
             "ok": True,
             "tool": "cae.extract_field_regions",
@@ -3410,6 +3438,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "package_path": package_path_str,
             "out_path": result.get("out_path"),
             "cluster_count": result.get("cluster_count", 0),
+            "cae_result_map_refreshed": cae_result_map_status,
             "clusters": result.get("clusters", []),
             "warnings": warnings,
             "artifacts": [
@@ -4875,6 +4904,37 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         ),
         input_schema=_schema("aieng.apply_shape_ir_patch"),
         requires_approval=True,
+    )
+
+    def _tool_cae_map_results(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Map CAE results back to topology entities / object_registry / source_ir_node;
+        write analysis/cae_result_map.json. Read-only analysis (no solver)."""
+        from aieng.converters.cae_result_map import write_cae_result_map
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result_map = write_cae_result_map(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "map_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": "ok", "tool": "cae.map_results", "cae_result_map": result_map}
+
+    _rt.register_tool(
+        "cae.map_results",
+        _tool_cae_map_results,
+        description=(
+            "Map CAE results (stress/displacement clusters + scalar extrema) back to "
+            "topology entities, object_registry objects, and source_ir_node where "
+            "resolvable. Writes analysis/cae_result_map.json; reports unmapped regions "
+            "honestly. Read-only analysis (no solver/mesher)."
+        ),
+        input_schema=_schema("cae.map_results"),
     )
 
     def _tool_aieng_agent_readme(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:

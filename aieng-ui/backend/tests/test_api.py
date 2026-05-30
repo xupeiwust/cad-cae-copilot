@@ -10384,3 +10384,50 @@ def test_shape_ir_patch_endpoint_dry_run_and_reject(tmp_path: Path) -> None:
     assert bad.status_code == 200 and bad.json()["status"] == "rejected"
     with _zip.ZipFile(pkg) as zf:
         assert _json.loads(zf.read("geometry/shape_ir.json"))["parts"][0]["parameters"]["RADIUS"] == 4
+
+
+def test_cae_result_map_endpoint(tmp_path: Path) -> None:
+    import json as _json, zipfile as _zip
+    from app.main import create_app, default_project, project_dir, save_project, get_project
+
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid = save_project(settings, default_project("cae-map"))["id"]
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    members = {
+        "geometry/topology_map.json": {"entities": [
+            {"id": "body_001", "type": "solid", "name": "plate", "bounding_box": [-20, -15, 0, 20, 15, 6], "face_ids": ["face_001"]},
+            {"id": "body_002", "type": "solid", "name": "post", "bounding_box": [10, -3, 6, 16, 3, 26], "face_ids": ["face_010"]},
+        ]},
+        "registry/object_registry.json": {"objects": [
+            {"node_id": "plate", "topology_entities": ["body_001", "face_001"], "linkage": "name_match"},
+            {"node_id": "post", "topology_entities": ["body_002", "face_010"], "linkage": "name_match"},
+        ]},
+        "results/computed_metrics.json": {"load_cases": [{"id": "lc1", "metrics": {
+            "max_von_mises_stress": {"value": 245.0, "unit": "MPa"}}}]},
+        "results/field_regions.json": {"field": "S", "clusters": [
+            {"id": "cluster_001", "location": {"x": 13, "y": 0, "z": 18}, "magnitude": {"value": 245.0, "unit": "MPa"}, "node_count": 40}]},
+    }
+    with _zip.ZipFile(pkg, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, _json.dumps(content))
+    proj = get_project(settings, pid); proj["aieng_file"] = f"{pid}.aieng"; save_project(settings, proj)
+
+    client = TestClient(create_app(settings))
+    resp = client.get(f"/api/projects/{pid}/cae-result-map")
+    assert resp.status_code == 200
+    data = resp.json()
+    hot = next(m for m in data["mapped_results"] if m["result_type"] == "stress")
+    assert hot["source_ir_node"] == "post" and hot["confidence"] == "high"
+    assert data["summary"]["resolved_to_node"] == 1
+    with _zip.ZipFile(pkg) as zf:
+        assert "analysis/cae_result_map.json" in zf.namelist()
+
+    # a project with no CAE results -> 404
+    pid2 = save_project(settings, default_project("no-cae"))["id"]
+    pkg2 = project_dir(settings, pid2) / f"{pid2}.aieng"
+    with _zip.ZipFile(pkg2, "w") as zf:
+        zf.writestr("geometry/topology_map.json", _json.dumps({"entities": []}))
+    proj2 = get_project(settings, pid2); proj2["aieng_file"] = f"{pid2}.aieng"; save_project(settings, proj2)
+    assert client.get(f"/api/projects/{pid2}/cae-result-map").status_code == 404

@@ -5081,9 +5081,13 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if pkg is None or not pkg.exists():
             return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
 
-        representation = str(inp.get("representation") or "manifold_mesh")
-        # By default the optimized body is placed in the design space's derivation
-        # frame; cell_size/thickness/origin are honored only if the caller overrides.
+        # Default to B-Rep: a topology-optimization result is a design suggestion an
+        # engineer inspects, picks faces on, and exports to STEP / feeds back into
+        # CAD/CAE — all of which need analytic faces. manifold_mesh is offered as a
+        # robust fallback (and auto-used if the B-Rep build fails to execute).
+        representation = str(inp.get("representation") or "brep_build123d")
+        # The optimized body is placed in the design space's derivation frame;
+        # cell_size/thickness/origin are honored only if the caller overrides.
         cs = inp.get("cell_size")
         cell_size = (float(cs[0]), float(cs[1] if len(cs) > 1 else cs[0])) if cs else None
         thickness = inp.get("thickness")
@@ -5091,20 +5095,42 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         origin = (float(org[0]), float(org[1]), float(org[2])) if org else None
         method = str(inp.get("method") or "contour").lower()
         boundary = str(inp.get("boundary") or "spline").lower()
-        try:
-            payload = write_shape_ir_from_topology_optimization(
-                pkg, representation=representation, cell_size=cell_size,
+        timeout = int(inp.get("timeout") or 120)
+
+        def _writeback(rep: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            pay = write_shape_ir_from_topology_optimization(
+                pkg, representation=rep, cell_size=cell_size,
                 thickness=(float(thickness) if thickness is not None else None),
                 origin=origin,
                 node_id=(str(inp["node_id"]) if inp.get("node_id") else None),
                 use_frame=bool(inp.get("use_frame", True)),
                 method=method, boundary=boundary,
             )
-            recompile = _cad_generation.recompile_shape_ir_package(pkg, timeout=int(inp.get("timeout") or 120))
+            rc = _cad_generation.recompile_shape_ir_package(pkg, timeout=timeout)
+            return pay, rc
+
+        try:
+            payload, recompile = _writeback(representation)
+            # Safety net: if a non-mesh representation didn't actually execute, retry
+            # once as a watertight mesh so the writeback still yields a viewable body.
+            if representation != "manifold_mesh" and not (recompile or {}).get("executed", False):
+                payload, recompile = _writeback("manifold_mesh")
+                payload.setdefault("provenance", {})["representation_fallback"] = (
+                    f"{representation} did not execute; fell back to manifold_mesh")
         except FileNotFoundError as exc:
             return {"status": "error", "code": "no_topology_optimization", "message": str(exc)}
         except Exception as exc:  # noqa: BLE001
-            return {"status": "error", "code": "writeback_failed", "message": f"{type(exc).__name__}: {exc}"}
+            # B-Rep build raised — fall back to mesh once before giving up.
+            if representation != "manifold_mesh":
+                try:
+                    payload, recompile = _writeback("manifold_mesh")
+                    payload.setdefault("provenance", {})["representation_fallback"] = (
+                        f"{representation} failed ({type(exc).__name__}); fell back to manifold_mesh")
+                except Exception as exc2:  # noqa: BLE001
+                    return {"status": "error", "code": "writeback_failed",
+                            "message": f"{type(exc2).__name__}: {exc2}"}
+            else:
+                return {"status": "error", "code": "writeback_failed", "message": f"{type(exc).__name__}: {exc}"}
 
         # Publish the recompiled preview to viewer/model.* + set web_asset so the UI
         # viewer actually shows the optimized body (the frontend's default viewer URL

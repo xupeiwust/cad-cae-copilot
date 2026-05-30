@@ -161,8 +161,10 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "representation": {
                 "type": "string",
                 "description": (
-                    "Compile target for the optimized body (default manifold_mesh -> "
-                    "watertight mesh; brep_build123d also supported)."
+                    "Compile target for the optimized body. Default brep_build123d -> "
+                    "analytic faces an engineer can pick / export to STEP / feed back into "
+                    "CAD/CAE; manifold_mesh -> watertight mesh (also the auto-fallback if "
+                    "the B-Rep build fails to execute)."
                 ),
             },
             "cell_size": {

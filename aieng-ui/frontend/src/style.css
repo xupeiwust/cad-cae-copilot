@@ -4409,6 +4409,13 @@ textarea {
   font-size: 11px;
 }
 
+.selection-inspector-note {
+  margin: 2px 0 0;
+  color: var(--glass-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .selection-inspector-list {
   display: flex;
   flex-direction: column;

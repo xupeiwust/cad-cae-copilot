@@ -16,6 +16,14 @@ export function SelectionInspectorCard({
 }: SelectionInspectorCardProps) {
   if (!pickedFaces.length) return null;
 
+  // A "mesh_region" face is the whole body of a mesh part (manifold/SDF/optimized
+  // topology), not a discrete B-Rep face — so picking it highlights the entire part.
+  // Label these as whole-body selections so the panel matches what the viewer shows.
+  const isRegion = (face: PickedFace) => face.surface_type === "mesh_region";
+  const allRegions = pickedFaces.every(isRegion);
+  const anyRegion = pickedFaces.some(isRegion);
+  const countNoun = allRegions ? "body" : anyRegion ? "selection" : "face";
+
   const pointerText = pickedFaces.map((face) => face.pointer).join(" ");
   const primaryPointer = pickedFaces[0]?.pointer ?? "@face:selected";
   const suggestedActions = [
@@ -30,13 +38,22 @@ export function SelectionInspectorCard({
     <section className="selection-inspector-card" aria-label="Selected geometry">
       <div className="selection-inspector-head">
         <strong>Selected geometry</strong>
-        <span>{pickedFaces.length} face{pickedFaces.length !== 1 ? "s" : ""}</span>
+        <span>{pickedFaces.length} {countNoun}{pickedFaces.length !== 1 ? "s" : ""}</span>
       </div>
+      {anyRegion && (
+        <p className="selection-inspector-note">
+          This is a mesh part — selecting it highlights the whole body, not a single
+          B-Rep face (mesh geometry has no per-face topology).
+        </p>
+      )}
       <div className="selection-inspector-list">
         {pickedFaces.map((face) => (
           <div key={face.pointer} className="selection-inspector-item">
             <code><PointerText text={face.pointer} /></code>
-            <span>{face.surface_type || "unknown"} · roles: {face.roles.length ? face.roles.join(", ") : "unknown"}</span>
+            <span>
+              {isRegion(face) ? "whole body (mesh region)" : (face.surface_type || "unknown")}
+              {" · roles: "}{face.roles.length ? face.roles.join(", ") : "unknown"}
+            </span>
           </div>
         ))}
       </div>

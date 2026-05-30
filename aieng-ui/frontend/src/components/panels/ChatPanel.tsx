@@ -276,7 +276,7 @@ export function ChatPanel({
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const wasNearBottom = wasNearBottomRef.current || distanceFromBottom < 120;
     if (wasNearBottom) {
-      el.scrollTop = el.scrollHeight;
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
       setNewActivityAvailable(false);
     } else {
       setNewActivityAvailable(true);
@@ -385,7 +385,7 @@ export function ChatPanel({
   function scrollToBottom() {
     const el = chatLogRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     wasNearBottomRef.current = true;
     setNewActivityAvailable(false);
   }

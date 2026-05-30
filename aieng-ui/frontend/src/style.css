@@ -1677,6 +1677,22 @@ input[type="file"] {
   border-radius: 18px;
   border: 1px solid rgba(71, 85, 105, 0.35);
   background: rgba(3, 7, 18, 0.54);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(71, 85, 105, 0.6) transparent;
+}
+
+.chat-window::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.chat-window::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(71, 85, 105, 0.6);
+}
+
+.chat-window::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .chat-bubble {

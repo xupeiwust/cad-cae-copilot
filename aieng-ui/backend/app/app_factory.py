@@ -5093,8 +5093,23 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "code": "writeback_failed", "message": f"{type(exc).__name__}: {exc}"}
 
+        # Publish the recompiled preview to viewer/model.* + set web_asset so the UI
+        # viewer actually shows the optimized body (the frontend's default viewer URL
+        # resolves to /assets/projects/{id}/{web_asset}; recompile only refreshes the
+        # in-package preview, not the on-disk viewer asset). Mirrors cad.execute_build123d.
         try:
+            import zipfile as _zf
+            glb_bytes = stl_bytes = None
+            with _zf.ZipFile(pkg, "r") as zf:
+                names = zf.namelist()
+                if "geometry/preview.glb" in names:
+                    glb_bytes = zf.read("geometry/preview.glb")
+                if "geometry/preview.stl" in names:
+                    stl_bytes = zf.read("geometry/preview.stl")
             proj = get_project(active_settings, pid)
+            if glb_bytes or stl_bytes:
+                proj["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
+                _cad_generation._publish_preview_to_viewer(active_settings, pid, proj, glb_bytes, stl_bytes)
             proj["updated_at"] = now_iso()
             save_project(active_settings, proj)
         except Exception:

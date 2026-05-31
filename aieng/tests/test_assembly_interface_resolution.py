@@ -1,0 +1,249 @@
+"""Tests for assembly interface resolution + geometric connection validation.
+
+Geometry validation only — no contact, no bolt preload, no solver execution.
+"""
+from __future__ import annotations
+
+import json
+import zipfile
+from pathlib import Path
+
+from aieng.converters.assembly_interface_resolution import (
+    ASSEMBLY_CONNECTION_GEOMETRY_PATH,
+    INTERFACE_RESOLUTION_PATH,
+    resolve_and_validate_assembly_geometry,
+    resolve_assembly_interfaces,
+    resolve_interface,
+    validate_connection_geometry,
+)
+
+# bbox = [xmin,ymin,zmin,xmax,ymax,zmax]
+
+
+def _face(fid, bbox, normal, area=1.0, body=None):
+    e = {"id": fid, "type": "face", "bounding_box": bbox, "normal": normal, "area": area}
+    if body:
+        e["body_id"] = body
+    return e
+
+
+def _two_part_assembly(conn_type="rigid_tie", behavior=None, **conn_extra):
+    return {
+        "format": "aieng.assembly_ir", "unit": "mm",
+        "parts": [
+            {"id": "a", "role": "design_part", "geometry_ref": "geometry/a.step",
+             "transform": {"translation": [0, 0, 0], "unit": "mm"}, "material": "Al"},
+            {"id": "b", "role": "reference_part", "geometry_ref": "geometry/b.step",
+             # b is translated +10 in z so its mating face meets a's mating face
+             "transform": {"translation": [0, 0, 10], "unit": "mm"}, "material": "Steel"},
+        ],
+        "interfaces": [
+            {"id": "if_a", "part_id": "a", "semantic_role": "mounting_face",
+             "topology_refs": {"face_ids": ["a_top"]}},
+            {"id": "if_b", "part_id": "b", "semantic_role": "support_face",
+             "topology_refs": {"face_ids": ["b_bot"]}},
+        ],
+        "connections": [
+            {"id": "c1", "type": conn_type, "part_a": "a", "part_b": "b",
+             "interface_a": "if_a", "interface_b": "if_b",
+             "behavior": behavior or ["load_transfer"], **conn_extra},
+        ],
+        "analysis_intent": {"design_parts": ["a"]},
+    }
+
+
+def _topology():
+    # part a: top face at z=10 (local), normal +z
+    # part b: bottom face at z=0 (local), normal -z; after +10 translate it lands at z=10
+    return {
+        "a": {"a_top": _face("a_top", [0, 0, 10, 5, 5, 10], [0, 0, 1.0], area=25.0)},
+        "b": {"b_bot": _face("b_bot", [0, 0, 0, 5, 5, 0], [0, 0, -1.0], area=25.0)},
+    }
+
+
+# ── resolution + transforms ──────────────────────────────────────────────────
+
+def test_transform_moves_bbox_and_centroid():
+    iface = {"id": "if_b", "part_id": "b", "semantic_role": "support_face",
+             "topology_refs": {"face_ids": ["b_bot"]}}
+    rec = resolve_interface(iface, _topology()["b"], {"translation": [0, 0, 10]})
+    assert rec["resolution_status"] == "resolved"
+    # local bottom face centroid z = 0 -> world z = 10
+    assert rec["local"]["centroid"][2] == 0.0
+    assert rec["world"]["centroid"][2] == 10.0
+    assert rec["world"]["bbox"][2] == 10.0 and rec["world"]["bbox"][5] == 10.0
+
+
+def test_unresolved_face_reported_honestly():
+    iface = {"id": "x", "part_id": "a", "topology_refs": {"face_ids": ["ghost"]}}
+    rec = resolve_interface(iface, _topology()["a"], {"translation": [0, 0, 0]})
+    assert rec["resolution_status"] == "unresolved"
+    assert rec["unresolved_refs"] == ["ghost"]
+    assert rec["world"] == {}
+
+
+def test_partial_resolution():
+    iface = {"id": "x", "part_id": "a", "topology_refs": {"face_ids": ["a_top", "ghost"]}}
+    rec = resolve_interface(iface, _topology()["a"], {"translation": [0, 0, 0]})
+    assert rec["resolution_status"] == "partially_resolved"
+    assert rec["unresolved_refs"] == ["ghost"] and rec["resolved_entity_count"] == 1
+
+
+def test_missing_transform_noted():
+    iface = {"id": "if_a", "part_id": "a", "topology_refs": {"face_ids": ["a_top"]}}
+    rec = resolve_interface(iface, _topology()["a"], None)
+    assert rec["transform_applied"] is False and rec["transform_note"] == "missing_transform"
+
+
+# ── connection geometry validation ───────────────────────────────────────────
+
+def test_matching_translated_faces_plausible_rigid_tie():
+    asm = _two_part_assembly("rigid_tie")
+    res = resolve_assembly_interfaces(asm, _topology())
+    geo = validate_connection_geometry(asm, res)
+    c = geo["connections"][0]
+    assert c["geometry_status"] == "plausible", c["reasons"]
+    assert c["metrics"]["bbox_overlap"] is True
+    # opposing faces: +z (a) vs -z (b) -> dot ~ -1, NOT same direction
+    assert c["metrics"]["normal_alignment"] < 0
+
+
+def test_far_apart_interfaces_invalid():
+    asm = _two_part_assembly("rigid_tie")
+    asm["parts"][1]["transform"]["translation"] = [0, 0, 1000]  # b way out in z
+    res = resolve_assembly_interfaces(asm, _topology())
+    geo = validate_connection_geometry(asm, res)
+    c = geo["connections"][0]
+    assert c["geometry_status"] == "invalid"
+    assert "far_apart" in c["reasons"]
+
+
+def test_same_direction_normals_warn():
+    asm = _two_part_assembly("rigid_tie")
+    topo = _topology()
+    topo["b"]["b_bot"]["normal"] = [0, 0, 1.0]  # both faces point +z (suspicious for a mate)
+    res = resolve_assembly_interfaces(asm, topo)
+    geo = validate_connection_geometry(asm, res)
+    c = geo["connections"][0]
+    assert "normals_same_direction" in c["reasons"]
+    assert c["geometry_status"] == "warning"
+
+
+def test_unresolved_interface_insufficient_data():
+    asm = _two_part_assembly("rigid_tie")
+    res = resolve_assembly_interfaces(asm, {"a": _topology()["a"]})  # no topology for b
+    geo = validate_connection_geometry(asm, res)
+    c = geo["connections"][0]
+    assert c["geometry_status"] == "insufficient_data"
+    assert "unresolved_interface" in c["reasons"]
+
+
+def test_bolted_proxy_without_bolt_hole_warns():
+    # roles are mounting_face/support_face; bolted_proxy prefers bolt_hole/mounting_face.
+    # mounting_face is present on one side, so to force the warning drop both to contact_face.
+    asm = _two_part_assembly("bolted_proxy")
+    asm["interfaces"][0]["semantic_role"] = "contact_face"
+    asm["interfaces"][1]["semantic_role"] = "contact_face"
+    res = resolve_assembly_interfaces(asm, _topology())
+    geo = validate_connection_geometry(asm, res)
+    c = geo["connections"][0]
+    assert "no_bolt_hole_evidence" in c["reasons"]
+    assert c["geometry_status"] in ("warning", "invalid")
+
+
+def test_bolted_proxy_with_mounting_face_no_evidence_warning():
+    asm = _two_part_assembly("bolted_proxy")  # if_a is mounting_face
+    res = resolve_assembly_interfaces(asm, _topology())
+    geo = validate_connection_geometry(asm, res)
+    assert "no_bolt_hole_evidence" not in geo["connections"][0]["reasons"]
+
+
+def test_contact_proxy_draft_only():
+    asm = _two_part_assembly("contact_proxy")
+    res = resolve_assembly_interfaces(asm, _topology())
+    geo = validate_connection_geometry(asm, res)
+    c = geo["connections"][0]
+    assert "contact_draft_only" in c["reasons"]
+    assert c["geometry_status"] == "warning"   # never "plausible"
+
+
+def test_spring_proxy_warning_even_when_aligned():
+    asm = _two_part_assembly("spring_proxy")
+    res = resolve_assembly_interfaces(asm, _topology())
+    geo = validate_connection_geometry(asm, res)
+    c = geo["connections"][0]
+    assert "centroid_based_proxy" in c["reasons"]
+    assert c["geometry_status"] == "warning"
+
+
+# ── package integration ──────────────────────────────────────────────────────
+
+def _write_assembly_package(tmp_path: Path, assembly, per_part_topology=True) -> Path:
+    pkg = tmp_path / "asm.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", json.dumps({"name": "Asm"}))
+        zf.writestr("provenance/conversion_manifest.json",
+                    json.dumps({"format": "aieng.conversion_manifest"}))
+        zf.writestr("assembly/assembly_ir.json", json.dumps(assembly))
+        if per_part_topology:
+            topo = _topology()
+            for pid, ents in topo.items():
+                zf.writestr(f"parts/{pid}/topology_map.json",
+                            json.dumps({"format_version": "0.1.0",
+                                        "entities": list(ents.values())}))
+    return pkg
+
+
+def test_package_resolves_and_validates(tmp_path: Path):
+    pkg = _write_assembly_package(tmp_path, _two_part_assembly("rigid_tie"))
+    result = resolve_and_validate_assembly_geometry(pkg)
+    assert result["assembly_present"] is True
+    assert result["resolution_summary"]["resolved"] == 2
+    assert result["geometry_summary"].get("plausible") == 1
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        assert INTERFACE_RESOLUTION_PATH in names
+        assert ASSEMBLY_CONNECTION_GEOMETRY_PATH in names
+        # honesty + no solver deck
+        assert not any(n.lower().endswith((".inp", ".frd", ".step", ".stp")) for n in names)
+        geo = json.loads(zf.read(ASSEMBLY_CONNECTION_GEOMETRY_PATH))
+        assert geo["provenance"]["geometry_validation_only"] is True
+        assert geo["provenance"]["contact_physics_modeled"] is False
+        graph = json.loads(zf.read("assembly/connection_graph.json"))
+        assert graph["edges"][0]["geometry_status"] == "plausible"
+
+
+def test_package_invalid_connection_disables_cae_draft(tmp_path: Path):
+    asm = _two_part_assembly("rigid_tie")
+    asm["parts"][1]["transform"]["translation"] = [0, 0, 1000]  # far apart -> invalid
+    pkg = _write_assembly_package(tmp_path, asm)
+    resolve_and_validate_assembly_geometry(pkg)
+    with zipfile.ZipFile(pkg) as zf:
+        draft = json.loads(zf.read("simulation/assembly_cae_setup_draft.json"))
+        assert draft["status"] == "needs_user_input"
+        cdraft = draft["connections"][0]
+        assert cdraft["geometry_status"] == "invalid" and cdraft.get("disabled") is True
+
+
+def test_package_without_assembly_unaffected(tmp_path: Path):
+    pkg = tmp_path / "plain.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/shape_ir.json", json.dumps({"representation": "manifold_mesh"}))
+    before = set(zipfile.ZipFile(pkg).namelist())
+    result = resolve_and_validate_assembly_geometry(pkg)
+    after = set(zipfile.ZipFile(pkg).namelist())
+    assert result["assembly_present"] is False and before == after
+
+
+def test_shared_package_topology_fallback(tmp_path: Path):
+    # No per-part maps; a single shared geometry/topology_map.json with body_id scoping.
+    asm = _two_part_assembly("rigid_tie")
+    pkg = tmp_path / "shared.aieng"
+    a = _face("a_top", [0, 0, 10, 5, 5, 10], [0, 0, 1.0], area=25.0, body="a")
+    b = _face("b_bot", [0, 0, 0, 5, 5, 0], [0, 0, -1.0], area=25.0, body="b")
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("assembly/assembly_ir.json", json.dumps(asm))
+        zf.writestr("geometry/topology_map.json",
+                    json.dumps({"format_version": "0.1.0", "entities": [a, b]}))
+    result = resolve_and_validate_assembly_geometry(pkg)
+    assert result["resolution_summary"]["resolved"] == 2

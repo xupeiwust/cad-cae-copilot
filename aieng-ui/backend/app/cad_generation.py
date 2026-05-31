@@ -2787,6 +2787,13 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
         if asm.get("assembly_present"):
             summary["assembly_validation_status"] = asm.get("validation_status")
             summary["assembly_part_count"] = asm.get("part_count")
+            # Resolve interfaces against part topology + validate connection geometry.
+            from aieng.converters.assembly_interface_resolution import (
+                resolve_and_validate_assembly_geometry,
+            )
+            geo = resolve_and_validate_assembly_geometry(package_path)
+            if geo.get("assembly_present"):
+                summary["assembly_geometry_summary"] = geo.get("geometry_summary")
     except Exception:  # noqa: BLE001 - assembly processing is best-effort
         pass
     return summary

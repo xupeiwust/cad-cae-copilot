@@ -197,6 +197,42 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 39: Assembly interface resolution + geometric connection validation — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / solver). Builds on Assembly IR v0: resolves interface
+`topology_refs` against per-part / package topology maps, transforms the resolved geometry into
+assembly/world coordinates, and validates whether each simplified connection is GEOMETRICALLY
+PLAUSIBLE. This is geometry validation ONLY — no contact, no bolt preload, no solver. Connections
+stay proxies; `geometry_validation_only:true` rides on every output.
+
+- New module `aieng/src/aieng/converters/assembly_interface_resolution.py`.
+- **Interface resolution** (`resolve_assembly_interfaces` → `assembly/interface_resolution.json`):
+  per interface, locate referenced face/edge/vertex entities, compute bbox / centroid /
+  area-weighted normal (face-like) / area / topology_entity_count, apply the part transform
+  (translation + euler / 3x3 / 4x4 matrix) to produce world geometry, and report
+  `resolution_status` ∈ resolved / partially_resolved / unresolved. Unresolved refs preserved
+  honestly; missing/invalid transforms noted (`transform_note`).
+- **Connection geometry** (`validate_connection_geometry` →
+  `diagnostics/assembly_connection_geometry.json`): centroid distance, AABB gap/overlap, normal
+  alignment, semantic-role fit → `geometry_status` ∈ plausible / warning / invalid /
+  insufficient_data with reasons (unresolved_interface, far_apart, normals_same_direction,
+  no_overlap, missing_transform, unsupported_connection_type, +
+  no_bolt_hole_evidence / contact_draft_only / centroid_based_proxy). Type-specific checks:
+  rigid_tie/bonded want close/overlapping; bolted_proxy prefers bolt_hole/mounting_face; welded
+  prefers weld/contact/mounting; spring is centroid-based (warning); contact stays draft-only.
+- **Topology sources** — preference: part `topology_ref` → `parts/<id>/topology_map.json` →
+  `geometry/parts/<id>/topology_map.json` → shared package `geometry/topology_map.json`
+  (body_id-scoped). Missing topology degrades to unresolved, not invented geometry.
+- **Updates** — `assembly/connection_graph.json` edges gain `geometry_status` / reasons / metrics;
+  `simulation/assembly_cae_setup_draft.json` gains per-connection `geometry_status`, marks invalid
+  connections `disabled` + `needs_user_input`, and attaches resolved world centroids to
+  loads/supports. No solver deck is ever produced.
+- **Integration** — `resolve_and_validate_assembly_geometry(package_path)` auto-runs after
+  `process_assembly_package` in `recompile_shape_ir_package` (gated) and from
+  `POST /api/projects/{id}/assembly/process`.
+- Tests: 16 core (`aieng/tests/test_assembly_interface_resolution.py`) + extended backend endpoint
+  test. Single-part packages unaffected. No UI files.
+
 ## Phase 38: Assembly IR v0 + simplified connection contract — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent). Foundation for assembly-level CAD/CAE. Introduces an optional

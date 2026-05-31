@@ -10801,9 +10801,21 @@ def test_assembly_process_endpoint(tmp_path: Path) -> None:
         ],
         "analysis_intent": {"design_parts": ["bracket"], "frozen_parts": ["wall"]},
     }
+    # per-part topology so interface resolution + geometry validation can run
+    face_a = {"id": "a_top", "type": "face", "bounding_box": [0, 0, 10, 5, 5, 10],
+              "normal": [0, 0, 1.0], "area": 25.0}
+    face_b = {"id": "b_bot", "type": "face", "bounding_box": [0, 0, 0, 5, 5, 0],
+              "normal": [0, 0, -1.0], "area": 25.0}
+    assembly["interfaces"][0]["topology_refs"] = {"face_ids": ["a_top"]}
+    assembly["interfaces"][1]["topology_refs"] = {"face_ids": ["b_bot"]}
+    assembly["parts"][1]["transform"] = {"translation": [0, 0, 10], "unit": "mm"}
     with zipfile.ZipFile(pkg, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps({"model_id": "asm-demo", "resources": {}}))
         zf.writestr("assembly/assembly_ir.json", json.dumps(assembly))
+        zf.writestr("parts/bracket/topology_map.json",
+                    json.dumps({"format_version": "0.1.0", "entities": [face_a]}))
+        zf.writestr("parts/wall/topology_map.json",
+                    json.dumps({"format_version": "0.1.0", "entities": [face_b]}))
     project["aieng_file"] = "asm.aieng"
     save_project(settings, project)
 
@@ -10811,11 +10823,15 @@ def test_assembly_process_endpoint(tmp_path: Path) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["assembly_present"] is True and data["validation_status"] == "passed"
+    assert data["interface_resolution"]["resolved"] == 2
+    assert data["connection_geometry"]["connection_count"] == 1
 
     with zipfile.ZipFile(pkg) as zf:
         names = set(zf.namelist())
         for art in ("diagnostics/assembly_validation.json", "assembly/part_registry.json",
-                    "assembly/connection_graph.json", "simulation/assembly_cae_setup_draft.json"):
+                    "assembly/connection_graph.json", "simulation/assembly_cae_setup_draft.json",
+                    "assembly/interface_resolution.json",
+                    "diagnostics/assembly_connection_geometry.json"):
             assert art in names
         assert not any(n.lower().endswith((".inp", ".frd", ".step", ".stp")) for n in names)
 

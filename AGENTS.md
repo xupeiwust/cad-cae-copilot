@@ -745,7 +745,7 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
 ├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node), topology_optimization.json
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
-├── assembly/                (optional, multi-part) assembly_ir.json, part_registry.json, connection_graph.json
+├── assembly/                (optional, multi-part) assembly_ir.json, part_registry.json, connection_graph.json, interface_resolution.json
 ├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd, assembly_cae_setup_draft.json)
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json
 └── audit_log.jsonl          append-only action history
@@ -761,9 +761,18 @@ physics, and no assembly solver execution in v0. When present, the backend best-
 `diagnostics/assembly_validation.json`, `assembly/part_registry.json`,
 `assembly/connection_graph.json`, and a solver-neutral `simulation/assembly_cae_setup_draft.json`
 (auto on recompile, or via `POST /api/projects/{id}/assembly/process`). Schema:
-`aieng/schemas/assembly_ir.schema.json`. Single-part packages are unaffected. Future work:
-assembly-level CAE execution, contact modeling, bolt preload, assembly result mapping, and
-assembly-aware optimization.
+`aieng/schemas/assembly_ir.schema.json`. Single-part packages are unaffected.
+
+When per-part / package topology maps are available, the same call also **resolves interfaces
+and validates connection geometry** (geometry-validation only — still no contact/preload/solver):
+it resolves each interface's `topology_refs` to bbox/centroid/normal/area, applies the part
+transform into world coordinates (`assembly/interface_resolution.json`), and judges each
+connection's plausibility from centroid distance / bbox overlap / normal alignment / semantic-role
+fit → `geometry_status` ∈ plausible / warning / invalid / insufficient_data
+(`diagnostics/assembly_connection_geometry.json`). Invalid connections are marked `disabled` +
+`needs_user_input` in the CAE setup draft. Unresolved refs are reported honestly, never invented.
+Future work: assembly-level CAE execution, contact modeling, bolt preload, assembly result
+mapping, and assembly-aware optimization.
 
 ---
 

@@ -1160,13 +1160,22 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         single-part geometry is touched. Returns {assembly_present: false} when the
         package has no assembly artifact."""
         from aieng.converters.assembly_ir import process_assembly_package
+        from aieng.converters.assembly_interface_resolution import (
+            resolve_and_validate_assembly_geometry,
+        )
         from .project_io import get_project, resolve_project_path
 
         project = get_project(active_settings, project_id)
         package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
         if package_path is None or not package_path.exists():
             raise HTTPException(status_code=404, detail=".aieng package not found")
-        return {"project_id": project_id, **process_assembly_package(package_path)}
+        base = process_assembly_package(package_path)
+        result = {"project_id": project_id, **base}
+        if base.get("assembly_present"):
+            geo = resolve_and_validate_assembly_geometry(package_path)
+            result["interface_resolution"] = geo.get("resolution_summary")
+            result["connection_geometry"] = geo.get("geometry_summary")
+        return result
 
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(

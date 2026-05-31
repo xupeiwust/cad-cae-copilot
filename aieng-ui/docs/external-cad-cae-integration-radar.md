@@ -377,7 +377,7 @@ exists. The CAD-mutation boundary remains intact.
 
 - A new runtime tool **`freecad.inspect_features`** that:
   - is registered in the runtime tool registry (`runtime.py` aliases
-    cover "inspect features", "feature inspection", "提取特征");
+    cover "inspect features", "feature inspection", "extract features");
   - calls the v0.14 preflight first;
   - delegates to a feature-inspection bridge seam in
     `freecad_adapter._default_freecad_inspect_bridge`;

@@ -324,13 +324,12 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "agent context", "cad cae context", "cad/cae context",
             "engineering context", "agent-facing context",
-            "上下文", "工程上下文",
         ],
         "aieng.agent_context",
         "Build compact agent-facing CAD/CAE context",
     ),
     (
-        ["inspect", "package", "summary", "摘要", "检查包", "查看包"],
+        ["inspect", "package", "summary"],
         "aieng.inspect_package",
         "Inspect .aieng package and return project summary",
     ),
@@ -343,23 +342,23 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         "Convert a STEP or FreeCAD file to an .aieng package",
     ),
     (
-        ["refresh semantic", "refresh semantics", "validate", "校验", "语义", "刷新语义"],
+        ["refresh semantic", "refresh semantics", "validate"],
         "aieng.refresh_semantics",
         "Re-validate package and refresh semantic state",
     ),
     (
-        ["preview", "生成预览", "glb", "stl", "viewer", "预览"],
+        ["preview", "glb", "stl", "viewer"],
         "aieng.generate_preview",
         "Generate 3-D web preview asset",
     ),
     (
-        ["audit", "log", "审计", "日志"],
+        ["audit", "log"],
         "aieng.read_audit_log",
         "Return the most recent audit log entries for this project",
     ),
     (
         [
-            "generate computed metrics", "import computed metrics", "归一化指标",
+            "generate computed metrics", "import computed metrics",
         ],
         "postprocess.generate_computed_metrics",
         "Import computed metrics from a CSV or JSON file into a .aieng package",
@@ -368,7 +367,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "refresh cae summary", "regenerate cae summary", "update postprocessing summary",
             "refresh result summary", "update cae summary", "summarize cae results",
-            "更新后处理摘要", "刷新cae摘要", "刷新结果摘要", "重新生成摘要",
         ],
         "postprocess.refresh_cae_summary",
         "Regenerate CAE result summary, evidence index, and markdown inside the .aieng package",
@@ -377,7 +375,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "apply cae setup patch", "cae setup patch", "patch cae setup",
             "apply setup patch", "patch setup", "cae patch",
-            "应用cae设置补丁", "修改cae设置", "修改仿真设置",
         ],
         "cae.apply_setup_patch",
         "Apply a controlled patch to CAE setup artifacts inside a .aieng package",
@@ -386,7 +383,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "extract solver results", "parse frd", "extract frd", "import frd results",
             "extract cae results", "parse solver output", "extract computed metrics from frd",
-            "提取求解器结果", "解析frd文件", "提取计算指标",
         ],
         "cae.extract_solver_results",
         "Parse a CalculiX FRD result file and write computed_metrics.json into a .aieng package",
@@ -396,7 +392,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
             "extract field regions", "field region extraction", "extract stress clusters",
             "extract high stress regions", "identify stress concentrations", "find stress hotspots",
             "field region clusters", "frd region extraction",
-            "提取场区域", "提取应力区域", "识别应力集中", "提取应力聚类",
         ],
         "cae.extract_field_regions",
         "Extract high-magnitude spatial clusters from a CalculiX FRD file and write results/field_regions.json",
@@ -406,7 +401,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
             "prepare solver run", "solver preflight", "run preflight", "check solver readiness",
             "prepare cae run", "cae run preflight", "check simulation readiness",
             "prepare simulation run", "simulation preflight",
-            "准备求解器运行", "求解器预检", "仿真准备", "求解器运行预检",
         ],
         "cae.prepare_solver_run",
         "Inspect .aieng package and return solver run preflight plan (no solver execution)",
@@ -415,7 +409,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "generate solver input", "generate calculix deck", "generate solver deck",
             "create solver input", "build solver deck", "generate inp",
-            "生成求解器输入", "生成计算输入", "创建求解器输入",
         ],
         "cae.generate_solver_input",
         "Generate a runnable CalculiX solver input deck from existing .aieng setup artifacts",
@@ -425,7 +418,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
             "execute solver run", "start solver run", "run calculix",
             "execute calculix", "start calculix", "run simulation",
             "execute simulation", "start simulation",
-            "执行求解器运行", "运行仿真",
         ],
         "cae.run_solver",
         "Execute an external CalculiX solver run on an existing input deck (requires approval)",
@@ -434,7 +426,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "write mesh handoff", "mesh handoff", "generate mesh handoff",
             "create mesh handoff", "mesh handoff contract",
-            "生成网格交接", "网格交接",
         ],
         "cae.write_mesh_handoff",
         "Write a mesh handoff contract into a .aieng package for external Gmsh execution",
@@ -443,7 +434,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "import solver evidence", "import solver result", "import solver output",
             "import result evidence", "solver evidence import",
-            "导入求解器证据", "导入求解器结果",
         ],
         "cae.import_solver_evidence",
         "Import an external solver result file as evidence into a .aieng package",
@@ -452,7 +442,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "write evidence scaffold", "evidence scaffold", "create evidence scaffold",
             "init evidence", "setup evidence", "evidence scaffold",
-            "证据脚手架", "创建证据", "初始化证据",
         ],
         "aieng.write_evidence_scaffold",
         "Write results/evidence_index.json scaffold into a .aieng package without creating or advancing claims",
@@ -460,7 +449,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
     (
         [
             "validate package", "validation", "check package",
-            "校验包", "验证包", "检查包",
         ],
         "aieng.validate",
         "Validate a .aieng package against AIENG schemas and rules",
@@ -469,7 +457,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "write completeness report", "completeness report", "generate completeness report",
             "package completeness", "missingness report", "what is missing",
-            "完整性报告", "缺失报告", "生成完整性报告",
         ],
         "aieng.write_completeness_report",
         "Write a completeness/missingness report into a .aieng package",
@@ -478,7 +465,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "update validation status", "write validation status", "validation status",
             "package validation status",
-            "验证状态", "更新验证状态", "写入验证状态",
         ],
         "aieng.update_validation_status",
         "Update validation status (status.yaml) inside a .aieng package",
@@ -487,7 +473,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "named part bbox", "part bbox", "bounding box of part", "part center",
             "named part center", "center of part",
-            "零件包围盒", "零件中心", "部件包围盒",
         ],
         "cad.get_named_part_bbox",
         "Read bbox and center of a named CAD part from topology_map",
@@ -496,7 +481,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "refine cad", "refine geometry", "feedback driven cad edit",
             "edit build123d via feedback", "update model from feedback",
-            "细化cad", "根据反馈修改cad", "修改几何",
         ],
         "cad.refine",
         "Refine existing build123d CAD using natural-language feedback",
@@ -505,7 +489,6 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         [
             "edit cad parameter", "change cad parameter", "update cad parameter",
             "modify cad parameter", "set cad parameter", "apply cad edit",
-            "修改cad参数", "编辑cad参数", "更新cad参数",
         ],
         "cad.edit_parameter",
         "Apply a parametric edit to a CAD model feature (requires approval)",

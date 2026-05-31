@@ -21,7 +21,7 @@ import type {
   RuntimeConfig,
   RuntimeConfigSnapshot,
 } from "../types";
-import { useBrowserStorageState } from "./useBrowserStorageState";
+import { useEncryptedLocalStorage } from "../hooks/useEncryptedLocalStorage";
 
 const LLM_CONFIG_KEY = "llm_config";
 const LOCAL_AGENT_CONFIG_KEY = "local_agent_config";
@@ -37,15 +37,10 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [llmConfig, setLlmConfigState] = useState<LLMConfig>(DEFAULT_LLM_CONFIG);
   const [localAgentConfig, setLocalAgentConfigState] = useState<LocalAgentConfig>(DEFAULT_LOCAL_AGENT_CONFIG);
-  const [directApiKey, setDirectApiKey] = useBrowserStorageState<string>(
+  const [apiKey, setApiKey] = useEncryptedLocalStorage(
     "aieng_api_key",
     "",
-    {
-      storage: "session",
-      deserialize: (raw) => raw,
-      serialize: (value) => value,
-      shouldRemove: (value) => !value,
-    },
+    { shouldRemove: (value) => !value },
   );
 
   useEffect(() => {
@@ -110,8 +105,8 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
     setRuntimeDraft(snapshot.config);
   }
 
-  function updateDirectApiKey(key: string) {
-    setDirectApiKey(key);
+  function updateApiKey(key: string) {
+    setApiKey(key);
   }
 
   function updateRuntimeDraft<K extends keyof RuntimeConfig>(key: K, value: RuntimeConfig[K]) {
@@ -165,12 +160,7 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
     setLlmConfig((current) => {
       const next = { ...current, provider };
       if (provider === "anthropic") {
-        next.api_key_env = "ANTHROPIC_API_KEY";
         next.base_url = "";
-      } else if (provider === "azure-openai") {
-        next.api_key_env = "AZURE_OPENAI_API_KEY";
-      } else {
-        next.api_key_env = "OPENAI_API_KEY";
       }
       return next;
     });
@@ -188,13 +178,13 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
     llmConfig,
     llmReady,
     localAgentConfig,
-    directApiKey,
+    apiKey,
     runtimeReady,
     runtimeProvider,
     setRuntimeNotice,
     setLocalAgentConfig,
     applyRuntimeSnapshot,
-    updateDirectApiKey,
+    updateApiKey,
     updateRuntimeDraft,
     restoreRuntimeDefaults,
     runRuntimeTask,

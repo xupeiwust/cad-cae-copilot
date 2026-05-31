@@ -98,8 +98,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         llm_config = agent_engine.sanitize_llm_config(data.get("llm_config"))
         if not llm_config:
             raise HTTPException(status_code=400, detail="llm_config is required")
+        api_key = data.get("api_key")
+        api_key = api_key if isinstance(api_key, str) and api_key else None
         verify = bool(data.get("verify_connection", False))
-        return agent_engine.test_llm_provider(active_settings, llm_config, verify_connection=verify)
+        return agent_engine.test_llm_provider(
+            active_settings, llm_config, api_key=api_key, verify_connection=verify
+        )
 
     @app.get("/api/capabilities")
     def list_capabilities() -> list[dict[str, Any]]:

@@ -131,6 +131,7 @@ def _build_provider(settings: Any, llm_config: dict[str, Any]) -> Any:
         config = ProviderConfig(
             provider=str(llm_config.get("provider") or "openai-compatible"),
             model=str(llm_config.get("model") or "configured-model"),
+            api_key=llm_config.get("api_key") or None,
             api_key_env=llm_config.get("api_key_env") or None,
             base_url=llm_config.get("base_url") or None,
             input_price_per_million_tokens=llm_config.get("input_price_per_million_tokens"),
@@ -242,9 +243,9 @@ def _infer_template_request(message: str) -> tuple[str | None, dict[str, Any]]:
     """
     text = message.lower()
     template_id: str | None = None
-    if any(tok in text for tok in ["plate_with_hole", "plate with hole", "hole plate", "孔板", "开孔板", "带孔板"]):
+    if any(tok in text for tok in ["plate_with_hole", "plate with hole", "hole plate"]):
         template_id = "plate_with_hole"
-    elif any(tok in text for tok in ["cantilever_beam", "cantilever", "悬臂梁", "悬臂", "beam", "梁"]):
+    elif any(tok in text for tok in ["cantilever_beam", "cantilever", "beam"]):
         template_id = "cantilever_beam"
     if template_id is None:
         return None, {}
@@ -261,23 +262,23 @@ def _infer_template_request(message: str) -> tuple[str | None, dict[str, Any]]:
 
     params: dict[str, Any] = {}
     material_aliases = {
-        "aluminum_6061_t6": ["aluminum_6061_t6", "6061", "aluminum", "aluminium", "铝合金", "铝"],
-        "steel_s235": ["steel_s235", "s235", "steel", "钢"],
-        "stainless_304": ["stainless_304", "304", "stainless", "不锈钢"],
+        "aluminum_6061_t6": ["aluminum_6061_t6", "6061", "aluminum", "aluminium"],
+        "steel_s235": ["steel_s235", "s235", "steel"],
+        "stainless_304": ["stainless_304", "304", "stainless"],
     }
     for material_id, aliases in material_aliases.items():
         if any(alias in text for alias in aliases):
             params["material"] = material_id
             break
 
-    length = number_for([r"(?:length|长度|长)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm", r"([0-9]+(?:\.[0-9]+)?)\s*mm\D{0,8}(?:long|length|长)"])
-    width = number_for([r"(?:width|宽度|宽)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm", r"([0-9]+(?:\.[0-9]+)?)\s*mm\D{0,8}(?:wide|width|宽)"])
-    height = number_for([r"(?:height|高度|高)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm"])
-    thickness = number_for([r"(?:thickness|厚度|厚)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm"])
-    hole = number_for([r"(?:hole diameter|diameter|孔径|孔直径|直径)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm"])
-    load = number_for([r"(?:load|force|载荷|负载|力)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*n", r"([0-9]+(?:\.[0-9]+)?)\s*n"])
-    stress = number_for([r"(?:stress|应力)\D{0,16}([0-9]+(?:\.[0-9]+)?)\s*mpa", r"([0-9]+(?:\.[0-9]+)?)\s*mpa"])
-    displacement = number_for([r"(?:displacement|deflection|位移|挠度)\D{0,16}([0-9]+(?:\.[0-9]+)?)\s*mm"])
+    length = number_for([r"(?:length)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm", r"([0-9]+(?:\.[0-9]+)?)\s*mm\D{0,8}(?:long|length)"])
+    width = number_for([r"(?:width)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm", r"([0-9]+(?:\.[0-9]+)?)\s*mm\D{0,8}(?:wide|width)"])
+    height = number_for([r"(?:height)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm"])
+    thickness = number_for([r"(?:thickness)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm"])
+    hole = number_for([r"(?:hole diameter|diameter)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*mm"])
+    load = number_for([r"(?:load|force)\D{0,12}([0-9]+(?:\.[0-9]+)?)\s*n", r"([0-9]+(?:\.[0-9]+)?)\s*n"])
+    stress = number_for([r"(?:stress)\D{0,16}([0-9]+(?:\.[0-9]+)?)\s*mpa", r"([0-9]+(?:\.[0-9]+)?)\s*mpa"])
+    displacement = number_for([r"(?:displacement|deflection)\D{0,16}([0-9]+(?:\.[0-9]+)?)\s*mm"])
 
     if length is not None:
         params["length_mm"] = length
@@ -342,7 +343,7 @@ def heuristic_agent_plan(
             token in text
             for token in [
                 "design", "create", "generate", "build", "model", "cad", "fixture",
-                "设计", "生成", "创建", "建模", "模型", "目标",
+                "design", "generate", "create", "model", "target",
             ]
         )
         if wants_action and "engineering_template.save_draft" in tools:
@@ -385,7 +386,7 @@ def heuristic_agent_plan(
 
     wants_modification = patch_json is not None or any(
         token in text
-        for token in ["建模", "修改", "改", "减重", "加孔", "打孔", "厚度", "apply", "patch", "edit", "model"]
+        for token in ["apply", "patch", "edit", "model"]
     )
     if wants_modification and not template_id:
         if project_id and "mcp.check" in tools:
@@ -430,7 +431,7 @@ def heuristic_agent_plan(
                 "The agent can inspect and preflight capability gaps, then ask for a concrete patch proposal."
             )
 
-    if project_id and any(token in text for token in ["preview", "预览", "glb", "stl", "刷新"]) and "aieng.generate_preview" in tools:
+    if project_id and any(token in text for token in ["preview", "glb", "stl"]) and "aieng.generate_preview" in tools:
         steps.append(_step("preview", "tool", "aieng.generate_preview", "Refresh the web preview artifact.", base_input))
 
     if project_id and not steps and "aieng.inspect_package" in tools:
@@ -542,6 +543,7 @@ def test_llm_provider(
     settings: Any,
     llm_config: dict[str, Any],
     *,
+    api_key: str | None = None,
     verify_connection: bool = False,
 ) -> dict[str, Any]:
     """Test LLM provider configuration and optionally verify API connectivity.
@@ -553,7 +555,6 @@ def test_llm_provider(
     provider_name = str(llm_config.get("provider") or "openai-compatible")
     model = str(llm_config.get("model") or "configured-model")
     base_url = llm_config.get("base_url")
-    api_key_env = llm_config.get("api_key_env")
 
     # Step 1: Check API key presence
     src = settings.aieng_root / "src"
@@ -565,11 +566,12 @@ def test_llm_provider(
         config = ProviderConfig(
             provider=provider_name,
             model=model,
-            api_key_env=api_key_env,
+            api_key=api_key,
+            api_key_env=llm_config.get("api_key_env") or None,
             base_url=base_url,
         )
-        api_key = config.resolved_api_key()
-        if not api_key:
+        resolved_key = config.resolved_api_key()
+        if not resolved_key:
             return {
                 "config_ready": False,
                 "connection_verified": False,
@@ -577,14 +579,16 @@ def test_llm_provider(
                 "model": model,
                 "base_url": base_url,
                 "api_key_present": False,
-                "error_message": f"Environment variable {api_key_env or 'OPENAI_API_KEY'} not set",
+                "error_message": "API key not provided and no environment variable set",
             }
     finally:
         _remove_path(candidate, injected)
 
     # Step 2: Validate config structure (can we build the provider?)
+    enriched_config = dict(llm_config)
+    enriched_config["api_key"] = api_key
     try:
-        provider = _build_provider(settings, llm_config)
+        provider = _build_provider(settings, enriched_config)
     except Exception as exc:
         return {
             "config_ready": False,

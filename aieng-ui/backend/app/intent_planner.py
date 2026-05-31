@@ -43,32 +43,23 @@ _STRUCTURAL_TOKENS = (
     "stress", "displacement", "deflection", "stiffness", "fatigue",
     "static", "linear elastic", "load", "force",
     "arm", "strong enough", "strength", "robust", "stiff",
-    # zh
-    "梁", "悬臂", "板", "支架", "应力", "位移", "挠度", "载荷", "力", "静力",
-    "强度", "刚度",
 )
 _CFD_TOKENS = (
     "cfd", "fluid", "flow", "openfoam", "turbulence", "navier",
     "velocity field", "pressure drop",
-    # zh
-    "流体", "湍流",
 )
 _RUN_TOKENS = (
     "run", "execute", "solve", "simulate",
-    # zh
-    "运行", "执行", "求解", "仿真",
 )
 
 # CAD-action detection (v0.38)
 _CAD_ACTION_VERBS = (
     "create", "draw", "model", "make", "build", "generate",
-    "设计", "创建", "绘制", "建模", "生成",
 )
 _CAD_ACTION_NOUNS = (
     "box", "bracket", "cantilever", "beam", "plate", "frame",
     "quadcopter", "drone", "arm", "geometry", "cad", "shape",
     "part", "component",
-    "盒子", "支架", "悬臂", "梁", "板", "框架", "几何",
 )
 _CAD_ACTION_TOKENS = _CAD_ACTION_VERBS + _CAD_ACTION_NOUNS
 
@@ -90,15 +81,13 @@ def _wants_solver_now(message: str) -> bool:
     text = message.lower()
     return any(token in text for token in _RUN_TOKENS) and any(
         token in text
-        for token in ("solver", "simulation", "simulate", "ccx", "calculix", "fem",
-                      "仿真", "求解", "运行")
+        for token in ("solver", "simulation", "simulate", "ccx", "calculix", "fem")
     )
 
 
 def _wants_mesh_now(message: str) -> bool:
     text = message.lower()
-    return any(token in text for token in ("mesh", "generate mesh", "mesher", "gmsh", "netgen",
-                                           "网格", "生成网格"))
+    return any(token in text for token in ("mesh", "generate mesh", "mesher", "gmsh", "netgen"))
 
 
 # ── constraint extraction ────────────────────────────────────────────────────

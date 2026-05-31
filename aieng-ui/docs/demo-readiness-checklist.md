@@ -99,7 +99,7 @@ Use this sequence during the demo. Tick each step as you go.
 - [ ] **Inspect `result_summary` / `computed_metrics`** — open the produced `.aieng` package artifacts. Show `computed_metrics.json` with max displacement and max von Mises.
 - [ ] **Inspect artifact paths with Artifact Inspector** — click an artifact path in the CAE grid or chat bubble (e.g. `simulation/runs/run_001/solver_run.json`). Show parsed JSON or text inline.
 - [ ] **Show setup patch diff if relevant** — if a setup patch was applied earlier, open the chat bubble diff panel: operation, JSON pointer, changed/added/removed paths, compact before/after values.
-- [ ] **Verify FRD overlay honesty** — if solver results exist, check the Three.js viewer field overlay label. Confirm it says "FRD真实数据" (real), warns about bbox mismatch, or clearly labels synthetic data.
+- [ ] **Verify FRD overlay honesty** — if solver results exist, check the Three.js viewer field overlay label. Confirm it says "FRD real data" (real), warns about bbox mismatch, or clearly labels synthetic data.
 
 ---
 
@@ -129,7 +129,7 @@ Say these boundaries out loud. They protect the team from overclaiming and the a
 | Schema drift warning | `aieng` schema version changed since package was created | Re-run `aieng.refresh_semantics` or re-import the model to regenerate the package with current schema. |
 | Stale artifacts after setup patch | `cae.apply_setup_patch` changed setup files but did not re-run the solver | This is expected behavior. The UI shows a stale-artifact warning. Explain that the old results no longer reflect the new setup. |
 | `freecad_unavailable` on mesh gen | FreeCADCmd not found | Expected on machines without FreeCAD. `cae.generate_mesh` returns honest error; no fake mesh artifact. Install FreeCAD and set `AIENG_TEST_REAL_FREECAD=1` to run real integration test. |
-| Field label mismatch | FRD bbox suspicious or synthetic overlay | Check the viewer label: `FRD真实数据` (real), `FRD数据存在，但几何坐标可能不一致` (suspicious bbox), or `合成预览，不可用于工程判断` (synthetic). |
+| Field label mismatch | FRD bbox suspicious or synthetic overlay | Check the viewer label: `FRD real data` (real), `FRD data exists, but geometry coordinates may be inconsistent` (suspicious bbox), or `Synthetic preview, not for engineering decisions` (synthetic). |
 | Artifact too large/binary for inspector | File > 2 MB (JSON) or > 256 KB (text), or binary format | The inspector returns `size_bytes` without content. Download or inspect the file externally. |
 
 ---

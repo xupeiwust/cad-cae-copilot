@@ -7,12 +7,12 @@ This document describes how to run the real-integration test for `cae.generate_m
 The integration test verifies the full pipeline:
 
 ```
-.aieng ZIP 内 geometry 解包
-    → FreeCAD/Gmsh mesh 生成
-    → .inp 产物
+.aieng ZIP geometry unpack
+    → FreeCAD/Gmsh mesh generation
+    → .inp output
     → mesh_metadata.json
-    → 原子写回 .aieng
-    → 返回 completed
+    → atomic write-back to .aieng
+    → return completed
 ```
 
 ## Prerequisites

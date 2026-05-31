@@ -636,7 +636,7 @@ def _target_comparison_items_for_loop(loop: dict[str, Any]) -> list[dict[str, An
 def _claim_boundary_in_report(text: str | None) -> bool:
     if not text:
         return False
-    needles = ("does not certify", "claim boundary", "本报告不认证")
+    needles = ("does not certify", "claim boundary")
     lower = text.lower()
     return any(n.lower() in lower for n in needles)
 
@@ -1168,7 +1168,7 @@ def _build_review_markdown(
     lines.append("")
     lines.append(_CLAIM_BOUNDARY_EXPORT_NOTE)
     lines.append("")
-    lines.append("> 本评审导出不认证设计安全，不自动推进工程 claim，必须由合格工程师审查。")
+    lines.append("> This decision review export does not certify design safety, does not auto-advance engineering claims, and must be reviewed by a qualified engineer.")
     lines.append("")
     lines.append("## Review summary")
     lines.append("")
@@ -1969,7 +1969,7 @@ def _build_loop_report(loop: dict[str, Any]) -> dict[str, Any]:
         "",
         "This report does not certify the design, does not advance engineering claims automatically, and must be reviewed by a qualified engineer. CAD proposals are hypotheses; computed metrics are evidence inputs only.",
         "",
-        "> 本报告不认证设计安全，不自动推进工程 claim，必须由合格工程师审查。",
+        "> This report does not certify design safety, does not auto-advance engineering claims, and must be reviewed by a qualified engineer.",
         "",
         "## Loop summary",
         "",

@@ -22,29 +22,25 @@ POLICY_SUMMARY = (
 _INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "inspect": (
         "inspect", "status", "state", "summary", "what is", "show", "explain", "understand",
-        "check", "review", "look at", "看看", "查看", "检查", "状态", "解释", "总结", "理解",
+        "check", "review", "look at",
     ),
     "cad_modify": (
         "modify", "edit", "change", "redesign", "optimize", "reduce weight", "thicken",
-        "make thinner", "add hole", "parameter", "修改", "更改", "改", "优化", "减重", "加厚",
-        "变薄", "打孔", "参数",
+        "make thinner", "add hole", "parameter",
     ),
     "cad_create": (
         "create", "generate", "build", "model", "draw", "fixture",
-        "创建", "生成", "建立", "建模", "绘制",
     ),
-    "export": ("export", "step", "fcstd", "download", "导出", "输出"),
+    "export": ("export", "step", "fcstd", "download"),
     "setup": (
-        "setup", "material", "load", "boundary", "constraint", "fea setup", "补全", "设置",
-        "材料", "载荷", "边界", "约束", "仿真设置",
+        "setup", "material", "load", "boundary", "constraint", "fea setup",
     ),
     "mesh_or_solver": (
-        "mesh", "solver", "simulate", "simulation", "run", "calculix", "ccx", "求解",
-        "仿真", "运行", "网格",
+        "mesh", "solver", "simulate", "simulation", "run", "calculix", "ccx",
     ),
     "results": (
         "result", "metric", "postprocess", "extract", "compare", "target", "stress",
-        "displacement", "结果", "指标", "后处理", "提取", "比较", "目标", "应力", "位移",
+        "displacement",
     ),
 }
 

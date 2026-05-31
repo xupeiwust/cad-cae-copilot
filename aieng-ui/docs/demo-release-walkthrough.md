@@ -144,7 +144,7 @@ parallel claim boundary:
 > engineering claims, and must be reviewed by a qualified engineer
 > before being cited in any acceptance decision.
 >
-> 本评审导出不认证设计安全，不自动推进工程 claim，必须由合格工程师审查。
+> This review export does not certify design safety, does not auto-advance engineering claims, and must be reviewed by a qualified engineer.
 
 The export is a **textual record** — it is not a substitute for an
 engineering review of the underlying package, evidence, and audit log.

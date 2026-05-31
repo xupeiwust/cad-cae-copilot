@@ -581,29 +581,35 @@ button:disabled {
   color: #f0fdfa;
 }
 
-/* ── Direct API key input ─────────────────────────────────────────────────── */
-.api-key-input-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.api-key-input {
-  flex: 1;
+/* ── Form field inputs (settings drawer) ──────────────────────────────────── */
+.form-field input,
+.form-field select {
   font-size: 13px;
   padding: 7px 10px;
   border-radius: 7px;
   border: 1px solid rgba(71, 85, 105, 0.5);
   background: rgba(3, 7, 18, 0.4);
   color: #e2e8f0;
-  font-family: monospace;
   outline: none;
   transition: border-color 0.15s;
 }
-.api-key-input:focus {
+.form-field input:focus,
+.form-field select:focus {
   border-color: rgba(45, 212, 191, 0.6);
 }
-.api-key-input::placeholder {
+.form-field input::placeholder {
   color: rgba(148, 163, 184, 0.5);
+}
+
+/* ── Direct API key input ─────────────────────────────────────────────────── */
+.api-key-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.api-key-input-row input[type="password"] {
+  flex: 1;
+  font-family: monospace;
 }
 .api-key-clear {
   white-space: nowrap;

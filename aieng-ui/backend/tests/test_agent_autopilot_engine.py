@@ -127,7 +127,7 @@ def test_engine_bootstraps_project_context_before_real_adapter_step(tmp_path: Pa
     )
     state = engine.start(
         AutopilotRunRequest(
-            message="解释一下这个模型",
+            message="Explain this model",
             project_id="p1",
             adapter_id="spy",
             dry_run=False,

@@ -172,7 +172,7 @@ Approval and conversation are intentionally separate API concepts:
 | Frontend approve/reject buttons (conditional on awaiting_approval) | ✅ |
 | Frontend events shown as plan steps in chat | ✅ |
 | Frontend CAD result summary line | ✅ compact human-readable output for build123d/model-generation results |
-| Frontend artifact changed-files section | ✅ `变更文件:` block from `ToolResult.artifacts` |
+| Frontend artifact changed-files section | ✅ `Changed files:` block from `ToolResult.artifacts` |
 | Runtime audit event log (`audit/events.jsonl`) | ✅ append-only JSONL inside ZIP; `geometry_modified`, `solver_run_completed`, `cae_summary_refreshed` events |
 | `GET /api/projects/{id}/audit-events` endpoint | ✅ read-only; returns events in append order |
 | Package artifact manifest | ✅ on-demand classification of all ZIP members by kind/category; freshness context from revalidation status |
@@ -890,7 +890,7 @@ not accept proposals, create claim maps, or advance engineering claims.
 | Streaming events | Poll-based; SSE or WebSocket would enable live updates |
 | Optional external CAD adapter | FreeCADCmd or another CAD backend can be reintroduced behind the provider registry when needed |
 | Mesh quality metrics | Not yet implemented — external mesh handoff records intent, but no quality report |
-| Field data endpoint | Extend `GET /projects/{id}/fields/{f}` to serve real VTK/HDF5 data (currently synthetic `y_normalized` with explicit "合成预览，不可用于工程判断" label) |
+| Field data endpoint | Extend `GET /projects/{id}/fields/{f}` to serve real VTK/HDF5 data (currently synthetic `y_normalized` with explicit "Synthetic preview, not for engineering decisions" label) |
 | Solver field data endpoint | Extend `GET /projects/{id}/fields/{f}` to serve real VTK/HDF5 data |
 | MCP server adapter | `backend/app/mcp_server.py` wrapping `runtime.registered_tool_names()` |
 | Multi-step plan with dependencies | Steps execute sequentially; parallel/conditional is future |

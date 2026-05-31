@@ -156,8 +156,8 @@ does not advance engineering claims. All computed numbers shown in the
 demo are mock/fixture data. A qualified engineer must review the
 underlying evidence before making any acceptance decision.
 
-> 本演示仅用于决策评审。它不认证设计安全，不自动推进工程 claim。
-> 所有数值均为演示用 mock/fixture 数据。必须由合格工程师审查底层证据。
+> This demo is for decision review only. It does not certify design safety and does not auto-advance engineering claims.
+> All values are demo mock/fixture data. The underlying evidence must be reviewed by a qualified engineer.
 
 ## Known limitations
 

@@ -1155,7 +1155,7 @@ export type LLMConfig = {
   provider: string;
   model: string;
   base_url?: string | null;
-  api_key_env?: string | null;
+  api_key?: string | null;
   temperature: number;
   top_p: number;
   max_output_tokens: number;

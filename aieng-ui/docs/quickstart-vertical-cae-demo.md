@@ -72,7 +72,7 @@ fixture.
 | Mesh generation | **Real when FreeCAD available** | `cae.generate_mesh` runs FreeCAD+Gmsh macro; writes `simulation/mesh/*.inp` + `mesh_metadata.json`. Returns `error/freecad_unavailable` when FreeCAD missing. |
 | Binary FRD | Not supported | UTF-8 text FRD only |
 | VTU / ODB parsing | Not supported | Only CalculiX FRD scalar extraction |
-| Field visualization | Honest labeling | FRD real data → "FRD真实数据" or "FRD数据存在，但几何坐标可能不一致"; synthetic → "合成预览，不可用于工程判断" |
+| Field visualization | Honest labeling | FRD real data → "FRD real data" or "FRD data exists, but geometry coordinates may be inconsistent"; synthetic → "Synthetic preview, not for engineering decisions" |
 | Convergence claim | Explicitly avoided | `converged: null` in `solver_run.json`; exit code alone is not reliable evidence |
 | Physical correctness | Not validated | No experimental correlation, mesh convergence study, or independent validation |
 

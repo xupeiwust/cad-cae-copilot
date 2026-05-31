@@ -239,7 +239,7 @@ It always includes:
 > This report does not certify the design, does not advance engineering
 > claims automatically, and must be reviewed by a qualified engineer.
 >
-> 本报告不认证设计安全，不自动推进工程 claim，必须由合格工程师审查。
+> This report does not certify design safety, does not auto-advance engineering claims, and must be reviewed by a qualified engineer.
 
 - Limitations section reminding readers that a proposal is a hypothesis,
   solver success is not engineering validation, verification is heuristic,

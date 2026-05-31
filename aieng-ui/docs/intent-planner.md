@@ -123,7 +123,7 @@ must respect both.
    gate that already protects `cae.run_solver`, `cad.edit_parameter`,
    etc. is reused — no new approval path is introduced.
 4. **No silent solver execution.** Requests containing run /
-   simulate / 求解 / 仿真 are matched against the structural
+   simulate / solve / simulation are matched against the structural
    preflight (`structural_adapter.prepare_structural_run_preview`)
    and the planner emits the missing readiness items instead of
    proposing `cae.run_solver`. The refusal is explicit in

@@ -55,21 +55,21 @@ function buildQuickActions(history: ChatHistoryItem[]): QuickAction[] {
 
   if (hasSim) {
     actions.push(
-      { label: "查看应力热点", prompt: "Show me the stress hotspots and regions with high von Mises stress in the model" },
-      { label: "生成报告", prompt: "Generate an engineering analysis report summarizing the simulation results and key findings" },
-      { label: "优化设计", prompt: "Based on the simulation results, suggest design improvements to reduce stress concentrations" },
+      { label: "View stress hotspots", prompt: "Show me the stress hotspots and regions with high von Mises stress in the model" },
+      { label: "Generate report", prompt: "Generate an engineering analysis report summarizing the simulation results and key findings" },
+      { label: "Optimize design", prompt: "Based on the simulation results, suggest design improvements to reduce stress concentrations" },
     );
   } else if (hasCad) {
     actions.push(
-      { label: "运行仿真", prompt: "Run a structural FEA simulation on this geometry using Gmsh + CalculiX" },
-      { label: "修改参数", prompt: "Show me the available editable parameters for this geometry" },
-      { label: "检查模型", prompt: "Review the current geometry and point out any potential issues" },
+      { label: "Run simulation", prompt: "Run a structural FEA simulation on this geometry using Gmsh + CalculiX" },
+      { label: "Edit parameters", prompt: "Show me the available editable parameters for this geometry" },
+      { label: "Check model", prompt: "Review the current geometry and point out any potential issues" },
     );
   }
 
   actions.push(
-    { label: "继续", prompt: "Continue with the next step" },
-    { label: "描述修改", prompt: "I would like to make some changes. What options do I have?" },
+    { label: "Continue", prompt: "Continue with the next step" },
+    { label: "Describe changes", prompt: "I would like to make some changes. What options do I have?" },
   );
 
   return actions.slice(0, 5);

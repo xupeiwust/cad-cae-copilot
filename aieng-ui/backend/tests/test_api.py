@@ -593,7 +593,7 @@ def test_agent_plan_dry_run_without_api_key_returns_guarded_plan(tmp_path: Path)
     response = client.post(
         "/api/agent/plan",
         json={
-            "message": "帮我检查这个模型并准备减重建模",
+            "message": "Help me check this model and prepare weight reduction modelling",
             "project_id": project["id"],
             "dry_run": True,
             "llm_config": {
@@ -656,7 +656,7 @@ def test_agent_run_without_project_completes_with_empty_safe_plan(tmp_path: Path
 
     response = client.post(
         "/api/agent/runs",
-        json={"message": "解释一下如何开始建模", "dry_run": True},
+        json={"message": "Explain how to start modelling", "dry_run": True},
     )
 
     assert response.status_code == 200
@@ -724,7 +724,7 @@ def test_runtime_plan_selects_computed_metrics_intent(tmp_path: Path) -> None:
     """'generate computed metrics' routes to postprocess.generate_computed_metrics."""
     from app.runtime import build_plan
 
-    for msg in ["generate computed metrics", "import computed metrics", "归一化指标"]:
+    for msg in ["generate computed metrics", "import computed metrics", "normalize metrics"]:
         plan = build_plan(msg, None)
         assert len(plan) == 1, f"Expected 1 step for {msg!r}, got {plan}"
         assert plan[0]["name"] == "postprocess.generate_computed_metrics", (
@@ -857,7 +857,7 @@ def test_runtime_plan_selects_refresh_cae_summary_intent(tmp_path: Path) -> None
     """'refresh cae summary' includes postprocess.refresh_cae_summary in plan."""
     from app.runtime import build_plan
 
-    for msg in ["refresh cae summary", "update postprocessing summary", "刷新cae摘要"]:
+    for msg in ["refresh cae summary", "update postprocessing summary", "refresh CAE summary"]:
         plan = build_plan(msg, None)
         names = [s["name"] for s in plan]
         assert "postprocess.refresh_cae_summary" in names, (
@@ -8789,7 +8789,7 @@ def test_copilot_loop_report_carries_claim_boundary_and_rejection_notice(tmp_pat
     # Claim boundary phrasing (English + Chinese parallel line).
     assert "does not certify the design" in markdown
     assert "does not advance engineering claims" in markdown
-    assert "本报告不认证设计安全" in markdown
+    assert "does not certify" in markdown
     # Rejection acknowledged.
     assert "Rejection notice" in markdown
     assert "not executed" in markdown.lower() or "rejected" in markdown.lower()
@@ -9500,7 +9500,7 @@ def test_copilot_loop_export_review_two_loops_with_highlights_and_diff(monkeypat
     assert "`changed`" in md or "changed" in md
     # Claim boundary always present.
     assert "does not certify" in md
-    assert "本评审导出不认证设计安全" in md
+    assert "does not certify" in md
     with zipfile.ZipFile(pkg_path, "r") as zf:
         assert body["export_path"] in zf.namelist()
 
@@ -9645,7 +9645,7 @@ def test_demo_seed_reports_do_not_claim_certification(tmp_path: Path) -> None:
         assert resp.status_code == 200
         markdown = resp.json()["markdown"]
         assert "does not certify the design" in markdown
-        assert "本报告不认证设计安全" in markdown
+        assert "does not certify" in markdown
         forbidden = ("design is certified", "certifies the design", "engineering claim accepted")
         for phrase in forbidden:
             assert phrase not in markdown.lower(), (
@@ -9821,7 +9821,7 @@ def test_export_review_caps_embedded_reports_and_warns(monkeypatch, tmp_path: Pa
     assert f"(../copilot_loop/{approved_id}.md)" in md
     # Even capped, claim boundary is always present.
     assert "does not certify" in md
-    assert "本评审导出不认证设计安全" in md
+    assert "does not certify" in md
 
 
 def test_export_review_missing_report_keeps_link_label_or_not_available(tmp_path: Path) -> None:
@@ -9940,7 +9940,7 @@ def test_v05_demo_smoke_seed_list_compare_export(tmp_path: Path) -> None:
     assert f"(../copilot_loop/{approved['loop_id']}.md)" in md
     # Claim boundary present in both languages
     assert "does not certify" in md
-    assert "本评审导出不认证设计安全" in md
+    assert "does not certify" in md
     # No certification language
     md_lower = md.lower()
     for forbidden in (

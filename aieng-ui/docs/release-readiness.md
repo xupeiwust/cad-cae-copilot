@@ -295,7 +295,7 @@ Every demo loop report and every export contains an explicit claim boundary:
 > claims, and must be reviewed by a qualified engineer before being cited in
 > any acceptance decision.
 >
-> 本评审导出不认证设计安全，不自动推进工程 claim，必须由合格工程师审查。
+> This review export does not certify design safety, does not auto-advance engineering claims, and must be reviewed by a qualified engineer.
 
 ## Troubleshooting
 

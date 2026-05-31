@@ -67,14 +67,11 @@ export function detectEngineeringIntent(msg: string, hasCadResult: boolean): Eng
     "generate", "create a", "create the", "design a", "design the",
     "make a", "make the", "model a", "model the", "build a", "build the",
     "draw a", "draw the",
-    "生成", "创建", "设计", "画一个", "画个", "画一", "做一个", "做个",
-    "建模", "绘制", "画", "做",
   ];
   const partNouns = [
     "part", "bracket", "plate", "housing", "mount", "gear", "enclosure",
     "fixture", "block", "shaft", "flange", "cap", "cover", "holder",
     "beam", "rod", "body", "component", "bushing", "sleeve", "clamp", "adapter",
-    "咖啡机", "机器", "设备", "产品", "零件", "部件", "组件", "模型", "机",
   ];
   if (genPhrases.some((text) => lower.includes(text)) && partNouns.some((noun) => lower.includes(noun))) {
     return "generate";
@@ -85,8 +82,6 @@ export function detectEngineeringIntent(msg: string, hasCadResult: boolean): Eng
       "make", "increase", "decrease", "change", "add", "remove",
       "thicker", "taller", "wider", "longer", "shorter", "bigger", "smaller",
       "refine", "adjust", "update", "modify",
-      "修改", "调整", "加厚", "加宽", "加长", "增大", "减小", "变薄",
-      "更新", "优化", "改",
     ];
     if (refineTriggers.some((text) => lower.includes(text))) return "refine";
   }

@@ -17,16 +17,16 @@ export const LOCAL_AGENT_CONFIG_STORAGE_KEY = "aieng-ui.local-agent-config";
 export const CHAT_CONNECTION_ID_STORAGE_KEY = "aieng-ui.chat-connection-id";
 export const LLM_PROVIDER_SUGGESTIONS = ["openai-compatible", "anthropic", "openai", "azure-openai"] as const;
 export const CHAT_SUGGESTIONS = [
-  "总结当前模型的语义和主要风险",
-  "检查当前包是否准备好接受修改",
-  "给出不改变保护区域的安全减重步骤",
+  "Summarize the current model semantics and main risks",
+  "Check whether the current package is ready for a patch",
+  "Give safe weight-reduction steps without changing protected regions",
 ] as const;
 
 export const DEFAULT_LLM_CONFIG: LLMConfig = {
   provider: "openai-compatible",
   model: "configured-model",
   base_url: "",
-  api_key_env: "OPENAI_API_KEY",
+  api_key: null,
   temperature: 0,
   top_p: 1,
   max_output_tokens: 8192,

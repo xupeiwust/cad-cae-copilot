@@ -36,11 +36,11 @@ export function redactSecrets(input: string): string {
 }
 
 export function runtimeStatusLabel(status: RuntimeRun["status"]): string {
-  if (status === "completed") return "已完成";
-  if (status === "awaiting_approval") return "等待审批";
-  if (status === "failed") return "执行失败";
-  if (status === "rejected") return "已拒绝";
-  if (status === "cancelled") return "已取消";
+  if (status === "completed") return "Completed";
+  if (status === "awaiting_approval") return "Awaiting approval";
+  if (status === "failed") return "Failed";
+  if (status === "rejected") return "Rejected";
+  if (status === "cancelled") return "Cancelled";
   return status;
 }
 
@@ -66,7 +66,7 @@ export function normalizeLlmConfig(raw: unknown): LLMConfig {
     provider: typeof data.provider === "string" && data.provider.trim() ? data.provider : base.provider,
     model: typeof data.model === "string" && data.model.trim() ? data.model : base.model,
     base_url: typeof data.base_url === "string" ? data.base_url : base.base_url,
-    api_key_env: typeof data.api_key_env === "string" ? data.api_key_env : base.api_key_env,
+    api_key: typeof data.api_key === "string" && data.api_key ? data.api_key : base.api_key,
     temperature: typeof data.temperature === "number" && Number.isFinite(data.temperature) ? data.temperature : base.temperature,
     top_p: typeof data.top_p === "number" && Number.isFinite(data.top_p) ? data.top_p : base.top_p,
     max_output_tokens:
@@ -85,16 +85,16 @@ export function normalizeLlmConfig(raw: unknown): LLMConfig {
 }
 
 export function isLlmConfigReady(config: LLMConfig) {
-  return Boolean(config.provider.trim() && config.model.trim() && (config.api_key_env?.trim() || config.base_url?.trim()));
+  return Boolean(config.provider.trim() && config.model.trim() && (config.api_key?.trim() || config.base_url?.trim()));
 }
 
 export function getRuntimeDetail(snapshot: RuntimeConfigSnapshot | null) {
-  if (!snapshot) return "正在读取预览适配器配置";
+  if (!snapshot) return "Reading preview adapter configuration";
   if (snapshot.probe.ready) {
     return `${getProviderLabel(snapshot.config.provider)} / topology=${snapshot.probe.topology_backend_resolved}`;
   }
   const issues = Array.isArray(snapshot.probe.issues) ? snapshot.probe.issues : [];
-  return issues.join("；") || snapshot.probe.bridge_error || "运行时检测未通过";
+  return issues.join("; ") || snapshot.probe.bridge_error || "Runtime check did not pass";
 }
 
 export function createChatId() {
@@ -133,19 +133,19 @@ export function formatGeometryResult(output: Record<string, unknown>): string {
   if (!output || output.status === "error") {
     const code = output?.code ?? "error";
     const msg = output?.message ?? "Geometry inspection failed.";
-    return `几何检查失败 [${code}]: ${msg}`;
+    return `Geometry inspection failed [${code}]: ${msg}`;
   }
   const bb = output.bounding_box as Record<string, number> | undefined;
   const dims = bb
-    ? `${bb.xlen?.toFixed(1)} × ${bb.ylen?.toFixed(1)} × ${bb.zlen?.toFixed(1)} mm`
-    : "—";
+    ? `${bb.xlen?.toFixed(1)} x ${bb.ylen?.toFixed(1)} x ${bb.zlen?.toFixed(1)} mm`
+    : "-";
   const vol = typeof output.total_volume_mm3 === "number"
-    ? `${(output.total_volume_mm3 / 1000).toFixed(2)} cm³`
-    : "—";
-  const faces = output.total_face_count ?? "—";
-  const solids = output.total_solid_count ?? "—";
+    ? `${(output.total_volume_mm3 / 1000).toFixed(2)} cm3`
+    : "-";
+  const faces = output.total_face_count ?? "-";
+  const solids = output.total_solid_count ?? "-";
   const ver = output.freecad_version ? ` (FreeCAD ${output.freecad_version})` : "";
-  return `几何检查完成${ver} — 外形尺寸 ${dims}，体积 ${vol}，${solids} 个实体，${faces} 个面`;
+  return `Geometry inspection complete${ver} - dimensions ${dims}, volume ${vol}, ${solids} solids, ${faces} faces`;
 }
 
 export function formatArtifactChanges(run: RuntimeRun): string | null {
@@ -156,7 +156,7 @@ export function formatArtifactChanges(run: RuntimeRun): string | null {
     .map((a) => String(a.path ?? ""))
     .filter(Boolean);
   if (paths.length === 0) return null;
-  return "变更文件:\n" + paths.map((p) => `  - ${p}`).join("\n");
+  return "Changed files:\n" + paths.map((p) => `  - ${p}`).join("\n");
 }
 
 export function extractArtifactPaths(run: RuntimeRun): string[] {

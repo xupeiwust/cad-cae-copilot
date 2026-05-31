@@ -25,7 +25,7 @@ def test_compact_tool_catalog_strips_verbose_schema_descriptions() -> None:
 
 def test_action_prompt_compacts_large_agent_context_observation() -> None:
     prompt = build_action_prompt(
-        objective="解释一下这个模型",
+        objective="Explain this model",
         project_id="p1",
         selected_geometry={},
         agent_context={"project": {"name": "Schenkel"}},

@@ -23,9 +23,9 @@ This checklist covers the runtime-honesty, approval-gate, artifact-integrity, fr
 
 - [x] **Synthetic field overlay labeled as not for engineering judgment**
   - Frontend `fieldNote` logic shows three distinct labels:
-    - `FRD真实数据` — real FRD data, bbox aligned
-    - `FRD数据存在，但几何坐标可能不一致` — FRD data present but bbox suspicious
-    - `合成预览，不可用于工程判断` — synthetic / no real data
+    - `FRD real data` — real FRD data, bbox aligned
+    - `FRD data exists, but geometry coordinates may be inconsistent` — FRD data present but bbox suspicious
+    - `Synthetic preview, not for engineering decisions` — synthetic / no real data
 
 ---
 
@@ -74,7 +74,7 @@ Runtime behavior:
   - Returns `"suspicious"` with reason when mesh bbox ≠ FRD bbox
 
 - [x] **Synthetic overlay warning visible**
-  - When `source !== "frd"`, label reads `合成预览，不可用于工程判断`
+  - When `source !== "frd"`, label reads `Synthetic preview, not for engineering decisions`
 
 - [x] **LLM `config_ready` and `connection_verified` are separate**
   - `POST /api/llm/test` with `verify_connection=false` returns `config_ready`

@@ -13,7 +13,7 @@ type CadGenResult = { code: string; face_count: number; feature_count: number };
 
 type UseEngineeringActionsArgs = {
   selectedId: string | null;
-  directApiKey: string;
+  apiKey: string;
   refreshProjects(nextSelectedId?: string | null): Promise<void>;
   setBusy: Dispatch<SetStateAction<boolean>>;
   setChatHistory: Dispatch<SetStateAction<ChatHistoryItem[]>>;
@@ -21,7 +21,7 @@ type UseEngineeringActionsArgs = {
 
 export function useEngineeringActions({
   selectedId,
-  directApiKey,
+  apiKey,
   refreshProjects,
   setBusy,
   setChatHistory,
@@ -66,7 +66,7 @@ export function useEngineeringActions({
       };
       if (options.materialHint) payload.material_hint = options.materialHint;
       if (options.meshHint) payload.mesh_hint = options.meshHint;
-      if (directApiKey) payload.api_key = directApiKey;
+      if (apiKey) payload.api_key = apiKey;
       const result = await api.aiPreprocessing(selectedId, payload);
       const feaSetup = result.fea_setup as Record<string, unknown>;
       const setupYaml = result.setup_yaml as Record<string, unknown>;
@@ -122,7 +122,7 @@ export function useEngineeringActions({
     setCadGenerating(true);
     setCadGenerationProgress(applyCadProgressEvent(emptyCadGenerationProgress(), { step: "planning", message: "AI is analyzing the design description…" }));
     try {
-      const keyPayload = directApiKey ? { api_key: directApiKey } : {};
+      const keyPayload = apiKey ? { api_key: apiKey } : {};
       if (intent === "generate") {
         const response = await api.generateCadStream(selectedId, { description: prompt, hints: {}, write_files: true, ...keyPayload });
         const reader = response.body?.getReader();

@@ -96,7 +96,7 @@ export const api = {
     request<{ deleted: boolean; key: string }>(`/api/settings/${encodeURIComponent(key)}`, {
       method: "DELETE",
     }),
-  testLlmProvider: (config: LLMConfig, verifyConnection: boolean) =>
+  testLlmProvider: (config: LLMConfig, apiKey: string, verifyConnection: boolean) =>
     request<{
       config_ready: boolean;
       connection_verified: boolean;
@@ -108,7 +108,7 @@ export const api = {
     }>("/api/llm/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ llm_config: config, verify_connection: verifyConnection }),
+      body: JSON.stringify({ llm_config: config, api_key: apiKey, verify_connection: verifyConnection }),
     }),
   listCapabilities: () => request<CapabilityDescriptor[]>("/api/capabilities"),
   previewCapability: (operationName: string, inputs: Record<string, unknown> = {}, approved = false) =>

@@ -8,7 +8,8 @@ import { ShapeIrObjectsCard } from "../components/ShapeIrObjectsCard";
 import { ViewerPane } from "../components/ViewerPane";
 import { SelectionInspectorCard } from "../components/agent/SelectionInspectorCard";
 import { ChatPanel } from "../components/panels/ChatPanel";
-import { GlobalSettingsDrawer, RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
+import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
+import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
 import type { useWorkbenchApp } from "./useWorkbenchApp";
 
 type AppChromeProps = {
@@ -151,8 +152,8 @@ export function AppChrome({ app }: AppChromeProps) {
         runtimeReady={app.runtimeReady}
         llmConfig={app.llmConfig}
         llmReady={app.llmReady}
-        directApiKey={app.directApiKey}
-        onDirectApiKeyChange={app.updateDirectApiKey}
+        apiKey={app.apiKey}
+        onApiKeyChange={app.updateApiKey}
         onClose={() => app.setSettingsOpen(false)}
         onDraftChange={app.updateRuntimeDraft}
         onLlmChange={app.updateLlmConfig}

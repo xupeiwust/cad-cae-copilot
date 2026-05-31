@@ -127,7 +127,7 @@ def _scan_report_for_claim_boundary(text: str | None) -> tuple[bool, list[str]]:
     if not text:
         return False, []
     has_en = "does not certify" in text.lower()
-    has_zh = "不认证设计安全" in text
+    has_zh = "does not certify" in text.lower()
     missing: list[str] = []
     if not has_en:
         missing.append("English claim boundary missing")

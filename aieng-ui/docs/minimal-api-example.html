@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>AIENG Minimal API Example</title>
@@ -29,10 +29,10 @@
 <body>
 
 <h1>🛠️ AIENG Minimal API Example</h1>
-<p>零依赖纯 HTML/JS，展示如何调用核心 API。把 <code>API_BASE</code> 改成你的后端地址即可。</p>
+<p>Zero-dependency pure HTML/JS demo showing how to call core APIs. Change <code>API_BASE</code> to your backend address.</p>
 
 <div class="section">
-  <h3>1. 配置</h3>
+  <h3>1. Configuration</h3>
   <div class="row">
     <input id="apiBase" value="http://127.0.0.1:8000" placeholder="API Base URL">
     <button onclick="testHealth()">Test Connection</button>
@@ -40,7 +40,7 @@
 </div>
 
 <div class="section">
-  <h3>2. 项目管理</h3>
+  <h3>2. Project Management</h3>
   <div class="row">
     <input id="projectName" value="coffee-machine" placeholder="Project name">
     <button onclick="createProject()">Create Project</button>
@@ -58,13 +58,13 @@
 <div class="section">
   <h3>3. AI Text-to-CAD</h3>
   <div class="row">
-    <textarea id="cadPrompt" placeholder="e.g. 画个胶囊式咖啡机">画个胶囊式咖啡机</textarea>
+    <textarea id="cadPrompt" placeholder="e.g. Draw a capsule coffee machine">Draw a capsule coffee machine</textarea>
     <button onclick="generateCad()">Generate CAD</button>
   </div>
 </div>
 
 <div class="section">
-  <h3>4. 预览 & Click-to-Pointer</h3>
+  <h3>4. Preview & Click-to-Pointer</h3>
   <div class="row">
     <button onclick="loadPreview()">Load Preview</button>
     <button onclick="buildBrepGraph()">Build B-Rep Graph</button>

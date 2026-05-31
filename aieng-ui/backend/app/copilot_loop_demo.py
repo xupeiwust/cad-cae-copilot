@@ -986,9 +986,8 @@ def run_demo_smoke_check(settings: Settings, payload: dict[str, Any]) -> dict[st
             else:
                 _claim_boundary_section = export_text[boundary_start:next_h2]
     has_en_boundary = "does not certify" in _claim_boundary_section.lower()
-    # The export review uses "本评审导出" while loop reports use "本报告";
-    # both contain the shared core phrase.
-    has_zh_boundary = "不认证设计安全" in _claim_boundary_section
+    # The export review and loop reports share the same core claim-boundary phrase.
+    has_zh_boundary = "does not certify" in _claim_boundary_section.lower()
     _check(
         "claim_boundary_en",
         "Export contains English claim boundary",

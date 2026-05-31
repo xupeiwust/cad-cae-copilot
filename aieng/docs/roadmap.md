@@ -197,6 +197,31 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 25: CAE-result-guided topology-optimization derivation — COMPLETE (2026-05-31)
+
+Backend CAD/CAE infra only (no UI / NL-agent / optimizer changes). The topology-
+optimization problem can now be annotated with engineering guidance from neutral
+(solver-agnostic) CAE result artifacts — as ADVISORY guidance, never replacing the
+loads/supports/material/design-space taken from the CAE setup.
+
+- `build_topopt_result_guidance()` reads `analysis/cae_result_map.json` (+ field_regions
+  / computed_metrics / object_registry) and produces `result_guidance`:
+  `stress_hotspots`, `deflection_hotspots`, `stiffness_sensitive_regions` (← deflection),
+  `preserve_or_reinforce_regions` (← stress), `unmapped_result_regions`, `global_extrema`.
+  Every item preserves the neutral fields verbatim (load_case_id, result_type, quantity,
+  value/unit, value_range, affected_topology_entities, source_ir_node, node_linkage,
+  mapping_method, confidence) and is mapped back to the design_space_node
+  (`within_design_space`). No CalculiX-specific names are read.
+- `collect_topopt_result_guidance()` attaches the guidance to the derived problem (2D + 3D),
+  writes `diagnostics/topology_optimization_result_guidance.json` (consumed/skipped/unmapped
+  + counts + confidence distribution), and stamps `provenance/conversion_manifest.json`
+  `topopt_inputs` (cae_setup+cae_result_guidance vs cae_setup_only, artifact paths). Missing
+  results → warning, not error; results present but unmapped → honest diagnostics.
+  `run_topology_optimization` carries `result_guidance` into the result contract.
+- Tests: setup-only derivation unchanged + warns; stress hotspot → preserve_or_reinforce;
+  deflection → stiffness_sensitive; unmapped recorded honestly; field_regions fallback;
+  missing artifacts warn (no fail); neutral fields preserved; no CalculiX names; no UI files.
+
 ## Phase 24: Geometry execution manifest (backend source of truth) — COMPLETE (2026-05-31)
 
 Backend CAD/CAE infra only (no UI / NL-agent / optimizer changes). A reliable record

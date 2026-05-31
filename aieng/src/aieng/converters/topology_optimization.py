@@ -661,6 +661,283 @@ def _dedup_cells(cells: list[list[int]]) -> list[list[int]]:
     return out
 
 
+TOPOPT_RESULT_GUIDANCE_PATH = "diagnostics/topology_optimization_result_guidance.json"
+
+# Neutral CAE result artifacts (solver-agnostic). Used as GUIDANCE only — never as a
+# replacement for the loads/supports/material/design-space taken from the CAE setup.
+_CAE_RESULT_ARTIFACTS = {
+    "computed_metrics": "analysis/computed_metrics.json",
+    "field_regions": "analysis/field_regions.json",
+    "cae_result_map": "analysis/cae_result_map.json",
+    "object_registry": "registry/object_registry.json",
+}
+
+
+def _quantity_for(result_type: str | None) -> str:
+    rt = str(result_type or "").lower()
+    if "stress" in rt:
+        return "von_mises_stress"
+    if "disp" in rt or "deflect" in rt:
+        return "displacement_magnitude"
+    if "strain" in rt:
+        return "strain"
+    return rt or "unknown"
+
+
+def _guidance_item(m: dict[str, Any], design_space_node: str | None, *, guidance: str | None = None) -> dict[str, Any]:
+    """Preserve the neutral result-map fields verbatim + map back to the design space."""
+    affected = m.get("affected_topology_entities") or []
+    sin = m.get("source_ir_node")
+    within = bool(design_space_node and (sin == design_space_node or design_space_node in affected))
+    item = {
+        "region_id": m.get("region_id"),
+        "load_case_id": m.get("load_case_id"),
+        "result_type": m.get("result_type"),
+        "quantity": _quantity_for(m.get("result_type")),
+        "value": m.get("value"),
+        "unit": m.get("unit"),
+        "value_range": m.get("value_range"),
+        "location": m.get("location"),
+        "affected_topology_entities": affected,
+        "source_ir_node": sin,
+        "node_linkage": m.get("node_linkage"),
+        "mapping_method": m.get("mapping_method"),
+        "confidence": m.get("confidence"),
+        "within_design_space": within,
+    }
+    if guidance:
+        item["guidance"] = guidance
+    return item
+
+
+def build_topopt_result_guidance(
+    cae_result_map: dict[str, Any] | None,
+    field_regions: dict[str, Any] | None,
+    computed_metrics: dict[str, Any] | None,
+    design_space_node: str | None,
+    *,
+    present: dict[str, bool] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """Turn neutral CAE result artifacts into topology-optimization GUIDANCE.
+
+    Returns ``(result_guidance, diagnostics, warnings)``. Solver-agnostic: reads only
+    the neutral contract fields (result_type/value/unit/load_case_id/confidence/
+    source_ir_node/mapping_method/...) — no CalculiX-specific names. The guidance never
+    changes the optimizer's boundary conditions; it annotates which regions the analysis
+    says are stressed / deflecting so a later step (or the user) can preserve/reinforce
+    them. ``preserve_or_reinforce_regions`` ← stress hotspots; ``stiffness_sensitive_regions``
+    ← deflection hotspots."""
+    present = present or {}
+    warnings: list[str] = []
+    consumed: list[str] = []
+    skipped: list[str] = []
+    for key, path in _CAE_RESULT_ARTIFACTS.items():
+        (consumed if present.get(key) else skipped).append(path)
+
+    stress: list[dict[str, Any]] = []
+    deflection: list[dict[str, Any]] = []
+    unmapped: list[dict[str, Any]] = []
+
+    crm = cae_result_map or {}
+    mapped = crm.get("mapped_results") if isinstance(crm.get("mapped_results"), list) else []
+    for m in mapped:
+        if not isinstance(m, dict):
+            continue
+        rt = str(m.get("result_type") or "").lower()
+        if "stress" in rt:
+            stress.append(_guidance_item(m, design_space_node))
+        elif "disp" in rt or "deflect" in rt:
+            deflection.append(_guidance_item(m, design_space_node))
+    for u in (crm.get("unmapped_regions") if isinstance(crm.get("unmapped_regions"), list) else []):
+        if isinstance(u, dict):
+            unmapped.append({
+                "region_id": u.get("region_id") or u.get("id"),
+                "load_case_id": u.get("load_case_id"),
+                "result_type": u.get("result_type"),
+                "reason": u.get("reason") or "unmapped",
+            })
+
+    # If there is no mapped result map but raw field regions exist, surface them as
+    # location-only hotspots that could not be tied to topology (honest, low confidence).
+    used_field_regions = False
+    if not mapped and isinstance(field_regions, dict):
+        for r in (field_regions.get("regions") if isinstance(field_regions.get("regions"), list) else []):
+            if not isinstance(r, dict):
+                continue
+            used_field_regions = True
+            val = r.get("value") or {}
+            stub = {
+                "region_id": r.get("id"),
+                "load_case_id": r.get("load_case_id"),
+                "result_type": r.get("result_type"),
+                "value": val.get("peak", val.get("max")),
+                "value_range": {"min": val.get("min"), "max": val.get("max")},
+                "unit": val.get("unit"),
+                "location": r.get("center"),
+                "affected_topology_entities": [],
+                "source_ir_node": None,
+                "node_linkage": "none",
+                "mapping_method": "none",
+                "confidence": "low",
+            }
+            rt = str(r.get("result_type") or "").lower()
+            target = stress if "stress" in rt else (deflection if ("disp" in rt or "deflect" in rt) else None)
+            if target is not None:
+                target.append(_guidance_item(stub, design_space_node))
+            unmapped.append({"region_id": r.get("id"), "load_case_id": r.get("load_case_id"),
+                             "result_type": r.get("result_type"),
+                             "reason": "field region not mapped to topology (no cae_result_map)"})
+
+    available = bool(stress or deflection or unmapped)
+    if not available:
+        if not any(present.get(k) for k in _CAE_RESULT_ARTIFACTS):
+            warnings.append("no CAE result artifacts present; deriving topology-optimization "
+                            "problem from CAE setup only (loads/supports/material/design-space)")
+        else:
+            warnings.append("CAE result artifacts present but no mappable result regions found; "
+                            "no result_guidance produced")
+    elif unmapped and not (stress or deflection):
+        warnings.append("CAE results present but none could be mapped to topology — see "
+                        "unmapped_result_regions for diagnostics")
+
+    # preserve_or_reinforce ← high stress; stiffness_sensitive ← high deflection.
+    preserve = [{**dict(it), "guidance": "preserve_or_reinforce"} for it in stress]
+    stiffness = [{**dict(it), "guidance": "increase_stiffness"} for it in deflection]
+
+    global_extrema: list[dict[str, Any]] = []
+    if isinstance(computed_metrics, dict):
+        for lc in (computed_metrics.get("load_cases") if isinstance(computed_metrics.get("load_cases"), list) else []):
+            for r in (lc.get("results") if isinstance(lc, dict) and isinstance(lc.get("results"), list) else []):
+                if isinstance(r, dict):
+                    global_extrema.append({
+                        "load_case_id": lc.get("id"), "result_type": r.get("result_type"),
+                        "metric": r.get("metric"), "max": r.get("max"), "min": r.get("min"),
+                        "unit": r.get("unit"),
+                    })
+
+    guidance = {
+        "available": available,
+        "design_space_node": design_space_node,
+        "stress_hotspots": stress,
+        "deflection_hotspots": deflection,
+        "stiffness_sensitive_regions": stiffness,
+        "preserve_or_reinforce_regions": preserve,
+        "unmapped_result_regions": unmapped,
+        "global_extrema": global_extrema,
+        "sources": {"consumed": consumed, "skipped": skipped},
+        "advisory_only": True,
+        "note": ("Engineering guidance from analysis results. ADVISORY: it annotates "
+                 "stressed/deflecting regions; it does NOT set the optimizer's loads, "
+                 "supports, material, or design space (those come from the CAE setup)."),
+    }
+    diagnostics = {
+        "format": "aieng.topology_optimization_result_guidance",
+        "schema_version": "0.1",
+        "design_space_node": design_space_node,
+        "consumed_artifacts": consumed,
+        "skipped_artifacts": skipped,
+        "used_field_regions_fallback": used_field_regions,
+        "counts": {
+            "mapped_results": len(mapped),
+            "stress_hotspots": len(stress),
+            "deflection_hotspots": len(deflection),
+            "unmapped_result_regions": len(unmapped),
+        },
+        "confidence_distribution": _confidence_distribution(stress + deflection),
+        "unmapped_result_regions": unmapped,
+        "warnings": warnings,
+    }
+    return guidance, diagnostics, warnings
+
+
+def _confidence_distribution(items: list[dict[str, Any]]) -> dict[str, int]:
+    dist: dict[str, int] = {}
+    for it in items:
+        c = str(it.get("confidence") or "unknown")
+        dist[c] = dist.get(c, 0) + 1
+    return dist
+
+
+def _replace_members(package_path: Path, members: dict[str, bytes]) -> None:
+    """Atomically write/replace several members in a .aieng zip in one rewrite."""
+    tmp = package_path.with_suffix(".tmp.aieng")
+    try:
+        with (
+            zipfile.ZipFile(package_path, "r") as src,
+            zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+        ):
+            for item in src.infolist():
+                if item.filename not in members:
+                    dst.writestr(item, src.read(item.filename))
+            for name, data in members.items():
+                dst.writestr(name, data)
+        tmp.replace(package_path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def collect_topopt_result_guidance(
+    package_path: str | Path, design_space_node: str | None, *, write: bool = True,
+) -> tuple[dict[str, Any], list[str]]:
+    """Read neutral CAE result artifacts from a package, build result_guidance, and
+    (best-effort) write diagnostics/topology_optimization_result_guidance.json + stamp
+    the conversion manifest with the topopt inputs provenance. Returns
+    ``(result_guidance, warnings)``. Missing artifacts -> warning, never an error."""
+    package_path = Path(package_path)
+    present: dict[str, bool] = {}
+    crm = fr = cm = None
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
+            for key, path in _CAE_RESULT_ARTIFACTS.items():
+                present[key] = path in names
+            crm = json.loads(zf.read(_CAE_RESULT_ARTIFACTS["cae_result_map"])) if present.get("cae_result_map") else None
+            fr = json.loads(zf.read(_CAE_RESULT_ARTIFACTS["field_regions"])) if present.get("field_regions") else None
+            cm = json.loads(zf.read(_CAE_RESULT_ARTIFACTS["computed_metrics"])) if present.get("computed_metrics") else None
+    except Exception as exc:  # noqa: BLE001 - result guidance is advisory
+        return ({"available": False, "error": f"{type(exc).__name__}: {exc}",
+                 "sources": {"consumed": [], "skipped": list(_CAE_RESULT_ARTIFACTS.values())}},
+                [f"could not read CAE result artifacts: {exc}"])
+
+    guidance, diagnostics, warnings = build_topopt_result_guidance(
+        crm, fr, cm, design_space_node, present=present)
+
+    if write and package_path.exists():
+        try:
+            members: dict[str, bytes] = {
+                TOPOPT_RESULT_GUIDANCE_PATH: (json.dumps(diagnostics, indent=2, sort_keys=True) + "\n").encode(),
+            }
+            # Stamp the conversion manifest: the topopt problem used CAE setup + (optionally)
+            # CAE result guidance, with the artifact paths actually consumed.
+            manifest: dict[str, Any] = {}
+            with zipfile.ZipFile(package_path, "r") as zf:
+                if "provenance/conversion_manifest.json" in zf.namelist():
+                    try:
+                        manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+                    except Exception:
+                        manifest = {}
+            if not isinstance(manifest, dict):
+                manifest = {}
+            manifest.setdefault("format", "aieng.conversion_manifest")
+            manifest["topopt_inputs"] = {
+                "used": "cae_setup+cae_result_guidance" if guidance.get("available") else "cae_setup_only",
+                "design_space_node": design_space_node,
+                "result_guidance_available": bool(guidance.get("available")),
+                "consumed_artifacts": guidance.get("sources", {}).get("consumed", []),
+                "skipped_artifacts": guidance.get("sources", {}).get("skipped", []),
+                "diagnostics_path": TOPOPT_RESULT_GUIDANCE_PATH,
+                "note": "Loads/supports/material/design-space come from the CAE setup; CAE "
+                        "results are advisory guidance only.",
+            }
+            members["provenance/conversion_manifest.json"] = (
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+            _replace_members(package_path, members)
+        except Exception:  # noqa: BLE001 - best-effort diagnostics write
+            pass
+    return guidance, warnings
+
+
 def derive_topopt_problem_from_package(
     package_path: str | Path, *,
     dimension: str = "2d", resolution: int = 48, resolution_3d: int = 16,
@@ -769,14 +1046,22 @@ def derive_topopt_problem_from_package(
         warnings.append(
             "insufficient derived BCs (need ≥1 support and ≥1 load) — falling back to the cantilever preset")
 
+    # Advisory engineering guidance from neutral CAE result artifacts (if present).
+    # The loads/supports/material/design-space above stay sourced from the CAE setup.
+    result_guidance, guidance_warnings = collect_topopt_result_guidance(package_path, solid_node)
+    warnings.extend(guidance_warnings)
+
     return {
         "grid": {"nelx": nelx, "nely": nely},
         "volfrac": volfrac, "penalty": penalty, "rmin": rmin, "max_iters": max_iters,
         "objective": objective,
         "bcs": bcs,
         "design_space_node": solid_node,
+        "result_guidance": result_guidance,
         "derivation": {
             "source": "cae_setup+topology_map",
+            "bc_source": "cae_setup",
+            "result_guidance_source": "cae_result_artifacts" if result_guidance.get("available") else "none",
             "derived": derived,
             "plane": {"u_axis": axis[u], "v_axis": axis[v], "out_of_plane_axis": axis[w]},
             "design_space_bbox": overall,
@@ -786,6 +1071,7 @@ def derive_topopt_problem_from_package(
                 "cell_size": [round(du, 6), round(dv, 6)], "thickness": round(ext[w], 6),
             },
             "support_count": len(supports), "load_count": len(loads),
+            "result_guidance_inputs": result_guidance.get("sources"),
             "warnings": warnings,
             "limitations": [
                 "3D supports/loads are projected onto the plane of the two largest design-space "
@@ -932,6 +1218,8 @@ def derive_topopt_problem_3d_from_package(
             "support_count": len(supports), "load_count": len(loads),
         }
 
+    result_guidance, guidance_warnings = collect_topopt_result_guidance(package_path, solid_node)
+
     return {
         "status": "ok",
         "dimension": "3d",
@@ -943,14 +1231,18 @@ def derive_topopt_problem_3d_from_package(
         "design_space_node": solid_node,
         "source_ir_node": solid_node,
         "frame": frame,
+        "result_guidance": result_guidance,
         "derivation": {
             "source": "cae_setup+topology_map",
+            "bc_source": "cae_setup",
+            "result_guidance_source": "cae_result_artifacts" if result_guidance.get("available") else "none",
             "derived": True,
             "dimension": "3d",
             "design_space_bbox": overall,
             "frame": frame,
             "support_count": len(supports), "load_count": len(loads),
-            "warnings": diagnostics,
+            "result_guidance_inputs": result_guidance.get("sources"),
+            "warnings": diagnostics + guidance_warnings,
             "limitations": [
                 "Full-3D structured-voxel idealization: supports/loads are snapped to the nearest "
                 "design-space boundary voxel layer; experimental reference, not production.",
@@ -997,6 +1289,7 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
         "material": problem.get("material"),
         "constraints": problem.get("constraints"),
         "derivation": problem.get("derivation"),
+        "result_guidance": problem.get("result_guidance"),
     }
     frame = problem.get("frame") or (problem.get("derivation") or {}).get("frame")
     result_block: dict[str, Any] = {

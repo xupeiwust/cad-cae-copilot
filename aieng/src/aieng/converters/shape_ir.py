@@ -450,7 +450,7 @@ _EXTRUDED_REGION_KINDS = {"extruded_region", "extruded_polygons", "density_conto
 
 # Node kinds carrying a ready triangle mesh (e.g. marching-cubes topology-opt
 # proxy). Mesh-runtime only — built directly from vertices/faces.
-_SURFACE_MESH_KINDS = {"surface_mesh", "mesh_proxy", "triangle_mesh"}
+_SURFACE_MESH_KINDS = {"surface_mesh", "smooth_mesh_proxy", "mesh_proxy", "triangle_mesh"}
 
 
 def _plane_basis(u_axis: str, v_axis: str) -> dict[str, Any]:

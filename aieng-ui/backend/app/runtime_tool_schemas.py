@@ -158,12 +158,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "project_id": {"type": "string"},
             "method": {
                 "type": "string",
-                "enum": ["contour", "voxels", "surface"],
+                "enum": ["contour", "voxels", "surface", "smooth_mesh", "marching_cubes"],
                 "description": (
                     "Geometry for the optimized body. 2D: 'contour' (default) = smooth "
                     "marching-squares boundary, extruded; 'voxels' = blocky cells. 3D: "
-                    "'surface' (default) = smooth marching-cubes mesh proxy; 'voxels' = "
-                    "blocky voxel union. 3D surface/voxels are mesh / lossy / not production CAD."
+                    "'surface'/'smooth_mesh'/'marching_cubes' (default) = smooth marching-cubes "
+                    "mesh proxy (a smooth_mesh_proxy node); 'voxels' = blocky voxel union. 3D "
+                    "outputs are mesh / lossy / preview-only / not production CAD (no B-Rep)."
                 ),
             },
             "boundary": {

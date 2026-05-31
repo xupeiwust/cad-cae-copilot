@@ -1603,6 +1603,19 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
 # topology, verification, object_registry — and stays linked to its source node.
 
 SHAPE_IR_PATH = "geometry/shape_ir.json"
+SMOOTH_MESH_RECONSTRUCTION_PATH = "diagnostics/smooth_mesh_reconstruction.json"
+# Method aliases that request a smooth marching-cubes mesh proxy for a 3D result.
+_SMOOTH_MESH_METHODS = {"surface", "smooth_mesh", "marching_cubes"}
+
+
+def _verts_bbox(verts: list[list[float]]) -> list[float] | None:
+    if not verts:
+        return None
+    xs = [p[0] for p in verts]
+    ys = [p[1] for p in verts]
+    zs = [p[2] for p in verts]
+    return [round(min(xs), 5), round(min(ys), 5), round(min(zs), 5),
+            round(max(xs), 5), round(max(ys), 5), round(max(zs), 5)]
 
 
 def marching_cubes_surface(
@@ -1778,32 +1791,51 @@ def topology_result_to_shape_ir(
             cs3 = [float(fc[0]), float(fc[1] if len(fc) > 1 else fc[0]),
                    float(fc[2] if len(fc) > 2 else fc[0])]
         m3 = str(method or "voxels").lower()
+        prov = topo_result.get("provenance") or {}
+        problem_blk = topo_result.get("problem") or {}
+        source_ir_node = prov.get("source_ir_node") or problem_blk.get("source_ir_node") or design_space_node
+        # Preserve optimizer provenance + the analysis context the mesh proxy came from.
         src_opt = {
             "optimizer": (topo_result.get("optimizer") or {}).get("name"),
             "objective": topo_result.get("objective"),
             "design_space_node": design_space_node,
+            "source_ir_node": source_ir_node,
+            "load_case_id": prov.get("load_case_id") or problem_blk.get("load_case_id"),
             "final_compliance": result.get("final_compliance"),
             "achieved_volume_fraction": result.get("achieved_volume_fraction"),
+            "target_volume_fraction": problem_blk.get("volfrac"),
+            "threshold": threshold,
+            "limitations": list(topo_result.get("limitations") or []),
             "dimension": "3d",
         }
         tags = ["preview", "design_suggestion", "lossy", "not_production_cad"]
 
         verts: list[list[float]] = []
         faces: list[list[int]] = []
-        if m3 == "surface":
+        fallback_reason: str | None = None
+        if m3 in _SMOOTH_MESH_METHODS:
             verts, faces = marching_cubes_surface(dens3, threshold, origin=o3, cell_size=cs3)
             if not (verts and faces):
-                m3 = "voxels"   # honest fallback when no surface could be extracted
-                src_opt["surface_fallback"] = "marching cubes produced no surface (or skimage missing); using voxels"
+                fallback_reason = "marching cubes produced no isosurface (empty field or scikit-image missing)"
+                m3 = "voxels"   # honest fallback to blocky voxels
+                src_opt["surface_fallback"] = fallback_reason
 
-        if m3 == "surface":
+        # Honesty flags shared by every 3D topo-opt body (mesh preview, never B-Rep/CAD).
+        honesty = {
+            "representation_kind": "mesh", "geometry_kind": "mesh",
+            "lossy": True, "preview_only": True, "cad_editable": False, "not_production_cad": True,
+        }
+        if m3 in _SMOOTH_MESH_METHODS:
             node3: dict[str, Any] = {
-                "id": nid, "label": nid, "type": "surface_mesh", "dimension": 3,
+                "id": nid, "label": nid, "type": "smooth_mesh_proxy", "dimension": 3,
                 "vertices": verts, "faces": faces, "origin": o3, "cell_size": cs3,
                 "u_axis": str(frame3.get("u_axis", "x")), "v_axis": str(frame3.get("v_axis", "y")),
                 "w_axis": str(frame3.get("w_axis", "z")), "placed_in_frame": bool(frame3),
-                "smoothing": "marching_cubes", "vertex_count": len(verts), "triangle_count": len(faces),
-                "tags": tags + ["surface_mesh"],
+                "iso_value": threshold, "smoothing": "marching_cubes",
+                "vertex_count": len(verts), "triangle_count": len(faces),
+                "bbox": _verts_bbox(verts),
+                "tags": tags + ["smooth_mesh_proxy", "marching_cubes"],
+                **honesty,
                 "source_optimization": src_opt,
             }
             evidence = "smooth_mesh_preview"
@@ -1814,6 +1846,7 @@ def topology_result_to_shape_ir(
                 "u_axis": str(frame3.get("u_axis", "x")), "v_axis": str(frame3.get("v_axis", "y")),
                 "w_axis": str(frame3.get("w_axis", "z")), "placed_in_frame": bool(frame3),
                 "tags": tags + ["voxelized"],
+                **honesty,
                 "source_optimization": src_opt,
             }
             evidence = "voxelized_preview"
@@ -1829,10 +1862,11 @@ def topology_result_to_shape_ir(
                 "dimension": "3d",
                 "optimizer": (topo_result.get("optimizer") or {}).get("name"),
                 "design_space_node": design_space_node,
-                "source_ir_node": (topo_result.get("provenance") or {}).get("source_ir_node")
-                or design_space_node,
+                "source_ir_node": source_ir_node,
+                "load_case_id": src_opt.get("load_case_id"),
                 "topopt_contract_version": topo_result.get("contract_version"),
                 "evidence": evidence,
+                "preview_only": True, "cad_editable": False,
             },
         }
 
@@ -1971,22 +2005,48 @@ def write_shape_ir_from_topology_optimization(
         thickness=thickness, origin=origin, node_id=node_id, color=color, use_frame=use_frame,
         method=method, boundary=boundary, simplify_tol=simplify_tol,
     )
-    data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
-    tmp = package_path.with_suffix(".tmp.aieng")
-    try:
-        with (
-            zipfile.ZipFile(package_path, "r") as src,
-            zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
-        ):
-            for item in src.infolist():
-                if item.filename != SHAPE_IR_PATH:
-                    dst.writestr(item, src.read(item.filename))
-            dst.writestr(SHAPE_IR_PATH, data)
-        tmp.replace(package_path)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
+    members = {SHAPE_IR_PATH: (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()}
+    # When a smooth (marching-cubes) mesh was requested, write honest reconstruction
+    # diagnostics (iso value, grid shape, vertex/face counts, bbox, frame placement,
+    # fallback reason if it degraded to voxels).
+    if str(method).lower() in _SMOOTH_MESH_METHODS:
+        diag = _smooth_mesh_reconstruction_diagnostics(payload, topo_result)
+        members[SMOOTH_MESH_RECONSTRUCTION_PATH] = (json.dumps(diag, indent=2, sort_keys=True) + "\n").encode()
+    _replace_members(package_path, members)
     return payload
+
+
+def _smooth_mesh_reconstruction_diagnostics(payload: dict[str, Any], topo_result: dict[str, Any]) -> dict[str, Any]:
+    """Honest diagnostics for the 3D smooth-mesh reconstruction (mesh preview, not CAD)."""
+    node = (payload.get("parts") or [{}])[0]
+    result = topo_result.get("result") or {}
+    grid3 = result.get("density_grid_3d") or {}
+    is_smooth = node.get("type") == "smooth_mesh_proxy"
+    src_opt = node.get("source_optimization") or {}
+    return {
+        "format": "aieng.smooth_mesh_reconstruction",
+        "schema_version": "0.1",
+        "method": "marching_cubes",
+        "succeeded": is_smooth,
+        "fallback": None if is_smooth else "density_voxels",
+        "fallback_reason": src_opt.get("surface_fallback"),
+        "iso_value": result.get("threshold"),
+        "input_grid_shape": {"nx": grid3.get("nx"), "ny": grid3.get("ny"), "nz": grid3.get("nz")},
+        "vertex_count": node.get("vertex_count", 0),
+        "face_count": node.get("triangle_count", 0),
+        "bbox": node.get("bbox"),
+        "frame_placement_applied": bool(node.get("placed_in_frame")),
+        "representation_kind": "mesh",
+        "geometry_kind": "mesh",
+        "preview_only": True,
+        "cad_editable": False,
+        "not_production_cad": True,
+        "design_space_node": node.get("source_optimization", {}).get("design_space_node"),
+        "source_ir_node": node.get("source_optimization", {}).get("source_ir_node"),
+        "load_case_id": src_opt.get("load_case_id"),
+        "optimizer": src_opt.get("optimizer"),
+        "limitations": src_opt.get("limitations") or topo_result.get("limitations") or [],
+    }
 
 
 def write_topology_optimization(

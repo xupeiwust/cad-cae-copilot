@@ -197,6 +197,34 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 27: Smooth mesh reconstruction for 3D topo-opt (mesh proxy) — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). First milestone toward mesh-to-CAD: turn the blocky
+3D voxel result into a smoother isosurface mesh — honestly a mesh PREVIEW, never B-Rep
+(B-Rep/NURBS reconstruction is a later milestone, explicitly not in this PR).
+
+- Smooth-mesh writeback method aliases `smooth_mesh` / `marching_cubes` (and the prior
+  `surface`) extract an isosurface from `density_grid_3d` at the threshold/iso-value via
+  `marching_cubes_surface` (scikit-image), transform vertices into design-space/world
+  coordinates with the stored frame (winding oriented to positive signed volume).
+- Emits a `smooth_mesh_proxy` Shape IR node with explicit honesty flags
+  (`representation_kind: mesh`, `geometry_kind: mesh`, `lossy: true`, `preview_only: true`,
+  `cad_editable: false`, `not_production_cad: true`) + `iso_value`, vertex/face counts,
+  bbox, and preserved provenance (source_ir_node, design_space_node, load_case_id,
+  optimizer, target/achieved volume_fraction, threshold, limitations). Compiled by the
+  manifold runtime via `Manifold(Mesh(...))`.
+- Honest fallback: if scikit-image is missing or no isosurface crosses the threshold,
+  falls back to `density_voxels` and records the reason.
+- Diagnostics `diagnostics/smooth_mesh_reconstruction.json` (method, succeeded, fallback +
+  reason, iso_value, input grid shape, vertex/face counts, bbox, frame_placement_applied,
+  mesh-honesty flags, provenance). object_registry links it as `fused_mesh` (mesh, not
+  B-Rep faces); verification reports `geometry_kind: mesh`; geometry_execution manifest
+  records executed:true / mesh (Phase 24).
+- Tests: 3D blob → non-empty smooth mesh; frame placement maps bbox into design space;
+  missing marching-cubes → honest voxel fallback; diagnostics written (success + fallback);
+  registry `fused_mesh`/mesh + verification honest; method aliases; existing density_voxels
+  writeback unchanged; no UI files.
+
 ## Phase 26: Result-guidance-aware topology optimization — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent / mesh-to-BRep / new optimizers). Turns the advisory

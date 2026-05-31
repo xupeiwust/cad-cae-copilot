@@ -10584,9 +10584,24 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     sir = wb.json()["shape_ir"]
     assert sir["representation"] == "manifold_mesh"          # 3D defaults to mesh, not B-Rep
     node = sir["parts"][0]
-    assert node["type"] == "surface_mesh" and node["dimension"] == 3   # default = surface proxy
+    assert node["type"] == "smooth_mesh_proxy" and node["dimension"] == 3   # default = smooth mesh proxy
+    assert node["preview_only"] is True and node["cad_editable"] is False
     assert node["triangle_count"] > 0 and "not_production_cad" in node["tags"]
     assert (project_dir(settings, pid) / "viewer" / "model.glb").exists()
+    # smooth-mesh reconstruction diagnostics + honest mesh evidence (registry + verification)
+    from aieng.converters.shape_ir_verification import verify_shape_ir_package
+    with _zip.ZipFile(pkg) as zf:
+        names = zf.namelist()
+        assert "diagnostics/smooth_mesh_reconstruction.json" in names
+        recon = _json.loads(zf.read("diagnostics/smooth_mesh_reconstruction.json"))
+        reg = _json.loads(zf.read("registry/object_registry.json"))
+    assert recon["method"] == "marching_cubes" and recon["geometry_kind"] == "mesh"
+    assert recon["cad_editable"] is False and recon["frame_placement_applied"] is True
+    obj = reg["objects"][0]
+    assert obj["linkage"] == "fused_mesh" and obj["representation_kind"] == "mesh"
+    assert obj["cad_editable"] is False               # not pretending B-Rep faces
+    vr = verify_shape_ir_package(pkg)
+    assert vr["geometry_kind"] == "mesh" and vr["representation_kind"] == "mesh"
 
     # explicit method=voxels -> blocky density_voxels
     wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})

@@ -21,6 +21,7 @@ from aieng.converters.shape_ir_manifold import (  # noqa: E402
 )
 from aieng.converters.topology_optimization import (  # noqa: E402
     SHAPE_IR_PATH,
+    SMOOTH_MESH_RECONSTRUCTION_PATH,
     TOPOLOGY_OPTIMIZATION_PATH,
     available_optimizers,
     derive_topopt_problem_from_package,
@@ -133,10 +134,12 @@ def test_3d_surface_marching_cubes_writeback():
     assert payload["representation"] == "manifold_mesh"
     assert payload["provenance"]["evidence"] == "smooth_mesh_preview"
     node = payload["parts"][0]
-    assert node["type"] == "surface_mesh" and node["dimension"] == 3
+    assert node["type"] == "smooth_mesh_proxy" and node["dimension"] == 3
     assert node["smoothing"] == "marching_cubes"
     assert node["vertex_count"] > 0 and node["triangle_count"] > 0
-    assert set(["lossy", "not_production_cad", "surface_mesh"]).issubset(node["tags"])
+    assert node["preview_only"] is True and node["cad_editable"] is False
+    assert node["representation_kind"] == "mesh" and node["geometry_kind"] == "mesh"
+    assert set(["lossy", "not_production_cad", "smooth_mesh_proxy"]).issubset(node["tags"])
     # placed in the frame (origin [10,20,0], cells 2x2x3)
     assert all(v[0] >= 10.0 - 1e-3 and v[2] >= -1e-3 for v in node["vertices"])
 
@@ -151,14 +154,73 @@ def test_3d_surface_falls_back_to_voxels_when_empty():
     assert "surface_fallback" in node["source_optimization"]
 
 
+def test_3d_smooth_mesh_method_aliases():
+    pytest.importorskip("skimage")
+    vals = [[[1.0 if (1 <= i <= 3 and 1 <= j <= 3 and 1 <= k <= 3) else 0.0
+              for i in range(5)] for j in range(5)] for k in range(5)]
+    topo = {**_TOPO3D, "result": {"threshold": 0.5,
+            "density_grid_3d": {"nx": 5, "ny": 5, "nz": 5, "values": vals}}}
+    for alias in ("smooth_mesh", "marching_cubes", "surface"):
+        node = topology_result_to_shape_ir(topo, method=alias)["parts"][0]
+        assert node["type"] == "smooth_mesh_proxy", alias
+        assert node["iso_value"] == 0.5 and node["bbox"] is not None
+
+
+def test_3d_smooth_mesh_writes_reconstruction_diagnostics(tmp_path: Path):
+    pytest.importorskip("skimage")
+    vals = [[[1.0 if (1 <= i <= 3 and 1 <= j <= 3 and 1 <= k <= 3) else 0.0
+              for i in range(5)] for j in range(5)] for k in range(5)]
+    topo = {**_TOPO3D, "limitations": ["experimental 3D SIMP"],
+            "provenance": {"design_space_node": "plate", "source_ir_node": "plate"},
+            "problem": {"load_case_id": "lc1", "volfrac": 0.4},
+            "result": {"threshold": 0.5,
+                       "density_grid_3d": {"nx": 5, "ny": 5, "nz": 5, "values": vals}}}
+    pkg = tmp_path / "sm.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", "{}")
+        zf.writestr(TOPOLOGY_OPTIMIZATION_PATH, json.dumps(topo))
+    payload = write_shape_ir_from_topology_optimization(pkg, method="smooth_mesh")
+    assert payload["parts"][0]["type"] == "smooth_mesh_proxy"
+    with zipfile.ZipFile(pkg) as zf:
+        assert SMOOTH_MESH_RECONSTRUCTION_PATH in zf.namelist()
+        d = json.loads(zf.read(SMOOTH_MESH_RECONSTRUCTION_PATH))
+    assert d["method"] == "marching_cubes" and d["succeeded"] is True
+    assert d["iso_value"] == 0.5 and d["input_grid_shape"] == {"nx": 5, "ny": 5, "nz": 5}
+    assert d["vertex_count"] > 0 and d["face_count"] > 0 and d["bbox"] is not None
+    assert d["frame_placement_applied"] is True
+    assert d["geometry_kind"] == "mesh" and d["cad_editable"] is False and d["not_production_cad"] is True
+    assert d["load_case_id"] == "lc1" and d["source_ir_node"] == "plate"
+    assert d["limitations"] == ["experimental 3D SIMP"]
+
+
+def test_3d_smooth_mesh_diagnostics_records_voxel_fallback(tmp_path: Path):
+    # empty field -> no isosurface -> fallback to voxels, recorded honestly in diagnostics
+    topo = {**_TOPO3D, "result": {"threshold": 0.5,
+            "density_grid_3d": {"nx": 2, "ny": 2, "nz": 2,
+                                "values": [[[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 0.0]]]}}}
+    pkg = tmp_path / "fb.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", "{}")
+        zf.writestr(TOPOLOGY_OPTIMIZATION_PATH, json.dumps(topo))
+    payload = write_shape_ir_from_topology_optimization(pkg, method="marching_cubes")
+    assert payload["parts"][0]["type"] == "density_voxels"   # honest fallback
+    with zipfile.ZipFile(pkg) as zf:
+        d = json.loads(zf.read(SMOOTH_MESH_RECONSTRUCTION_PATH))
+    assert d["succeeded"] is False and d["fallback"] == "density_voxels" and d["fallback_reason"]
+
+
 def test_3d_surface_compiles_and_executes_in_manifold():
     pytest.importorskip("skimage")
     pytest.importorskip("manifold3d")
     vals = [[[1.0 if (1 <= i <= 3 and 1 <= j <= 3 and 1 <= k <= 3) else 0.0
               for i in range(5)] for j in range(5)] for k in range(5)]
     topo = {**_TOPO3D, "result": {"threshold": 0.5,
+            "design_space_node": "blk", "source_ir_node": "blk",
             "density_grid_3d": {"nx": 5, "ny": 5, "nz": 5, "values": vals}}}
-    payload = topology_result_to_shape_ir(topo, method="surface")
+    payload = topology_result_to_shape_ir(topo, method="marching_cubes")
+    node = payload["parts"][0]
+    # frame placement maps the bbox into design-space coords (frame origin [10,20,0])
+    assert node["bbox"][0] >= 10.0 - 1e-3 and node["bbox"][2] >= -1e-3
     src = compile_shape_ir_to_manifold_source(payload)
     assert "Mesh" in src and "Manifold(" in src
     ns: dict = {}

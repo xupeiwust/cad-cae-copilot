@@ -197,6 +197,33 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 26: Result-guidance-aware topology optimization — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent / mesh-to-BRep / new optimizers). Turns the advisory
+`result_guidance` (Phase 25) into solver-neutral optimization-grid fields the SIMP
+optimizers can optionally consume — guidance still never sets BCs/material/design-space.
+
+- `build_guidance_field(problem)` maps `result_guidance` hotspots (via the frame/grid)
+  into `preserve_mask` (high/medium-confidence stress → protect), `stiffness_weight_field`
+  (deflection → local sensitivity multiplier), and `ignore_mask` (low-confidence /
+  unmapped — recorded, never enforced). 2D `[nely][nelx]`, 3D `[nz][ny][nx]`. Honest:
+  low confidence + unmapped are diagnosed, not enforced. Preserves provenance
+  (load_case_id/result_type/unit/value/confidence/source_ir_node/within_design_space).
+- Problem options: `use_result_guidance`, `preserve_min_density`,
+  `stiffness_weight_multiplier`, `guidance_radius_cells`.
+- `simp_2d`/`simp_3d` minimal change: `preserve_mask` floors protected cells at
+  `preserve_min_density` (per-cell OC lower bound — volume bisection still honors it);
+  `stiffness_weight_field` scales the filtered sensitivity locally. Identical to the
+  classic behavior when `use_result_guidance` is false or guidance absent.
+- `run_topology_optimization` builds + attaches the field, records
+  `result_guidance_consumed` + a compact `guidance_field_summary`;
+  `write_topology_optimization` writes the bulky field to
+  `analysis/topology_optimization_guidance_field.json` (kept out of the main result).
+- Tests: classic SIMP unchanged without guidance; high-confidence stress → preserve_mask;
+  deflection → stiffness weight; low-confidence/unmapped recorded not enforced; 2D + 3D
+  optimizers respect `preserve_min_density`; guidance-field artifact written; no
+  CalculiX-specific names; no UI files modified.
+
 ## Phase 25: CAE-result-guided topology-optimization derivation — COMPLETE (2026-05-31)
 
 Backend CAD/CAE infra only (no UI / NL-agent / optimizer changes). The topology-

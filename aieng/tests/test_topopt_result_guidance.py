@@ -15,10 +15,16 @@ import pytest
 pytest.importorskip("numpy")
 
 from aieng.converters.topology_optimization import (  # noqa: E402
+    TOPOPT_GUIDANCE_FIELD_PATH,
     TOPOPT_RESULT_GUIDANCE_PATH,
+    build_guidance_field,
     build_topopt_result_guidance,
     collect_topopt_result_guidance,
     derive_topopt_problem_from_package,
+    run_topology_optimization,
+    simp_2d,
+    simp_3d,
+    write_topology_optimization,
 )
 
 # A neutral cae_result_map: one stress hotspot + one displacement hotspot + one unmapped.
@@ -180,3 +186,136 @@ def test_collect_guidance_missing_results_warns(tmp_path: Path):
     with zipfile.ZipFile(pkg) as zf:
         manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
     assert manifest["topopt_inputs"]["used"] == "cae_setup_only"
+
+
+# ── guidance-field mapping + optimizer consumption ───────────────────────────
+
+def _rg(stress_loc=None, defl_loc=None, stress_conf="high", defl_conf="high"):
+    rg = {"available": True, "design_space_node": "plate",
+          "stress_hotspots": [], "deflection_hotspots": [],
+          "preserve_or_reinforce_regions": [], "stiffness_sensitive_regions": [],
+          "unmapped_result_regions": [], "sources": {"consumed": ["analysis/cae_result_map.json"]}}
+    if stress_loc is not None:
+        it = {"region_id": "s1", "load_case_id": "lc1", "result_type": "stress",
+              "quantity": "von_mises_stress", "value": 280.0, "unit": "MPa",
+              "location": {"x": stress_loc[0], "y": stress_loc[1], "z": stress_loc[2]},
+              "source_ir_node": "plate", "confidence": stress_conf, "within_design_space": True,
+              "guidance": "preserve_or_reinforce"}
+        rg["preserve_or_reinforce_regions"].append(it)
+    if defl_loc is not None:
+        it = {"region_id": "d1", "load_case_id": "lc1", "result_type": "displacement",
+              "quantity": "displacement_magnitude", "value": 1.4, "unit": "mm",
+              "location": {"x": defl_loc[0], "y": defl_loc[1], "z": defl_loc[2]},
+              "source_ir_node": "plate", "confidence": defl_conf, "within_design_space": True,
+              "guidance": "increase_stiffness"}
+        rg["stiffness_sensitive_regions"].append(it)
+    return rg
+
+
+_FRAME_2D = {"origin": [0.0, 0.0, 0.0], "u_axis": "x", "v_axis": "y", "cell_size": [1.0, 1.0]}
+_FRAME_3D = {"origin": [0.0, 0.0, 0.0], "u_axis": "x", "v_axis": "y", "w_axis": "z",
+             "cell_size": [1.0, 1.0, 1.0]}
+
+
+def test_build_guidance_field_2d_preserve_and_weight():
+    prob = {"grid": {"nelx": 20, "nely": 10}, "frame": _FRAME_2D,
+            "preserve_min_density": 0.6, "stiffness_weight_multiplier": 3.0, "guidance_radius_cells": 0,
+            "result_guidance": _rg(stress_loc=(5, 5, 0), defl_loc=(15, 2, 0))}
+    gf = build_guidance_field(prob)
+    assert gf["dimension"] == "2d"
+    pm = gf["preserve_mask"]
+    assert pm[5][5] == 1 and gf["diagnostics"]["cells_preserved"] == 1
+    wf = gf["stiffness_weight_field"]
+    assert wf[2][15] == 3.0 and gf["diagnostics"]["cells_weighted"] == 1
+    assert gf["options"]["preserve_min_density"] == 0.6
+    # provenance preserves the neutral fields
+    regs = gf["provenance"]["regions"]
+    assert any(r["result_type"] == "stress" and r["unit"] == "MPa" and r["confidence"] == "high"
+               and r["enforced"] for r in regs)
+
+
+def test_build_guidance_field_low_confidence_recorded_not_enforced():
+    prob = {"grid": {"nelx": 20, "nely": 10}, "frame": _FRAME_2D, "guidance_radius_cells": 0,
+            "result_guidance": _rg(stress_loc=(5, 5, 0), stress_conf="low")}
+    gf = build_guidance_field(prob)
+    assert gf["diagnostics"]["cells_preserved"] == 0          # low confidence -> not enforced
+    assert gf["diagnostics"]["ignored"] == 1
+    assert gf["ignore_mask"][5][5] == 1
+    assert gf["provenance"]["regions"][0]["enforced"] is False
+
+
+def test_build_guidance_field_unmapped_recorded():
+    prob = {"grid": {"nelx": 10, "nely": 6}, "frame": _FRAME_2D, "guidance_radius_cells": 0,
+            "result_guidance": _rg(stress_loc=(500, 500, 0))}   # far outside the grid
+    gf = build_guidance_field(prob)
+    assert gf["diagnostics"]["unmapped_count"] == 1
+    assert gf["diagnostics"]["cells_preserved"] == 0
+
+
+def _solve_problem_2d(use_guidance):
+    return {
+        "grid": {"nelx": 24, "nely": 12}, "volfrac": 0.5, "max_iters": 8,
+        "frame": _FRAME_2D, "preserve_min_density": 0.7, "guidance_radius_cells": 0,
+        "bcs": {"supports": [{"cells": [[0, j] for j in range(12)]}],
+                "loads": [{"cells": [[23, 6]], "fx": 0.0, "fy": -1.0}]},
+        "use_result_guidance": use_guidance,
+        "result_guidance": _rg(stress_loc=(12, 6, 0)),
+    }
+
+
+def test_simp_2d_unchanged_without_guidance():
+    out = simp_2d(_solve_problem_2d(use_guidance=False))   # guidance present but flag off
+    assert out["guidance_consumed"] is False
+    assert out["guidance_cells_preserved"] == 0
+
+
+def test_simp_2d_respects_preserve_min_density():
+    res = run_topology_optimization(_solve_problem_2d(use_guidance=True), optimizer="simp_2d")
+    assert res["result"]["result_guidance_consumed"] is True
+    vals = res["result"]["density_grid"]["values"]            # [nely][nelx]
+    assert vals[6][12] >= 0.7 - 1e-6                          # preserved cell floored at preserve_min
+    assert res["provenance"]["result_guidance_consumed"] is True
+
+
+def _solve_problem_3d(use_guidance):
+    nx, ny, nz = 10, 6, 4
+    return {
+        "grid": {"nx": nx, "ny": ny, "nz": nz}, "volume_fraction": 0.4, "max_iters": 6,
+        "frame": _FRAME_3D, "preserve_min_density": 0.7, "guidance_radius_cells": 0,
+        "bcs": {"supports": [{"cells": [[0, j, k] for j in range(ny) for k in range(nz)]}],
+                "loads": [{"cells": [[nx - 1, ny // 2, nz // 2]], "fx": 0.0, "fy": -1.0, "fz": 0.0}]},
+        "use_result_guidance": use_guidance,
+        "result_guidance": _rg(stress_loc=(5, 3, 2)),
+    }
+
+
+def test_simp_3d_respects_preserve_min_density():
+    res = run_topology_optimization(_solve_problem_3d(use_guidance=True), optimizer="simp_3d")
+    assert res["result"]["result_guidance_consumed"] is True
+    vals = res["result"]["density_grid_3d"]["values"]         # [nz][ny][nx]
+    assert vals[2][3][5] >= 0.7 - 1e-6                         # preserved voxel floored
+
+
+def test_simp_3d_unchanged_without_guidance():
+    out = simp_3d(_solve_problem_3d(use_guidance=False))
+    assert out["guidance_consumed"] is False
+
+
+def test_guidance_field_artifact_written(tmp_path: Path):
+    pkg = tmp_path / "g.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", "{}")
+    res = write_topology_optimization(pkg, _solve_problem_2d(use_guidance=True), optimizer="simp_2d")
+    assert res["result"]["result_guidance_consumed"] is True
+    with zipfile.ZipFile(pkg) as zf:
+        names = zf.namelist()
+        assert TOPOPT_GUIDANCE_FIELD_PATH in names
+        gf = json.loads(zf.read(TOPOPT_GUIDANCE_FIELD_PATH))
+        topo = json.loads(zf.read("analysis/topology_optimization.json"))
+    assert gf["preserve_mask"][6][12] == 1
+    assert topo["provenance"]["result_guidance_consumed"] is True
+    assert "guidance_field" not in topo                        # bulky field split out
+    # no CalculiX-specific names anywhere in the guidance artifacts
+    blob = (json.dumps(gf) + json.dumps(topo)).lower()
+    for tok in ("calculix", "ccx", "frd", ".inp", "abaqus"):
+        assert tok not in blob

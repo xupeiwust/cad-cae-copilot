@@ -167,6 +167,53 @@ def _resolve_bcs(nelx: int, nely: int, bcs: dict[str, Any]) -> tuple[np.ndarray,
     return fixed, F, preset
 
 
+def _grid_guidance_2d(problem: dict[str, Any], nely: int, nelx: int):
+    """Extract the (preserve_mask, stiffness_weight_field, preserve_min_density) for a
+    2D solve from problem['guidance_field']. Returns (None, None, 0.5) when guidance is
+    off/absent/mis-shaped — so the classic behavior is untouched."""
+    if not problem.get("use_result_guidance"):
+        return None, None, 0.5
+    gf = problem.get("guidance_field") or {}
+    pmin = float((gf.get("options") or {}).get("preserve_min_density", 0.5))
+    preserve = weight = None
+    try:
+        pa = np.asarray(gf.get("preserve_mask"), dtype=float)
+        if pa.shape == (nely, nelx) and pa.any():
+            preserve = pa > 0.5
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        wa = np.asarray(gf.get("stiffness_weight_field"), dtype=float)
+        if wa.shape == (nely, nelx) and (wa != 1.0).any():
+            weight = wa
+    except Exception:  # noqa: BLE001
+        pass
+    return preserve, weight, pmin
+
+
+def _grid_guidance_3d(problem: dict[str, Any], nx: int, ny: int, nz: int):
+    """Flat (preserve_mask, stiffness_weight_field, preserve_min_density) for a 3D solve,
+    indexed to eid = i + nx*j + nx*ny*k (C-order of the [nz][ny][nx] arrays)."""
+    if not problem.get("use_result_guidance"):
+        return None, None, 0.5
+    gf = problem.get("guidance_field") or {}
+    pmin = float((gf.get("options") or {}).get("preserve_min_density", 0.5))
+    preserve = weight = None
+    try:
+        pa = np.asarray(gf.get("preserve_mask"), dtype=float)
+        if pa.shape == (nz, ny, nx) and pa.any():
+            preserve = (pa.reshape(-1) > 0.5)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        wa = np.asarray(gf.get("stiffness_weight_field"), dtype=float)
+        if wa.shape == (nz, ny, nx) and (wa != 1.0).any():
+            weight = wa.reshape(-1)
+    except Exception:  # noqa: BLE001
+        pass
+    return preserve, weight, pmin
+
+
 def simp_2d(problem: dict[str, Any]) -> dict[str, Any]:
     """Classic 2D SIMP compliance minimization (OC update + sensitivity filter).
 
@@ -188,6 +235,11 @@ def simp_2d(problem: dict[str, Any]) -> dict[str, Any]:
     fixed, F, preset = _resolve_bcs(nelx, nely, bcs)
     bcs_source = "preset" if preset is not None else "explicit"
     free = np.setdiff1d(np.arange(ndof), fixed)
+
+    # Optional result-guidance: preserve_mask floors protected cells; stiffness_weight_field
+    # locally scales the sensitivity. Off / absent -> identical to the classic behavior.
+    preserve_mask, weight_field, preserve_min = _grid_guidance_2d(problem, nely, nelx)
+    guidance_consumed = preserve_mask is not None or weight_field is not None
 
     # element -> global dof map
     edof = np.zeros((nelx * nely, 8), dtype=int)
@@ -243,14 +295,18 @@ def simp_2d(problem: dict[str, Any]) -> dict[str, Any]:
                             acc += fac * x[l, k] * dc[l, k]
                 dcf[j, i] = acc / (x[j, i] * s) if s > 0 else dc[j, i]
 
+        # guidance: bias sensitivity toward stiffness-sensitive cells; floor preserved cells.
+        dc_eff = dcf if weight_field is None else dcf * weight_field
+        lower = 0.001 if preserve_mask is None else np.where(preserve_mask, preserve_min, 0.001)
+
         # optimality-criteria update with bisection on the volume multiplier
         l1, l2, move = 1e-9, 1e9, 0.2
         xnew = x.copy()
         while (l2 - l1) / (l1 + l2) > 1e-3:
             lmid = 0.5 * (l1 + l2)
             xnew = np.clip(
-                x * np.sqrt(np.maximum(-dcf, 0) / lmid),
-                np.maximum(x - move, 0.001),
+                x * np.sqrt(np.maximum(-dc_eff, 0) / lmid),
+                np.maximum(x - move, lower),
                 np.minimum(x + move, 1.0),
             )
             if xnew.mean() - volfrac > 0:
@@ -270,6 +326,9 @@ def simp_2d(problem: dict[str, Any]) -> dict[str, Any]:
         "target_volume_fraction": volfrac,
         "bcs_preset": preset,
         "bcs_source": bcs_source,
+        "guidance_consumed": guidance_consumed,
+        "guidance_cells_preserved": int(preserve_mask.sum()) if preserve_mask is not None else 0,
+        "guidance_cells_weighted": int((weight_field != 1.0).sum()) if weight_field is not None else 0,
     }
 
 
@@ -473,6 +532,10 @@ def simp_3d(problem: dict[str, Any]) -> dict[str, Any]:
     fixed, F, preset = _resolve_bcs_3d(nx, ny, nz, problem.get("bcs") or {})
     free = np.setdiff1d(np.arange(ndof), fixed)
 
+    # Optional result-guidance (flat, eid-indexed). Off/absent -> classic behavior.
+    preserve_mask, weight_field, preserve_min = _grid_guidance_3d(problem, nx, ny, nz)
+    guidance_consumed = preserve_mask is not None or weight_field is not None
+
     warnings: list[str] = []
     x = np.full(nele, volfrac)
     history: list[float] = []
@@ -500,13 +563,15 @@ def simp_3d(problem: dict[str, Any]) -> dict[str, Any]:
             dc[e] = -penal * (x[e] ** (penal - 1)) * ce
         history.append(round(c, 6))
         dc = _sensitivity_filter_3d(nx, ny, nz, rmin, x, dc)
+        dc_eff = dc if weight_field is None else dc * weight_field
+        lower = 0.001 if preserve_mask is None else np.where(preserve_mask, preserve_min, 0.001)
         l1, l2, move = 1e-9, 1e9, 0.2
         xnew = x.copy()
         while (l2 - l1) / (l1 + l2) > 1e-3:
             lmid = 0.5 * (l1 + l2)
             xnew = np.clip(
-                x * np.sqrt(np.maximum(-dc, 0) / lmid),
-                np.maximum(x - move, 0.001), np.minimum(x + move, 1.0))
+                x * np.sqrt(np.maximum(-dc_eff, 0) / lmid),
+                np.maximum(x - move, lower), np.minimum(x + move, 1.0))
             if xnew.mean() - volfrac > 0:
                 l1 = lmid
             else:
@@ -533,6 +598,9 @@ def simp_3d(problem: dict[str, Any]) -> dict[str, Any]:
         "bcs_preset": preset,
         "bcs_source": "preset" if preset is not None else "explicit",
         "warnings": warnings,
+        "guidance_consumed": guidance_consumed,
+        "guidance_cells_preserved": int(preserve_mask.sum()) if preserve_mask is not None else 0,
+        "guidance_cells_weighted": int((weight_field != 1.0).sum()) if weight_field is not None else 0,
     }
 
 
@@ -938,6 +1006,157 @@ def collect_topopt_result_guidance(
     return guidance, warnings
 
 
+TOPOPT_GUIDANCE_FIELD_PATH = "analysis/topology_optimization_guidance_field.json"
+_ENFORCEABLE_CONFIDENCE = {"high", "medium"}
+
+
+def _guidance_cell(loc: Any, frame: dict[str, Any], dims: tuple[int, ...], is3d: bool) -> tuple[int, ...] | None:
+    """Map a result hotspot's world ``location`` to a grid/voxel cell via the frame.
+    Returns grid coords (i, j[, k]) or None if outside the grid / no location."""
+    if isinstance(loc, dict):
+        p = [float(loc.get("x", 0.0)), float(loc.get("y", 0.0)), float(loc.get("z", 0.0))]
+    elif isinstance(loc, (list, tuple)) and len(loc) >= 3:
+        p = [float(loc[0]), float(loc[1]), float(loc[2])]
+    else:
+        return None
+    origin = frame.get("origin") or [0.0, 0.0, 0.0]
+    cs = frame.get("cell_size") or [1.0, 1.0, 1.0]
+    ui = _AXIS_INDEX.get(str(frame.get("u_axis", "x")), 0)
+    vi = _AXIS_INDEX.get(str(frame.get("v_axis", "y")), 1)
+    su = float(cs[0]) or 1.0
+    sv = float(cs[1] if len(cs) > 1 else cs[0]) or 1.0
+    i = int((p[ui] - float(origin[ui])) / su)
+    j = int((p[vi] - float(origin[vi])) / sv)
+    if is3d:
+        wi = ({0, 1, 2} - {ui, vi}).pop()
+        sw = float(cs[2] if len(cs) > 2 else cs[0]) or 1.0
+        k = int((p[wi] - float(origin[wi])) / sw)
+        if 0 <= i < dims[0] and 0 <= j < dims[1] and 0 <= k < dims[2]:
+            return (i, j, k)
+        return None
+    if 0 <= i < dims[0] and 0 <= j < dims[1]:
+        return (i, j)
+    return None
+
+
+def build_guidance_field(problem: dict[str, Any]) -> dict[str, Any]:
+    """Map a problem's ``result_guidance`` into solver-neutral optimization-grid fields.
+
+    Produces ``preserve_mask`` (cells to protect, from high/medium-confidence stress
+    hotspots), ``stiffness_weight_field`` (local sensitivity multiplier, from deflection
+    hotspots), and ``ignore_mask`` (low-confidence / unmapped regions — recorded, not
+    enforced). 2D fields are shaped ``[nely][nelx]``; 3D ``[nz][ny][nx]`` (matching the
+    optimizers' grids). Honest: low confidence and unmapped regions never enter the
+    enforced masks; everything is diagnosed. Pure — no IO, no algorithm change."""
+    grid = problem.get("grid") or {}
+    frame = problem.get("frame") or (problem.get("derivation") or {}).get("frame") or {}
+    rg = problem.get("result_guidance") or {}
+    radius = max(int(problem.get("guidance_radius_cells", 1)), 0)
+    mult = float(problem.get("stiffness_weight_multiplier", 2.0))
+    pmin = float(problem.get("preserve_min_density", 0.5))
+
+    is3d = "nx" in grid
+    if is3d:
+        nx, ny, nz = int(grid.get("nx", 1)), int(grid.get("ny", 1)), int(grid.get("nz", 1))
+        dims: tuple[int, ...] = (nx, ny, nz)
+        shape = (nz, ny, nx)
+    else:
+        nelx, nely = int(grid.get("nelx", 1)), int(grid.get("nely", 1))
+        dims = (nelx, nely)
+        shape = (nely, nelx)
+
+    preserve = np.zeros(shape, dtype=float)
+    weight = np.ones(shape, dtype=float)
+    ignore = np.zeros(shape, dtype=float)
+
+    def stamp(arr: np.ndarray, cell: tuple[int, ...], value: float, *, take_max: bool = False) -> int:
+        n = 0
+        if is3d:
+            i, j, k = cell
+            for kk in range(max(k - radius, 0), min(k + radius + 1, shape[0])):
+                for jj in range(max(j - radius, 0), min(j + radius + 1, shape[1])):
+                    for ii in range(max(i - radius, 0), min(i + radius + 1, shape[2])):
+                        arr[kk, jj, ii] = max(arr[kk, jj, ii], value) if take_max else value
+                        n += 1
+        else:
+            i, j = cell
+            for jj in range(max(j - radius, 0), min(j + radius + 1, shape[0])):
+                for ii in range(max(i - radius, 0), min(i + radius + 1, shape[1])):
+                    arr[jj, ii] = max(arr[jj, ii], value) if take_max else value
+                    n += 1
+        return n
+
+    diag = {"mapped": 0, "ignored": 0, "unmapped": [], "confidence_levels": {}}
+    regions_prov: list[dict[str, Any]] = []
+
+    def consider(items: list, kind: str) -> None:
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            conf = str(it.get("confidence") or "low").lower()
+            diag["confidence_levels"][conf] = diag["confidence_levels"].get(conf, 0) + 1
+            cell = _guidance_cell(it.get("location"), frame, dims, is3d)
+            prov = {
+                "region_id": it.get("region_id"), "kind": kind,
+                "load_case_id": it.get("load_case_id"), "result_type": it.get("result_type"),
+                "quantity": it.get("quantity"), "value": it.get("value"), "unit": it.get("unit"),
+                "confidence": conf, "source_ir_node": it.get("source_ir_node"),
+                "within_design_space": it.get("within_design_space"), "cell": list(cell) if cell else None,
+            }
+            if cell is None:
+                diag["unmapped"].append({"region_id": it.get("region_id"), "kind": kind,
+                                         "reason": "location outside design-space grid or missing"})
+                prov["enforced"] = False
+                regions_prov.append(prov)
+                continue
+            if conf in _ENFORCEABLE_CONFIDENCE:
+                if kind == "preserve":
+                    stamp(preserve, cell, 1.0)
+                else:  # stiffness
+                    stamp(weight, cell, mult, take_max=True)
+                diag["mapped"] += 1
+                prov["enforced"] = True
+            else:  # low confidence: record + ignore, do not enforce
+                stamp(ignore, cell, 1.0)
+                diag["ignored"] += 1
+                prov["enforced"] = False
+            regions_prov.append(prov)
+
+    consider(rg.get("preserve_or_reinforce_regions"), "preserve")
+    consider(rg.get("stiffness_sensitive_regions"), "stiffness")
+
+    diag["cells_preserved"] = int((preserve > 0.5).sum())
+    diag["cells_weighted"] = int((weight != 1.0).sum())
+    diag["cells_ignored"] = int((ignore > 0.5).sum())
+    diag["unmapped_count"] = len(diag["unmapped"])
+
+    return {
+        "format": "aieng.topology_optimization_guidance_field",
+        "schema_version": "0.1",
+        "dimension": "3d" if is3d else "2d",
+        "grid": dict(grid),
+        "frame": frame,
+        "options": {
+            "use_result_guidance": True,
+            "preserve_min_density": pmin,
+            "stiffness_weight_multiplier": mult,
+            "guidance_radius_cells": radius,
+            "enforceable_confidence": sorted(_ENFORCEABLE_CONFIDENCE),
+        },
+        "preserve_mask": preserve.astype(int).tolist(),
+        "stiffness_weight_field": np.round(weight, 4).tolist(),
+        "ignore_mask": ignore.astype(int).tolist(),
+        "diagnostics": diag,
+        "provenance": {
+            "design_space_node": rg.get("design_space_node") or problem.get("design_space_node"),
+            "source_ir_node": problem.get("source_ir_node") or problem.get("design_space_node"),
+            "consumed_artifacts": (rg.get("sources") or {}).get("consumed", []),
+            "regions": regions_prov,
+            "advisory_only": True,
+        },
+    }
+
+
 def derive_topopt_problem_from_package(
     package_path: str | Path, *,
     dimension: str = "2d", resolution: int = 48, resolution_3d: int = 16,
@@ -1261,6 +1480,16 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
         requested_name = "simp_2d"
     else:
         requested_name = requested
+
+    # Result-guidance: when enabled and available, map result_guidance into grid fields
+    # and hand them to the optimizer (preserve_mask / stiffness_weight_field). Advisory —
+    # never alters BCs/material/design-space. Off/absent -> classic behavior unchanged.
+    guidance_field: dict[str, Any] | None = None
+    rg = problem.get("result_guidance") or {}
+    if problem.get("use_result_guidance") and rg.get("available"):
+        guidance_field = build_guidance_field(problem)
+        problem = {**problem, "guidance_field": guidance_field}
+
     opt = entry["fn"](problem)
 
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -1326,6 +1555,17 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
             "Coarse, observational design aid — not a production-grade optimizer.",
         ]
 
+    guidance_consumed = bool(opt.get("guidance_consumed"))
+    result_block["result_guidance_consumed"] = guidance_consumed
+    if guidance_field is not None:
+        result_block["guidance_field_summary"] = {
+            "cells_preserved": opt.get("guidance_cells_preserved", 0),
+            "cells_weighted": opt.get("guidance_cells_weighted", 0),
+            "diagnostics": guidance_field.get("diagnostics"),
+            "options": guidance_field.get("options"),
+            "artifact_path": TOPOPT_GUIDANCE_FIELD_PATH,
+        }
+
     return {
         "format": "aieng.topology_optimization",
         "schema_version": TOPOPT_CONTRACT_VERSION,
@@ -1337,6 +1577,7 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
         "frame": frame,
         "problem": problem_block,
         "result": result_block,
+        "guidance_field": guidance_field,
         "provenance": {
             "optimizer_name": requested_name,
             "optimizer_version": entry["version"],
@@ -1344,6 +1585,9 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
             "source_ir_node": problem.get("source_ir_node") or problem.get("design_space_node"),
             "load_case_id": problem.get("load_case_id"),
             "contract_version": TOPOPT_CONTRACT_VERSION,
+            "result_guidance_consumed": guidance_consumed,
+            "result_guidance_available": bool(rg.get("available")),
+            "result_guidance_artifacts": (rg.get("sources") or {}).get("consumed", []),
         },
         "limitations": limitations,
         "warnings": list(opt.get("warnings") or []),
@@ -1748,24 +1992,22 @@ def write_shape_ir_from_topology_optimization(
 def write_topology_optimization(
     package_path: str | Path, problem: dict[str, Any], *, optimizer: str = "simp_2d",
 ) -> dict[str, Any]:
-    """Run optimization and write analysis/topology_optimization.json into a package."""
+    """Run optimization and write analysis/topology_optimization.json into a package.
+
+    When result-guidance was consumed, the (bulky) guidance grid fields are written to
+    a separate analysis/topology_optimization_guidance_field.json; the main result keeps
+    only a compact guidance_field_summary."""
     result = run_topology_optimization(problem, optimizer=optimizer)
     package_path = Path(package_path)
     if not package_path.exists():
         return result
-    data = (json.dumps(result, indent=2, sort_keys=True) + "\n").encode()
-    tmp = package_path.with_suffix(".tmp.aieng")
-    try:
-        with (
-            zipfile.ZipFile(package_path, "r") as src,
-            zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
-        ):
-            for item in src.infolist():
-                if item.filename != TOPOLOGY_OPTIMIZATION_PATH:
-                    dst.writestr(item, src.read(item.filename))
-            dst.writestr(TOPOLOGY_OPTIMIZATION_PATH, data)
-        tmp.replace(package_path)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
+    # Split the bulky guidance field out into its own artifact; keep the main result lean.
+    guidance_field = result.pop("guidance_field", None)
+    members: dict[str, bytes] = {
+        TOPOLOGY_OPTIMIZATION_PATH: (json.dumps(result, indent=2, sort_keys=True) + "\n").encode(),
+    }
+    if guidance_field is not None:
+        members[TOPOPT_GUIDANCE_FIELD_PATH] = (
+            json.dumps(guidance_field, indent=2, sort_keys=True) + "\n").encode()
+    _replace_members(package_path, members)
     return result

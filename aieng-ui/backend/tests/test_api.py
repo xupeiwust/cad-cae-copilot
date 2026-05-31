@@ -10578,15 +10578,21 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     assert res["result"]["density_grid_3d"]["nx"] >= 2 and res["result"]["solid_voxel_count"] >= 0
     assert res["result"]["compliance_history"][-1] < res["result"]["compliance_history"][0]
 
-    # 3D writeback -> manifold mesh by default, viewer refreshes
+    # 3D writeback default -> smooth marching-cubes surface mesh (manifold), viewer refreshes
     wb = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={})
     assert wb.status_code == 200 and wb.json()["status"] == "ok"
     sir = wb.json()["shape_ir"]
     assert sir["representation"] == "manifold_mesh"          # 3D defaults to mesh, not B-Rep
     node = sir["parts"][0]
-    assert node["type"] == "density_voxels" and node["dimension"] == 3
-    assert "not_production_cad" in node["tags"]
+    assert node["type"] == "surface_mesh" and node["dimension"] == 3   # default = surface proxy
+    assert node["triangle_count"] > 0 and "not_production_cad" in node["tags"]
     assert (project_dir(settings, pid) / "viewer" / "model.glb").exists()
+
+    # explicit method=voxels -> blocky density_voxels
+    wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})
+    assert wbv.status_code == 200 and wbv.json()["status"] == "ok"
+    nodev = wbv.json()["shape_ir"]["parts"][0]
+    assert nodev["type"] == "density_voxels" and "voxelized" in nodev["tags"]
 
 
 def test_topology_optimization_3d_needs_user_input(tmp_path: Path) -> None:

@@ -2732,6 +2732,9 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_surface_fitting import write_mesh_surface_fit
                 sf = write_mesh_surface_fit(package_path)
                 summary["mesh_plane_fit_count"] = len(sf.get("surfaces") or [])
+                from aieng.converters.mesh_reconstruction_readiness import write_mesh_reconstruction_readiness
+                rr = write_mesh_reconstruction_readiness(package_path)
+                summary["reconstruction_next_action"] = (rr.get("readiness") or {}).get("recommended_next_action")
             except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:

@@ -197,6 +197,35 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 31: Mesh reconstruction readiness analysis — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Reads the mesh region graph + analytic surface fits and
+judges how ready a smooth mesh is for FUTURE partial/full mesh-to-B-Rep/NURBS reconstruction.
+Pure analysis — no reconstruction, no STEP, no B-Rep/NURBS, no CAD-editability claim.
+
+- `assess_reconstruction_readiness(region_graph, surface_fit, seg_diag, fit_diag)`:
+  - Coverage: total/fitted region counts, fitted/plane/cylinder area fractions, unfit area
+    fraction, noisy-small area fraction.
+  - Quality: fit-error summary, confidence distribution, adjacency coverage among fitted
+    regions, boundary availability/coverage.
+  - Classification: `partial_brep_candidate` (≥50% area fitted, low noise),
+    `full_brep_candidate` (≥90% fitted + ≥4 fitted faces + ≥80% adjacency coverage + ≤10%
+    unfit), and `recommended_next_action` ∈ {partial_brep_reconstruction,
+    freeform_surface_fitting, mesh_cleanup, insufficient_data}.
+  - Blocking issues: large unfit regions, too many noisy regions, only-medium-confidence
+    fits, missing boundaries, missing adjacency. Plus reasoning strings + thresholds.
+- Outputs `diagnostics/mesh_reconstruction_readiness.json` + optional
+  `graph/mesh_reconstruction_plan.json` (per-region action: reconstruct_face_candidate /
+  fit_freeform_surface / cleanup). Provenance preserved (source mesh artifact, source_ir_node,
+  design_space_node, representation_kind/geometry_kind=mesh, is_brep:false, cad_editable:false).
+  Missing inputs → insufficient_data, honest. `recompile_shape_ir_package` auto-runs it after
+  surface fitting on mesh outputs.
+- Tests: cube (6 planes) → partial+full candidate (partial_brep_reconstruction); single
+  cylinder → partial not full; freeform blob → freeform_surface_fitting + large-unfit blocker;
+  noisy mesh → mesh_cleanup; 60/40 fit → partial + freeform_surface_fitting; missing inputs →
+  insufficient_data; provenance + honesty flags; package cube produces both artifacts; backend
+  3D endpoint produces readiness. No UI files; no STEP/NURBS/B-Rep.
+
 ## Phase 30: Analytic cylinder fitting for mesh region candidates — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). Extends `mesh_surface_fitting` so non-planar regions

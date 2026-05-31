@@ -10612,10 +10612,17 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
         assert "graph/mesh_surface_fit.json" in nm
         msf = _json.loads(zf.read("graph/mesh_surface_fit.json"))
         assert "diagnostics/mesh_surface_fitting.json" in nm
+        # reconstruction readiness auto-runs (analysis only, not B-Rep)
+        assert "diagnostics/mesh_reconstruction_readiness.json" in nm
+        rr = _json.loads(zf.read("diagnostics/mesh_reconstruction_readiness.json"))
+        assert "graph/mesh_reconstruction_plan.json" in nm
     assert mrg["regions"] and mrg["provenance"]["is_brep"] is False
     assert mrg["provenance"]["representation_kind"] == "mesh"
     assert msf["provenance"]["is_brep"] is False and msf["provenance"]["cad_editable"] is False
     assert all(s["surface_type"] == "plane" and s["is_brep"] is False for s in msf["surfaces"])
+    assert rr["provenance"]["is_brep"] is False and rr["provenance"]["cad_editable"] is False
+    assert rr["readiness"]["recommended_next_action"] in (
+        "partial_brep_reconstruction", "freeform_surface_fitting", "mesh_cleanup", "insufficient_data")
 
     # explicit method=voxels -> blocky density_voxels
     wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})

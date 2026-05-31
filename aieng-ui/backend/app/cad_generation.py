@@ -2739,6 +2739,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_brep_reconstruction import write_partial_brep_plan
                 bp = write_partial_brep_plan(package_path)
                 summary["brep_face_candidate_count"] = (bp.get("summary") or {}).get("candidate_face_count", 0)
+                # Generate + validate real OCC faces from the candidates (no stitch/solid/STEP).
+                from aieng.converters.mesh_brep_face_generation import write_brep_faces
+                gf = write_brep_faces(package_path)
+                summary["brep_generated_face_count"] = (gf.get("summary") or {}).get("generated_face_count", 0)
             except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:

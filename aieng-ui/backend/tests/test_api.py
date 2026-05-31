@@ -10620,6 +10620,10 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
         assert "geometry/partial_brep_surfaces.json" in nm
         pbs = _json.loads(zf.read("geometry/partial_brep_surfaces.json"))
         assert "graph/mesh_brep_reconstruction_plan.json" in nm
+        # OCC face GENERATION auto-runs (validated faces, intermediate; no stitch/solid/STEP)
+        assert "geometry/partial_brep_faces.json" in nm
+        pbf = _json.loads(zf.read("geometry/partial_brep_faces.json"))
+        assert "diagnostics/partial_brep_face_generation.json" in nm
         assert not any(n.lower().endswith((".step", ".stp")) for n in nm)   # no STEP exported
     assert mrg["regions"] and mrg["provenance"]["is_brep"] is False
     assert mrg["provenance"]["representation_kind"] == "mesh"
@@ -10631,6 +10635,9 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     assert pbs["provenance"]["full_solid"] is False and pbs["provenance"]["watertight"] is False
     assert pbs["provenance"]["step_exported"] is False
     assert all(fc["reconstruction_status"] == "candidate" for fc in pbs["face_candidates"])
+    assert pbf["provenance"]["faces_stitched"] is False and pbf["provenance"]["step_exported"] is False
+    assert pbf["summary"]["generated_face_count"] >= 1     # planar regions -> validated OCC faces
+    assert all(f["geometry_validation"]["valid"] for f in pbf["faces"] if f["status"] == "generated")
 
     # explicit method=voxels -> blocky density_voxels
     wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})

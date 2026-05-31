@@ -197,6 +197,35 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 33: Analytic B-Rep face generation (real OCC faces, no stitch) — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Converts plane/cylinder face candidates into REAL OCC
+(build123d kernel) faces and validates them — an intermediate artifact. NO stitching, NO
+watertight solid, NO STEP export, NO NURBS/freeform fitting, NO production-CAD claim.
+
+- `generate_brep_faces(surfaces_doc)`: for each candidate builds + validates an OCC face
+  in memory (only a neutral JSON status record is persisted):
+  - plane → `BRepBuilderAPI_MakePolygon` (closed boundary loop) + `MakeFace(wire, OnlyPlane)`;
+    checks loop closure, `BRepCheck_Analyzer` validity, and area > tol.
+  - cylinder → `Geom_CylindricalSurface` trimmed to the angular + axial range
+    (`MakeFace(cyl, u0, u1, 0, height)`); if no angular coverage is derivable →
+    `skipped_cylinder_boundary_insufficient`.
+  - per-candidate status: generated / skipped / failed (+ reason) with geometry_validation
+    metrics (area, valid, spans). Degrades honestly to all-skipped when OCC/OCP is absent.
+- Summary: input_candidate_count, generated_face_count, generated_plane/cylinder counts,
+  skipped/failed counts, can_attempt_stitching (≥4 generated faces). Honesty flags:
+  is_brep:false, full_solid:false, watertight:false, step_exported:false, faces_stitched:
+  false, cad_editable:"candidate_faces_only".
+- Outputs: `geometry/partial_brep_faces.json` + `diagnostics/partial_brep_face_generation.json`
+  (occ_available, thresholds, provenance, limitations). Provenance preserves source mesh
+  artifact / source_ir_node / design_space_node. `recompile_shape_ir_package` auto-runs it
+  after the reconstruction plan on mesh outputs.
+- Tests: six plane candidates → six validated planar faces; degenerate (collinear) boundary →
+  skipped; cylinder without angular coverage → skipped_insufficient; synthetic cylinder with
+  angular+axial bounds → generated face with exact patch area; provenance/honesty preserved;
+  missing input degrades; package cube generates faces with NO STEP; backend 3D endpoint
+  generates validated faces. No UI files.
+
 ## Phase 32: Partial B-Rep reconstruction planning (face candidates) — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). First GENERATIVE step of mesh-to-CAD: convert accepted

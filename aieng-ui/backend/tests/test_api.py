@@ -10604,11 +10604,18 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     assert vr["geometry_kind"] == "mesh" and vr["representation_kind"] == "mesh"
     # mesh recompile auto-builds the solver-neutral region graph (observational, not B-Rep)
     with _zip.ZipFile(pkg) as zf:
-        assert "graph/mesh_region_graph.json" in zf.namelist()
+        nm = zf.namelist()
+        assert "graph/mesh_region_graph.json" in nm
         mrg = _json.loads(zf.read("graph/mesh_region_graph.json"))
-        assert "diagnostics/mesh_region_segmentation.json" in zf.namelist()
+        assert "diagnostics/mesh_region_segmentation.json" in nm
+        # analytic plane fitting auto-runs on the mesh regions (planes only, not B-Rep)
+        assert "graph/mesh_surface_fit.json" in nm
+        msf = _json.loads(zf.read("graph/mesh_surface_fit.json"))
+        assert "diagnostics/mesh_surface_fitting.json" in nm
     assert mrg["regions"] and mrg["provenance"]["is_brep"] is False
     assert mrg["provenance"]["representation_kind"] == "mesh"
+    assert msf["provenance"]["is_brep"] is False and msf["provenance"]["cad_editable"] is False
+    assert all(s["surface_type"] == "plane" and s["is_brep"] is False for s in msf["surfaces"])
 
     # explicit method=voxels -> blocky density_voxels
     wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})

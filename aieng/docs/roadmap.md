@@ -197,6 +197,38 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 29: Analytic plane fitting for mesh planar-candidate regions — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Next step toward future mesh-to-B-Rep: fit best-fit
+PLANES to the `planar_candidate` regions of `graph/mesh_region_graph.json`. Still mesh
+analysis — a fitted plane + an APPROXIMATE boundary loop, NOT a B-Rep face; no STEP,
+no NURBS, no CAD-editability claim, no reconstruction in this PR.
+
+- `mesh_region_segmentation` refactor: extracted `_grow_regions` + public
+  `assign_face_regions` (deterministic per-face region membership) and
+  `read_package_mesh` (shared mesh+provenance reader) so the fitter recovers the SAME
+  regions the graph was built from.
+- `converters/mesh_surface_fitting.py`: `fit_plane_to_points` (PCA — normal = smallest
+  principal axis, in-plane basis, max/RMS point-to-plane error); `fit_mesh_surfaces`
+  re-segments with the graph's thresholds to recover each planar_candidate region's
+  faces/vertices, fits a plane, computes a convex-hull boundary loop in the plane
+  (`loop_uv` + `loop_world`, flagged `approximate`), and a fit confidence from the
+  region planarity + relative RMS. Non-planar / freeform / noisy regions are skipped
+  with a recorded reason.
+- Outputs `graph/mesh_surface_fit.json` (surfaces: surface_type=plane, normal/origin/
+  basis, fit errors, confidence, boundary, source_region_id, is_brep:false) +
+  `diagnostics/mesh_surface_fitting.json` (regions_processed/fitted/skipped + reasons,
+  thresholds, fit-error summary). Provenance carries source mesh artifact, source_ir_node,
+  design_space_node, runtime, representation_kind/geometry_kind=mesh, is_brep:false,
+  cad_editable:false, limitations. Missing region graph → honest degraded docs.
+- `recompile_shape_ir_package` auto-runs the plane fit after the region graph on mesh
+  outputs (best-effort).
+- Tests: cube → six low-error plane fits (high confidence, axis-aligned normals); tilted
+  plane → correct normal; near-planar noisy quad → medium confidence; sphere/freeform →
+  skipped with reasons; convex-hull boundary present; provenance preserved; artifacts
+  written; missing region graph degrades honestly; backend 3D endpoint produces the fit.
+  No UI files; no STEP/NURBS/B-Rep.
+
 ## Phase 28: Mesh region segmentation for smooth topo-opt meshes — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). First analysis step toward future mesh-to-B-Rep/NURBS:

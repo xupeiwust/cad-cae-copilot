@@ -53,6 +53,56 @@ def _edge_face_map(F: np.ndarray) -> dict[tuple[int, int], list[int]]:
     return edges
 
 
+def _grow_regions(V: np.ndarray, F: np.ndarray, normal_angle_deg: float):
+    """Flood-fill faces into regions across shared edges while adjacent normals stay
+    within ``normal_angle_deg``. Returns (region_of, unit_normals, areas, edges,
+    non_manifold_count, region_count). Deterministic (seed = ascending face index),
+    so region ids are stable across re-runs — surface fitting relies on this."""
+    unit, area = _face_normals_areas(V, F)
+    edges = _edge_face_map(F)
+    nfaces = len(F)
+    adj: list[set[int]] = [set() for _ in range(nfaces)]
+    non_manifold = 0
+    for fl in edges.values():
+        if len(fl) > 2:
+            non_manifold += 1
+        for i in range(len(fl)):
+            for j in range(i + 1, len(fl)):
+                adj[fl[i]].add(fl[j])
+                adj[fl[j]].add(fl[i])
+    cos_thresh = math.cos(math.radians(normal_angle_deg))
+    region_of = np.full(nfaces, -1, dtype=int)
+    rid = 0
+    for seed in range(nfaces):
+        if region_of[seed] >= 0:
+            continue
+        region_of[seed] = rid
+        stack = [seed]
+        while stack:
+            f = stack.pop()
+            nf = unit[f]
+            for nb in adj[f]:
+                if region_of[nb] < 0 and float(np.dot(nf, unit[nb])) >= cos_thresh:
+                    region_of[nb] = rid
+                    stack.append(nb)
+        rid += 1
+    return region_of, unit, area, edges, non_manifold, rid
+
+
+def assign_face_regions(vertices: list | np.ndarray, faces: list | np.ndarray, *,
+                        normal_angle_deg: float = 20.0):
+    """Recover the per-face region assignment (and face normals/areas) for a mesh —
+    the deterministic membership behind ``segment_mesh_regions``. Downstream steps
+    (e.g. surface fitting) use this to collect the faces of a given ``region_NNN``.
+    Returns (region_of, unit_normals, areas)."""
+    V = np.asarray(vertices, dtype=float)
+    F = np.asarray(faces, dtype=int)
+    if V.ndim != 2 or V.shape[1] != 3 or F.ndim != 2 or F.shape[1] != 3 or len(F) == 0:
+        return np.zeros(0, dtype=int), np.zeros((0, 3)), np.zeros(0)
+    region_of, unit, area, _edges, _nm, _rid = _grow_regions(V, F, normal_angle_deg)
+    return region_of, unit, area
+
+
 def segment_mesh_regions(
     vertices: list | np.ndarray,
     faces: list | np.ndarray,
@@ -79,37 +129,10 @@ def segment_mesh_regions(
                                 "warnings": ["empty or malformed mesh (need Nx3 vertices + Mx3 faces)"],
                                 "thresholds": {}}}
 
-    unit, area = _face_normals_areas(V, F)
-    edges = _edge_face_map(F)
+    region_of, unit, area, edges, non_manifold, rid = _grow_regions(V, F, normal_angle_deg)
     nfaces = len(F)
-    adj: list[set[int]] = [set() for _ in range(nfaces)]
-    non_manifold = 0
-    for fl in edges.values():
-        if len(fl) > 2:
-            non_manifold += 1
-        for i in range(len(fl)):
-            for j in range(i + 1, len(fl)):
-                adj[fl[i]].add(fl[j])
-                adj[fl[j]].add(fl[i])
     if non_manifold:
         warnings.append(f"{non_manifold} non-manifold edge(s) (>2 incident faces); adjacency is approximate")
-
-    cos_thresh = math.cos(math.radians(normal_angle_deg))
-    region_of = np.full(nfaces, -1, dtype=int)
-    rid = 0
-    for seed in range(nfaces):
-        if region_of[seed] >= 0:
-            continue
-        region_of[seed] = rid
-        stack = [seed]
-        while stack:
-            f = stack.pop()
-            nf = unit[f]
-            for nb in adj[f]:
-                if region_of[nb] < 0 and float(np.dot(nf, unit[nb])) >= cos_thresh:
-                    region_of[nb] = rid
-                    stack.append(nb)
-        rid += 1
 
     total_area = float(area.sum()) or 1.0
     regions: list[dict[str, Any]] = []
@@ -220,19 +243,17 @@ def _mesh_from_stl(data: bytes) -> tuple[list, list] | None:
     return None
 
 
-def build_mesh_region_graph(
-    package_path: str | Path, *, normal_angle_deg: float = 20.0,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Read a package's mesh (from a Shape IR mesh node, else preview.stl), segment it,
-    and return ``(mesh_region_graph, diagnostics)``. Missing mesh degrades honestly
-    (empty graph + a recorded reason); never raises."""
+def read_package_mesh(package_path: str | Path) -> dict[str, Any]:
+    """Read the mesh + provenance for a package (the single source of truth for mesh
+    analysis steps). Prefers a Shape IR mesh node's inline vertices/faces, else
+    geometry/preview.stl. Returns a dict with vertices/faces (or None), source_artifact,
+    source_ir_node, design_space_node, runtime, limitations, available, reason."""
     package_path = Path(package_path)
-    source_artifact = None
-    source_ir_node = design_space_node = None
-    runtime = None
-    limitations: list[str] = []
-    vertices = faces = None
-
+    out: dict[str, Any] = {
+        "vertices": None, "faces": None, "source_artifact": None, "source_ir_node": None,
+        "design_space_node": None, "runtime": None, "limitations": [], "available": False,
+        "reason": None,
+    }
     try:
         with zipfile.ZipFile(package_path, "r") as zf:
             names = set(zf.namelist())
@@ -240,30 +261,51 @@ def build_mesh_region_graph(
             manifest = _read_json(zf, _MANIFEST_PATH, names) or {}
             node = _mesh_node(shape_ir) if isinstance(shape_ir, dict) else None
             if node is not None:
-                vertices, faces = node.get("vertices"), node.get("faces")
-                source_artifact = f"{_SHAPE_IR_PATH}#{node.get('id')}"
+                out["vertices"], out["faces"] = node.get("vertices"), node.get("faces")
+                out["source_artifact"] = f"{_SHAPE_IR_PATH}#{node.get('id')}"
                 so = node.get("source_optimization") or {}
-                source_ir_node = so.get("source_ir_node") or node.get("id")
-                design_space_node = so.get("design_space_node")
-                limitations = list(so.get("limitations") or [])
+                out["source_ir_node"] = so.get("source_ir_node") or node.get("id")
+                out["design_space_node"] = so.get("design_space_node")
+                out["limitations"] = list(so.get("limitations") or [])
             elif _PREVIEW_STL in names:
                 got = _mesh_from_stl(zf.read(_PREVIEW_STL))
                 if got is not None:
-                    vertices, faces = got
-                    source_artifact = _PREVIEW_STL
+                    out["vertices"], out["faces"] = got
+                    out["source_artifact"] = _PREVIEW_STL
             ge = manifest.get("geometry_execution") if isinstance(manifest, dict) else None
             if isinstance(ge, dict):
-                runtime = ge.get("actual_runtime") or ge.get("backend")
-                source_ir_node = source_ir_node or (manifest.get("topopt_inputs") or {}).get("source_ir_node")
+                out["runtime"] = ge.get("actual_runtime") or ge.get("backend")
+                out["source_ir_node"] = out["source_ir_node"] or (manifest.get("topopt_inputs") or {}).get("source_ir_node")
     except FileNotFoundError:
-        return _degraded("package not found", source_artifact)
+        out["reason"] = "package not found"
+        return out
     except Exception as exc:  # noqa: BLE001
-        return _degraded(f"could not read package: {type(exc).__name__}: {exc}", source_artifact)
+        out["reason"] = f"could not read package: {type(exc).__name__}: {exc}"
+        return out
+    if not out["vertices"] or not out["faces"]:
+        out["reason"] = ("no mesh available (no smooth_mesh_proxy/mesh_proxy node with "
+                         "vertices/faces and no readable geometry/preview.stl)")
+        return out
+    out["available"] = True
+    return out
 
-    if not vertices or not faces:
-        return _degraded(
-            "no mesh available (no smooth_mesh_proxy/mesh_proxy node with vertices/faces "
-            "and no readable geometry/preview.stl)", source_artifact)
+
+def build_mesh_region_graph(
+    package_path: str | Path, *, normal_angle_deg: float = 20.0,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read a package's mesh (from a Shape IR mesh node, else preview.stl), segment it,
+    and return ``(mesh_region_graph, diagnostics)``. Missing mesh degrades honestly
+    (empty graph + a recorded reason); never raises."""
+    package_path = Path(package_path)
+    mesh = read_package_mesh(package_path)
+    source_artifact = mesh["source_artifact"]
+    if not mesh["available"]:
+        return _degraded(mesh["reason"] or "no mesh available", source_artifact)
+    vertices, faces = mesh["vertices"], mesh["faces"]
+    source_ir_node = mesh["source_ir_node"]
+    design_space_node = mesh["design_space_node"]
+    runtime = mesh["runtime"]
+    limitations = mesh["limitations"]
 
     seg = segment_mesh_regions(vertices, faces, normal_angle_deg=normal_angle_deg)
     provenance = {

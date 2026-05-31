@@ -2723,12 +2723,16 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                                           requested_runtime=runtime, fallback_used=fallback_used,
                                           fallback_reason=fallback_reason)
             summary.update(executed=True, geometry_kind="mesh")
-            # Mesh outputs get a solver-neutral region graph (observational; not B-Rep).
+            # Mesh outputs get a solver-neutral region graph + analytic plane fits for
+            # planar_candidate regions (observational mesh analysis; not B-Rep).
             try:
                 from aieng.converters.mesh_region_segmentation import write_mesh_region_graph
                 rg = write_mesh_region_graph(package_path)
                 summary["mesh_region_count"] = len(rg.get("regions") or [])
-            except Exception:  # noqa: BLE001 - segmentation is best-effort analysis
+                from aieng.converters.mesh_surface_fitting import write_mesh_surface_fit
+                sf = write_mesh_surface_fit(package_path)
+                summary["mesh_plane_fit_count"] = len(sf.get("surfaces") or [])
+            except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:
             summary["skipped"] = True

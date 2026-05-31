@@ -197,6 +197,39 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 34: B-Rep stitching readiness + edge matching (plan only) — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Analyzes the generated analytic faces and produces a
+STITCHING PLAN before any sewing. It matches approximate boundary edges across faces; it
+does NOT sew faces, does NOT create a shell/solid, does NOT export STEP. NURBS out of scope.
+
+- `plan_brep_stitching(faces_doc, surfaces_doc, region_graph)`: extracts boundary edges
+  (plane: loop segments from partial_brep_surfaces; cylinder: the two axial straight edges
+  only when an angular range is available, else none), then matches edges across faces by
+  endpoint gap + length similarity (tolerance = 1% of the model bbox diagonal), supporting
+  reversed orientation. Uses mesh-region adjacency as a prior: adjacent source regions →
+  high-confidence matches, non-adjacent → low. Detects matched pairs, unmatched edges,
+  conflicting (an edge in >1 match), orientation conflicts (same-direction), and near-miss
+  (gapped) pairs.
+- Readiness summary: generated_face_count, boundary_edge_count, matched_edge_pair_count,
+  unmatched_edge_count, adjacency_covered_fraction, can_attempt_partial_shell,
+  can_attempt_closed_shell (≥4 faces + 0 unmatched + 0 conflicts + 0 near-miss + full
+  adjacency coverage + no unreconstructed neighbours), confidence. Blocking issues:
+  insufficient_generated_faces, too_many_unmatched_edges, missing_boundaries,
+  conflicting_edge_matches, large_edge_gaps, unreconstructed_neighbor_regions. Diagnostics:
+  tolerances, edge-gap stats, adjacency-prior usage, faces_without_boundary.
+- Honesty: shell_created:false, solid_created:false, step_exported:false, cad_editable:false,
+  stitching_plan_only:true. Outputs `graph/mesh_brep_stitching_plan.json` +
+  `diagnostics/mesh_brep_stitching_readiness.json`. Provenance preserves source mesh artifact
+  / source_ir_node / design_space_node. `recompile_shape_ir_package` auto-runs it after face
+  generation on mesh outputs.
+- Tests: cube (6 faces) → 12 matched pairs, 0 unmatched, closed-shell ready; missing a face →
+  partial not closed + unreconstructed_neighbor blocker; gapped edges → no match +
+  large_edge_gaps; cylinder without angular boundary → 0 edges, no false matches +
+  missing_boundaries; non-adjacent coincident edges → low-confidence only; provenance/honesty
+  preserved; missing inputs degrade; package cube writes the plan with NO STEP; backend 3D
+  endpoint produces it. No UI files.
+
 ## Phase 33: Analytic B-Rep face generation (real OCC faces, no stitch) — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). Converts plane/cylinder face candidates into REAL OCC

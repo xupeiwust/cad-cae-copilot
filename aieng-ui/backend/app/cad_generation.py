@@ -2743,6 +2743,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_brep_face_generation import write_brep_faces
                 gf = write_brep_faces(package_path)
                 summary["brep_generated_face_count"] = (gf.get("summary") or {}).get("generated_face_count", 0)
+                # Stitching readiness + edge matching (plan only; no sewing/shell/STEP).
+                from aieng.converters.mesh_brep_stitching import write_brep_stitching_plan
+                sp = write_brep_stitching_plan(package_path)
+                summary["brep_matched_edge_pairs"] = (sp.get("summary") or {}).get("matched_edge_pair_count", 0)
             except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:

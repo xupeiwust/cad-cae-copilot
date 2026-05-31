@@ -10628,6 +10628,13 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
         assert "graph/mesh_brep_stitching_plan.json" in nm
         sps = _json.loads(zf.read("graph/mesh_brep_stitching_plan.json"))
         assert "diagnostics/mesh_brep_stitching_readiness.json" in nm
+        # conservative OCC sewing/solidification auto-runs after PR34 artifacts.
+        assert "diagnostics/mesh_brep_sewing.json" in nm
+        sewing = _json.loads(zf.read("diagnostics/mesh_brep_sewing.json"))
+        assert "diagnostics/mesh_brep_step_export.json" in nm
+        step_export = _json.loads(zf.read("diagnostics/mesh_brep_step_export.json"))
+        assert "diagnostics/mesh_brep_roundtrip_verification.json" in nm
+        roundtrip = _json.loads(zf.read("diagnostics/mesh_brep_roundtrip_verification.json"))
         assert not any(n.lower().endswith((".step", ".stp")) for n in nm)   # no STEP exported
     assert mrg["regions"] and mrg["provenance"]["is_brep"] is False
     assert mrg["provenance"]["representation_kind"] == "mesh"
@@ -10644,6 +10651,9 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     assert all(f["geometry_validation"]["valid"] for f in pbf["faces"] if f["status"] == "generated")
     assert sps["provenance"]["shell_created"] is False and sps["provenance"]["solid_created"] is False
     assert sps["provenance"]["step_exported"] is False and sps["provenance"]["stitching_plan_only"] is True
+    assert sewing["provenance"]["production_ready"] is False
+    assert step_export["step_exported"] is False
+    assert roundtrip["status"] in ("warning", "failed")
 
     # explicit method=voxels -> blocky density_voxels
     wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})

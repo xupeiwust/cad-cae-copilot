@@ -197,6 +197,60 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 37: Mesh-derived B-Rep STEP roundtrip verification — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Final conservative verification step for mesh-to-CAD
+reconstruction. Re-imports `geometry/reconstructed.step` only when it exists, extracts
+OCC topology, and compares it against the reconstruction inputs. It explicitly records
+that the source remains mesh-derived/lossy and that this is not production CAD
+certification.
+
+- Output: `diagnostics/mesh_brep_roundtrip_verification.json`.
+- Checks: STEP presence, OCC topology extraction, expected vs observed face count, expected
+  analytic surface types (`plane` / `cylinder`), bbox consistency where available, and
+  source provenance preservation (`source_ir_node`, `design_space_node`, source artifacts).
+- Status is `passed`, `warning`, or `failed`. Partial/no-STEP reconstructions degrade to
+  warning/failure with reasons instead of claiming success.
+- Tests cover cube STEP roundtrip, partial/no-STEP degradation, missing inputs, and
+  manifest/provenance preservation. No UI files.
+
+## Phase 36: Closed shell → valid solid → STEP export — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Converts a sewn OCC shell to a solid only when Phase 35
+produced a valid closed shell. Exports STEP only after OCC validates the resulting solid.
+Partial shells, invalid shells, invalid solids, and unavailable OCC produce diagnostics and
+do not write STEP.
+
+- Output on success only: `geometry/reconstructed.step`.
+- Diagnostics: `diagnostics/mesh_brep_step_export.json`.
+- On successful export, OCC topology is extracted from the reconstructed STEP into
+  `geometry/reconstructed_topology_map.json` and `geometry/topology_map.json`.
+- `provenance/conversion_manifest.json` records `geometry_execution.geometry_kind=brep`
+  only on success; failure/partial cases keep mesh execution honest and record
+  `mesh_brep_reconstruction.status=not_exported`.
+- Honesty: reconstructed STEP is mesh-derived/lossy, not original design history, not
+  production-ready, and no freeform/NURBS fitting is claimed.
+
+## Phase 35: OCC sewing from analytic face candidates — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Starts from PR34's
+`graph/mesh_brep_stitching_plan.json` and validated `geometry/partial_brep_faces.json`.
+Rebuilds the validated plane/cylinder OCC faces in memory, attempts sewing with explicit
+tolerance, and reports whether the result is a partial or closed shell. This stage does
+not build solids and never exports STEP.
+
+- Outputs: `diagnostics/mesh_brep_sewing.json` and
+  `geometry/reconstructed_shell_status.json`.
+- Summary includes `shell_created`, `shell_type` (`partial_shell`, `closed_shell`,
+  `failed`), `face_count_in`, `face_count_rebuilt`, `face_count_sewn`,
+  `free_edge_count`, `closed`, `valid`, and `sewing_tolerance`.
+- Diagnostics preserve unmatched edges, large gaps, skipped/invalid faces, OCC
+  unavailability, stitching blockers, source mesh artifact, source region/surface IDs,
+  `source_ir_node`, and `design_space_node`.
+- Honesty: `solid_created:false`, `step_exported:false`,
+  `cad_editable:shell_candidate_only`, `production_ready:false`.
+  Partial shells remain non-exportable shell candidates.
+
 ## Phase 34: B-Rep stitching readiness + edge matching (plan only) — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). Analyzes the generated analytic faces and produces a

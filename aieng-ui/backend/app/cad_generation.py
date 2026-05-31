@@ -2747,6 +2747,13 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_brep_stitching import write_brep_stitching_plan
                 sp = write_brep_stitching_plan(package_path)
                 summary["brep_matched_edge_pairs"] = (sp.get("summary") or {}).get("matched_edge_pair_count", 0)
+                # Conservative mesh-to-CAD continuation: sew candidate faces, create/export
+                # STEP only if OCC validates a closed solid, then roundtrip-verify.
+                from aieng.converters.mesh_brep_solidification import reconstruct_brep_step
+                br = reconstruct_brep_step(package_path)
+                summary["brep_shell_type"] = ((br.get("sewing") or {}).get("summary") or {}).get("shell_type")
+                summary["brep_step_exported"] = bool((br.get("step_export") or {}).get("step_exported"))
+                summary["brep_roundtrip_status"] = (br.get("roundtrip_verification") or {}).get("status")
             except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:

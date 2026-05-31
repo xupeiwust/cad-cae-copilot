@@ -10602,6 +10602,13 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     assert obj["cad_editable"] is False               # not pretending B-Rep faces
     vr = verify_shape_ir_package(pkg)
     assert vr["geometry_kind"] == "mesh" and vr["representation_kind"] == "mesh"
+    # mesh recompile auto-builds the solver-neutral region graph (observational, not B-Rep)
+    with _zip.ZipFile(pkg) as zf:
+        assert "graph/mesh_region_graph.json" in zf.namelist()
+        mrg = _json.loads(zf.read("graph/mesh_region_graph.json"))
+        assert "diagnostics/mesh_region_segmentation.json" in zf.namelist()
+    assert mrg["regions"] and mrg["provenance"]["is_brep"] is False
+    assert mrg["provenance"]["representation_kind"] == "mesh"
 
     # explicit method=voxels -> blocky density_voxels
     wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})

@@ -2723,6 +2723,13 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                                           requested_runtime=runtime, fallback_used=fallback_used,
                                           fallback_reason=fallback_reason)
             summary.update(executed=True, geometry_kind="mesh")
+            # Mesh outputs get a solver-neutral region graph (observational; not B-Rep).
+            try:
+                from aieng.converters.mesh_region_segmentation import write_mesh_region_graph
+                rg = write_mesh_region_graph(package_path)
+                summary["mesh_region_count"] = len(rg.get("regions") or [])
+            except Exception:  # noqa: BLE001 - segmentation is best-effort analysis
+                pass
         else:
             summary["skipped"] = True
             # Honest record: representation emitted source but no runner is wired.

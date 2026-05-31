@@ -197,6 +197,35 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 28: Mesh region segmentation for smooth topo-opt meshes — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). First analysis step toward future mesh-to-B-Rep/NURBS:
+cluster a `smooth_mesh_proxy` / mesh-preview body into a solver-neutral **mesh region
+graph**. Observational mesh analysis only — regions are `*_candidate` clusters, NOT
+B-Rep faces; no STEP export, no CAD-editability claim, no reconstruction here.
+
+- `converters/mesh_region_segmentation.py`: `segment_mesh_regions(vertices, faces, …)`
+  (pure numpy) computes per-face normals + areas, builds edge→face adjacency, and grows
+  regions across shared edges while adjacent normals stay within `normal_angle_deg`
+  (default 20°). Per region: id, face_count, area, bbox, area-weighted average normal,
+  planarity score, `surface_class_candidate` (planar_candidate / freeform_candidate /
+  noisy_small_region / unknown), confidence, neighbors. Region adjacency carries
+  `shared_boundary_edges`. A cube → 6 planar regions (12 adjacency pairs); a sphere →
+  freeform/low-planarity regions; tiny islands → noisy_small_region.
+- `build_mesh_region_graph` / `write_mesh_region_graph(package_path)`: read the mesh from
+  a Shape IR mesh node (inline vertices/faces) or `geometry/preview.stl`; write
+  `graph/mesh_region_graph.json` + `diagnostics/mesh_region_segmentation.json`. Provenance:
+  source mesh artifact, source_ir_node, design_space_node, runtime, representation_kind=mesh,
+  geometry_kind=mesh, `is_brep:false`, `cad_editable:false`, limitations. Diagnostics:
+  total faces/regions, small/noisy count, thresholds, warnings/fallbacks. Missing mesh →
+  honest degraded (empty) graph with a recorded reason.
+- `recompile_shape_ir_package` auto-builds the region graph after a mesh runtime success
+  (best-effort), so every mesh writeback (voxel or smooth proxy) gets one.
+- Tests: cube → six planar_candidate + adjacency; sphere → freeform/low-planarity; tiny
+  noisy island flagged; provenance (source_ir_node/design_space_node/mesh-honesty)
+  preserved; artifacts written; missing mesh degrades honestly; backend 3D endpoint
+  produces the graph. No UI files; no B-Rep claims.
+
 ## Phase 27: Smooth mesh reconstruction for 3D topo-opt (mesh proxy) — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). First milestone toward mesh-to-CAD: turn the blocky

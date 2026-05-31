@@ -197,6 +197,34 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 32: Partial B-Rep reconstruction planning (face candidates) — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). First GENERATIVE step of mesh-to-CAD: convert accepted
+analytic surface fits into backend-neutral B-Rep FACE CANDIDATES. NO stitching, NO
+watertight solid, NO STEP export, NO NURBS/freeform fitting, NO production-CAD claim.
+
+- `plan_partial_brep(region_graph, surface_fit, readiness)`: for each region with an
+  accepted plane/cylinder fit, builds a face candidate — source_region_id, source surface
+  id, surface_type, analytic params (plane: origin/normal/basis; cylinder: axis_origin/
+  axis_direction/radius/axial_range), approximate boundary (plane: convex-hull loop_uv/
+  loop_world; cylinder: axial_range), fit confidence + error, `reconstruction_status:
+  candidate`. Skips freeform / noisy / low-confidence / missing-boundary / excessive-error
+  regions with reasons. Gated OUT (no candidates + warning) when readiness recommends
+  mesh_cleanup or insufficient_data.
+- Summary: candidate_face_count, plane/cylinder candidate counts, skipped_region_count,
+  area_coverage, can_attempt_partial_brep, can_attempt_full_brep (false unless readiness
+  says full AND all candidates have boundaries AND ≥4 faces).
+- Honesty flags everywhere: is_brep:false (source mesh), reconstructed_faces_are_candidates:
+  true, full_solid:false, watertight:false, cad_editable:"candidate_only", step_exported:false.
+- Outputs: `graph/mesh_brep_reconstruction_plan.json`, `geometry/partial_brep_surfaces.json`,
+  `diagnostics/partial_brep_reconstruction.json` (thresholds, accept/reject reasons,
+  provenance, limitations). Provenance preserves source mesh artifact / source_ir_node /
+  design_space_node. `recompile_shape_ir_package` auto-runs it after readiness on mesh outputs.
+- Tests: cube → six plane face candidates; cylinder → one cylinder candidate;
+  low-confidence/no-boundary → skipped; freeform → skipped; readiness insufficient/cleanup →
+  no candidates + warning; provenance + honesty preserved; missing inputs degrade; package
+  cube writes all three artifacts with no STEP; backend 3D endpoint produces them. No UI files.
+
 ## Phase 31: Mesh reconstruction readiness analysis — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). Reads the mesh region graph + analytic surface fits and

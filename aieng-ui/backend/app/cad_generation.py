@@ -2735,6 +2735,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_reconstruction_readiness import write_mesh_reconstruction_readiness
                 rr = write_mesh_reconstruction_readiness(package_path)
                 summary["reconstruction_next_action"] = (rr.get("readiness") or {}).get("recommended_next_action")
+                # Partial B-Rep PLANNING: accepted fits -> face candidates (no stitching/solid/STEP).
+                from aieng.converters.mesh_brep_reconstruction import write_partial_brep_plan
+                bp = write_partial_brep_plan(package_path)
+                summary["brep_face_candidate_count"] = (bp.get("summary") or {}).get("candidate_face_count", 0)
             except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:

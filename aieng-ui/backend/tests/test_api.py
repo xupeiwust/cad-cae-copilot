@@ -10616,6 +10616,11 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
         assert "diagnostics/mesh_reconstruction_readiness.json" in nm
         rr = _json.loads(zf.read("diagnostics/mesh_reconstruction_readiness.json"))
         assert "graph/mesh_reconstruction_plan.json" in nm
+        # partial B-Rep PLANNING auto-runs (face candidates only; no solid/STEP)
+        assert "geometry/partial_brep_surfaces.json" in nm
+        pbs = _json.loads(zf.read("geometry/partial_brep_surfaces.json"))
+        assert "graph/mesh_brep_reconstruction_plan.json" in nm
+        assert not any(n.lower().endswith((".step", ".stp")) for n in nm)   # no STEP exported
     assert mrg["regions"] and mrg["provenance"]["is_brep"] is False
     assert mrg["provenance"]["representation_kind"] == "mesh"
     assert msf["provenance"]["is_brep"] is False and msf["provenance"]["cad_editable"] is False
@@ -10623,6 +10628,9 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     assert rr["provenance"]["is_brep"] is False and rr["provenance"]["cad_editable"] is False
     assert rr["readiness"]["recommended_next_action"] in (
         "partial_brep_reconstruction", "freeform_surface_fitting", "mesh_cleanup", "insufficient_data")
+    assert pbs["provenance"]["full_solid"] is False and pbs["provenance"]["watertight"] is False
+    assert pbs["provenance"]["step_exported"] is False
+    assert all(fc["reconstruction_status"] == "candidate" for fc in pbs["face_candidates"])
 
     # explicit method=voxels -> blocky density_voxels
     wbv = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={"method": "voxels"})

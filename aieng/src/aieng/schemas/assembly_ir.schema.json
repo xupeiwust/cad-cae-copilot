@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aieng.dev/schemas/assembly_ir.schema.json",
+  "title": "aieng Assembly IR v0",
+  "description": "Backend representation of a multi-part assembly: parts, placements, interfaces, and SIMPLIFIED connection proxies. v0 is representation + validation only — connections are proxies, NOT full nonlinear contact, and NO assembly solver execution is implied.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["format", "parts"],
+  "properties": {
+    "format": {"const": "aieng.assembly_ir"},
+    "schema_version": {"type": "string"},
+    "name": {"type": "string"},
+    "unit": {"type": "string", "description": "Default length unit for transforms (e.g. mm)."},
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "role": {
+            "type": "string",
+            "enum": ["design_part", "reference_part", "fixture", "load_source", "fastener", "external_context"]
+          },
+          "geometry_ref": {
+            "type": "string",
+            "description": "Path to part Shape IR / STEP / package-local geometry, or a member name."
+          },
+          "source_ir_node": {"type": "string"},
+          "transform": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "translation": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+              "rotation_euler_deg": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+              "matrix": {"type": "array", "description": "Optional 3x3 or 4x4 row-major matrix."},
+              "unit": {"type": "string"}
+            }
+          },
+          "material": {"description": "Material name or reference object."},
+          "editable": {"type": "boolean"}
+        }
+      }
+    },
+    "interfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "part_id"],
+        "properties": {
+          "id": {"type": "string"},
+          "part_id": {"type": "string"},
+          "semantic_role": {
+            "type": "string",
+            "enum": ["mounting_face", "bolt_hole", "contact_face", "weld_face", "load_face", "support_face"]
+          },
+          "topology_refs": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "face_ids": {"type": "array", "items": {"type": "string"}},
+              "edge_ids": {"type": "array", "items": {"type": "string"}},
+              "vertex_ids": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "type", "part_a", "part_b"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {
+            "type": "string",
+            "enum": ["rigid_tie", "bonded", "bolted_proxy", "welded_proxy", "contact_proxy", "spring_proxy", "unknown"]
+          },
+          "part_a": {"type": "string"},
+          "part_b": {"type": "string"},
+          "interface_a": {"type": "string"},
+          "interface_b": {"type": "string"},
+          "behavior": {
+            "description": "One value or a list from {load_transfer, positioning_only, preserve_interface}."
+          },
+          "stiffness": {"description": "Optional simplified stiffness parameter(s)."},
+          "parameters": {"type": "object", "additionalProperties": true},
+          "confidence": {"description": "high | medium | low or a number."},
+          "limitations": {
+            "type": "array", "items": {"type": "string"},
+            "description": "REQUIRED for proxy connection types — what the simplified model does NOT capture."
+          }
+        }
+      }
+    },
+    "analysis_intent": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "design_parts": {"type": "array", "items": {"type": "string"}},
+        "frozen_parts": {"type": "array", "items": {"type": "string"}},
+        "preserve_interfaces": {"type": "array", "items": {"type": "string"}},
+        "allowed_optimization_parts": {"type": "array", "items": {"type": "string"}},
+        "load_paths": {"type": "array"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "created_by": {"type": "string"},
+        "source_files": {"type": "array", "items": {"type": "string"}},
+        "assumptions": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

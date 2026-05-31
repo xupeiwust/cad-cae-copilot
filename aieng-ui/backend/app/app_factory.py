@@ -1149,6 +1149,25 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         p = payload or {}
         return _tool_opt_writeback_to_shape_ir({"project_id": project_id, **p}, {})
 
+    @app.post("/api/projects/{project_id}/assembly/process")
+    def process_assembly_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Best-effort Assembly IR v0 processing: if the package carries
+        assembly/assembly_ir.json, (re)write its validation + part registry +
+        connection graph + solver-neutral CAE setup draft. No solver is run; no
+        single-part geometry is touched. Returns {assembly_present: false} when the
+        package has no assembly artifact."""
+        from aieng.converters.assembly_ir import process_assembly_package
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **process_assembly_package(package_path)}
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,

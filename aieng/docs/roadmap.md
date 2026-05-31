@@ -197,6 +197,41 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 38: Assembly IR v0 + simplified connection contract — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). Foundation for assembly-level CAD/CAE. Introduces an optional
+`assembly/assembly_ir.json` artifact describing **multiple parts**, their placements, interfaces,
+and **simplified connections (proxies)** — explicitly NOT full nonlinear contact, bolt preload,
+or any assembly solver execution. Connections are flagged `is_proxy`; honesty flags
+(`contact_physics_modeled:false`, `bolt_preload_modeled:false`, `solver_executed:false`) ride on
+every output. Single-part packages are completely unaffected (everything is gated on artifact
+presence).
+
+- New module `aieng/src/aieng/converters/assembly_ir.py` + schema `schemas/assembly_ir.schema.json`.
+- **Contract** — parts (role ∈ design_part / reference_part / fixture / load_source / fastener /
+  external_context; geometry_ref / source_ir_node; transform; material; editable), interfaces
+  (semantic_role ∈ mounting_face / bolt_hole / contact_face / weld_face / load_face / support_face;
+  topology_refs), connections (type ∈ rigid_tie / bonded / bolted_proxy / welded_proxy /
+  contact_proxy / spring_proxy / unknown; behavior; confidence; limitations), analysis_intent,
+  provenance. Extensible (`additionalProperties`).
+- **`validate_assembly_ir`** → `diagnostics/assembly_validation.json` (status passed/warning/failed):
+  unique part ids, valid connection/interface refs, transform shape, design-parts-exist, recognized
+  connection types, proxy-without-limitations warning, geometry-ref severity by role, topology refs
+  reported as `unresolved_refs` (v0 cannot resolve them — never silently trusted).
+- **`build_part_registry`** → `assembly/part_registry.json`; **`build_connection_graph`** →
+  `assembly/connection_graph.json` (nodes=parts, edges=connections, `is_proxy`/`load_transfer`).
+  Editability derived from role unless explicitly overridden.
+- **`build_assembly_cae_setup_draft`** → `simulation/assembly_cae_setup_draft.json`: solver-neutral
+  DRAFT only (rigid_tie/bonded→tie, welded→bonded_tie, bolted→connector_proxy, spring→spring_connector,
+  contact/unknown→unsupported/draft-only). Missing interfaces / no design parts → `needs_user_input`.
+  Never produces a solver deck.
+- **Integration** — `process_assembly_package(package_path)` runs all of the above best-effort;
+  auto-invoked from `recompile_shape_ir_package` (gated on `assembly/assembly_ir.json`) and exposed
+  as `POST /api/projects/{id}/assembly/process`. Manifest gains an honest `assembly` block.
+- Tests: 21 core (`aieng/tests/test_assembly_ir.py`) + 2 backend endpoint tests. No UI files.
+- **Out of scope (future):** assembly-level CAE execution, real contact modeling, bolt preload,
+  assembly result mapping, assembly-aware topology/size optimization.
+
 ## Phase 37: Mesh-derived B-Rep STEP roundtrip verification — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). Final conservative verification step for mesh-to-CAD

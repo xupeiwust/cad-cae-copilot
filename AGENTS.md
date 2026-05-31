@@ -745,10 +745,25 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
 ├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node), topology_optimization.json
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
-├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd)
+├── assembly/                (optional, multi-part) assembly_ir.json, part_registry.json, connection_graph.json
+├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd, assembly_cae_setup_draft.json)
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json
 └── audit_log.jsonl          append-only action history
 ```
+
+### Assembly IR v0 (optional, multi-part)
+
+A package MAY carry `assembly/assembly_ir.json` — a backend representation of a **multi-part
+assembly**: parts (+ roles / placements / materials), interfaces, and **simplified connections**
+(`rigid_tie` / `bonded` / `bolted_proxy` / `welded_proxy` / `contact_proxy` / `spring_proxy`).
+Connections are **PROXIES, not full nonlinear contact** — there is no bolt preload, no contact
+physics, and no assembly solver execution in v0. When present, the backend best-effort writes
+`diagnostics/assembly_validation.json`, `assembly/part_registry.json`,
+`assembly/connection_graph.json`, and a solver-neutral `simulation/assembly_cae_setup_draft.json`
+(auto on recompile, or via `POST /api/projects/{id}/assembly/process`). Schema:
+`aieng/schemas/assembly_ir.schema.json`. Single-part packages are unaffected. Future work:
+assembly-level CAE execution, contact modeling, bolt preload, assembly result mapping, and
+assembly-aware optimization.
 
 ---
 

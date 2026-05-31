@@ -2778,6 +2778,17 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
             refresh(package_path)
         except Exception:  # noqa: BLE001
             pass
+    # Optional Assembly IR v0: if the package carries assembly/assembly_ir.json, refresh its
+    # registry / connection graph / validation / CAE draft. Gated on presence — single-part
+    # packages are untouched. Best-effort; never raises, never runs a solver.
+    try:
+        from aieng.converters.assembly_ir import process_assembly_package
+        asm = process_assembly_package(package_path)
+        if asm.get("assembly_present"):
+            summary["assembly_validation_status"] = asm.get("validation_status")
+            summary["assembly_part_count"] = asm.get("part_count")
+    except Exception:  # noqa: BLE001 - assembly processing is best-effort
+        pass
     return summary
 
 

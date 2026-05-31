@@ -10767,3 +10767,75 @@ def test_geometry_execution_manifest_missing_degrades_honestly(tmp_path: Path) -
             {"representation": "manifold_mesh", "parts": [{"id": "x", "type": "box"}]}))
     vr = verify_shape_ir_package(pkg)
     assert vr["geometry_kind"] == "none"             # honest: nothing was generated
+
+
+def test_assembly_process_endpoint(tmp_path: Path) -> None:
+    """POST /assembly/process writes validation + registry + connection graph + CAE draft
+    for a package carrying assembly/assembly_ir.json — and runs no solver."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    project = save_project(settings, default_project("asm-demo"))
+    project_id = project["id"]
+    pkg = project_dir(settings, project_id) / "asm.aieng"
+    pkg.parent.mkdir(parents=True, exist_ok=True)
+    assembly = {
+        "format": "aieng.assembly_ir", "schema_version": "0.1", "unit": "mm",
+        "parts": [
+            {"id": "bracket", "role": "design_part", "geometry_ref": "geometry/bracket.step",
+             "transform": {"translation": [0, 0, 0], "unit": "mm"}, "material": "AlSi10Mg"},
+            {"id": "wall", "role": "reference_part", "geometry_ref": "geometry/wall.step",
+             "transform": {"translation": [0, 0, -5], "unit": "mm"}},
+        ],
+        "interfaces": [
+            {"id": "if_a", "part_id": "bracket", "semantic_role": "mounting_face"},
+            {"id": "if_b", "part_id": "wall", "semantic_role": "support_face"},
+        ],
+        "connections": [
+            {"id": "c1", "type": "bolted_proxy", "part_a": "bracket", "part_b": "wall",
+             "interface_a": "if_a", "interface_b": "if_b", "behavior": ["load_transfer"],
+             "limitations": ["no preload"]},
+        ],
+        "analysis_intent": {"design_parts": ["bracket"], "frozen_parts": ["wall"]},
+    }
+    with zipfile.ZipFile(pkg, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "asm-demo", "resources": {}}))
+        zf.writestr("assembly/assembly_ir.json", json.dumps(assembly))
+    project["aieng_file"] = "asm.aieng"
+    save_project(settings, project)
+
+    resp = client.post(f"/api/projects/{project_id}/assembly/process", json={})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["assembly_present"] is True and data["validation_status"] == "passed"
+
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        for art in ("diagnostics/assembly_validation.json", "assembly/part_registry.json",
+                    "assembly/connection_graph.json", "simulation/assembly_cae_setup_draft.json"):
+            assert art in names
+        assert not any(n.lower().endswith((".inp", ".frd", ".step", ".stp")) for n in names)
+
+
+def test_assembly_process_endpoint_no_assembly(tmp_path: Path) -> None:
+    """A package without assembly/assembly_ir.json is left untouched (assembly_present false)."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("no-asm"))
+    project_id = project["id"]
+    pkg = project_dir(settings, project_id) / "p.aieng"
+    pkg.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pkg, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "no-asm", "resources": {}}))
+    project["aieng_file"] = "p.aieng"
+    save_project(settings, project)
+
+    resp = client.post(f"/api/projects/{project_id}/assembly/process", json={})
+    assert resp.status_code == 200
+    assert resp.json()["assembly_present"] is False

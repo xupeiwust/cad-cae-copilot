@@ -590,9 +590,14 @@ closed-shell solidification → STEP export → roundtrip verification. STEP exp
 allowed only when OCC validates a real closed shell and solid; partial shells write
 diagnostics (`diagnostics/mesh_brep_sewing.json`,
 `diagnostics/mesh_brep_step_export.json`,
-`diagnostics/mesh_brep_roundtrip_verification.json`) but no STEP. Reconstructed STEP
-(`geometry/reconstructed.step`) is mesh-derived/lossy, not original design history,
-not production CAD certification, and freeform/NURBS fitting remains future work.
+`diagnostics/mesh_brep_roundtrip_verification.json`) but no STEP. Successful
+reconstruction writes derived CAD only to `geometry/reconstructed.step` and never
+overwrites the source/generated STEP. When reconstructed topology replaces
+`geometry/topology_map.json`, the original mesh topology is preserved at
+`geometry/mesh_topology_map.json`; failed reruns remove stale reconstructed artifacts
+and restore mesh topology. Reconstructed STEP (`geometry/reconstructed.step`) is
+mesh-derived/lossy, not original design history, not production CAD certification,
+and freeform/NURBS fitting remains future work.
 | `postprocess.generate_computed_metrics` | Import metrics from CSV/JSON |
 | `postprocess.refresh_cae_summary` | Regenerate result summary + evidence markdown |
 

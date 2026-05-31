@@ -14,9 +14,11 @@ import pytest
 pytest.importorskip("numpy")
 pytest.importorskip("OCP")
 
+import aieng.converters.mesh_brep_solidification as solid  # noqa: E402
 from aieng.converters.mesh_brep_face_generation import PARTIAL_BREP_FACES_PATH
 from aieng.converters.mesh_brep_reconstruction import PARTIAL_BREP_SURFACES_PATH
 from aieng.converters.mesh_brep_solidification import (  # noqa: E402
+    MESH_TOPOLOGY_PATH,
     MESH_BREP_ROUNDTRIP_PATH,
     MESH_BREP_SEWING_PATH,
     MESH_BREP_STEP_EXPORT_PATH,
@@ -127,6 +129,29 @@ def _write_pkg(tmp_path: Path, region_ids: list[int], graph_region_ids: list[int
     surfaces = _surfaces_doc(region_ids)
     graph_ids = graph_region_ids or region_ids
     region_graph = _region_graph(graph_ids, _CUBE_ADJ_PAIRS)
+    mesh_topology = {
+        "format": "aieng.topology_map",
+        "metadata": {
+            "extraction_mode": "mesh_region_graph",
+            "real_step_parsing": False,
+            "source": "test_mesh_fixture",
+        },
+        "entities": [
+            {
+                "id": "mesh_body_001",
+                "type": "solid",
+                "name": "mesh_body",
+                "bounding_box": [0, 0, 0, 1, 1, 1],
+            },
+            {
+                "id": "mesh_region_001",
+                "type": "face",
+                "body_id": "mesh_body_001",
+                "surface_type": "mesh_region",
+                "bounding_box": [0, 0, 0, 1, 1, 0],
+            },
+        ],
+    }
     plan, readiness = plan_brep_stitching(faces, surfaces, region_graph)
     pkg = tmp_path / "case.aieng"
     manifest = {
@@ -140,6 +165,7 @@ def _write_pkg(tmp_path: Path, region_ids: list[int], graph_region_ids: list[int
     }
     with zipfile.ZipFile(pkg, "w") as zf:
         zf.writestr("geometry/shape_ir.json", json.dumps({"parts": [{"id": "blk"}]}))
+        zf.writestr("geometry/topology_map.json", json.dumps(mesh_topology))
         zf.writestr("graph/mesh_region_graph.json", json.dumps(region_graph))
         zf.writestr(PARTIAL_BREP_FACES_PATH, json.dumps(faces))
         zf.writestr(PARTIAL_BREP_SURFACES_PATH, json.dumps(surfaces))
@@ -175,10 +201,15 @@ def test_cube_closed_shell_becomes_valid_solid_step_and_roundtrips(tmp_path: Pat
         topo = json.loads(zf.read("geometry/topology_map.json"))
         assert len([e for e in topo["entities"] if e["type"] == "face"]) == 6
         manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+        roundtrip = json.loads(zf.read(MESH_BREP_ROUNDTRIP_PATH))
     assert manifest["geometry_execution"]["geometry_kind"] == "brep"
     assert manifest["geometry_execution"]["production_ready"] is False
     assert manifest["geometry_execution"]["source_ir_node"] == "blk"
     assert manifest["geometry_execution"]["design_space_node"] == "blk"
+    assert manifest["mesh_brep_reconstruction"]["status"] == "exported_verified"
+    assert MESH_TOPOLOGY_PATH in names
+    assert roundtrip["checks"]["source_bbox"] == [0, 0, 0, 1, 1, 1]
+    assert roundtrip["checks"]["observed_solid_bbox"] is not None
 
 
 def test_missing_face_produces_partial_shell_no_step(tmp_path: Path) -> None:
@@ -256,3 +287,98 @@ def test_missing_inputs_degrade_with_diagnostics(tmp_path: Path) -> None:
         assert MESH_BREP_STEP_EXPORT_PATH in names
         assert MESH_BREP_ROUNDTRIP_PATH in names
         assert RECONSTRUCTED_STEP_PATH not in names
+
+
+def test_occ_unavailable_degrades_without_step(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, list(range(6)))
+    monkeypatch.setattr(solid, "_occ", lambda: None)
+    result = reconstruct_brep_step(pkg)
+    assert result["sewing"]["occ_available"] is False
+    assert result["step_export"]["step_exported"] is False
+    with zipfile.ZipFile(pkg) as zf:
+        assert RECONSTRUCTED_STEP_PATH not in zf.namelist()
+        sewing = json.loads(zf.read(MESH_BREP_SEWING_PATH))
+    assert "OCC/OCP unavailable" in " ".join(sewing["warnings"])
+
+
+def test_missing_stitching_plan_and_missing_faces_are_honest(tmp_path: Path) -> None:
+    pkg = tmp_path / "missing_plan.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr(PARTIAL_BREP_SURFACES_PATH, json.dumps(_surfaces_doc(list(range(6)))))
+    result = reconstruct_brep_step(pkg)
+    assert result["step_export"]["step_exported"] is False
+    assert "missing inputs" in " ".join(result["sewing"]["warnings"])
+    assert RECONSTRUCTED_STEP_PATH not in result["written_artifacts"]
+
+    pkg2 = tmp_path / "missing_faces.aieng"
+    faces = _faces_doc(list(range(6)))
+    surfaces = _surfaces_doc(list(range(6)))
+    plan, readiness = plan_brep_stitching(faces, surfaces, _region_graph(list(range(6)), _CUBE_ADJ_PAIRS))
+    with zipfile.ZipFile(pkg2, "w") as zf:
+        zf.writestr(PARTIAL_BREP_SURFACES_PATH, json.dumps(surfaces))
+        zf.writestr(MESH_BREP_STITCHING_PLAN_PATH, json.dumps(plan))
+        zf.writestr(MESH_BREP_STITCHING_READINESS_PATH, json.dumps(readiness))
+    result2 = reconstruct_brep_step(pkg2)
+    assert result2["step_export"]["step_exported"] is False
+    assert PARTIAL_BREP_FACES_PATH in result2["sewing"]["blocking_issues"][0]["detail"]
+
+
+def test_failed_step_export_records_no_step(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, list(range(6)))
+    monkeypatch.setattr(solid, "_write_step_bytes", lambda _occ, _shape: (None, "forced STEP writer failure"))
+    result = reconstruct_brep_step(pkg)
+    assert result["sewing"]["summary"]["shell_type"] == "closed_shell"
+    assert result["step_export"]["solid_valid"] is True
+    assert result["step_export"]["step_exported"] is False
+    assert "forced STEP writer failure" in result["step_export"]["reason"]
+    with zipfile.ZipFile(pkg) as zf:
+        assert RECONSTRUCTED_STEP_PATH not in zf.namelist()
+        manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+    assert manifest["geometry_execution"]["geometry_kind"] == "mesh"
+
+
+def test_failed_step_reimport_keeps_step_but_not_brep_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pkg = _write_pkg(tmp_path, list(range(6)))
+    monkeypatch.setattr(solid, "_extract_topology", lambda _step: (None, "forced reimport failure"))
+    result = reconstruct_brep_step(pkg)
+    assert result["step_export"]["step_exported"] is True
+    assert result["roundtrip_verification"]["status"] == "failed"
+    with zipfile.ZipFile(pkg) as zf:
+        names = zf.namelist()
+        assert RECONSTRUCTED_STEP_PATH in names
+        assert RECONSTRUCTED_TOPOLOGY_PATH not in names
+        manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+    assert manifest["geometry_execution"]["geometry_kind"] == "mesh"
+    assert manifest["mesh_brep_reconstruction"]["status"] == "exported_unverified"
+
+
+def test_failed_rerun_removes_stale_reconstructed_artifacts_and_restores_mesh_topology(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, list(range(6)))
+    reconstruct_brep_step(pkg)
+    with zipfile.ZipFile(pkg) as zf:
+        assert RECONSTRUCTED_STEP_PATH in zf.namelist()
+        mesh_topo = json.loads(zf.read(MESH_TOPOLOGY_PATH))
+        brep_topo = json.loads(zf.read("geometry/topology_map.json"))
+        assert brep_topo != mesh_topo
+
+    # Now make the same package partial and rerun. Managed reconstructed artifacts
+    # must be removed, and topology_map restored to the saved mesh topology.
+    faces = _faces_doc(list(range(5)))
+    surfaces = _surfaces_doc(list(range(5)))
+    plan, readiness = plan_brep_stitching(faces, surfaces, _region_graph(list(range(6)), _CUBE_ADJ_PAIRS))
+    _replace_member(pkg, PARTIAL_BREP_FACES_PATH, faces)
+    _replace_member(pkg, PARTIAL_BREP_SURFACES_PATH, surfaces)
+    _replace_member(pkg, MESH_BREP_STITCHING_PLAN_PATH, plan)
+    _replace_member(pkg, MESH_BREP_STITCHING_READINESS_PATH, readiness)
+    result = reconstruct_brep_step(pkg)
+    assert result["step_export"]["step_exported"] is False
+    with zipfile.ZipFile(pkg) as zf:
+        names = zf.namelist()
+        assert RECONSTRUCTED_STEP_PATH not in names
+        assert RECONSTRUCTED_TOPOLOGY_PATH not in names
+        assert json.loads(zf.read("geometry/topology_map.json")) == mesh_topo
+        manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+    assert manifest["geometry_execution"]["geometry_kind"] == "mesh"
+    assert manifest["mesh_brep_reconstruction"]["status"] == "not_exported"

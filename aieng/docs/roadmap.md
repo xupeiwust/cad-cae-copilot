@@ -211,8 +211,9 @@ certification.
   source provenance preservation (`source_ir_node`, `design_space_node`, source artifacts).
 - Status is `passed`, `warning`, or `failed`. Partial/no-STEP reconstructions degrade to
   warning/failure with reasons instead of claiming success.
-- Tests cover cube STEP roundtrip, partial/no-STEP degradation, missing inputs, and
-  manifest/provenance preservation. No UI files.
+- Tests cover cube STEP roundtrip, partial/no-STEP degradation, missing inputs,
+  unavailable OCC, STEP writer/reimport failure, stale reconstructed artifact cleanup,
+  mesh topology restoration, and manifest/provenance preservation. No UI files.
 
 ## Phase 36: Closed shell → valid solid → STEP export — COMPLETE (2026-05-31)
 
@@ -221,13 +222,18 @@ produced a valid closed shell. Exports STEP only after OCC validates the resulti
 Partial shells, invalid shells, invalid solids, and unavailable OCC produce diagnostics and
 do not write STEP.
 
-- Output on success only: `geometry/reconstructed.step`.
+- Output on success only: `geometry/reconstructed.step` (derived artifact; source or
+  generated STEP is not overwritten).
 - Diagnostics: `diagnostics/mesh_brep_step_export.json`.
 - On successful export, OCC topology is extracted from the reconstructed STEP into
-  `geometry/reconstructed_topology_map.json` and `geometry/topology_map.json`.
+  `geometry/reconstructed_topology_map.json` and `geometry/topology_map.json`; the
+  original mesh topology is preserved at `geometry/mesh_topology_map.json`.
 - `provenance/conversion_manifest.json` records `geometry_execution.geometry_kind=brep`
-  only on success; failure/partial cases keep mesh execution honest and record
-  `mesh_brep_reconstruction.status=not_exported`.
+  only for an exported and topology-verified reconstruction (`exported_verified`).
+  STEP export without topology reimport is `exported_unverified` and does not promote
+  package geometry; failure/partial cases keep mesh execution honest and record
+  `mesh_brep_reconstruction.status=not_exported`. Failed reruns delete stale
+  `geometry/reconstructed.step` / `geometry/reconstructed_topology_map.json`.
 - Honesty: reconstructed STEP is mesh-derived/lossy, not original design history, not
   production-ready, and no freeform/NURBS fitting is claimed.
 

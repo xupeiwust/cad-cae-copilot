@@ -32,6 +32,7 @@ MESH_BREP_SEWING_PATH = "diagnostics/mesh_brep_sewing.json"
 RECONSTRUCTED_SHELL_STATUS_PATH = "geometry/reconstructed_shell_status.json"
 RECONSTRUCTED_STEP_PATH = "geometry/reconstructed.step"
 RECONSTRUCTED_TOPOLOGY_PATH = "geometry/reconstructed_topology_map.json"
+MESH_TOPOLOGY_PATH = "geometry/mesh_topology_map.json"
 MESH_BREP_STEP_EXPORT_PATH = "diagnostics/mesh_brep_step_export.json"
 MESH_BREP_ROUNDTRIP_PATH = "diagnostics/mesh_brep_roundtrip_verification.json"
 CONVERSION_MANIFEST_PATH = "provenance/conversion_manifest.json"
@@ -41,6 +42,7 @@ _DEFAULT_SEWING_TOLERANCE = 1.0e-5
 _AREA_TOL = 1.0e-9
 _SOURCE_ARTIFACTS = [
     "geometry/shape_ir.json",
+    MESH_TOPOLOGY_PATH,
     MESH_REGION_GRAPH_PATH,
     MESH_SURFACE_FIT_PATH,
     MESH_RECONSTRUCTION_READINESS_PATH,
@@ -141,6 +143,8 @@ def _read_package_inputs(package_path: Path) -> dict[str, Any]:
                 "reconstruction_plan": MESH_BREP_PLAN_PATH,
                 "surface_fit": MESH_SURFACE_FIT_PATH,
                 "conversion_manifest": CONVERSION_MANIFEST_PATH,
+                "topology_map": TOPOLOGY_MAP_PATH,
+                "mesh_topology_map": MESH_TOPOLOGY_PATH,
             }.items():
                 out[key] = _read_json(zf, path, names)
                 if (
@@ -765,16 +769,22 @@ def _roundtrip_verify(
         missing_types = sorted(set(expected_types) - set(observed_types))
         if missing_types:
             warnings.append(f"expected surface types missing after roundtrip: {missing_types}")
-        src_bbox = _bbox_from_candidates(inputs.get("surfaces_doc"))
+    observed_bbox = None
+    bbox_delta = None
+    bbox_tolerance = None
+    src_bbox = _bbox_from_candidates(inputs.get("surfaces_doc"))
+    if topology_map is not None:
         body_bboxes = [
             e.get("bounding_box")
             for e in topology_map.get("entities", [])
             if e.get("type") == "solid" and isinstance(e.get("bounding_box"), list)
         ]
         if src_bbox and body_bboxes:
-            delta = max(abs(float(src_bbox[i]) - float(body_bboxes[0][i])) for i in range(6))
-            if delta > max(_bbox_diag(src_bbox) * 0.02, 1e-5):
-                warnings.append(f"bbox mismatch exceeds tolerance: max_delta={delta:.6g}")
+            observed_bbox = [float(x) for x in body_bboxes[0]]
+            bbox_delta = max(abs(float(src_bbox[i]) - observed_bbox[i]) for i in range(6))
+            bbox_tolerance = max(_bbox_diag(src_bbox) * 0.02, 1e-5)
+            if bbox_delta > bbox_tolerance:
+                warnings.append(f"bbox mismatch exceeds tolerance: max_delta={bbox_delta:.6g}")
         elif src_bbox:
             warnings.append("source bbox available but roundtrip solid bbox missing")
         status = "passed" if not warnings else "warning"
@@ -805,6 +815,10 @@ def _roundtrip_verify(
                     if e.get("type") == "face" and e.get("surface_type")
                 }
             ),
+            "source_bbox": src_bbox,
+            "observed_solid_bbox": observed_bbox,
+            "bbox_max_abs_delta": bbox_delta,
+            "bbox_tolerance": bbox_tolerance,
         },
         "warnings": warnings,
         "errors": errors,
@@ -821,12 +835,13 @@ def _roundtrip_verify(
     }
 
 
-def _replace_members(path: Path, members: dict[str, bytes]) -> None:
+def _replace_members(path: Path, members: dict[str, bytes], *, delete_members: set[str] | None = None) -> None:
     tmp = path.with_suffix(".tmp.aieng")
+    delete_members = set(delete_members or set())
     try:
         with zipfile.ZipFile(path, "r") as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
             for item in src.infolist():
-                if item.filename not in members:
+                if item.filename not in members and item.filename not in delete_members:
                     dst.writestr(item, src.read(item.filename))
             for name, data in members.items():
                 dst.writestr(name, data)
@@ -844,8 +859,19 @@ def _update_manifest(inputs: dict[str, Any], export_diag: dict[str, Any], topolo
     manifest = inputs.get("conversion_manifest") if isinstance(inputs.get("conversion_manifest"), dict) else {}
     manifest.setdefault("format", "aieng.conversion_manifest")
     base = _base_provenance(inputs)
+    existing_ge = manifest.get("geometry_execution") if isinstance(manifest.get("geometry_execution"), dict) else None
+    previous_source_ge = None
+    prior_recon = manifest.get("mesh_brep_reconstruction")
+    if isinstance(prior_recon, dict) and isinstance(prior_recon.get("source_geometry_execution"), dict):
+        previous_source_ge = prior_recon["source_geometry_execution"]
     recon = {
-        "status": "exported" if export_diag.get("step_exported") else "not_exported",
+        "status": (
+            "exported_verified"
+            if export_diag.get("step_exported") and topology_written
+            else "exported_unverified"
+            if export_diag.get("step_exported")
+            else "not_exported"
+        ),
         "production_ready": False,
         "source_mesh_remains_lossy": True,
         "reconstruction_level": "full_closed_solid" if export_diag.get("step_exported") else "partial_or_failed",
@@ -853,7 +879,11 @@ def _update_manifest(inputs: dict[str, Any], export_diag: dict[str, Any], topolo
         "artifacts": [MESH_BREP_SEWING_PATH, MESH_BREP_STEP_EXPORT_PATH, MESH_BREP_ROUNDTRIP_PATH],
         "limitations": base.get("limitations") or [],
     }
-    if export_diag.get("step_exported"):
+    if existing_ge and existing_ge.get("backend") != "mesh_brep_reconstruction":
+        recon["source_geometry_execution"] = existing_ge
+    elif previous_source_ge:
+        recon["source_geometry_execution"] = previous_source_ge
+    if export_diag.get("step_exported") and topology_written:
         artifacts = [RECONSTRUCTED_STEP_PATH, MESH_BREP_SEWING_PATH, MESH_BREP_STEP_EXPORT_PATH, MESH_BREP_ROUNDTRIP_PATH]
         if topology_written:
             artifacts.extend([TOPOLOGY_MAP_PATH, RECONSTRUCTED_TOPOLOGY_PATH])
@@ -873,6 +903,11 @@ def _update_manifest(inputs: dict[str, Any], export_diag: dict[str, Any], topolo
             "source_ir_node": base.get("source_ir_node"),
             "design_space_node": base.get("design_space_node"),
         }
+    elif existing_ge and existing_ge.get("backend") == "mesh_brep_reconstruction" and previous_source_ge:
+        # A later failed/partial run must not leave a stale reconstructed-BRep
+        # geometry_execution claim behind. Restore the mesh execution record that
+        # existed before the successful reconstruction run.
+        manifest["geometry_execution"] = previous_source_ge
     manifest["mesh_brep_reconstruction"] = recon
     return manifest
 
@@ -906,13 +941,25 @@ def reconstruct_brep_step(package_path: str | Path, *, tolerance: float = _DEFAU
     if step_bytes and export_diag.get("step_exported"):
         members[RECONSTRUCTED_STEP_PATH] = step_bytes
     if topology_map is not None and export_diag.get("step_exported"):
+        if inputs.get("mesh_topology_map") is None and isinstance(inputs.get("topology_map"), dict):
+            members[MESH_TOPOLOGY_PATH] = _json_bytes(inputs["topology_map"])
         members[RECONSTRUCTED_TOPOLOGY_PATH] = _json_bytes(topology_map)
         members[TOPOLOGY_MAP_PATH] = _json_bytes(topology_map)
+    elif isinstance(inputs.get("mesh_topology_map"), dict):
+        # If a previous reconstruction overwrote topology_map.json, a later
+        # failed/partial reconstruction should restore the original mesh topology
+        # instead of leaving stale B-Rep topology in the package.
+        members[TOPOLOGY_MAP_PATH] = _json_bytes(inputs["mesh_topology_map"])
     members[CONVERSION_MANIFEST_PATH] = _json_bytes(
         _update_manifest(inputs, export_diag, topology_map is not None and export_diag.get("step_exported"))
     )
+    delete_members: set[str] = set()
+    if not export_diag.get("step_exported"):
+        delete_members.update({RECONSTRUCTED_STEP_PATH, RECONSTRUCTED_TOPOLOGY_PATH})
+    elif topology_map is None:
+        delete_members.add(RECONSTRUCTED_TOPOLOGY_PATH)
     if package_path.exists():
-        _replace_members(package_path, members)
+        _replace_members(package_path, members, delete_members=delete_members)
     return {
         "status": "ok",
         "sewing": sewing,

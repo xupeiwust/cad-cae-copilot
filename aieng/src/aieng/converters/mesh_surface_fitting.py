@@ -113,6 +113,93 @@ def _fit_confidence(planarity: float, rms: float, scale: float) -> str:
     return "low"
 
 
+# ── cylinder fit ─────────────────────────────────────────────────────────────
+# Conservative acceptance thresholds (a cylinder's face normals are ⟂ to its axis).
+_CYL_MIN_CONSISTENCY = 0.9        # mean |normal·axis| must be small (normals ⟂ axis)
+_CYL_MAX_REL_RMS = 0.05           # radial RMS error / radius
+_CYL_MIN_NORMAL_PLANARITY = 0.15  # normals must span ~2D (else it's a plane, not a cylinder)
+_CYL_MAX_RADIUS_FACTOR = 8.0      # reject near-flat huge-radius "cylinders" (radius > k·bbox_diag)
+
+
+def _perp_basis(axis: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    a = axis / (np.linalg.norm(axis) or 1.0)
+    ref = np.array([1.0, 0.0, 0.0]) if abs(a[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    e1 = np.cross(a, ref)
+    e1 = e1 / (np.linalg.norm(e1) or 1.0)
+    e2 = np.cross(a, e1)
+    return e1, e2
+
+
+def fit_cylinder_to_points(points: np.ndarray, normals: np.ndarray, scale: float) -> dict[str, Any] | None:
+    """Conservative cylinder fit. Axis = the direction the face normals are LEAST aligned
+    with (smallest-eigenvalue eigenvector of the normal covariance — a cylinder's normals
+    are ⟂ to its axis). Then a Kåsa circle fit in the perpendicular plane gives radius +
+    axis origin; the axial projection gives height. Returns the fit + error metrics, or a
+    dict with ``reject_reason`` (or None) when the geometry isn't cylinder-like."""
+    P = np.asarray(points, dtype=float)
+    N = np.asarray(normals, dtype=float)
+    if len(P) < 6 or len(N) < 3:
+        return {"reject_reason": "too few points/normals"}
+    # axis from normals' covariance
+    evals, evecs = np.linalg.eigh(N.T @ N)        # ascending
+    if evals[2] <= 0:
+        return {"reject_reason": "degenerate normals"}
+    normal_planarity = float(evals[1] / evals[2])  # ~0 for a plane (normals 1D), larger for a cylinder
+    axis = evecs[:, 0]
+    axis = axis / (np.linalg.norm(axis) or 1.0)
+    if normal_planarity < _CYL_MIN_NORMAL_PLANARITY:
+        return {"reject_reason": f"normals nearly co-linear (planar, not cylindrical); "
+                                 f"normal_planarity={normal_planarity:.3f}",
+                "normal_planarity": round(normal_planarity, 4)}
+    e1, e2 = _perp_basis(axis)
+    x = P @ e1
+    y = P @ e2
+    # Kåsa algebraic circle fit: minimize |x^2+y^2 + D x + E y + F|
+    A = np.column_stack([x, y, np.ones_like(x)])
+    b = x ** 2 + y ** 2
+    sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+    cx, cy = sol[0] / 2.0, sol[1] / 2.0
+    r2 = sol[2] + cx ** 2 + cy ** 2
+    if not np.isfinite(r2) or r2 <= 0:
+        return {"reject_reason": "circle fit degenerate"}
+    r = float(np.sqrt(r2))
+    if scale and r > _CYL_MAX_RADIUS_FACTOR * scale:
+        return {"reject_reason": f"radius {r:.3g} >> region size (near-flat, not a cylinder)",
+                "radius": round(r, 6)}
+    radial = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    rms_radial = float(np.sqrt(((radial - r) ** 2).mean()))
+    max_radial = float(np.abs(radial - r).max())
+    normal_consistency = float(1.0 - np.abs(N @ axis).mean())
+    axial = P @ axis
+    a_min, a_max = float(axial.min()), float(axial.max())
+    origin = cx * e1 + cy * e2 + a_min * axis
+    return {
+        "axis": [round(float(v), 6) for v in axis],
+        "origin": [round(float(v), 6) for v in origin],
+        "radius": round(r, 6),
+        "height": round(a_max - a_min, 6),
+        "axial_range": [round(a_min, 6), round(a_max, 6)],
+        "rms_radial": round(rms_radial, 6),
+        "max_radial": round(max_radial, 6),
+        "normal_consistency": round(normal_consistency, 4),
+        "normal_planarity": round(normal_planarity, 4),
+    }
+
+
+def _cylinder_confidence(cyl: dict[str, Any], scale: float) -> str:
+    if cyl is None or cyl.get("reject_reason") or "radius" not in cyl or "rms_radial" not in cyl:
+        return "reject"
+    r = float(cyl["radius"]) or 1.0
+    rel_rms = float(cyl["rms_radial"]) / r
+    nc = float(cyl.get("normal_consistency", 0.0))
+    npl = float(cyl.get("normal_planarity", 0.0))
+    if nc >= 0.97 and rel_rms <= 0.02 and npl >= 0.3:
+        return "high"
+    if nc >= _CYL_MIN_CONSISTENCY and rel_rms <= _CYL_MAX_REL_RMS:
+        return "medium"
+    return "reject"
+
+
 # ── package integration ──────────────────────────────────────────────────────
 
 def _read_json(zf: zipfile.ZipFile, name: str, names: set[str]) -> Any:
@@ -153,7 +240,7 @@ def fit_mesh_surfaces(package_path: str | Path) -> tuple[dict[str, Any], dict[st
     V = np.asarray(mesh["vertices"], dtype=float)
     F = np.asarray(mesh["faces"], dtype=int)
     angle = float((seg_diag.get("thresholds") or {}).get("normal_angle_deg", 20.0))
-    region_of, _unit, area = assign_face_regions(V, F, normal_angle_deg=angle)
+    region_of, unit, area = assign_face_regions(V, F, normal_angle_deg=angle)
 
     prov_src = graph.get("provenance") or {}
     provenance = {
@@ -175,13 +262,10 @@ def fit_mesh_surfaces(package_path: str | Path) -> tuple[dict[str, Any], dict[st
     surfaces: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     errors: list[float] = []
+    cyl_considered = cyl_accepted = cyl_rejected = 0
     for reg in graph["regions"]:
         rid = str(reg.get("region_id") or "")
         cls = reg.get("surface_class_candidate")
-        if cls != "planar_candidate":
-            skipped.append({"region_id": rid, "surface_class_candidate": cls,
-                            "reason": f"not a planar_candidate ({cls}); no plane fitted"})
-            continue
         try:
             ridx = int(rid.split("_")[1])
         except (IndexError, ValueError):
@@ -193,25 +277,39 @@ def fit_mesh_surfaces(package_path: str | Path) -> tuple[dict[str, Any], dict[st
             continue
         verts_idx = np.unique(F[fid].reshape(-1))
         pts = V[verts_idx]
-        fit = fit_plane_to_points(pts, areas=area[fid])
         bbox = reg.get("bbox") or []
         scale = _bbox_diag(bbox) or 1.0
-        planarity = float(reg.get("planarity_score") or 0.0)
-        conf = _fit_confidence(planarity, fit["rms_distance"], scale)
-        errors.append(fit["rms_distance"])
-        surfaces.append({
-            "surface_id": f"surface_{ridx:03d}",
-            "source_region_id": rid,
-            "surface_type": "plane",
-            "fitted": True,
-            **fit,
-            "region_planarity_score": planarity,
-            "fit_confidence": conf,
-            "boundary": _boundary_loop(pts, fit),
-            "representation_kind": "mesh",
-            "geometry_kind": "mesh",
-            "is_brep": False,
-        })
+        common = {"surface_id": f"surface_{ridx:03d}", "source_region_id": rid,
+                  "representation_kind": "mesh", "geometry_kind": "mesh", "is_brep": False}
+
+        if cls == "planar_candidate":
+            fit = fit_plane_to_points(pts, areas=area[fid])
+            planarity = float(reg.get("planarity_score") or 0.0)
+            conf = _fit_confidence(planarity, fit["rms_distance"], scale)
+            errors.append(fit["rms_distance"])
+            surfaces.append({**common, "surface_type": "plane", "fitted": True, **fit,
+                             "region_planarity_score": planarity, "fit_confidence": conf,
+                             "boundary": _boundary_loop(pts, fit)})
+        elif cls in ("freeform_candidate", "unknown"):
+            # Conservative cylinder attempt for non-planar (non-noisy) regions.
+            cyl_considered += 1
+            cyl = fit_cylinder_to_points(pts, unit[fid], scale)
+            conf = _cylinder_confidence(cyl, scale) if cyl else "reject"
+            if cyl and conf in ("high", "medium"):
+                cyl_accepted += 1
+                errors.append(cyl["rms_radial"])
+                surfaces.append({**common, "surface_type": "cylinder", "fitted": True, **cyl,
+                                 "region_class": cls, "fit_confidence": conf})
+            else:
+                cyl_rejected += 1
+                why = cyl.get("reject_reason") if cyl else "axis/circle fit degenerate"
+                skipped.append({"region_id": rid, "surface_class_candidate": cls,
+                                "reason": f"not accepted as cylinder ({why})",
+                                "cylinder_metrics": {k: cyl.get(k) for k in
+                                                     ("radius", "rms_radial", "normal_consistency")} if cyl else None})
+        else:  # noisy_small_region
+            skipped.append({"region_id": rid, "surface_class_candidate": cls,
+                            "reason": f"{cls}: not fitted (too small/noisy)"})
 
     fit_doc = {
         "format": "aieng.mesh_surface_fit",
@@ -223,16 +321,28 @@ def fit_mesh_surfaces(package_path: str | Path) -> tuple[dict[str, Any], dict[st
                           "mesh regions toward future mesh-to-CAD; they are NOT B-Rep faces and "
                           "do NOT certify CAD editability. No STEP exported.",
     }
+    plane_fits = sum(1 for s in surfaces if s["surface_type"] == "plane")
+    cylinder_fits = sum(1 for s in surfaces if s["surface_type"] == "cylinder")
     diagnostics = {
         "format": "aieng.mesh_surface_fitting",
         "schema_version": "0.1",
         "regions_processed": len(graph["regions"]),
         "fitted": len(surfaces),
+        "plane_fits": plane_fits,
+        "cylinder_fits": cylinder_fits,
+        "cylinder_candidates_considered": cyl_considered,
+        "cylinder_fits_accepted": cyl_accepted,
+        "cylinder_fits_rejected": cyl_rejected,
         "skipped": len(skipped),
         "skipped_detail": skipped,
-        "thresholds": {"normal_angle_deg": angle,
-                       "confidence": {"high": "planarity>=0.995 & rel_rms<=0.01",
-                                      "medium": "planarity>=0.98 & rel_rms<=0.05"}},
+        "thresholds": {
+            "normal_angle_deg": angle,
+            "plane_confidence": {"high": "planarity>=0.995 & rel_rms<=0.01",
+                                 "medium": "planarity>=0.98 & rel_rms<=0.05"},
+            "cylinder": {"min_normal_consistency": _CYL_MIN_CONSISTENCY,
+                         "max_rel_rms": _CYL_MAX_REL_RMS, "min_normal_planarity": _CYL_MIN_NORMAL_PLANARITY,
+                         "max_radius_bbox_factor": _CYL_MAX_RADIUS_FACTOR},
+        },
         "fit_error_summary": {
             "max_rms": round(max(errors), 6) if errors else 0.0,
             "mean_rms": round(float(np.mean(errors)), 6) if errors else 0.0,

@@ -197,6 +197,32 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 30: Analytic cylinder fitting for mesh region candidates — COMPLETE (2026-05-31)
+
+Backend-only (no UI / NL-agent). Extends `mesh_surface_fitting` so non-planar regions
+that look cylindrical get analytic cylinder evidence. Still mesh analysis (cylinder axis
++ radius + height + errors), NOT a B-Rep face; no STEP, no NURBS, no reconstruction.
+
+- `fit_cylinder_to_points(points, normals, scale)`: conservative fit — axis = the
+  direction the face normals are LEAST aligned with (smallest-eigenvalue eigenvector of
+  the normal covariance, since a cylinder's normals are ⟂ to its axis); Kåsa circle fit
+  in the perpendicular plane → radius + axis origin; axial projection → height/axial_range.
+  Errors: RMS + max radial, plus normal_consistency (mean ⟂-ness) and normal_planarity
+  (normals must span ~2D, else it's a plane). Returns metrics or a `reject_reason`.
+- `fit_mesh_surfaces` now routes `freeform_candidate`/`unknown` regions to a cylinder
+  attempt; accepts `surface_type=cylinder` at high/medium confidence (consistency + relative
+  radial RMS gates), else records a skip with the rejecting metric. Planar regions still fit
+  as planes; noisy/small still skipped.
+- Outputs: `graph/mesh_surface_fit.json` enriched with cylinder surfaces;
+  `diagnostics/mesh_surface_fitting.json` adds cylinder_candidates_considered / accepted /
+  rejected + cylinder thresholds. Provenance unchanged (source artifact, source_ir_node,
+  design_space_node, source_region_id, representation_kind/geometry_kind=mesh, is_brep:false,
+  cad_editable:false). `recompile_shape_ir_package` auto-runs it after the region graph.
+- Tests: synthetic Z-tube → correct axis/radius/height (high); tilted tube → correct axis
+  direction; 90° partial patch → high/medium; ~8% noisy tube → not high (lower/reject);
+  cube planes stay planes (0 cylinder candidates); sphere not accepted as a cylinder;
+  provenance preserved. No UI files; no STEP/NURBS/B-Rep.
+
 ## Phase 29: Analytic plane fitting for mesh planar-candidate regions — COMPLETE (2026-05-31)
 
 Backend-only (no UI / NL-agent). Next step toward future mesh-to-B-Rep: fit best-fit

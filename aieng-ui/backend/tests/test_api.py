@@ -10614,3 +10614,89 @@ def test_topology_optimization_3d_needs_user_input(tmp_path: Path) -> None:
     assert d.status_code == 200
     body = d.json()
     assert body["status"] == "needs_user_input" and body["diagnostics"]
+
+
+def _topopt_project_with_setup(settings, name, *, load_dir):
+    """Create a project (120x80x10 plate) with a CAE setup, return (pid, pkg, client)."""
+    import json as _json, zipfile as _zip
+    from app.main import create_app, default_project, project_dir, save_project, get_project
+    pid = save_project(settings, default_project(name))["id"]
+    pkg = project_dir(settings, pid) / f"{pid}.aieng"
+    topo = {"entities": [
+        {"id": "body_plate", "type": "solid", "source_ir_node": "plate", "bounding_box": [0, 0, 0, 120, 80, 10]},
+        {"id": "face_left", "type": "face", "bounding_box": [0, 0, 0, 0, 80, 10]},
+        {"id": "face_right", "type": "face", "bounding_box": [120, 0, 0, 120, 80, 10]}]}
+    cae_map = {"mappings": [
+        {"maps_to": {"feature_id": "feat_fix"}, "face_ids": ["face_left"]},
+        {"maps_to": {"feature_id": "feat_load"}, "face_ids": ["face_right"]}]}
+    setup = ("boundary_conditions:\n  - {id: bc1, target_feature: feat_fix, type: fixed}\n"
+             f"loads:\n  - {{id: ld1, target_feature: feat_load, type: force, value_n: 500.0, direction: {load_dir}}}\n")
+    with _zip.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/topology_map.json", _json.dumps(topo))
+        zf.writestr("simulation/cae_mapping.json", _json.dumps(cae_map))
+        zf.writestr("simulation/setup.yaml", setup)
+    proj = get_project(settings, pid); proj["aieng_file"] = f"{pid}.aieng"; save_project(settings, proj)
+    client = TestClient(create_app(settings))
+    return pid, pkg, client
+
+
+def _read_geom_exec(pkg):
+    import json as _json, zipfile as _zip
+    with _zip.ZipFile(pkg) as zf:
+        assert "provenance/conversion_manifest.json" in zf.namelist(), "no conversion manifest written"
+        return _json.loads(zf.read("provenance/conversion_manifest.json")).get("geometry_execution") or {}
+
+
+def test_geometry_execution_manifest_across_paths(tmp_path: Path) -> None:
+    """recompile/writeback/patch paths write a normalized geometry_execution manifest;
+    verification reads it (no false geometry_kind:none for a real mesh writeback)."""
+    from aieng.converters.shape_ir_verification import verify_shape_ir_package
+    settings = Settings(platform_root=tmp_path / "p", workspace_root=tmp_path / "w",
+                        data_root=tmp_path / "d", aieng_root=tmp_path / "w" / "aieng",
+                        sample_step=tmp_path / "w" / "s.step")
+    pid, pkg, client = _topopt_project_with_setup(settings, "geomexec", load_dir="[0.0, -1.0, 0.0]")
+
+    # run 2D SIMP (auto-derive)
+    r = client.post(f"/api/projects/{pid}/topology-optimization", json={"auto_derive": True})
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+
+    # (1) manifold_mesh writeback -> executed:true, geometry_kind:mesh
+    wb = client.post(f"/api/projects/{pid}/topology-optimization/writeback",
+                     json={"representation": "manifold_mesh", "method": "voxels"})
+    assert wb.status_code == 200 and wb.json()["status"] == "ok"
+    ge = _read_geom_exec(pkg)
+    assert ge["executed"] is True and ge["geometry_kind"] == "mesh"
+    assert ge["representation_kind"] == "mesh" and ge["actual_runtime"] == "manifold"
+    assert "geometry/preview.glb" in ge["artifacts"] and ge["source_shape_ir"] == "geometry/shape_ir.json"
+    assert "fallback" in ge and isinstance(ge["fallback"]["used"], bool)
+    vr = verify_shape_ir_package(pkg)
+    assert vr["geometry_kind"] == "mesh"          # no longer falsely "none" for a real mesh writeback
+
+    # (2) brep_build123d writeback -> geometry_kind:brep + generated.step
+    wb2 = client.post(f"/api/projects/{pid}/topology-optimization/writeback",
+                      json={"representation": "brep_build123d", "method": "contour", "boundary": "polygon"})
+    assert wb2.status_code == 200 and wb2.json()["status"] == "ok"
+    ge2 = _read_geom_exec(pkg)
+    assert ge2["executed"] is True and ge2["geometry_kind"] == "brep"
+    assert ge2["representation_kind"] == "brep" and "geometry/generated.step" in ge2["artifacts"]
+    assert verify_shape_ir_package(pkg)["geometry_kind"] == "brep"
+
+    # (3) the shared recompile path (used by apply_shape_ir_patch AND writeback) writes
+    # the manifest — call it directly to prove the patch path is covered too.
+    from app import cad_generation
+    rec = cad_generation.recompile_shape_ir_package(pkg)
+    assert rec["executed"] is True
+    ge3 = _read_geom_exec(pkg)
+    assert ge3["executed"] is True and ge3["geometry_kind"] in ("brep", "mesh")
+
+
+def test_geometry_execution_manifest_missing_degrades_honestly(tmp_path: Path) -> None:
+    """A package with NO manifest verifies honestly: not executed, geometry_kind none."""
+    import json as _json, zipfile as _zip
+    from aieng.converters.shape_ir_verification import verify_shape_ir_package
+    pkg = tmp_path / "bare.aieng"
+    with _zip.ZipFile(pkg, "w") as zf:   # shape_ir only, no manifest, no geometry artifacts
+        zf.writestr("geometry/shape_ir.json", _json.dumps(
+            {"representation": "manifold_mesh", "parts": [{"id": "x", "type": "box"}]}))
+    vr = verify_shape_ir_package(pkg)
+    assert vr["geometry_kind"] == "none"             # honest: nothing was generated

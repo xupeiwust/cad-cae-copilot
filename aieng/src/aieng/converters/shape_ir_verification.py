@@ -121,10 +121,16 @@ def verify_shape_ir_package(package_path: str | Path) -> dict[str, Any]:
     runtime = str(sdm.get("compile_runtime") or rep_resolved["runtime"])
     fallback = bool(sdm.get("representation_fallback", rep_resolved["fallback"]))
     geom_exec = manifest.get("geometry_execution") or {}
-    executed = bool(geom_exec.get("executed"))
-    backend = str(geom_exec.get("backend") or runtime)
-    repr_kind = _REPR_KIND.get(representation, "unknown")
-    geometry_kind = str(geom_exec.get("geometry_kind") or (_GEOMETRY_KIND[repr_kind] if executed else "none"))
+    repr_kind = str(geom_exec.get("representation_kind") or _REPR_KIND.get(representation, "unknown"))
+    backend = str(geom_exec.get("actual_runtime") or geom_exec.get("backend") or runtime)
+    # Honesty guard: never report executed:true unless a real geometry artifact exists,
+    # whatever the manifest claims (a manifest may overstate after a partial write).
+    _real_geometry_members = ("geometry/generated.step", "geometry/preview.glb", "geometry/preview.stl")
+    has_real_geometry = any(m in names for m in _real_geometry_members)
+    executed = bool(geom_exec.get("executed")) and has_real_geometry
+    # geometry_kind: prefer the manifest's declared class (mesh-class representations
+    # never declare brep there); else map from representation_kind when executed.
+    geometry_kind = str(geom_exec.get("geometry_kind") or (_GEOMETRY_KIND.get(repr_kind, "none") if executed else "none"))
 
     # capability level: max achieved level in the conversion manifest
     achieved = manifest.get("achieved_capability_levels") or []

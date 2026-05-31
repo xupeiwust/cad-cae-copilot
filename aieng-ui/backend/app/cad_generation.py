@@ -2146,6 +2146,152 @@ def _build_executed_object_registry(
     }
 
 
+# Canonical mapping representation -> representation_kind (mirrors
+# shape_ir_verification._REPR_KIND so the manifest agrees with verification).
+_REPRESENTATION_KIND = {
+    "brep_build123d": "brep",
+    "nurbs_brep": "nurbs_brep",
+    "manifold_mesh": "mesh",
+    "implicit_sdf": "implicit_field",
+}
+# Geometry artifacts a compile/recompile may produce (manifest lists those present).
+_GEOMETRY_ARTIFACTS = (
+    "geometry/source.py",
+    "geometry/manifold_source.py",
+    "geometry/sdf_source.py",
+    "geometry/generated.step",
+    "geometry/preview.glb",
+    "geometry/preview.stl",
+    "geometry/topology_map.json",
+    "geometry/mesh_topology_map.json",
+)
+# Real-geometry artifacts: at least one must exist for executed:true to be honest.
+_REAL_GEOMETRY_ARTIFACTS = ("geometry/generated.step", "geometry/preview.glb", "geometry/preview.stl")
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def build_geometry_execution_record(
+    names: set[str],
+    shape_ir: dict[str, Any] | None,
+    topology_map: dict[str, Any] | list | None,
+    *,
+    representation: str,
+    requested_runtime: str,
+    actual_runtime: str,
+    executed: bool,
+    geometry_kind: str,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    warnings: list[str] | None = None,
+    errors: list[str] | None = None,
+    executed_at: str | None = None,
+) -> dict[str, Any]:
+    """Build the normalized ``geometry_execution`` record — the backend source of
+    truth for what geometry was generated, by which runtime/representation, and
+    which artifacts exist. Honesty guards: ``executed`` is only true when a real
+    geometry artifact is present, and ``geometry_kind`` is forced to ``none`` when
+    not executed (never report mesh/brep without geometry)."""
+    repr_kind = _REPRESENTATION_KIND.get(str(representation), "unknown")
+    artifacts = [a for a in _GEOMETRY_ARTIFACTS if a in names]
+    has_real = any(a in names for a in _REAL_GEOMETRY_ARTIFACTS)
+    executed = bool(executed and has_real)
+    gk = str(geometry_kind) if executed else "none"
+
+    nodes = []
+    if isinstance(shape_ir, dict):
+        nodes = shape_ir.get("parts") or shape_ir.get("components") or []
+    node_ids = [str(n.get("id") or n.get("name")) for n in nodes if isinstance(n, dict) and (n.get("id") or n.get("name"))]
+    ents = []
+    if isinstance(topology_map, dict):
+        ents = topology_map.get("entities") or []
+    elif isinstance(topology_map, list):
+        ents = topology_map
+    mapped = sorted({str(e.get("source_ir_node")) for e in ents
+                     if isinstance(e, dict) and e.get("source_ir_node")})
+
+    return {
+        "executed": executed,
+        "requested_runtime": str(requested_runtime),
+        "actual_runtime": str(actual_runtime),
+        "backend": str(actual_runtime),          # back-compat: verification reads .backend
+        "representation": str(representation),    # back-compat
+        "representation_kind": repr_kind,         # brep | nurbs_brep | mesh | implicit_field | unknown
+        "geometry_kind": gk,                      # brep | mesh | none
+        "real_geometry": executed,
+        "source_shape_ir": "geometry/shape_ir.json",
+        "source_ir_node_coverage": {
+            "mapped": len(mapped), "total": len(node_ids),
+            "mapped_node_ids": mapped, "node_ids": node_ids,
+        },
+        "artifacts": artifacts,
+        "fallback": {"used": bool(fallback_used), "reason": fallback_reason},
+        "warnings": list(warnings or []),
+        "errors": list(errors or []),
+        "executed_at_utc": executed_at or _utc_now_iso(),
+    }
+
+
+def write_geometry_execution_manifest(
+    pkg_path: Path,
+    *,
+    representation: str,
+    requested_runtime: str,
+    actual_runtime: str,
+    executed: bool,
+    geometry_kind: str,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    warnings: list[str] | None = None,
+    errors: list[str] | None = None,
+) -> None:
+    """Create-or-update ``provenance/conversion_manifest.json`` with a normalized
+    ``geometry_execution`` record (reads shape_ir + topology from the package for
+    coverage/artifacts). Used by the failure/skip paths and any recompile that did
+    not go through ``reconcile_shape_ir_provenance``. Best-effort; never raises."""
+    if not Path(pkg_path).exists():
+        return
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            names = set(zf.namelist())
+            shape_ir = {}
+            topo: dict[str, Any] | list = {}
+            if "geometry/shape_ir.json" in names:
+                try:
+                    shape_ir = json.loads(zf.read("geometry/shape_ir.json"))
+                except Exception:
+                    shape_ir = {}
+            for tm in ("geometry/topology_map.json", "geometry/mesh_topology_map.json"):
+                if tm in names:
+                    try:
+                        topo = json.loads(zf.read(tm))
+                        break
+                    except Exception:
+                        pass
+            manifest: dict[str, Any] = {}
+            if "provenance/conversion_manifest.json" in names:
+                try:
+                    manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+                except Exception:
+                    manifest = {}
+        if not isinstance(manifest, dict):
+            manifest = {}
+        manifest.setdefault("format", "aieng.conversion_manifest")
+        manifest.setdefault("converter", "shape_ir_recompile")
+        manifest["geometry_execution"] = build_geometry_execution_record(
+            names, shape_ir, topo, representation=representation,
+            requested_runtime=requested_runtime, actual_runtime=actual_runtime,
+            executed=executed, geometry_kind=geometry_kind, fallback_used=fallback_used,
+            fallback_reason=fallback_reason, warnings=warnings, errors=errors)
+        _replace_member(pkg_path, "provenance/conversion_manifest.json",
+                        (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode())
+    except Exception as exc:  # noqa: BLE001 - manifest write is best-effort
+        print(f"[shape_ir] geometry_execution manifest write failed: {exc}", file=sys.stderr)
+
+
 def reconcile_shape_ir_provenance(
     pkg_path: Path,
     topology_map: dict[str, Any],
@@ -2155,6 +2301,11 @@ def reconcile_shape_ir_provenance(
     representation: str = "brep_build123d",
     backend: str = "build123d",
     geometry_kind: str = "brep",
+    requested_runtime: str | None = None,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    warnings: list[str] | None = None,
+    errors: list[str] | None = None,
 ) -> None:
     """Reconcile a Shape-IR package's provenance after its source was executed.
 
@@ -2174,8 +2325,7 @@ def reconcile_shape_ir_provenance(
     if not pkg_path.exists():
         return
     if executed_at is None:
-        from datetime import datetime, timezone
-        executed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        executed_at = _utc_now_iso()
     try:
         registry = _build_executed_object_registry(topology_map, feature_graph)
         replacements: dict[str, bytes] = {
@@ -2183,32 +2333,33 @@ def reconcile_shape_ir_provenance(
         }
         with zipfile.ZipFile(pkg_path, "r") as zf:
             names = set(zf.namelist())
+            shape_ir: dict[str, Any] = {}
+            if "geometry/shape_ir.json" in names:
+                try:
+                    shape_ir = json.loads(zf.read("geometry/shape_ir.json"))
+                except Exception:
+                    shape_ir = {}
+            manifest: dict[str, Any] = {}
             if "provenance/conversion_manifest.json" in names:
                 try:
                     manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
-                    if isinstance(manifest, dict):
-                        manifest["geometry_execution"] = {
-                            "executed": True,
-                            "backend": backend,
-                            "representation": representation,
-                            "real_geometry": True,
-                            "geometry_kind": geometry_kind,  # "brep" | "mesh"
-                            "executed_at_utc": executed_at,
-                            "note": (
-                                f"Shape IR was compiled and executed via the {backend} runner; "
-                                "topology_map.json and feature_graph.json now describe REAL "
-                                f"{geometry_kind} geometry and supersede the projected "
-                                "(pre-execution) entities. object_registry.json was rebuilt "
-                                "against them."
-                            ),
-                        }
-                        replacements["provenance/conversion_manifest.json"] = (
-                            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-                        ).encode()
                 except Exception:
-                    pass
-        if "objects/object_registry.json" not in names and not registry["objects"]:
-            return
+                    manifest = {}
+        # Create-or-update the conversion manifest with the normalized
+        # geometry_execution record (the source of truth verification/registry read).
+        if not isinstance(manifest, dict):
+            manifest = {}
+        manifest.setdefault("format", "aieng.conversion_manifest")
+        manifest.setdefault("converter", "shape_ir_recompile")
+        manifest["geometry_execution"] = build_geometry_execution_record(
+            names, shape_ir, topology_map, representation=representation,
+            requested_runtime=requested_runtime or backend, actual_runtime=backend,
+            executed=True, geometry_kind=geometry_kind, fallback_used=fallback_used,
+            fallback_reason=fallback_reason, warnings=warnings, errors=errors,
+            executed_at=executed_at)
+        replacements["provenance/conversion_manifest.json"] = (
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        ).encode()
         tmp = pkg_path.with_suffix(".tmp.aieng")
         try:
             with (
@@ -2544,6 +2695,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
     representation, runtime, source = compiled["representation"], compiled["runtime"], compiled["source"]
     _replace_member(package_path, compiled["source_path"], source.encode())
 
+    # The compiler may fall back to build123d for an unknown/failed representation.
+    fallback_used = bool(compiled.get("fallback"))
+    fallback_reason = (f"requested representation '{payload.get('representation')}' fell back to "
+                       f"{representation}") if fallback_used else None
     summary: dict[str, Any] = {"representation": representation, "runtime": runtime, "executed": False}
     try:
         if runtime == "build123d":
@@ -2554,7 +2709,9 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
             _write_cad_artifacts(package_path, step_bytes=step, stl_bytes=stl, topology_map=topo,
                                  feature_graph=fg, generated_code=source, glb_bytes=glb)
             reconcile_shape_ir_provenance(package_path, topo, fg, representation=representation,
-                                          backend="build123d", geometry_kind="brep")
+                                          backend="build123d", geometry_kind="brep",
+                                          requested_runtime=runtime, fallback_used=fallback_used,
+                                          fallback_reason=fallback_reason)
             summary.update(executed=True, geometry_kind="brep")
         elif runtime in ("sdf", "manifold"):
             runner = _execute_sdf_code if runtime == "sdf" else _execute_manifold_code
@@ -2562,12 +2719,26 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
             fg = _mesh_feature_graph(topo)
             _write_mesh_artifacts(package_path, stl, glb, topo, fg)
             reconcile_shape_ir_provenance(package_path, topo, fg, representation=representation,
-                                          backend=runtime, geometry_kind="mesh")
+                                          backend=runtime, geometry_kind="mesh",
+                                          requested_runtime=runtime, fallback_used=fallback_used,
+                                          fallback_reason=fallback_reason)
             summary.update(executed=True, geometry_kind="mesh")
         else:
             summary["skipped"] = True
+            # Honest record: representation emitted source but no runner is wired.
+            write_geometry_execution_manifest(
+                package_path, representation=representation, requested_runtime=runtime,
+                actual_runtime=runtime, executed=False, geometry_kind="none",
+                fallback_used=fallback_used, fallback_reason=fallback_reason,
+                warnings=[f"runtime '{runtime}' is not wired; no executed geometry produced"])
     except Exception as exc:  # noqa: BLE001 - report, don't raise into the patch flow
         summary["error"] = f"{type(exc).__name__}: {exc}"
+        # Honest record: execution failed, so no real geometry exists.
+        write_geometry_execution_manifest(
+            package_path, representation=representation, requested_runtime=runtime,
+            actual_runtime=runtime, executed=False, geometry_kind="none",
+            fallback_used=fallback_used, fallback_reason=fallback_reason,
+            errors=[summary["error"]])
     # Refresh diagnostics from the (re)generated package regardless of outcome.
     for refresh in (write_shape_ir_verification, write_shape_ir_object_registry):
         try:

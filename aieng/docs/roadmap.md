@@ -197,6 +197,35 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 24: Geometry execution manifest (backend source of truth) — COMPLETE (2026-05-31)
+
+Backend CAD/CAE infra only (no UI / NL-agent / optimizer changes). A reliable record
+of what geometry was actually generated, by which runtime/representation, and which
+artifacts exist — so verification + object_registry stop under-reporting after a
+recompile/writeback that didn't carry a conversion manifest.
+
+- `build_geometry_execution_record()` (cad_generation): normalized
+  `geometry_execution` block — `executed`, `requested_runtime`, `actual_runtime`,
+  `representation_kind` (brep/nurbs_brep/mesh/implicit_field/unknown), `geometry_kind`
+  (brep/mesh/none), `source_shape_ir`, `source_ir_node_coverage`, `artifacts` (present
+  members), `fallback{used,reason}`, `warnings`, `errors`, timestamp. Honesty guard:
+  `executed` only when a real geometry artifact (step/glb/stl) exists; `geometry_kind`
+  forced to none when not executed.
+- `reconcile_shape_ir_provenance` now CREATES the conversion manifest if absent (was
+  update-only → writeback/optimized bodies had no manifest) and writes the normalized
+  record; `recompile_shape_ir_package` threads requested/actual runtime + fallback and
+  writes an honest `executed:false` manifest on failure/skip. Covers convert/recompile,
+  `opt.writeback_to_shape_ir`, `apply_shape_ir_patch`, and all runtimes
+  (brep_build123d / nurbs_brep / manifold_mesh / sdf-implicit_field).
+- Verification prefers the manifest, derives `representation_kind`/`actual_runtime`
+  from it, and never reports `executed:true` without a real artifact (a manifest can't
+  overstate). object_registry reads the manifest via verification (fused_mesh for mesh
+  outputs preserved).
+- Tests: manifold writeback → executed:true / geometry_kind:mesh; brep writeback →
+  geometry_kind:brep + generated.step; shared recompile path (used by patch) writes the
+  manifest; verification no longer reports geometry_kind:none for a real mesh writeback;
+  missing manifest degrades honestly to none. No UI files modified.
+
 ## Phase 23: Experimental 3D SIMP topology optimization — COMPLETE (2026-05-30)
 
 Plugs a self-contained 3D optimizer into the existing topology-optimization

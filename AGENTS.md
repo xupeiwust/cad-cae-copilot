@@ -791,8 +791,19 @@ promote any candidate to the baseline, and missing metrics honestly produce
 it is feasible, improves the objective, and has high-confidence metrics; otherwise
 `best_candidate_id` is `null` and `safe_to_accept` is `false`.
 
+**A ranked candidate can be explicitly accepted** (PR4) via
+`POST /api/projects/{id}/design-study/candidates/{candidate_id}/accept`. This copies the
+candidate's derived workspace into `accepted/<candidate_id>/` (patch, derived Shape IR,
+evaluation, and acceptance provenance) and writes `analysis/design_study_acceptance.json` +
+`diagnostics/design_study_acceptance_report.json`. Acceptance is **explicit and gated**:
+- The candidate must be the `best_candidate_id` (or `override_unsafe` must be explicitly set).
+- The candidate must be `feasible`; `failed` / `infeasible` / `unknown` candidates are rejected.
+- The candidate workspace artifacts must exist.
+- **Baseline geometry is never overwritten.** The accepted candidate is a derived design artifact
+  only; production approval is **not** claimed.
+
 Future work: optimizer/search loop, multi-objective Pareto ranking, candidate CAE evaluation,
-and promoting a candidate to baseline.
+auto-promotion to baseline, and design-history branching.
 
 ### Assembly IR v0 (optional, multi-part)
 

@@ -1285,6 +1285,41 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail=".aieng package not found")
         return {"project_id": project_id, **rank_design_study_candidates(package_path)}
 
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/accept")
+    def accept_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Explicitly accept ONE ranked design-study candidate into a derived accepted workspace.
+
+        Copies the candidate's derived artifacts into ``accepted/<candidate_id>/`` and writes
+        ``analysis/design_study_acceptance.json`` + ``diagnostics/design_study_acceptance_report.json``.
+
+        The candidate must be eligible (feasible, not failed/unknown, and safe_to_accept or
+        best_candidate_id unless override_unsafe is explicitly set in the payload).
+
+        Does NOT overwrite baseline geometry. Does NOT auto-promote. Production approval is
+        NOT claimed."""
+        from aieng.converters.design_study_acceptance import accept_design_study_candidate
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **accept_design_study_candidate(
+                package_path,
+                candidate_id,
+                accepted_by=data.get("accepted_by", "agent"),
+                reasoning=data.get("reasoning"),
+                override_unsafe=bool(data.get("override_unsafe", False)),
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,

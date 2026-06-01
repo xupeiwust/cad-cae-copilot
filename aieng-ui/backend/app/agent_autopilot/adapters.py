@@ -12,7 +12,7 @@ from .schema import AdapterInvocationResult, AutopilotAgentAction, LocalAgentCap
 
 
 DEFAULT_PROBE_TIMEOUT_SECONDS = 3
-DEFAULT_STEP_TIMEOUT_SECONDS = 300
+DEFAULT_STEP_TIMEOUT_SECONDS = 900
 
 
 class LocalAgentAdapter(Protocol):

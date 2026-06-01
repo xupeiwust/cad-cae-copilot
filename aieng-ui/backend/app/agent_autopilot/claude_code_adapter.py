@@ -151,7 +151,7 @@ class ClaudeCodeAdapter:
             "--json-schema",
             json.dumps(action_schema),
             "--permission-mode",
-            "plan",
+            "dontAsk",
             "--tools",
             "",
         ]

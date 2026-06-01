@@ -778,8 +778,21 @@ are never created or overwritten. Each run appends a deterministic `iter_NNN` re
 `analysis/design_study_iterations.json` and rebuilds `diagnostics/design_study_report.json`.
 Execution is explicit and single-shot — **no optimizer/search/Pareto loop, no CAE, and no
 candidate is ever auto-promoted into the baseline** (`baseline_modified:false` everywhere; best a
-valid candidate reaches is `refine_candidate`). Future work: optimizer/search loop, multi-objective
-ranking, candidate CAE evaluation, and promoting a candidate to baseline.
+valid candidate reaches is `refine_candidate`).
+
+**Executed candidates can be ranked** (PR3) via `POST /api/projects/{id}/design-study/rank`.
+This reads the iteration history and per-candidate evaluation artifacts, classifies each candidate
+as `feasible` / `infeasible` / `unknown` / `failed`, scores them against the problem objective
+and constraints, and writes `analysis/design_study_candidate_ranking.json` +
+`diagnostics/design_study_scoring_report.json`. Ranking is **advisory only** — it does not
+search or propose new candidates, does not recompile geometry, does not run CAE, does not
+promote any candidate to the baseline, and missing metrics honestly produce
+`needs_more_evaluation` / low-confidence outcomes. The best candidate is selected only when
+it is feasible, improves the objective, and has high-confidence metrics; otherwise
+`best_candidate_id` is `null` and `safe_to_accept` is `false`.
+
+Future work: optimizer/search loop, multi-objective Pareto ranking, candidate CAE evaluation,
+and promoting a candidate to baseline.
 
 ### Assembly IR v0 (optional, multi-part)
 

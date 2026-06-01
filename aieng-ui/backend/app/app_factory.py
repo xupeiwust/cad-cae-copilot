@@ -1262,6 +1262,29 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         return {"project_id": project_id,
                 **execute_design_study_candidate(package_path, candidate_id, recompiler=recompiler)}
 
+    @app.post("/api/projects/{project_id}/design-study/rank")
+    def rank_design_study_candidates_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Rank already-executed design-study candidates.
+
+        Reads analysis/design_study_iterations.json + per-candidate evaluation artifacts,
+        classifies feasibility, scores against the problem objective and constraints,
+        and writes analysis/design_study_candidate_ranking.json +
+        diagnostics/design_study_scoring_report.json.
+
+        Does NOT execute new candidates, does NOT recompile geometry, does NOT run CAE,
+        and does NOT modify baseline geometry. Ranking is advisory only."""
+        from aieng.converters.design_study_ranking import rank_design_study_candidates
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **rank_design_study_candidates(package_path)}
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,

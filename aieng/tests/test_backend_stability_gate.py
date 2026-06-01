@@ -35,6 +35,7 @@ CANONICAL_DEMO_FILES = [
     _AIENG_ROOT / "tests" / "test_design_study_acceptance.py",
     _AIENG_ROOT / "tests" / "test_design_study_evaluation.py",
     _AIENG_ROOT / "tests" / "test_design_study_hints.py",
+    _AIENG_ROOT / "tests" / "test_design_study_cae_evaluation.py",
 ]
 
 # Canonical docs the gate checks for existence.
@@ -76,6 +77,10 @@ KEY_ARTIFACT_NAMES = [
     "analysis/design_study_acceptance.json",
     "diagnostics/design_study_acceptance_report.json",
     "accepted/candidate_good/geometry/shape_ir.json",
+    # Candidate CAE evaluation request v0 artifacts
+    "candidates/<candidate_id>/analysis/cae_evaluation_request.json",
+    "candidates/<candidate_id>/diagnostics/cae_evaluation_request.json",
+    "candidates/<candidate_id>/simulation/setup.yaml",
 ]
 
 # Honesty boundary phrases that must appear across the canonical docs.

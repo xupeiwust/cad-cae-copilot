@@ -240,6 +240,7 @@ pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_stud
 | Design study | No autonomous optimization or Pareto search | Explicit single-shot execution only |
 | Design study | Candidate evaluation reads existing static/neutral/proxy artifacts only | No solver/recompile/promotion during evaluation |
 | Design study | Candidate hints are advisory only | No patch generation, execution, CAE, ranking, acceptance, or geometry mutation |
+| Design study | Candidate CAE evaluation request is explicit and candidate-local | Solver execution disabled by default; baseline artifacts never overwritten |
 
 ---
 

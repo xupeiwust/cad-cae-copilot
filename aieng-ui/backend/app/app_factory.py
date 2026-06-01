@@ -1369,6 +1369,54 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             ),
         }
 
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/cae-evaluate")
+    def cae_evaluate_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Explicitly request CAE evaluation for ONE design-study candidate.
+
+        Derives candidate-local CAE setup from the baseline, normalizes existing
+        candidate-local neutral metrics into ``candidates/<id>/analysis/evaluation.json``,
+        and optionally refreshes ranking. Solver execution is disabled by default.
+
+        Writes:
+          - ``candidates/<id>/analysis/cae_evaluation_request.json``
+          - ``candidates/<id>/diagnostics/cae_evaluation_request.json``
+          - ``candidates/<id>/simulation/setup.yaml`` (copied from baseline)
+          - ``candidates/<id>/simulation/cae_mapping.json`` (copied from baseline)
+          - ``candidates/<id>/analysis/evaluation.json`` (refreshed)
+          - ``candidates/<id>/diagnostics/evaluation_report.json`` (refreshed)
+
+        Does NOT overwrite baseline geometry or baseline CAE artifacts. Does NOT
+        auto-accept or auto-promote candidates. Does NOT run unbounded iterations.
+        """
+        from aieng.converters.design_study_cae_evaluation import (
+            request_design_study_candidate_cae_evaluation,
+        )
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **request_design_study_candidate_cae_evaluation(
+                package_path,
+                candidate_id,
+                mode=data.get("mode", "prepare_only"),
+                allow_solver_execution=bool(data.get("allow_solver_execution", False)),
+                allow_solver_deck_generation=bool(data.get("allow_solver_deck_generation", True)),
+                allow_ranking_refresh=bool(data.get("allow_ranking_refresh", False)),
+                requested_by=data.get("requested_by", "agent"),
+                load_case_ids=data.get("load_case_ids"),
+                constraints_to_evaluate=data.get("constraints_to_evaluate"),
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,

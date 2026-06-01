@@ -85,6 +85,7 @@ the reference workbench. When in doubt, treat this file as the authoritative
 | Candidate proposal hints | `stable` | `analysis/design_study_candidate_hints.json`, `diagnostics/design_study_candidate_hints_report.json` | No | Not applicable | Advisory variable-scoped hints only; no patch generation, optimizer/search, execution, CAE, ranking, acceptance, or geometry mutation |
 | Candidate ranking and scoring | `stable` | `analysis/design_study_candidate_ranking.json`, `diagnostics/design_study_scoring_report.json` | No | Not applicable | Advisory ranking only; missing metrics remain `needs_more_evaluation`, no optimizer/search |
 | Candidate acceptance as derived artifact | `stable` | `analysis/design_study_acceptance.json`, `diagnostics/design_study_acceptance_report.json`, `accepted/<candidate_id>/geometry/shape_ir.json` | No package-level STEP | derived-only | Explicit gated copy to `accepted/`; production approval and baseline promotion are not claimed |
+| Candidate CAE evaluation request | `stable` | `candidates/<candidate_id>/analysis/cae_evaluation_request.json`, `candidates/<candidate_id>/diagnostics/cae_evaluation_request.json`, `candidates/<candidate_id>/simulation/setup.yaml`, `candidates/<candidate_id>/analysis/evaluation.json` | No | Not applicable | Explicit candidate-local CAE setup derivation + neutral metric normalization; solver execution disabled by default and best-effort when enabled; baseline artifacts never overwritten |
 
 ## Not Currently Claimed
 

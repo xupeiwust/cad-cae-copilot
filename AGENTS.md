@@ -830,6 +830,13 @@ evaluation, and acceptance provenance) and writes `analysis/design_study_accepta
 - **Baseline geometry is never overwritten.** The accepted candidate is a derived design artifact
   only; production approval is **not** claimed.
 
+**Candidate CAE evaluation request** (explicit, candidate-local) via
+`POST /api/projects/{id}/design-study/candidates/{candidate_id}/cae-evaluate`. Derives
+a candidate-local CAE setup from the baseline, normalizes existing candidate-local
+neutral metrics into `candidates/<candidate_id>/analysis/evaluation.json`, and optionally
+refreshes ranking. Solver execution is disabled by default and best-effort when enabled.
+Baseline CAE artifacts are never overwritten.
+
 **Canonical demo + regression** (`aieng-ui/backend/tests/test_design_study_demo.py`) exercises
 the full PR1–PR5 pipeline end-to-end using deterministic static/neutral metrics (no external solver):
 - Fixture: `aieng-ui/backend/tests/fixtures/design_study_demo/` — bracket-like baseline Shape IR,

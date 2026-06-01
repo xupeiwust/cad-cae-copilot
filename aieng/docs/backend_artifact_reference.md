@@ -134,6 +134,10 @@ reconstruction or assembly stage succeeded.
 | `analysis/design_study_acceptance.json` | explicit acceptance | Records an accepted/rejected derived candidate decision | Does not promote into baseline geometry |
 | `diagnostics/design_study_acceptance_report.json` | explicit acceptance | Acceptance eligibility and artifact checks | Diagnostic only |
 | `accepted/<candidate_id>/geometry/shape_ir.json` | explicit acceptance | Derived Shape IR copied into accepted workspace | Accepted artifact only; not production approval |
+| `candidates/<candidate_id>/analysis/cae_evaluation_request.json` | candidate CAE evaluation request | Explicit request artifact recording mode, permissions, and source references | Request-only; does not auto-execute or auto-accept |
+| `candidates/<candidate_id>/diagnostics/cae_evaluation_request.json` | candidate CAE evaluation request | Diagnostics covering setup derivation, deck/solver/normalization/ranking status | Diagnostic only |
+| `candidates/<candidate_id>/simulation/setup.yaml` | candidate CAE evaluation request | Candidate-local CAE setup derived from baseline (copied + warned) | May need re-verification if candidate geometry changed topology refs |
+| `candidates/<candidate_id>/simulation/cae_mapping.json` | candidate CAE evaluation request | Candidate-local CAE mapping derived from baseline | May need re-verification if candidate geometry changed topology refs |
 
 ## Honesty Rules Worth Repeating
 

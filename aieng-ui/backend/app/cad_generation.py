@@ -2795,6 +2795,11 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 summary["brep_shell_type"] = ((br.get("sewing") or {}).get("summary") or {}).get("shell_type")
                 summary["brep_step_exported"] = bool((br.get("step_export") or {}).get("step_exported"))
                 summary["brep_roundtrip_status"] = (br.get("roundtrip_verification") or {}).get("status")
+                # Mesh-to-CAD reconstruction STATUS AGGREGATOR v0 (diagnostic summary only).
+                from aieng.converters.mesh_to_cad_reconstruction_status import write_mesh_to_cad_reconstruction_status
+                rs = write_mesh_to_cad_reconstruction_status(package_path)
+                summary["mesh_to_cad_status"] = rs.get("status")
+                summary["mesh_to_cad_next_action"] = rs.get("recommended_next_action")
             except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:

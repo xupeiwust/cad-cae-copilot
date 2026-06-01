@@ -30,6 +30,7 @@ CANONICAL_DEMO_FILES = [
     _AIENG_ROOT / "tests" / "test_mesh_freeform_surface_readiness.py",
     _AIENG_ROOT / "tests" / "test_mesh_freeform_brep_faces.py",
     _AIENG_ROOT / "tests" / "test_freeform_face_trimming_readiness.py",
+    _AIENG_ROOT / "tests" / "test_mesh_to_cad_reconstruction_status.py",
     _BACKEND_TESTS / "test_assembly_topopt_demo.py",
     _BACKEND_TESTS / "test_design_study_demo.py",
     _AIENG_ROOT / "tests" / "test_showcase_gallery_docs.py",
@@ -92,6 +93,7 @@ KEY_ARTIFACT_NAMES = [
     "geometry/partial_freeform_brep_faces.json",
     "diagnostics/freeform_brep_face_generation.json",
     "diagnostics/freeform_face_trimming_readiness.json",
+    "diagnostics/mesh_to_cad_reconstruction_status.json",
 ]
 
 # Honesty boundary phrases that must appear across the canonical docs.

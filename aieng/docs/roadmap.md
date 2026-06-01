@@ -29,7 +29,8 @@ Completed/currently present in the reference backend:
 - Conservative mesh reconstruction ladder: mesh region graph, analytic surface
   fits, freeform/BSpline surface fitting evidence, freeform readiness scoring,
   freeform B-Rep face candidate generation, freeform trimming readiness diagnostics,
-  stitching/sewing diagnostics, and validated-only `geometry/reconstructed.step`
+  reconstruction status aggregation, stitching/sewing diagnostics, and
+  validated-only `geometry/reconstructed.step`
 - Assembly IR processing, simplified proxy assembly CAE artifacts, explicit
   selected-part assembly-aware topology optimization, post-optimization
   verification, and advisory recommendation/next-action artifacts
@@ -695,6 +696,43 @@ information to attempt future trimming and mixed analytic/freeform stitching.
   plan annotation remains candidate-only; existing analytic STEP path unchanged. No UI files.
 - **Out of scope (future):** trimmed freeform face generation, mixed analytic/freeform stitching,
   conditional STEP export after validation, exact boundary curve extraction.
+
+## Phase 37c: Mesh-to-CAD reconstruction status aggregator v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). Convergence/stability milestone: aggregates all scattered
+mesh-to-CAD pipeline diagnostics into one clear status report. This is a SUMMARY/DECISION layer —
+it does NOT create geometry, does NOT trigger fitting/sewing/export, and does NOT change
+existing behavior.
+
+- `build_mesh_to_cad_reconstruction_status(package_path)` reads every available pipeline
+  artifact (region graph, surface fits, freeform fits, readiness scores, face candidates,
+  trimming readiness, reconstruction plan, stitching plan, sewing, STEP export, roundtrip
+  verification) and classifies the overall reconstruction level:
+  `step_exported` | `closed_brep_solid` | `partial_brep` | `freeform_candidate_only` |
+  `mesh_only` | `insufficient_data`.
+- Coverage summary: analytic/freeform fitted area fractions, candidate face counts,
+  validated/generated counts.
+- Readiness flags: analytic ready, freeform evidence ready, face candidates ready,
+  trimming ready, closed-shell possible, STEP-export possible.
+- Blocker extraction from existing diagnostics with conservative severity:
+  `missing_boundary`, `large_edge_gaps`, `unfit_regions`, `freeform_not_trimmed`,
+  `step_roundtrip_failed`, `insufficient_data`, etc.
+- Recommended next action: `use_reconstructed_step`, `use_partial_brep`,
+  `attempt_freeform_trimming`, `improve_segmentation`, `improve_boundary`, `keep_mesh_only`,
+  `request_user_input`.
+- Honesty flags: `mesh_is_not_brep`, `freeform_candidates_are_not_stitched`,
+  `step_only_when_verified`, `production_cad_certified:false`.
+- Output: `diagnostics/mesh_to_cad_reconstruction_status.json`.
+- Integration: `recompile_shape_ir_package` auto-runs it after the full mesh-to-CAD pipeline
+  (sewing/STEP/roundtrip) as best-effort; missing artifacts degrade gracefully.
+- Tests: verified STEP → step_exported; valid solid no STEP → closed_brep_solid;
+  partial faces → partial_brep; freeform candidates → freeform_candidate_only;
+  trimming ready → attempt_freeform_trimming; boundary missing → improve_boundary;
+  mesh-only/insufficient → mesh_only/request_user_input; failed export → blocker;
+  roundtrip failed → not step_exported; integration writes artifact; analytic STEP path
+  unchanged. No UI files.
+- **Out of scope (future):** automatic action execution, auto-promotion to STEP,
+  freeform stitching, mixed analytic/freeform sewing.
 
 ## Phase 36: Closed shell → valid solid → STEP export — COMPLETE (2026-05-31)
 

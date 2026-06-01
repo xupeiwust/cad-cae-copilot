@@ -82,6 +82,7 @@ reconstruction or assembly stage succeeded.
 | `diagnostics/mesh_brep_sewing.json` | OCC sewing / solidification | Sewing and solidification outcome details | Diagnostic unless a validated solid is exported |
 | `diagnostics/mesh_brep_step_export.json` | STEP export gate | Records whether reconstructed STEP export was allowed | Export blocked unless a closed OCC-valid solid exists |
 | `diagnostics/mesh_brep_roundtrip_verification.json` | roundtrip verification | Verifies exported reconstructed STEP could be re-read/validated | Verification evidence only |
+| `diagnostics/mesh_to_cad_reconstruction_status.json` | reconstruction status aggregator v0 | Aggregates all mesh-to-CAD pipeline diagnostics into one status report: reconstruction level, STEP availability, blockers, next action | Diagnostic-only summary; does not create geometry or export STEP |
 | `geometry/reconstructed.step` | validated reconstruction export | Derived STEP from successful mesh reconstruction | Mesh-derived/lossy; not production CAD certified |
 | `geometry/reconstructed_topology_map.json` | successful reconstruction export | Topology extracted from the reconstructed STEP | Derived topology for the reconstructed artifact |
 | `geometry/mesh_topology_map.json` | reconstruction success/failure bookkeeping | Preserved original mesh topology when reconstructed topology becomes active | Original mesh evidence is retained rather than overwritten |

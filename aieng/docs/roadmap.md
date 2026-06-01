@@ -197,6 +197,59 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 40: Assembly CAE v0 simplified proxy execution — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). Builds on Assembly IR v0 and interface geometry
+validation to turn a validated assembly into a solver-neutral simplified CAE model,
+with optional best-effort deck generation, optional result normalization, and
+assembly result mapping. All connections remain proxy models; there is no nonlinear
+contact, no friction, no bolt preload, no assembly optimization, and no production
+contact-accuracy claim.
+
+- New module `aieng/src/aieng/converters/assembly_cae.py`.
+- **Model contract** — `build_assembly_cae_model` writes
+  `simulation/assembly_cae_model.json` and
+  `diagnostics/assembly_cae_model_diagnostics.json`, derived from
+  `assembly/assembly_ir.json`, `assembly/part_registry.json`,
+  `assembly/connection_graph.json`, `assembly/interface_resolution.json`,
+  `diagnostics/assembly_connection_geometry.json`, and
+  `simulation/assembly_cae_setup_draft.json`.
+- **Proxy connection mapping** — rigid_tie/bonded → tie/bonded proxy,
+  welded_proxy → welded tie proxy, bolted_proxy → bolted connector proxy (explicitly
+  no preload), spring_proxy → simplified spring connector, contact_proxy →
+  unsupported/draft-only. Invalid, unresolved, missing-interface, or positioning-only
+  connections are disabled / `needs_user_input`.
+- **Optional deck** — `simulation/assembly_calculix.inp` is generated only when
+  enabled simplified connections and actual per-part mesh refs exist. Missing assembly
+  meshing produces `diagnostics/assembly_solver_deck_generation.json` with `skipped`;
+  no fake deck is produced. Deck metadata records `simplified_proxy_connections:true`,
+  `contact_physics_modeled:false`, `bolt_preload_modeled:false`,
+  `production_ready:false`.
+- **Optional execution / normalization** — v0 does not require CalculiX. If a generic
+  neutral assembly result is present, it normalizes to
+  `analysis/assembly_computed_metrics.json` and
+  `analysis/assembly_field_regions.json`; otherwise
+  `diagnostics/assembly_solver_execution.json` records skipped/unavailable with
+  `solver_executed:false`.
+- **Result mapping** — `analysis/assembly_result_map.json` maps neutral assembly
+  field regions to part_id / interface_id / connection_id / source_ir_node using
+  resolved interface/part bboxes and centroid proximity. Confidence is high/medium/low;
+  ambiguous and unmapped regions are preserved honestly, and proxy-derived connection
+  results are marked as not real contact stress. Diagnostics:
+  `diagnostics/assembly_result_mapping.json`.
+- **Integration** — `resolve_and_validate_assembly_geometry(package_path)` now runs
+  assembly CAE v0 best-effort after interface/connection validation; `POST
+  /api/projects/{id}/assembly/process` and Shape IR recompilation expose the statuses.
+  The manifest assembly block records `assembly_cae_model_status`,
+  `solver_deck_status`, `solver_execution_status`, `assembly_result_mapping_status`,
+  proxy limitations, and `solver_executed` truthfully. Single-part packages remain
+  gated/unchanged.
+- Tests: assembly CAE model contract, proxy honesty, deck generated/skipped behavior,
+  generic/fake result normalization, result mapping, package integration, and existing
+  Assembly IR/interface regression tests. No UI files.
+- Future work: real contact modeling, bolt preload, assembly meshing improvements,
+  assembly-level topology/size optimization, assembly-aware result-guided optimization.
+
 ## Phase 39: Assembly interface resolution + geometric connection validation — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent / solver). Builds on Assembly IR v0: resolves interface
@@ -226,7 +279,7 @@ stay proxies; `geometry_validation_only:true` rides on every output.
 - **Updates** — `assembly/connection_graph.json` edges gain `geometry_status` / reasons / metrics;
   `simulation/assembly_cae_setup_draft.json` gains per-connection `geometry_status`, marks invalid
   connections `disabled` + `needs_user_input`, and attaches resolved world centroids to
-  loads/supports. No solver deck is ever produced.
+  loads/supports. Phase 39 itself produces no solver deck.
 - **Integration** — `resolve_and_validate_assembly_geometry(package_path)` auto-runs after
   `process_assembly_package` in `recompile_shape_ir_package` (gated) and from
   `POST /api/projects/{id}/assembly/process`.

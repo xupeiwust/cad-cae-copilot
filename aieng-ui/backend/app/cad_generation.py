@@ -2794,6 +2794,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
             geo = resolve_and_validate_assembly_geometry(package_path)
             if geo.get("assembly_present"):
                 summary["assembly_geometry_summary"] = geo.get("geometry_summary")
+                summary["assembly_cae_model_status"] = geo.get("assembly_cae_model_status")
+                summary["assembly_solver_deck_status"] = geo.get("solver_deck_status")
+                summary["assembly_solver_execution_status"] = geo.get("solver_execution_status")
+                summary["assembly_result_mapping_status"] = geo.get("assembly_result_mapping_status")
     except Exception:  # noqa: BLE001 - assembly processing is best-effort
         pass
     return summary

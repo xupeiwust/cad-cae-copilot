@@ -19,6 +19,7 @@ GitHub Copilot, OpenAI Codex, Cursor, …) drive **real 3D CAD modeling** (via
 - **Discoverable projects** — builds auto-name from their parts; locate any model by a part label via `aieng.find_projects_by_part`.
 - **One source, many representations** — a neutral **Shape IR** compiles through a pluggable backend registry: build123d/OCP (exact STEP/B-Rep), **NURBS** B-Rep surfaces (OCP), implicit **SDF** (organic → mesh), or **Manifold** (CSG mesh). B-Rep targets keep analytic per-face topology; mesh targets give fast previews. STEP/GLB are derived evidence at different levels, recorded in provenance.
 - **Conservative mesh-to-CAD ladder:** mesh/topology-optimization outputs can be analyzed into analytic face candidates and OCC-sewn shells. `geometry/reconstructed.step` is written only when OCC validates a closed solid and roundtrip checks run; it is a derived artifact and does not overwrite source/generated STEP. Original mesh topology is preserved at `geometry/mesh_topology_map.json`, and partial shells/invalid solids remove stale reconstructed artifacts instead of making production CAD claims.
+- **Assembly CAE v0:** optional Assembly IR packages can produce a solver-neutral simplified proxy CAE model, optional simplified CalculiX deck when real mesh refs exist, honest skipped solver diagnostics, and assembly result maps back to parts/interfaces/connections. It does not model nonlinear contact or bolt preload and is not production certified.
 - **Driven over MCP** — one tool registry, usable from Claude Code, Copilot, Codex, and Cursor.
 
 ---

@@ -10825,13 +10825,21 @@ def test_assembly_process_endpoint(tmp_path: Path) -> None:
     assert data["assembly_present"] is True and data["validation_status"] == "passed"
     assert data["interface_resolution"]["resolved"] == 2
     assert data["connection_geometry"]["connection_count"] == 1
+    assert data["assembly_cae_model_status"] == "ready"
+    assert data["solver_deck_status"] == "skipped"
+    assert data["solver_execution_status"] == "skipped"
 
     with zipfile.ZipFile(pkg) as zf:
         names = set(zf.namelist())
         for art in ("diagnostics/assembly_validation.json", "assembly/part_registry.json",
                     "assembly/connection_graph.json", "simulation/assembly_cae_setup_draft.json",
                     "assembly/interface_resolution.json",
-                    "diagnostics/assembly_connection_geometry.json"):
+                    "diagnostics/assembly_connection_geometry.json",
+                    "simulation/assembly_cae_model.json",
+                    "diagnostics/assembly_cae_model_diagnostics.json",
+                    "diagnostics/assembly_solver_deck_generation.json",
+                    "diagnostics/assembly_solver_execution.json",
+                    "diagnostics/assembly_result_mapping.json"):
             assert art in names
         assert not any(n.lower().endswith((".inp", ".frd", ".step", ".stp")) for n in names)
 

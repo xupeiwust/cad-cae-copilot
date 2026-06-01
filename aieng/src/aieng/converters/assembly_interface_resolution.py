@@ -527,10 +527,21 @@ def resolve_and_validate_assembly_geometry(package_path: str | Path) -> dict[str
         tmp.unlink(missing_ok=True)
         raise
 
+    cae_result: dict[str, Any] = {}
+    try:
+        from aieng.converters.assembly_cae import process_assembly_cae_package
+        cae_result = process_assembly_cae_package(package_path)
+    except Exception as exc:  # noqa: BLE001 - assembly CAE v0 is best-effort
+        cae_result = {"error": f"{type(exc).__name__}: {exc}"}
+
     return {
         "assembly_present": True,
         "resolution_summary": resolution["summary"],
         "geometry_summary": geometry["summary"],
         "cae_draft_status": draft["status"],
+        "assembly_cae_model_status": cae_result.get("assembly_cae_model_status"),
+        "solver_deck_status": cae_result.get("solver_deck_status"),
+        "solver_execution_status": cae_result.get("solver_execution_status"),
+        "assembly_result_mapping_status": cae_result.get("assembly_result_mapping_status"),
         "artifacts": sorted(members.keys()),
     }

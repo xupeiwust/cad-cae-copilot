@@ -1175,6 +1175,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             geo = resolve_and_validate_assembly_geometry(package_path)
             result["interface_resolution"] = geo.get("resolution_summary")
             result["connection_geometry"] = geo.get("geometry_summary")
+            result["assembly_cae_model_status"] = geo.get("assembly_cae_model_status")
+            result["solver_deck_status"] = geo.get("solver_deck_status")
+            result["solver_execution_status"] = geo.get("solver_execution_status")
+            result["assembly_result_mapping_status"] = geo.get("assembly_result_mapping_status")
         return result
 
     @app.post("/api/projects/{project_id}/brep/pick-face")

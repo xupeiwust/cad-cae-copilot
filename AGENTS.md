@@ -746,7 +746,8 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node), topology_optimization.json
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
 ├── assembly/                (optional, multi-part) assembly_ir.json, part_registry.json, connection_graph.json, interface_resolution.json
-├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd, assembly_cae_setup_draft.json)
+├── simulation/              setup/deck artifacts, including assembly_cae_setup_draft.json, assembly_cae_model.json, optional assembly_calculix.inp
+├── cae/                     setup.json, mesh_params.json, simulation/ (CalculiX .inp/.frd)
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json
 └── audit_log.jsonl          append-only action history
 ```
@@ -756,8 +757,8 @@ The backend manages all package I/O; never read it directly. Structure:
 A package MAY carry `assembly/assembly_ir.json` — a backend representation of a **multi-part
 assembly**: parts (+ roles / placements / materials), interfaces, and **simplified connections**
 (`rigid_tie` / `bonded` / `bolted_proxy` / `welded_proxy` / `contact_proxy` / `spring_proxy`).
-Connections are **PROXIES, not full nonlinear contact** — there is no bolt preload, no contact
-physics, and no assembly solver execution in v0. When present, the backend best-effort writes
+Connections are **PROXIES, not full nonlinear contact** — there is no bolt preload and no real
+contact physics. When present, the backend best-effort writes
 `diagnostics/assembly_validation.json`, `assembly/part_registry.json`,
 `assembly/connection_graph.json`, and a solver-neutral `simulation/assembly_cae_setup_draft.json`
 (auto on recompile, or via `POST /api/projects/{id}/assembly/process`). Schema:
@@ -771,8 +772,20 @@ connection's plausibility from centroid distance / bbox overlap / normal alignme
 fit → `geometry_status` ∈ plausible / warning / invalid / insufficient_data
 (`diagnostics/assembly_connection_geometry.json`). Invalid connections are marked `disabled` +
 `needs_user_input` in the CAE setup draft. Unresolved refs are reported honestly, never invented.
-Future work: assembly-level CAE execution, contact modeling, bolt preload, assembly result
-mapping, and assembly-aware optimization.
+
+Assembly CAE v0 then produces a **solver-neutral simplified proxy model**:
+`simulation/assembly_cae_model.json` plus
+`diagnostics/assembly_cae_model_diagnostics.json`. Solver deck generation is optional and
+best-effort: `simulation/assembly_calculix.inp` is written only when enabled simplified
+connections and actual per-part mesh refs exist; otherwise
+`diagnostics/assembly_solver_deck_generation.json` records `skipped`. Solver execution is
+also optional; v0 normalizes generic/fake assembly results when provided, otherwise writes
+`diagnostics/assembly_solver_execution.json` with `solver_executed:false`. Assembly results map
+to parts/interfaces/connections/source_ir_node with confidence in
+`analysis/assembly_result_map.json` and `diagnostics/assembly_result_mapping.json`.
+All outputs keep `production_ready:false`, `contact_physics_modeled:false`, and
+`bolt_preload_modeled:false`. Future work: real nonlinear contact modeling, bolt preload,
+assembly meshing improvements, and assembly-aware topology/size optimization.
 
 ---
 

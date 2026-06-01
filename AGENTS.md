@@ -783,9 +783,52 @@ also optional; v0 normalizes generic/fake assembly results when provided, otherw
 `diagnostics/assembly_solver_execution.json` with `solver_executed:false`. Assembly results map
 to parts/interfaces/connections/source_ir_node with confidence in
 `analysis/assembly_result_map.json` and `diagnostics/assembly_result_mapping.json`.
+
+Assembly-aware topology optimization v0 is **explicit execution only**:
+setup writes `analysis/assembly_topopt_problem.json`,
+`diagnostics/assembly_topopt_derivation.json`, and, when supports+loads are safe,
+`analysis/topology_optimization_problem.json`. A separate explicit backend helper
+`run_assembly_topology_optimization(package_path, ...)` — exposed through
+`opt.run_assembly_topology_optimization` and
+`POST /api/projects/{project_id}/assembly/topology-optimization/run` — consumes
+those artifacts, calls the existing single-part SIMP optimizer, and writes:
+- `analysis/assembly_topology_optimization.json`
+- `diagnostics/assembly_topopt_execution.json`
+- `diagnostics/assembly_post_optimization_verification.json`
+- `analysis/assembly_optimization_summary.json`
+- `analysis/assembly_design_recommendations.json`
+- `diagnostics/assembly_postprocess_report.json`
+- `analysis/assembly_next_actions.json`
+- `parts/<selected_part_id>/analysis/topology_optimization.json`
+- `parts/<selected_part_id>/geometry/optimized_shape_ir.json` when writeback is safe
+
+This optimizes **one selected `design_part` only**. Reference, fixture, fastener,
+load-source, frozen, and non-editable parts are rejected. Mounting/bolt/weld/contact/
+mating connector regions are passed through as preserve masks when their grid cells
+are known; unmapped preserve regions are warned, never silently ignored. Writeback
+creates a selected-part derived artifact and does **not** overwrite package-level
+geometry or reference parts. Post-optimization verification checks that only the
+selected part got derived artifacts, that preserve interfaces stay traceable (or
+warn honestly when they do not), and that proxy/contact/preload limitations are
+still explicit. It does **not** certify physical interface equivalence.
+After verification, a best-effort rule-based postprocess pass writes structured
+assembly design recommendations and a postprocess report. These are advisory
+only: they do not rerun topopt automatically, do not mutate geometry, and do
+not certify downstream export/reconstruction safety beyond the same proxy-model
+honesty boundaries.
+
+Canonical backend regression/demo fixture: `aieng-ui/backend/tests/fixtures/assembly_topopt_demo/`
+plus `aieng-ui/backend/tests/test_assembly_topopt_demo.py`. It exercises the full
+backend-only loop on a deterministic proxy-based assembly:
+`/assembly/process` → `write_assembly_topopt_problem(...)` →
+`/assembly/topology-optimization/run` → post-optimization verification + recommendation/report writeback, and also pins the unsafe-data
+`needs_user_input` path where no standard problem is emitted and no geometry is
+overwritten. Run it with:
+`pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q`
+
 All outputs keep `production_ready:false`, `contact_physics_modeled:false`, and
 `bolt_preload_modeled:false`. Future work: real nonlinear contact modeling, bolt preload,
-assembly meshing improvements, and assembly-aware topology/size optimization.
+assembly meshing improvements, and simultaneous multi-part topology/size optimization.
 
 ---
 

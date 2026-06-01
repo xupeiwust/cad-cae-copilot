@@ -1486,8 +1486,8 @@ def run_topology_optimization(problem: dict[str, Any], *, optimizer: str = "simp
     # never alters BCs/material/design-space. Off/absent -> classic behavior unchanged.
     guidance_field: dict[str, Any] | None = None
     rg = problem.get("result_guidance") or {}
-    if problem.get("use_result_guidance") and rg.get("available"):
-        guidance_field = build_guidance_field(problem)
+    if problem.get("use_result_guidance") and (problem.get("guidance_field") or rg.get("available")):
+        guidance_field = problem.get("guidance_field") or build_guidance_field(problem)
         problem = {**problem, "guidance_field": guidance_field}
 
     opt = entry["fn"](problem)

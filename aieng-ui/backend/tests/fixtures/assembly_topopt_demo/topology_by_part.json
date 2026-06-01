@@ -1,0 +1,129 @@
+{
+  "bracket": {
+    "entities": [
+      {
+        "body_id": "bracket",
+        "bounding_box": [
+          0,
+          0,
+          0,
+          80,
+          20,
+          10
+        ],
+        "id": "bracket",
+        "type": "solid"
+      },
+      {
+        "area": 200.0,
+        "body_id": "bracket",
+        "bounding_box": [
+          0,
+          0,
+          0,
+          0,
+          20,
+          10
+        ],
+        "id": "face_mount",
+        "normal": [
+          -1,
+          0,
+          0
+        ],
+        "type": "face"
+      },
+      {
+        "area": 80.0,
+        "body_id": "bracket",
+        "bounding_box": [
+          80,
+          6,
+          0,
+          80,
+          14,
+          10
+        ],
+        "id": "face_load",
+        "normal": [
+          1,
+          0,
+          0
+        ],
+        "type": "face"
+      }
+    ]
+  },
+  "load_jig": {
+    "entities": [
+      {
+        "body_id": "load_jig",
+        "bounding_box": [
+          80,
+          6,
+          0,
+          90,
+          14,
+          10
+        ],
+        "id": "load_jig",
+        "type": "solid"
+      },
+      {
+        "area": 80.0,
+        "body_id": "load_jig",
+        "bounding_box": [
+          80,
+          6,
+          0,
+          80,
+          14,
+          10
+        ],
+        "id": "face_jig",
+        "normal": [
+          -1,
+          0,
+          0
+        ],
+        "type": "face"
+      }
+    ]
+  },
+  "wall": {
+    "entities": [
+      {
+        "body_id": "wall",
+        "bounding_box": [
+          -10,
+          0,
+          0,
+          0,
+          20,
+          10
+        ],
+        "id": "wall",
+        "type": "solid"
+      },
+      {
+        "area": 200.0,
+        "body_id": "wall",
+        "bounding_box": [
+          0,
+          0,
+          0,
+          0,
+          20,
+          10
+        ],
+        "id": "face_wall",
+        "normal": [
+          1,
+          0,
+          0
+        ],
+        "type": "face"
+      }
+    ]
+  }
+}

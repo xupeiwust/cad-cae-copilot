@@ -10922,3 +10922,142 @@ def test_assembly_process_endpoint_no_assembly(tmp_path: Path) -> None:
     resp = client.post(f"/api/projects/{project_id}/assembly/process", json={})
     assert resp.status_code == 200
     assert resp.json()["assembly_present"] is False
+
+
+def test_assembly_topology_optimization_run_endpoint_is_explicit_and_part_scoped(tmp_path: Path) -> None:
+    """Explicit endpoint runs selected-part assembly topopt and writes only part-level artifacts."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from aieng.converters.assembly_cae import ASSEMBLY_CAE_MODEL_PATH, build_assembly_cae_model
+    from aieng.converters.assembly_interface_resolution import (
+        ASSEMBLY_CONNECTION_GEOMETRY_PATH,
+        INTERFACE_RESOLUTION_PATH,
+        resolve_assembly_interfaces,
+        validate_connection_geometry,
+    )
+    from aieng.converters.assembly_ir import (
+        ASSEMBLY_CAE_DRAFT_PATH,
+        ASSEMBLY_IR_PATH,
+        CONNECTION_GRAPH_PATH,
+        CONVERSION_MANIFEST_PATH,
+        PART_REGISTRY_PATH,
+        build_assembly_cae_setup_draft,
+        build_connection_graph,
+        build_part_registry,
+    )
+    from aieng.converters.assembly_topopt import (
+        ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH,
+        ASSEMBLY_NEXT_ACTIONS_PATH,
+        ASSEMBLY_POSTPROCESS_REPORT_PATH,
+        write_assembly_topopt_problem,
+    )
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("asm-topopt"))
+    project_id = project["id"]
+    pkg = project_dir(settings, project_id) / "asm-topopt.aieng"
+    pkg.parent.mkdir(parents=True, exist_ok=True)
+    assembly = {
+        "format": "aieng.assembly_ir", "schema_version": "0.1", "unit": "mm",
+        "parts": [
+            {"id": "bracket", "role": "design_part", "geometry_ref": "geometry/bracket.step",
+             "topology_ref": "parts/bracket/topology_map.json", "source_ir_node": "node_bracket"},
+            {"id": "wall", "role": "reference_part", "geometry_ref": "geometry/wall.step",
+             "topology_ref": "parts/wall/topology_map.json", "source_ir_node": "node_wall"},
+            {"id": "load_jig", "role": "load_source", "geometry_ref": "geometry/load_jig.step",
+             "topology_ref": "parts/load_jig/topology_map.json", "source_ir_node": "node_load_jig"},
+        ],
+        "interfaces": [
+            {"id": "if_mount", "part_id": "bracket", "semantic_role": "mounting_face",
+             "topology_refs": {"face_ids": ["face_mount"]}},
+            {"id": "if_wall", "part_id": "wall", "semantic_role": "support_face",
+             "topology_refs": {"face_ids": ["face_wall"]}},
+            {"id": "if_load", "part_id": "bracket", "semantic_role": "load_face",
+             "topology_refs": {"face_ids": ["face_load"]}},
+            {"id": "if_jig", "part_id": "load_jig", "semantic_role": "load_face",
+             "topology_refs": {"face_ids": ["face_jig"]}},
+        ],
+        "connections": [
+            {"id": "c_mount", "type": "rigid_tie", "part_a": "bracket", "part_b": "wall",
+             "interface_a": "if_mount", "interface_b": "if_wall", "behavior": ["load_transfer"]},
+            {"id": "c_load", "type": "bolted_proxy", "part_a": "bracket", "part_b": "load_jig",
+             "interface_a": "if_load", "interface_b": "if_jig", "behavior": ["load_transfer"]},
+        ],
+        "analysis_intent": {"design_parts": ["bracket"], "frozen_parts": ["wall", "load_jig"]},
+    }
+    topo = {
+        "bracket": {
+            "entities": [
+                {"id": "bracket", "type": "solid", "body_id": "bracket",
+                 "bounding_box": [0, 0, 0, 60, 12, 6]},
+                {"id": "face_mount", "type": "face", "body_id": "bracket",
+                 "bounding_box": [0, 0, 0, 0, 12, 6], "normal": [-1, 0, 0], "area": 72},
+                {"id": "face_load", "type": "face", "body_id": "bracket",
+                 "bounding_box": [60, 3, 0, 60, 9, 6], "normal": [1, 0, 0], "area": 36},
+            ]
+        },
+        "wall": {"entities": [
+            {"id": "face_wall", "type": "face", "body_id": "wall",
+             "bounding_box": [0, 0, 0, 0, 12, 6], "normal": [1, 0, 0], "area": 72},
+        ]},
+        "load_jig": {"entities": [
+            {"id": "face_jig", "type": "face", "body_id": "load_jig",
+             "bounding_box": [60, 3, 0, 60, 9, 6], "normal": [-1, 0, 0], "area": 36},
+        ]},
+    }
+    topo_by_part = {pid: {e["id"]: e for e in doc["entities"]} for pid, doc in topo.items()}
+    resolution = resolve_assembly_interfaces(assembly, topo_by_part)
+    geometry = validate_connection_geometry(assembly, resolution)
+    registry = build_part_registry(assembly)
+    graph = build_connection_graph(assembly)
+    draft = build_assembly_cae_setup_draft(assembly)
+    model, _diag = build_assembly_cae_model(
+        assembly=assembly,
+        part_registry=registry,
+        connection_graph=graph,
+        interface_resolution=resolution,
+        connection_geometry=geometry,
+        setup_draft=draft,
+    )
+    for load in model.get("boundary_conditions", {}).get("loads", []):
+        if load.get("interface_id") == "if_load":
+            load["direction"] = [0.0, -1.0, 0.0]
+            load["value_n"] = 10.0
+    with zipfile.ZipFile(pkg, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "asm-topopt", "resources": {}}))
+        zf.writestr(ASSEMBLY_IR_PATH, json.dumps(assembly))
+        zf.writestr(PART_REGISTRY_PATH, json.dumps(registry))
+        zf.writestr(CONNECTION_GRAPH_PATH, json.dumps(graph))
+        zf.writestr(INTERFACE_RESOLUTION_PATH, json.dumps(resolution))
+        zf.writestr(ASSEMBLY_CONNECTION_GEOMETRY_PATH, json.dumps(geometry))
+        zf.writestr(ASSEMBLY_CAE_DRAFT_PATH, json.dumps(draft))
+        zf.writestr(ASSEMBLY_CAE_MODEL_PATH, json.dumps(model))
+        zf.writestr(CONVERSION_MANIFEST_PATH, json.dumps({"format": "aieng.conversion_manifest"}))
+        for pid, doc in topo.items():
+            zf.writestr(f"parts/{pid}/topology_map.json", json.dumps(doc))
+    project["aieng_file"] = "asm-topopt.aieng"
+    save_project(settings, project)
+    setup = write_assembly_topopt_problem(pkg, resolution=10, max_iters=4)
+    assert setup["status"] == "ready"
+
+    resp = client.post(
+        f"/api/projects/{project_id}/assembly/topology-optimization/run",
+        json={"method": "voxels", "representation": "manifold_mesh"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tool"] == "opt.run_assembly_topology_optimization"
+    assert data["status"] == "derived_part_artifact_written"
+    assert data["assembly_topology_optimization"]["recommendation_status"] == "accept"
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        assert "analysis/assembly_topology_optimization.json" in names
+        assert "diagnostics/assembly_topopt_execution.json" in names
+        assert ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH in names
+        assert ASSEMBLY_POSTPROCESS_REPORT_PATH in names
+        assert ASSEMBLY_NEXT_ACTIONS_PATH in names
+        assert "parts/bracket/analysis/topology_optimization.json" in names
+        assert "parts/bracket/geometry/optimized_shape_ir.json" in names
+        assert "parts/wall/geometry/optimized_shape_ir.json" not in names
+        assert "geometry/shape_ir.json" not in names

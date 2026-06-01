@@ -1,0 +1,138 @@
+{
+  "analysis_intent": {
+    "design_parts": [
+      "bracket"
+    ],
+    "frozen_parts": [
+      "wall",
+      "load_jig"
+    ]
+  },
+  "connections": [
+    {
+      "behavior": [
+        "load_transfer"
+      ],
+      "id": "c_mount",
+      "interface_a": "if_mount",
+      "interface_b": "if_wall",
+      "limitations": [
+        "proxy tie only"
+      ],
+      "part_a": "bracket",
+      "part_b": "wall",
+      "type": "rigid_tie"
+    },
+    {
+      "behavior": [
+        "load_transfer"
+      ],
+      "id": "c_load",
+      "interface_a": "if_load",
+      "interface_b": "if_jig",
+      "limitations": [
+        "load fixture proxy only",
+        "no preload"
+      ],
+      "part_a": "bracket",
+      "part_b": "load_jig",
+      "type": "bolted_proxy"
+    }
+  ],
+  "format": "aieng.assembly_ir",
+  "interfaces": [
+    {
+      "id": "if_mount",
+      "part_id": "bracket",
+      "semantic_role": "mounting_face",
+      "topology_refs": {
+        "face_ids": [
+          "face_mount"
+        ]
+      }
+    },
+    {
+      "id": "if_wall",
+      "part_id": "wall",
+      "semantic_role": "support_face",
+      "topology_refs": {
+        "face_ids": [
+          "face_wall"
+        ]
+      }
+    },
+    {
+      "id": "if_load",
+      "part_id": "bracket",
+      "semantic_role": "load_face",
+      "topology_refs": {
+        "face_ids": [
+          "face_load"
+        ]
+      }
+    },
+    {
+      "id": "if_jig",
+      "part_id": "load_jig",
+      "semantic_role": "load_face",
+      "topology_refs": {
+        "face_ids": [
+          "face_jig"
+        ]
+      }
+    }
+  ],
+  "parts": [
+    {
+      "geometry_ref": "geometry/bracket.step",
+      "id": "bracket",
+      "material": "aluminum",
+      "name": "Optimized bracket",
+      "role": "design_part",
+      "source_ir_node": "node_bracket",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "unit": "mm"
+      },
+      "topology_ref": "parts/bracket/topology_map.json"
+    },
+    {
+      "geometry_ref": "geometry/wall.step",
+      "id": "wall",
+      "name": "Fixture wall",
+      "role": "reference_part",
+      "source_ir_node": "node_wall",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "unit": "mm"
+      },
+      "topology_ref": "parts/wall/topology_map.json"
+    },
+    {
+      "geometry_ref": "geometry/load_jig.step",
+      "id": "load_jig",
+      "name": "Load jig",
+      "role": "load_source",
+      "source_ir_node": "node_load_jig",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "unit": "mm"
+      },
+      "topology_ref": "parts/load_jig/topology_map.json"
+    }
+  ],
+  "schema_version": "0.1",
+  "unit": "mm"
+}

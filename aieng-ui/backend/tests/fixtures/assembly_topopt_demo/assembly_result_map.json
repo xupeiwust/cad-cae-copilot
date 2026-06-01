@@ -1,0 +1,50 @@
+{
+  "format": "aieng.assembly_result_map",
+  "mapped_results": [
+    {
+      "confidence": "high",
+      "connection_id": "c_mount",
+      "interface_id": "if_mount",
+      "load_case_id": "assembly_lc",
+      "location": [
+        4.0,
+        10.0,
+        5.0
+      ],
+      "mapping_method": "interface_bbox",
+      "part_id": "bracket",
+      "proxy_derived": true,
+      "region_id": "hot_stress",
+      "result_type": "stress",
+      "source_ir_node": "node_bracket",
+      "unit": "MPa",
+      "value": 182.0
+    },
+    {
+      "confidence": "high",
+      "connection_id": "c_load",
+      "interface_id": "if_load",
+      "load_case_id": "assembly_lc",
+      "location": [
+        76.0,
+        10.0,
+        5.0
+      ],
+      "mapping_method": "interface_bbox",
+      "part_id": "bracket",
+      "proxy_derived": true,
+      "region_id": "tip_deflection",
+      "result_type": "displacement",
+      "source_ir_node": "node_bracket",
+      "unit": "mm",
+      "value": 0.62
+    }
+  ],
+  "unmapped_regions": [
+    {
+      "reason": "outside assembly proxy domain",
+      "region_id": "unmapped_far",
+      "result_type": "stress"
+    }
+  ]
+}

@@ -197,6 +197,104 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 44: Assembly result-guided postprocess recommendations v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / new optimizer). Adds a conservative
+postprocess recommendation/report layer on top of Phase 43 assembly
+post-optimization verification.
+
+- New helper: `write_assembly_design_recommendations(package_path, ...)` in
+  `aieng.converters.assembly_topopt`.
+- Trigger: `run_assembly_topology_optimization(...)` now runs the recommendation
+  writer best-effort after post-optimization verification and writes:
+  - `analysis/assembly_design_recommendations.json`
+  - `diagnostics/assembly_postprocess_report.json`
+  - `analysis/assembly_next_actions.json`
+- Recommendation rules stay honest and machine-readable: accepted candidate,
+  rerun/preserve/stiffness suggestions, interface-review requests,
+  request-user-input degradation, downstream export blocking, and advisory
+  continue-to-dimension-optimization / mesh-to-CAD suggestions.
+- Inputs are read-only: the postprocess layer never reruns topopt, never edits
+  geometry, and never upgrades proxy-derived evidence into stronger physical
+  claims.
+- Degraded paths are explicit: missing inputs or low-confidence/unmapped result
+  guidance return `insufficient_data` / `needs_user_input` instead of silently
+  producing confident rerun advice.
+- Tests: accepted canonical demo recommendation set, rerun recommendation when
+  high-confidence guidance was not consumed, low-confidence mapping degradation,
+  single-part/no-assembly no-op behavior, backend demo artifact coverage, and
+  explicit API endpoint regression.
+
+## Phase 43: Assembly post-optimization verification v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / new optimizer). Adds a conservative
+post-writeback verification layer for assembly-aware topology optimization.
+
+- New helper: `verify_assembly_post_optimization(package_path, ...)` in
+  `aieng.converters.assembly_topopt`.
+- Trigger: `run_assembly_topology_optimization(...)` now runs the verifier
+  best-effort after explicit execution/writeback and writes:
+  - `diagnostics/assembly_post_optimization_verification.json`
+  - `analysis/assembly_optimization_summary.json`
+- Verification scope: selected-part artifact presence, non-selected/frozen part
+  immutability, preserve-region traceability, writeback target traceability, and
+  honest assembly/proxy provenance.
+- Preserve interfaces are checked as **traceable evidence only**: mapped cell
+  counts and connection/interface links are verified where available; no claim is
+  made that interface geometry is physically unchanged.
+- Honesty boundaries are enforced: the verifier fails if artifacts claim modeled
+  contact physics, friction, bolt preload, or multi-part simultaneous
+  optimization; proxy limitations must remain explicit.
+- Degraded paths are honest: missing setup/execution inputs return
+  `status=insufficient_data` instead of throwing, and unsafe/no-writeback cases
+  are surfaced through verification diagnostics.
+- Tests: successful selected-part verification, missing selected artifact,
+  unexpected non-selected/frozen-part artifacts, unmapped preserve-region
+  warnings, unsupported-claim failures, insufficient-input degradation, canonical
+  backend demo verification, and single-part topopt regression.
+
+## Phase 42: Assembly-aware topology optimization execution/writeback v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / new optimizer). Connects Phase 41 setup to the
+existing topology-optimization execution/writeback path for one selected assembly
+`design_part`.
+
+- New explicit helper: `run_assembly_topology_optimization(package_path, ...)`,
+  exposed as `opt.run_assembly_topology_optimization` and
+  `POST /api/projects/{project_id}/assembly/topology-optimization/run`. It is not
+  called automatically by assembly processing.
+- Execution reads `analysis/assembly_topopt_problem.json` and
+  `analysis/topology_optimization_problem.json`, validates one selected optimizable
+  part, rejects reference/frozen/fixture/fastener/load-source parts, and returns
+  `needs_user_input` diagnostics when prerequisites are missing.
+- Optimizer behavior is reused, not duplicated: the wrapper calls the existing
+  `run_topology_optimization` with the selected-part standard problem.
+- Preserve constraints: assembly interface preserve regions are converted into an
+  explicit guidance field for existing SIMP optimizers. Diagnostics report
+  `preserve_regions_total`, mapped/unmapped counts, and `cells_preserved`; unmapped
+  preserve regions warn rather than disappearing.
+- Result guidance: existing assembly result-map stress/deflection guidance is
+  preserved and merged with interface preserve masks where available.
+- Writeback: creates selected-part derived artifacts only:
+  `parts/<part_id>/analysis/topology_optimization.json` and, when a safe target is
+  known, `parts/<part_id>/geometry/optimized_shape_ir.json`. Package-level geometry
+  and reference parts are not overwritten.
+- Outputs: `analysis/assembly_topology_optimization.json`,
+  `diagnostics/assembly_topopt_execution.json`, selected-part result/writeback
+  artifacts, post-optimization verification diagnostics/summary, and manifest provenance.
+- Canonical regression/demo package: a deterministic backend-only fixture now
+  lives under `aieng-ui/backend/tests/fixtures/assembly_topopt_demo/`, with
+  `aieng-ui/backend/tests/test_assembly_topopt_demo.py` covering
+  `/assembly/process` → setup derivation → explicit execution/writeback and the
+  unsafe-data `needs_user_input` path where no geometry is overwritten.
+- Honesty boundaries: one selected part only; no nonlinear contact/friction, no bolt
+  preload, no new optimizer, no simultaneous multi-part optimization, and
+  `production_ready:false`.
+- Tests: explicit optimizer run, missing standard problem diagnostics, selected-part
+  provenance, reference-part non-modification, preserve-mask diagnostics,
+  assembly-result guidance preservation, safe writeback target failure,
+  canonical backend demo/regression coverage, and single-part topopt regression.
+
 ## Phase 41: Assembly-aware topology optimization setup v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent / new optimizer). Builds on Assembly IR v0,

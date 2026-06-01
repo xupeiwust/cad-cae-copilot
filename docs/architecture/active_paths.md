@@ -42,3 +42,20 @@ and guidance for contributors and AI agents.
   build123d workflow.
 - `archive/CAD-Agent-main` preserves a CadQuery-first agent skill experiment.
   Nothing in it is on the active execution path.
+
+## Local development startup
+
+The cross-platform launcher lives at `scripts/dev.py`. It starts both the active
+backend (`aieng-ui/backend`) and frontend (`aieng-ui/frontend`) concurrently.
+
+| Platform | Command |
+|---|---|
+| Windows PowerShell | `.\dev.ps1` |
+| macOS / Linux / WSL | `make dev` or `./scripts/dev.sh` |
+| Any (fallback) | `python scripts/dev.py` |
+
+Individual services:
+- Backend only: `make backend` (or `cd aieng-ui/backend && uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`)
+- Frontend only: `make frontend` (or `cd aieng-ui/frontend && npm run dev`)
+
+Environment variables: `BACKEND_PORT`, `FRONTEND_PORT`, `AIENG_PYTHON`.

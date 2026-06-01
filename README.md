@@ -142,15 +142,49 @@ conda create -n aieng311 python=3.11 -y
 conda activate aieng311
 pip install build123d
 cd aieng-ui/backend && pip install -e .
+```
 
-# 2. Run the backend (FastAPI on http://127.0.0.1:8000)
-#    Windows helper handles interpreter selection + port guard:
-#      ../scripts/backend.ps1
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+### Start everything (one command)
 
-# 3. Run the frontend (Vite dev server on http://localhost:5173)
-cd ../frontend && npm install && npm run dev
-#    Windows helper: aieng-ui/scripts/frontend.ps1
+**Windows PowerShell** (recommended):
+```powershell
+.\dev.ps1
+```
+
+**macOS / Linux / WSL** (recommended):
+```bash
+make dev
+```
+
+**Cross-platform fallback** (any OS):
+```bash
+python scripts/dev.py
+# or on macOS/Linux:
+python3 scripts/dev.py
+```
+
+This starts both the backend (FastAPI on `http://127.0.0.1:8000`) and the frontend
+(Vite on `http://localhost:5173`) in one terminal. Press **Ctrl+C** to stop both.
+
+Custom ports:
+```bash
+BACKEND_PORT=8080 FRONTEND_PORT=3000 make dev
+```
+
+### Start services individually
+
+**Backend only:**
+```bash
+make backend
+# or manually:
+cd aieng-ui/backend && uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**Frontend only:**
+```bash
+make frontend
+# or manually:
+cd aieng-ui/frontend && npm install && npm run dev
 ```
 
 Open http://localhost:5173 for the workbench UI.

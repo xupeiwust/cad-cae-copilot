@@ -26,6 +26,7 @@ _DOCS = _AIENG_ROOT / "docs"
 CANONICAL_DEMO_FILES = [
     _AIENG_ROOT / "tests" / "test_topology_optimization.py",
     _AIENG_ROOT / "tests" / "test_mesh_brep_solidification.py",
+    _AIENG_ROOT / "tests" / "test_mesh_freeform_surface_fitting.py",
     _BACKEND_TESTS / "test_assembly_topopt_demo.py",
     _BACKEND_TESTS / "test_design_study_demo.py",
     _AIENG_ROOT / "tests" / "test_showcase_gallery_docs.py",
@@ -81,6 +82,9 @@ KEY_ARTIFACT_NAMES = [
     "candidates/<candidate_id>/analysis/cae_evaluation_request.json",
     "candidates/<candidate_id>/diagnostics/cae_evaluation_request.json",
     "candidates/<candidate_id>/simulation/setup.yaml",
+    # Freeform surface fitting v0 artifacts
+    "graph/mesh_freeform_surface_fit.json",
+    "diagnostics/mesh_freeform_surface_fitting.json",
 ]
 
 # Honesty boundary phrases that must appear across the canonical docs.

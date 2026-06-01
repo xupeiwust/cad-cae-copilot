@@ -53,22 +53,26 @@ pytest aieng/tests/test_topology_optimization.py -q
 
 ## 2. Mesh-to-CAD B-Rep Reconstruction Demo
 
-**Purpose:** Validate mesh-to-analytic-B-Rep reconstruction pipeline: segmentation → surface fitting → face generation → stitching → sewing → STEP export.
+**Purpose:** Validate mesh-to-analytic-B-Rep reconstruction pipeline: segmentation → surface fitting → freeform fitting evidence → face generation → stitching → sewing → STEP export.
 
 **Test files:**
 - `aieng/tests/test_mesh_brep_reconstruction.py` (10 tests)
 - `aieng/tests/test_mesh_brep_face_generation.py` (9 tests)
 - `aieng/tests/test_mesh_brep_stitching.py` (8 tests)
 - `aieng/tests/test_mesh_brep_solidification.py` (11 tests)
+- `aieng/tests/test_mesh_freeform_surface_fitting.py` (15 tests)
 
 **Run:**
 ```bash
 pytest aieng/tests/test_mesh_brep_solidification.py -q
+pytest aieng/tests/test_mesh_freeform_surface_fitting.py -q
 ```
 
 **Expected artifacts:**
 - `graph/mesh_region_graph.json` — segmented mesh regions
-- `graph/mesh_surface_fit.json` — fitted surface parameters
+- `graph/mesh_surface_fit.json` — fitted plane/cylinder surface parameters
+- `graph/mesh_freeform_surface_fit.json` — approximate BSpline-like freeform surface evidence
+- `diagnostics/mesh_freeform_surface_fitting.json` — freeform fitting diagnostics
 - `diagnostics/mesh_reconstruction_readiness.json` — readiness gates
 - `geometry/partial_brep_surfaces.json` — analytic surface candidates
 - `geometry/partial_brep_faces.json` — validated OCC face candidates
@@ -80,6 +84,8 @@ pytest aieng/tests/test_mesh_brep_solidification.py -q
 **Expected behavior:**
 - Cube produces 6 face candidates, 12 matched edge pairs, closed shell
 - Cylinder produces cylinder face candidate
+- Freeform patches (saddle, sphere-like) produce BSpline surface evidence with control net and error metrics
+- Freeform evidence does NOT generate B-Rep faces or trigger STEP export
 - Missing/degenerate faces are skipped honestly (no false STEP)
 - Only closed OCC-valid solids write STEP; partial shells do not
 - Roundtrip verification checks STEP re-imports correctly
@@ -87,7 +93,7 @@ pytest aieng/tests/test_mesh_brep_solidification.py -q
 **Honesty boundaries:**
 - Reconstruction is mesh-derived and lossy; not original design history
 - Dominant surface classes: plane, cylinder, sphere, cone, torus
-- Freeform/NURBS fitting is future work
+- Freeform/BSpline fitting is evidence-only v0; NOT B-Rep faces, NOT STEP, NOT CAD-editable
 - `geometry/reconstructed.step` never overwrites the source STEP
 - Failed reconstruction removes stale artifacts and restores mesh topology
 

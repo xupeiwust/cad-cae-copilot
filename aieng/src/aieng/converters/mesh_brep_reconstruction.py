@@ -16,6 +16,7 @@ from aieng import FORMAT_VERSION
 from aieng.converters.mesh_region_segmentation import MESH_REGION_GRAPH_PATH
 from aieng.converters.mesh_surface_fitting import MESH_SURFACE_FIT_PATH
 from aieng.converters.mesh_reconstruction_readiness import MESH_RECONSTRUCTION_READINESS_PATH
+from aieng.converters.mesh_freeform_surface_fitting import FREEFORM_SURFACE_FIT_PATH
 
 MESH_BREP_PLAN_PATH = "graph/mesh_brep_reconstruction_plan.json"
 PARTIAL_BREP_SURFACES_PATH = "geometry/partial_brep_surfaces.json"
@@ -107,11 +108,12 @@ def plan_partial_brep(
     region_graph: dict[str, Any] | None,
     surface_fit: dict[str, Any] | None,
     readiness: dict[str, Any] | None,
+    freeform_fit: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Plan partial B-Rep reconstruction from accepted fits. Returns
     ``(plan, surfaces, diagnostics)``. Pure. Produces FACE CANDIDATES only — no shell,
     no solid, no STEP. Gated out (no candidates + warning) when readiness says the mesh
-    needs cleanup or is insufficient."""
+    needs cleanup or is insufficient. Freeform fits are included as evidence-only entries."""
     prov_src = (surface_fit or {}).get("provenance") or (region_graph or {}).get("provenance") or {}
     provenance = {
         "source_mesh_artifact": prov_src.get("source_mesh_artifact"),
@@ -120,6 +122,7 @@ def plan_partial_brep(
         "runtime": prov_src.get("runtime"),
         "region_graph": MESH_REGION_GRAPH_PATH,
         "surface_fit": MESH_SURFACE_FIT_PATH,
+        "freeform_surface_fit": FREEFORM_SURFACE_FIT_PATH,
         "readiness": MESH_RECONSTRUCTION_READINESS_PATH,
         "representation_kind": "mesh",
         "geometry_kind": "mesh",
@@ -127,7 +130,8 @@ def plan_partial_brep(
         "limitations": [
             "Face candidates are analytic approximations of mesh regions. NOT stitched, "
             "NOT a watertight solid, NOT STEP, NOT NURBS, NOT production CAD. Boundaries are "
-            "approximate (convex-hull for planes, axial range for cylinders).",
+            "approximate (convex-hull for planes, axial range for cylinders). "
+            "Freeform fits are evidence-only; no B-Rep faces generated from them.",
         ],
     }
     warnings: list[str] = []
@@ -152,6 +156,11 @@ def plan_partial_brep(
     total_area = 0.0
     candidate_area = 0.0
 
+    freeform_by_region: dict[str, dict[str, Any]] = {}
+    if isinstance(freeform_fit, dict):
+        freeform_by_region = {
+            str(s.get("source_region_id")): s for s in (freeform_fit.get("surfaces") or [])}
+
     if not gated:
         fitted_by_region: dict[str, dict[str, Any]] = {
             str(s.get("source_region_id")): s for s in (surface_fit.get("surfaces") or [])}
@@ -162,6 +171,17 @@ def plan_partial_brep(
             total_area += area
             s = fitted_by_region.get(rid)
             if s is None:
+                # Check for freeform evidence
+                ff = freeform_by_region.get(rid)
+                if ff is not None and ff.get("status") == "fitted":
+                    skipped.append({"region_id": rid, "surface_class_candidate": cls,
+                                    "reason": "freeform_brep_not_implemented"})
+                    plan_rows.append({"region_id": rid, "eligible": False,
+                                      "face_candidate_id": None,
+                                      "reconstruction_status": "evidence_only",
+                                      "source_freeform_surface_id": ff.get("surface_id"),
+                                      "reason": "freeform_brep_not_implemented"})
+                    continue
                 reason = ("freeform region (no analytic fit)" if cls == "freeform_candidate"
                           else "noisy/small region" if cls == "noisy_small_region"
                           else f"region not fitted ({cls})")
@@ -185,6 +205,7 @@ def plan_partial_brep(
 
     plane_n = sum(1 for c in candidates if c["surface_type"] == "plane")
     cyl_n = sum(1 for c in candidates if c["surface_type"] == "cylinder")
+    freeform_evidence_n = sum(1 for row in plan_rows if row.get("reconstruction_status") == "evidence_only")
     all_have_boundary = all(c["boundary"].get("loop_world") or c["boundary"].get("axial_range")
                             for c in candidates)
     can_partial = (not gated) and len(candidates) >= 1 and (
@@ -195,6 +216,7 @@ def plan_partial_brep(
         "candidate_face_count": len(candidates),
         "plane_candidate_count": plane_n,
         "cylinder_candidate_count": cyl_n,
+        "freeform_evidence_count": freeform_evidence_n,
         "skipped_region_count": len(skipped),
         "area_coverage": round(candidate_area / total_area, 4) if total_area else 0.0,
         "can_attempt_partial_brep": bool(can_partial),
@@ -250,7 +272,7 @@ def _read_json(zf: zipfile.ZipFile, name: str, names: set[str]) -> Any:
 
 
 def build_partial_brep_plan(package_path: str | Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Read the region graph + surface fits + readiness from a package and return
+    """Read the region graph + surface fits + freeform fits + readiness from a package and return
     ``(plan, surfaces, diagnostics)``. Missing inputs degrade honestly (no candidates)."""
     package_path = Path(package_path)
     try:
@@ -258,12 +280,13 @@ def build_partial_brep_plan(package_path: str | Path) -> tuple[dict[str, Any], d
             names = set(zf.namelist())
             region_graph = _read_json(zf, MESH_REGION_GRAPH_PATH, names)
             surface_fit = _read_json(zf, MESH_SURFACE_FIT_PATH, names)
+            freeform_fit = _read_json(zf, FREEFORM_SURFACE_FIT_PATH, names)
             readiness = _read_json(zf, MESH_RECONSTRUCTION_READINESS_PATH, names)
     except FileNotFoundError:
         return plan_partial_brep(None, None, None)
     except Exception:  # noqa: BLE001
         return plan_partial_brep(None, None, None)
-    return plan_partial_brep(region_graph, surface_fit, readiness)
+    return plan_partial_brep(region_graph, surface_fit, readiness, freeform_fit)
 
 
 def write_partial_brep_plan(package_path: str | Path) -> dict[str, Any]:

@@ -2757,6 +2757,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_surface_fitting import write_mesh_surface_fit
                 sf = write_mesh_surface_fit(package_path)
                 summary["mesh_plane_fit_count"] = len(sf.get("surfaces") or [])
+                # Freeform/NURBS surface fitting evidence v0 (evidence-only; no B-Rep/STEP).
+                from aieng.converters.mesh_freeform_surface_fitting import write_freeform_surface_fit
+                ff = write_freeform_surface_fit(package_path)
+                summary["mesh_freeform_fit_count"] = len(ff.get("surfaces") or [])
                 from aieng.converters.mesh_reconstruction_readiness import write_mesh_reconstruction_readiness
                 rr = write_mesh_reconstruction_readiness(package_path)
                 summary["reconstruction_next_action"] = (rr.get("readiness") or {}).get("recommended_next_action")

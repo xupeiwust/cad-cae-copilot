@@ -32,6 +32,8 @@ from aieng.converters.assembly_ir import (
     build_part_registry,
 )
 from aieng.converters.assembly_topopt import (
+    ASSEMBLY_OPTIMIZATION_SUMMARY_PATH,
+    ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH,
     ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
     ASSEMBLY_TOPOPT_EXECUTION_PATH,
     ASSEMBLY_TOPOPT_DERIVATION_PATH,
@@ -41,6 +43,7 @@ from aieng.converters.assembly_topopt import (
     STANDARD_TOPOPT_PROBLEM_PATH,
     derive_assembly_topopt_problem,
     run_assembly_topology_optimization,
+    verify_assembly_post_optimization,
     write_assembly_topopt_problem,
 )
 from aieng.converters.topology_optimization import run_topology_optimization
@@ -365,17 +368,23 @@ def test_run_assembly_topology_optimization_executes_existing_optimizer_and_writ
         names = set(zf.namelist())
         assert ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH in names
         assert ASSEMBLY_TOPOPT_EXECUTION_PATH in names
+        assert ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH in names
+        assert ASSEMBLY_OPTIMIZATION_SUMMARY_PATH in names
         assert part_result in names
         assert part_shape in names
         assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="wall") not in names
         execution = json.loads(zf.read(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH))
         topo = json.loads(zf.read(part_result))
         shape = json.loads(zf.read(part_shape))
+        verification = json.loads(zf.read(ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH))
     assert execution["topology_optimization"]["provenance"]["selected_part_id"] == "bracket"
     assert topo["problem"]["bcs_source"] == "explicit"
     assert topo["result"]["guidance_field_summary"]["cells_preserved"] > 0
     assert shape["assembly_writeback"]["selected_part_id"] == "bracket"
     assert shape["assembly_writeback"]["original_geometry_ref_preserved"] == "geometry/bracket.step"
+    assert verification["status"] == "passed"
+    assert verification["selected_part"]["optimized_artifact_found"] is True
+    assert verification["provenance"]["proxy_limitations_preserved"] is True
 
 
 def test_run_without_runnable_standard_problem_returns_needs_user_input(tmp_path: Path) -> None:
@@ -386,7 +395,10 @@ def test_run_without_runnable_standard_problem_returns_needs_user_input(tmp_path
     assert "missing_topology_optimization_problem" in result["diagnostics"]
     with zipfile.ZipFile(pkg) as zf:
         assert ASSEMBLY_TOPOPT_EXECUTION_PATH in zf.namelist()
+        assert ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH in zf.namelist()
         assert PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id="bracket") not in zf.namelist()
+        verification = json.loads(zf.read(ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH))
+    assert verification["status"] == "insufficient_data"
 
 
 def test_preserve_regions_without_grid_cells_are_warned_not_silent(tmp_path: Path) -> None:
@@ -438,6 +450,92 @@ def test_safe_writeback_target_missing_does_not_write_shape_artifact(tmp_path: P
     assert "safe_writeback_target_missing" in result["diagnostics"]
     with zipfile.ZipFile(pkg) as zf:
         assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="bracket") not in zf.namelist()
+
+
+def test_post_optimization_verification_fails_when_selected_artifact_is_missing(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6, use_result_guidance=True)
+    run_assembly_topology_optimization(pkg, method="voxels", representation="manifold_mesh")
+    missing_path = PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="bracket")
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            if item.filename != missing_path:
+                dst.writestr(item, src.read(item.filename))
+    tmp.replace(pkg)
+    verification = verify_assembly_post_optimization(pkg)
+    assert verification["status"] == "failed"
+    assert "selected_optimized_artifact_missing" in verification["verification"]["selected_part"]["errors"]
+
+
+def test_post_optimization_verification_flags_non_selected_frozen_part_modification(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6, use_result_guidance=True)
+    run_assembly_topology_optimization(pkg, method="voxels", representation="manifold_mesh")
+    wall_shape = PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="wall")
+    wall_topopt = PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id="wall")
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            dst.writestr(item, src.read(item.filename))
+        dst.writestr(wall_shape, json.dumps({"assembly_writeback": {"selected_part_id": "wall"}}))
+        dst.writestr(wall_topopt, json.dumps({"problem": {"bcs_source": "explicit"}}))
+    tmp.replace(pkg)
+    verification = verify_assembly_post_optimization(pkg)
+    assert verification["status"] == "failed"
+    frozen = verification["verification"]["non_selected_parts"]["frozen_parts_modified"]
+    assert any(item["part_id"] == "wall" for item in frozen)
+
+
+def test_post_optimization_verification_warns_when_preserve_region_is_unmapped(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6)
+    with zipfile.ZipFile(pkg) as zf:
+        problem = json.loads(zf.read(ASSEMBLY_TOPOPT_PROBLEM_PATH))
+    problem["preserve_regions"][0]["cells"] = []
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            if item.filename != ASSEMBLY_TOPOPT_PROBLEM_PATH:
+                dst.writestr(item, src.read(item.filename))
+        dst.writestr(ASSEMBLY_TOPOPT_PROBLEM_PATH, json.dumps(problem))
+    tmp.replace(pkg)
+    run_assembly_topology_optimization(pkg, method="voxels")
+    verification = verify_assembly_post_optimization(pkg)
+    assert verification["status"] == "warning"
+    preserve = verification["verification"]["preserve_interfaces"]
+    assert preserve["preserve_regions_unmapped"] == 1
+    assert any(w.startswith("preserve_region_unmapped:") for w in preserve["warnings"])
+
+
+def test_post_optimization_verification_fails_on_unsupported_claims(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6, use_result_guidance=True)
+    run_assembly_topology_optimization(pkg, method="voxels")
+    with zipfile.ZipFile(pkg) as zf:
+        execution = json.loads(zf.read(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH))
+    execution.setdefault("provenance", {})["bolt_preload_modelled"] = True
+    execution["provenance"]["contact_physics_modeled"] = True
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            if item.filename != ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH:
+                dst.writestr(item, src.read(item.filename))
+        dst.writestr(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH, json.dumps(execution))
+    tmp.replace(pkg)
+    verification = verify_assembly_post_optimization(pkg)
+    assert verification["status"] == "failed"
+    claims = verification["verification"]["provenance"]["unsupported_claims_detected"]
+    assert any("contact_physics_modeled" in item for item in claims)
+    assert any("bolt_preload_modelled" in item for item in claims)
+
+
+def test_post_optimization_verification_is_insufficient_without_execution_artifacts(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6)
+    verification = verify_assembly_post_optimization(pkg)
+    assert verification["status"] == "insufficient_data"
+    assert any(err.startswith("missing_input:analysis/assembly_topology_optimization.json") for err in verification["verification"]["errors"])
 
 
 def test_assembly_cae_processing_writes_topopt_setup_without_running_optimizer(tmp_path: Path) -> None:

@@ -33,6 +33,10 @@ SETUP_ARTIFACTS = {
     "analysis/topology_optimization_problem.json",
     "diagnostics/assembly_topopt_derivation.json",
 }
+VERIFICATION_ARTIFACTS = {
+    "diagnostics/assembly_post_optimization_verification.json",
+    "analysis/assembly_optimization_summary.json",
+}
 
 
 def _load_json(name: str) -> Any:
@@ -91,6 +95,8 @@ def expected_run_artifacts(selected_part_id: str = SELECTED_PART_ID) -> set[str]
     return {
         "analysis/assembly_topology_optimization.json",
         "diagnostics/assembly_topopt_execution.json",
+        "diagnostics/assembly_post_optimization_verification.json",
+        "analysis/assembly_optimization_summary.json",
         f"parts/{selected_part_id}/analysis/topology_optimization.json",
         f"parts/{selected_part_id}/geometry/optimized_shape_ir.json",
     }

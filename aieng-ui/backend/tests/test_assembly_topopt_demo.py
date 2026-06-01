@@ -8,10 +8,13 @@ from pathlib import Path
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 _AIENG_SRC = _WORKSPACE_ROOT / "aieng" / "src"
 _TESTS_DIR = Path(__file__).resolve().parent
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(_AIENG_SRC) not in sys.path:
     sys.path.insert(0, str(_AIENG_SRC))
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
 
 from aieng.converters.assembly_topopt import (
     ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
@@ -30,6 +33,7 @@ from assembly_topopt_demo_fixture import (
     PROCESS_ARTIFACTS,
     SELECTED_PART_ID,
     SETUP_ARTIFACTS,
+    VERIFICATION_ARTIFACTS,
     expected_run_artifacts,
     write_demo_package,
 )
@@ -86,7 +90,7 @@ def test_canonical_demo_package_runs_full_loop_and_preserves_scope(tmp_path: Pat
 
     with zipfile.ZipFile(pkg) as zf:
         names = set(zf.namelist())
-        required = PROCESS_ARTIFACTS | SETUP_ARTIFACTS | expected_run_artifacts()
+        required = PROCESS_ARTIFACTS | SETUP_ARTIFACTS | VERIFICATION_ARTIFACTS | expected_run_artifacts()
         required.add("analysis/assembly_result_map.json")
         assert required <= names
         assert STANDARD_TOPOPT_PROBLEM_PATH in names
@@ -99,6 +103,8 @@ def test_canonical_demo_package_runs_full_loop_and_preserves_scope(tmp_path: Pat
         standard = json.loads(zf.read(STANDARD_TOPOPT_PROBLEM_PATH))
         execution = json.loads(zf.read(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH))
         execution_diag = json.loads(zf.read(ASSEMBLY_TOPOPT_EXECUTION_PATH))
+        verification = json.loads(zf.read("diagnostics/assembly_post_optimization_verification.json"))
+        summary = json.loads(zf.read("analysis/assembly_optimization_summary.json"))
         part_result = json.loads(
             zf.read(PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id=SELECTED_PART_ID))
         )
@@ -130,10 +136,17 @@ def test_canonical_demo_package_runs_full_loop_and_preserves_scope(tmp_path: Pat
     assert execution["provenance"]["contact_physics_modeled"] is False
     assert execution["provenance"]["bolt_preload_modeled"] is False
     assert execution_diag["summary"]["writeback_status"] == "derived_part_artifact_written"
+    assert verification["status"] == "passed"
+    assert verification["selected_part"]["optimized_artifact_found"] is True
+    assert verification["non_selected_parts"]["unexpected_modified_parts"] == []
+    assert verification["preserve_interfaces"]["preserve_regions_mapped"] >= 2
+    assert verification["provenance"]["proxy_limitations_preserved"] is True
+    assert summary["status"] == "passed"
     assert manifest["assembly"]["assembly_topopt_execution_status"] == "derived_part_artifact_written"
     assert manifest["assembly"]["assembly_topopt_part_shape_path"] == (
         f"parts/{SELECTED_PART_ID}/geometry/optimized_shape_ir.json"
     )
+    assert manifest["assembly"]["assembly_post_optimization_verification_status"] == "passed"
 
 
 def test_canonical_demo_package_unsafe_data_stays_needs_input_and_does_not_overwrite(tmp_path: Path) -> None:
@@ -165,18 +178,23 @@ def test_canonical_demo_package_unsafe_data_stays_needs_input_and_does_not_overw
         after_names = set(zf.namelist())
         assert ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH in after_names
         assert ASSEMBLY_TOPOPT_EXECUTION_PATH in after_names
+        assert "diagnostics/assembly_post_optimization_verification.json" in after_names
         assert PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id=SELECTED_PART_ID) not in after_names
         assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id=SELECTED_PART_ID) not in after_names
         assert "geometry/shape_ir.json" not in after_names
         assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="wall") not in after_names
         execution = json.loads(zf.read(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH))
         diag = json.loads(zf.read(ASSEMBLY_TOPOPT_EXECUTION_PATH))
+        verification = json.loads(zf.read("diagnostics/assembly_post_optimization_verification.json"))
 
     assert execution["writeback"]["status"] == "not_attempted"
     assert execution["provenance"]["optimizer_executed"] is False
     assert diag["status"] == "needs_user_input"
+    assert verification["status"] == "insufficient_data"
     assert after_names - before_names <= {
         ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
         ASSEMBLY_TOPOPT_EXECUTION_PATH,
+        "diagnostics/assembly_post_optimization_verification.json",
+        "analysis/assembly_optimization_summary.json",
         "provenance/conversion_manifest.json",
     }

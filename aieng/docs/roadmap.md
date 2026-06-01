@@ -197,6 +197,34 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 43: Assembly post-optimization verification v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / new optimizer). Adds a conservative
+post-writeback verification layer for assembly-aware topology optimization.
+
+- New helper: `verify_assembly_post_optimization(package_path, ...)` in
+  `aieng.converters.assembly_topopt`.
+- Trigger: `run_assembly_topology_optimization(...)` now runs the verifier
+  best-effort after explicit execution/writeback and writes:
+  - `diagnostics/assembly_post_optimization_verification.json`
+  - `analysis/assembly_optimization_summary.json`
+- Verification scope: selected-part artifact presence, non-selected/frozen part
+  immutability, preserve-region traceability, writeback target traceability, and
+  honest assembly/proxy provenance.
+- Preserve interfaces are checked as **traceable evidence only**: mapped cell
+  counts and connection/interface links are verified where available; no claim is
+  made that interface geometry is physically unchanged.
+- Honesty boundaries are enforced: the verifier fails if artifacts claim modeled
+  contact physics, friction, bolt preload, or multi-part simultaneous
+  optimization; proxy limitations must remain explicit.
+- Degraded paths are honest: missing setup/execution inputs return
+  `status=insufficient_data` instead of throwing, and unsafe/no-writeback cases
+  are surfaced through verification diagnostics.
+- Tests: successful selected-part verification, missing selected artifact,
+  unexpected non-selected/frozen-part artifacts, unmapped preserve-region
+  warnings, unsupported-claim failures, insufficient-input degradation, canonical
+  backend demo verification, and single-part topopt regression.
+
 ## Phase 42: Assembly-aware topology optimization execution/writeback v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent / new optimizer). Connects Phase 41 setup to the
@@ -225,7 +253,7 @@ existing topology-optimization execution/writeback path for one selected assembl
   and reference parts are not overwritten.
 - Outputs: `analysis/assembly_topology_optimization.json`,
   `diagnostics/assembly_topopt_execution.json`, selected-part result/writeback
-  artifacts, and manifest provenance.
+  artifacts, post-optimization verification diagnostics/summary, and manifest provenance.
 - Canonical regression/demo package: a deterministic backend-only fixture now
   lives under `aieng-ui/backend/tests/fixtures/assembly_topopt_demo/`, with
   `aieng-ui/backend/tests/test_assembly_topopt_demo.py` covering

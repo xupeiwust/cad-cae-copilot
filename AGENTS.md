@@ -743,7 +743,8 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── state/                   revalidation_status.json (stale-artifact flags)
 ├── diagnostics/             shape_ir_verification.json, shape_ir_patch_report.json
 ├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
-├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node), topology_optimization.json
+├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node), topology_optimization.json, design_study_problem.json
+├── patches/                 (optional) design_candidates/<candidate_id>.json (proposed, validated, NEVER auto-applied)
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
 ├── assembly/                (optional, multi-part) assembly_ir.json, part_registry.json, connection_graph.json, interface_resolution.json
 ├── simulation/              setup/deck artifacts, including assembly_cae_setup_draft.json, assembly_cae_model.json, optional assembly_calculix.inp
@@ -751,6 +752,21 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── results/                 computed_metrics.json, field_regions.json, evidence_index.json
 └── audit_log.jsonl          append-only action history
 ```
+
+### Design study v0 (optional, parameter studies)
+
+A package MAY carry `analysis/design_study_problem.json` — a backend contract for an
+**agent-guided parameter design study**: design variables (with bounds / allowed values /
+`safe_to_modify` / `semantic_role`), plus constraints and an objective that are **recorded, not
+executed**. Proposed parameter changes live under `patches/design_candidates/<candidate_id>.json`.
+This is **contract + validation only**: `POST /api/projects/{id}/design-study/validate` (or a
+recompile) validates the problem (`diagnostics/design_study_problem_diagnostics.json`) and every
+candidate (`diagnostics/design_study_candidate_validation.json`) — checking bounds, allowed values,
+`safe_to_modify`, **protected interface variables**, `max_variables_per_candidate`, assembly
+`selected_part_id` scope, and reasoning. **No optimization/search is run, no candidate is applied,
+no geometry is recompiled, no CAE is run, and the baseline geometry is never modified.** Valid
+candidates are normalized (`applied:false`) but not applied. Future work: optimization/search
+execution, patch application, and CAE evaluation of candidates.
 
 ### Assembly IR v0 (optional, multi-part)
 

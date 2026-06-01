@@ -11061,3 +11061,80 @@ def test_assembly_topology_optimization_run_endpoint_is_explicit_and_part_scoped
         assert "parts/bracket/geometry/optimized_shape_ir.json" in names
         assert "parts/wall/geometry/optimized_shape_ir.json" not in names
         assert "geometry/shape_ir.json" not in names
+
+
+def test_design_study_validate_endpoint(tmp_path: Path) -> None:
+    """POST /design-study/validate validates the problem + candidate patches and writes
+    diagnostics — contract + validation only, no patch applied, baseline untouched."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("design-study"))
+    project_id = project["id"]
+    pkg = project_dir(settings, project_id) / "ds.aieng"
+    pkg.parent.mkdir(parents=True, exist_ok=True)
+    problem = {
+        "format": "aieng.design_study_problem", "schema_version": "0.1",
+        "variables": [
+            {"id": "wall_t", "path": "params/WALL_THICKNESS", "type": "continuous",
+             "current_value": 3.0, "min_value": 2.0, "max_value": 8.0, "unit": "mm",
+             "safe_to_modify": True, "semantic_role": "wall_thickness"},
+            {"id": "bolt_dia", "path": "params/BOLT_DIA", "type": "discrete",
+             "current_value": 6, "allowed_values": [4, 5, 6, 8], "unit": "mm",
+             "safe_to_modify": False, "semantic_role": "bolt_hole"},
+        ],
+        "settings": {"max_variables_per_candidate": 2, "require_reasoning": True},
+    }
+    good = {"format": "aieng.design_candidate_patch", "candidate_id": "cand_ok",
+            "reasoning": "thin the wall to cut mass",
+            "variable_changes": [{"variable_id": "wall_t", "new_value": 4.0}]}
+    bad = {"format": "aieng.design_candidate_patch", "candidate_id": "cand_bad",
+           "reasoning": "touch the bolt", "variable_changes": [{"variable_id": "bolt_dia", "new_value": 8}]}
+    with zipfile.ZipFile(pkg, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "design-study", "resources": {}}))
+        zf.writestr("geometry/shape_ir.json", json.dumps({"representation": "brep_build123d"}))
+        zf.writestr("analysis/design_study_problem.json", json.dumps(problem))
+        zf.writestr("patches/design_candidates/cand_ok.json", json.dumps(good))
+        zf.writestr("patches/design_candidates/cand_bad.json", json.dumps(bad))
+    project["aieng_file"] = "ds.aieng"
+    save_project(settings, project)
+
+    resp = client.post(f"/api/projects/{project_id}/design-study/validate", json={})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["design_study_present"] is True and data["problem_status"] == "passed"
+    assert data["candidate_count"] == 2
+
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        assert "diagnostics/design_study_problem_diagnostics.json" in names
+        assert "diagnostics/design_study_candidate_validation.json" in names
+        # baseline geometry untouched
+        assert json.loads(zf.read("geometry/shape_ir.json"))["representation"] == "brep_build123d"
+        diag = json.loads(zf.read("diagnostics/design_study_candidate_validation.json"))
+        by_id = {c["candidate_id"]: c for c in diag["candidates"]}
+        assert by_id["cand_ok"]["status"] == "valid" and by_id["cand_ok"]["applied"] is False
+        assert by_id["cand_bad"]["status"] == "rejected"
+
+
+def test_design_study_validate_endpoint_no_study(tmp_path: Path) -> None:
+    """A package without analysis/design_study_problem.json is untouched (present false)."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("no-ds"))
+    project_id = project["id"]
+    pkg = project_dir(settings, project_id) / "p.aieng"
+    pkg.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pkg, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "no-ds", "resources": {}}))
+    project["aieng_file"] = "p.aieng"
+    save_project(settings, project)
+
+    resp = client.post(f"/api/projects/{project_id}/design-study/validate", json={})
+    assert resp.status_code == 200
+    assert resp.json()["design_study_present"] is False

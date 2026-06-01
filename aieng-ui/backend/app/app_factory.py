@@ -1218,6 +1218,25 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             result["assembly_result_mapping_status"] = geo.get("assembly_result_mapping_status")
         return result
 
+    @app.post("/api/projects/{project_id}/design-study/validate")
+    def validate_design_study_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Best-effort design study v0 validation: if the package carries
+        analysis/design_study_problem.json, validate the problem + any candidate
+        patches under patches/design_candidates/ and write the diagnostics. Contract
+        + validation ONLY — no patch is applied, no geometry recompiled, no CAE run,
+        no optimization executed. Returns {design_study_present: false} when absent."""
+        from aieng.converters.design_study import process_design_study_package
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **process_design_study_package(package_path)}
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,

@@ -249,6 +249,37 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 45: Design study problem contract + candidate patch validation v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). Adds contracts for agent-guided PARAMETER design studies and
+SAFE candidate-patch validation. This is **contract + validation ONLY** — no optimization/search
+is run, no candidate patch is executed, no geometry is recompiled, no CAE is run, and the baseline
+geometry is never modified. Valid candidates are normalized but never applied. Gated on artifact
+presence; single-part / existing workflows are unaffected.
+
+- New module `aieng/src/aieng/converters/design_study.py` + schemas
+  `design_study_problem.schema.json`, `design_candidate_patch.schema.json`.
+- **Problem contract** (`analysis/design_study_problem.json`): variables (id, path, type ∈
+  continuous/integer/discrete/categorical/boolean, current_value, min/max or allowed_values, unit,
+  safe_to_modify, semantic_role, part_id), constraints + objective (RECORDED, not executed),
+  settings (max_variables_per_candidate, require_reasoning), evidence_refs (assembly recommendation
+  artifacts may be referenced, not deeply consumed), assembly_aware + selected_part_id.
+- **`validate_design_study_problem`** → `diagnostics/design_study_problem_diagnostics.json`:
+  unique ids, required fields, valid type, bounds/allowed-values consistency, current-value /
+  safe_to_modify / part_id sanity (passed/warning/failed).
+- **Candidate patch** (`patches/design_candidates/<candidate_id>.json`): reasoning +
+  variable_changes. **`validate_design_candidate_patch`** checks: variable exists, type valid,
+  value in bounds, allowed value for discrete, safe_to_modify=true, protected interface variables
+  rejected, max_variables_per_candidate not exceeded, selected_part_id respected (assembly-aware),
+  reasoning present when required. Invalid → rejected with diagnostics; valid → normalized
+  (`applied:false`, `baseline_modified:false`) but not applied.
+- **`process_design_study_package`** → `diagnostics/design_study_candidate_validation.json`
+  (validates the problem + every candidate in the package). Wired into `recompile_shape_ir_package`
+  (gated) + `POST /api/projects/{id}/design-study/validate`.
+- Tests: 17 core (`aieng/tests/test_design_study.py`) + 2 backend endpoint. No UI files.
+- **Out of scope (future):** optimization/search execution, patch application/recompile, CAE
+  evaluation of candidates, multi-objective ranking.
+
 ## Phase 44: Assembly result-guided postprocess recommendations v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent / new optimizer). Adds a conservative

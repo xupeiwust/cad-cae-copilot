@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aieng.dev/schemas/design_study_problem.schema.json",
+  "title": "aieng Design Study Problem v0",
+  "description": "Backend contract for an agent-guided PARAMETER design study. Records design variables, constraints, and an objective. v0 is CONTRACT + VALIDATION ONLY — no optimization/search is run, no patch is executed, no geometry is recompiled, no CAE is run.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["format", "variables"],
+  "properties": {
+    "format": {"const": "aieng.design_study_problem"},
+    "schema_version": {"type": "string"},
+    "name": {"type": "string"},
+    "assembly_aware": {"type": "boolean"},
+    "selected_part_id": {"type": "string", "description": "When assembly-aware, the part the study is scoped to."},
+    "variables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "path", "type"],
+        "properties": {
+          "id": {"type": "string"},
+          "path": {"type": "string", "description": "Where the variable lives (e.g. a Shape IR parameter / feature param)."},
+          "type": {"type": "string", "enum": ["continuous", "integer", "discrete", "categorical", "boolean"]},
+          "current_value": {},
+          "min_value": {"type": "number"},
+          "max_value": {"type": "number"},
+          "allowed_values": {"type": "array"},
+          "unit": {"type": "string"},
+          "safe_to_modify": {"type": "boolean"},
+          "protected": {"type": "boolean", "description": "Explicitly protected (e.g. an assembly interface dimension)."},
+          "semantic_role": {"type": "string"},
+          "part_id": {"type": "string"}
+        }
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Recorded, NOT executed.",
+      "items": {"type": "object", "additionalProperties": true}
+    },
+    "objective": {
+      "type": "object",
+      "description": "Recorded, NOT executed.",
+      "additionalProperties": true
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "max_variables_per_candidate": {"type": "integer", "minimum": 1},
+        "require_reasoning": {"type": "boolean"}
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "description": "Pointers to evidence (e.g. assembly recommendation artifacts). Referenced, not deeply consumed in v0.",
+      "items": {}
+    },
+    "provenance": {"type": "object", "additionalProperties": true}
+  }
+}

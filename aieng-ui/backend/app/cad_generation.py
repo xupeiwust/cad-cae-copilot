@@ -2825,6 +2825,17 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 summary["assembly_result_mapping_status"] = geo.get("assembly_result_mapping_status")
     except Exception:  # noqa: BLE001 - assembly processing is best-effort
         pass
+    # Optional design study v0: if the package carries analysis/design_study_problem.json,
+    # validate the problem + any candidate patches (contract + validation ONLY — never applies a
+    # patch, never recompiles geometry, never runs CAE). Gated on presence; best-effort.
+    try:
+        from aieng.converters.design_study import process_design_study_package
+        ds = process_design_study_package(package_path)
+        if ds.get("design_study_present"):
+            summary["design_study_problem_status"] = ds.get("problem_status")
+            summary["design_study_candidate_count"] = ds.get("candidate_count")
+    except Exception:  # noqa: BLE001 - design-study processing is best-effort
+        pass
     return summary
 
 

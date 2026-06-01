@@ -1262,6 +1262,29 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         return {"project_id": project_id,
                 **execute_design_study_candidate(package_path, candidate_id, recompiler=recompiler)}
 
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/evaluate")
+    def evaluate_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Evaluate ONE candidate from candidate-local solver-neutral/static evidence.
+
+        Writes ``candidates/<id>/analysis/evaluation.json`` and
+        ``candidates/<id>/diagnostics/evaluation_report.json``. This is
+        backend-only post-processing: it does NOT run CAE, does NOT recompile
+        geometry, does NOT apply/promote candidates, and does NOT overwrite
+        baseline geometry.
+        """
+        from aieng.converters.design_study_evaluation import evaluate_design_study_candidate
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **evaluate_design_study_candidate(package_path, candidate_id)}
+
     @app.post("/api/projects/{project_id}/design-study/rank")
     def rank_design_study_candidates_endpoint(
         project_id: str,

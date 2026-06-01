@@ -75,6 +75,16 @@ the reference workbench. When in doubt, treat this file as the authoritative
 | Post-optimization verification | `stable` | `diagnostics/assembly_post_optimization_verification.json`, `analysis/assembly_optimization_summary.json` | No | Not applicable | Verifies scope/preserve traceability/proxy honesty; does not certify physical equivalence |
 | Recommendation and next-action postprocess | `diagnostic-only` | `analysis/assembly_design_recommendations.json`, `diagnostics/assembly_postprocess_report.json`, `analysis/assembly_next_actions.json` | No | Not applicable | Advisory only; never reruns optimization or mutates geometry automatically |
 
+## Agent-Guided Design Studies
+
+| Capability | Status | Primary artifacts | STEP output | CAD editability | Current boundary |
+| --- | --- | --- | --- | --- | --- |
+| Design-study problem/candidate validation | `stable` | `analysis/design_study_problem.json`, `patches/design_candidates/<candidate_id>.json`, `diagnostics/design_study_problem_diagnostics.json`, `diagnostics/design_study_candidate_validation.json` | No | Not applicable | Contract + validation only; no search, execution, compile, CAE, or baseline mutation |
+| Candidate execution into derived workspace | `stable` | `analysis/design_study_iterations.json`, `diagnostics/design_study_report.json`, `candidates/<candidate_id>/patch.json`, `candidates/<candidate_id>/geometry/shape_ir.json`, `candidates/<candidate_id>/provenance/candidate.json` | No package-level STEP | candidate-only | Explicit single-shot derived workspace; baseline geometry is never overwritten or promoted |
+| Candidate-local evidence evaluation | `stable` | `candidates/<candidate_id>/analysis/evaluation.json`, `candidates/<candidate_id>/diagnostics/evaluation_report.json` | No | Not applicable | Reads only candidate-local static/neutral/proxy evidence; no solver run, no geometry recompile, proxy assembly evidence is lower-confidence |
+| Candidate ranking and scoring | `stable` | `analysis/design_study_candidate_ranking.json`, `diagnostics/design_study_scoring_report.json` | No | Not applicable | Advisory ranking only; missing metrics remain `needs_more_evaluation`, no optimizer/search |
+| Candidate acceptance as derived artifact | `stable` | `analysis/design_study_acceptance.json`, `diagnostics/design_study_acceptance_report.json`, `accepted/<candidate_id>/geometry/shape_ir.json` | No package-level STEP | derived-only | Explicit gated copy to `accepted/`; production approval and baseline promotion are not claimed |
+
 ## Not Currently Claimed
 
 | Capability | Status | Reason no stronger claim is made |
@@ -99,6 +109,8 @@ The current snapshot is grounded in focused suites that cover the slices above:
 - `aieng/tests/test_mesh_brep_solidification.py`
 - `aieng/tests/test_assembly_topopt.py`
 - `aieng-ui/backend/tests/test_assembly_topopt_demo.py`
+- `aieng/tests/test_design_study_evaluation.py`
+- `aieng/tests/test_design_study_ranking.py`
 - `aieng-ui/backend/tests/test_api.py -k assembly_topology_optimization_run_endpoint_is_explicit_and_part_scoped`
 
 This file is intentionally not a claim that every workspace-wide test suite is green.

@@ -249,6 +249,44 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 47: Design study candidate evaluation from solver-neutral evidence v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). PR5 after Phases 45–46. Adds explicit,
+candidate-local evaluation of executed design-study candidates from evidence
+already present in `candidates/<id>/`. It does **not** execute solvers, does
+**not** recompile geometry, does **not** generate new candidates, and never
+overwrites or promotes baseline geometry.
+
+- New module `aieng/src/aieng/converters/design_study_evaluation.py`.
+- **`evaluate_design_study_candidate(package_path, candidate_id)`** reads
+  candidate-local static/manual metrics, solver-neutral
+  `analysis/computed_metrics.json`, `analysis/field_regions.json`,
+  `analysis/cae_result_map.json`, geometry execution manifests, and
+  assembly/proxy evidence when present.
+- Writes `candidates/<id>/analysis/evaluation.json` and
+  `candidates/<id>/diagnostics/evaluation_report.json`. The evaluation keeps a
+  backward-compatible flat `metrics` map for ranking plus
+  `normalized_metrics` entries preserving value, unit, source paths,
+  load-case id, confidence, and proxy flags.
+- Normalized metrics cover mass, volume, max stress, max deflection, minimum
+  safety factor, and optional compliance/stiffness proxies. Multiple load cases
+  are combined conservatively: worst stress/deflection and lowest safety factor.
+- Constraint evidence is recorded for `max_stress`, `max_deflection`,
+  `min_safety_factor`, `mass_limit`, `volume_limit`, and `preserve_interface`;
+  manufacturability hints are warning-only in v0.
+- Assembly/proxy evidence is accepted only with lowered confidence and explicit
+  honesty flags (`proxy_derived`, `contact_physics_modeled:false`,
+  `bolt_preload_modeled:false`).
+- Ranking now refreshes candidate-local evaluations from existing evidence before
+  scoring when safe, prefers `evaluation.json`, and still returns
+  `needs_more_evaluation` for missing/insufficient data.
+- Integration: `POST /api/projects/{id}/design-study/candidates/{candidate_id}/evaluate`.
+- Tests: core evaluation/ranking regression plus canonical backend demo endpoint
+  coverage. No UI source files.
+- **Out of scope (future):** solver execution for candidate evaluation, automatic
+  CAE setup/mesh generation, optimizer/search/Pareto loop, and baseline
+  auto-promotion.
+
 ## Phase 46: Design study candidate execution + derived workspace v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent). PR2 after Phase 45. Safely EXECUTES a validated design-study
@@ -282,8 +320,8 @@ runs per call. No CAE is run.
   (`compile` flag, default true). Creating/validating a study never auto-executes a candidate.
 - Tests: 14 core (`aieng/tests/test_design_study_execution.py`) + 2 backend endpoint (one real
   build123d compile). PR1 validation + topopt/assembly focused tests stay green. No UI files.
-- **Out of scope (future):** optimizer/search loop, multi-objective ranking, candidate CAE
-  evaluation, promoting a candidate to baseline.
+- **Out of scope (future):** optimizer/search loop, multi-objective Pareto ranking, solver-backed
+  candidate CAE execution/setup, promoting a candidate to baseline.
 
 ## Phase 45: Design study problem contract + candidate patch validation v0 — COMPLETE (2026-06-01)
 

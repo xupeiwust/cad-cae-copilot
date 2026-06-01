@@ -112,6 +112,27 @@ reconstruction or assembly stage succeeded.
 | `parts/<selected_part_id>/analysis/topology_optimization.json` | selected-part writeback | Per-part copied optimization result under the chosen design part | Selected-part derived artifact |
 | `parts/<selected_part_id>/geometry/optimized_shape_ir.json` | selected-part writeback | Conditional writeback geometry for the chosen design part | Written only when selected-part writeback is safe |
 
+## Agent-Guided Design Studies
+
+| Path | Producer / stage | Purpose | Boundary |
+| --- | --- | --- | --- |
+| `analysis/design_study_problem.json` | design-study authoring | Design variables, objective, constraints, and settings for a parameter study | Problem contract only |
+| `patches/design_candidates/<candidate_id>.json` | candidate proposal | Proposed parameter changes against the problem variables | Candidate proposal; not applied by validation |
+| `diagnostics/design_study_problem_diagnostics.json` | design-study validation | Problem contract validation findings | Diagnostics only |
+| `diagnostics/design_study_candidate_validation.json` | design-study validation | Per-candidate validation/normalization results | Diagnostics only |
+| `analysis/design_study_iterations.json` | candidate execution | Deterministic log of explicit candidate runs | Baseline modification remains false |
+| `diagnostics/design_study_report.json` | candidate execution | Iteration/recommendation summary | Summary only |
+| `candidates/<candidate_id>/patch.json` | candidate execution | Candidate patch copied into its derived workspace | Candidate-local copy |
+| `candidates/<candidate_id>/geometry/shape_ir.json` | candidate execution | Derived Shape IR after applying the patch to a deep copy | Candidate-only geometry; not package baseline |
+| `candidates/<candidate_id>/provenance/candidate.json` | candidate execution | Provenance for patch application and baseline reference | Provenance only |
+| `candidates/<candidate_id>/analysis/evaluation.json` | candidate evaluation | Normalized candidate metrics, units/source paths, confidence, and constraint evidence | Reads local evidence only; no solver/recompile/promotion |
+| `candidates/<candidate_id>/diagnostics/evaluation_report.json` | candidate evaluation | Missingness and constraint-evaluation diagnostics | Diagnostic only |
+| `analysis/design_study_candidate_ranking.json` | candidate ranking | Advisory feasibility/score/order for executed candidates | Ranking only; no search or auto-accept |
+| `diagnostics/design_study_scoring_report.json` | candidate ranking | Ranking diagnostics, missing metrics, confidence distribution | Diagnostic only |
+| `analysis/design_study_acceptance.json` | explicit acceptance | Records an accepted/rejected derived candidate decision | Does not promote into baseline geometry |
+| `diagnostics/design_study_acceptance_report.json` | explicit acceptance | Acceptance eligibility and artifact checks | Diagnostic only |
+| `accepted/<candidate_id>/geometry/shape_ir.json` | explicit acceptance | Derived Shape IR copied into accepted workspace | Accepted artifact only; not production approval |
+
 ## Honesty Rules Worth Repeating
 
 - `smooth_mesh_proxy` and mesh-fit artifacts are not B-Rep.
@@ -122,3 +143,5 @@ reconstruction or assembly stage succeeded.
   real contact, friction, or bolt preload modeling.
 - Assembly recommendations are advisory. They do not rerun topology optimization,
   mutate geometry, or certify safety/manufacturability.
+- Design-study evaluation/ranking is advisory and candidate-local. It never runs
+  a solver, recompiles geometry, searches candidates, or promotes a baseline.

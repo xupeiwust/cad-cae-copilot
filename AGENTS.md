@@ -780,8 +780,23 @@ Execution is explicit and single-shot — **no optimizer/search/Pareto loop, no 
 candidate is ever auto-promoted into the baseline** (`baseline_modified:false` everywhere; best a
 valid candidate reaches is `refine_candidate`).
 
+Candidate evidence can be **explicitly evaluated** (PR5) via
+`POST /api/projects/{id}/design-study/candidates/{candidate_id}/evaluate`, or refreshed
+automatically by ranking when candidate-local evidence exists. This reads only artifacts under
+`candidates/<id>/` — neutral/static metrics, optional `field_regions` / `cae_result_map`,
+geometry execution manifest, and assembly/proxy evidence — then writes
+`candidates/<id>/analysis/evaluation.json` plus
+`candidates/<id>/diagnostics/evaluation_report.json`. The evaluator normalizes mass, volume,
+max stress, max deflection, minimum safety factor, and optional compliance/stiffness proxies;
+keeps units, load-case ids, and source paths; uses worst-case stress/deflection and lowest
+safety factor across load cases; and marks proxy assembly evidence lower confidence with
+`contact_physics_modeled:false` and `bolt_preload_modeled:false`
+honesty. It never runs a solver, never recompiles geometry, never mutates baseline artifacts,
+and never promotes a candidate.
+
 **Executed candidates can be ranked** (PR3) via `POST /api/projects/{id}/design-study/rank`.
-This reads the iteration history and per-candidate evaluation artifacts, classifies each candidate
+This reads the iteration history and per-candidate evaluation artifacts (building/refreshed from
+candidate-local evidence when safe), classifies each candidate
 as `feasible` / `infeasible` / `unknown` / `failed`, scores them against the problem objective
 and constraints, and writes `analysis/design_study_candidate_ranking.json` +
 `diagnostics/design_study_scoring_report.json`. Ranking is **advisory only** — it does not
@@ -803,7 +818,7 @@ evaluation, and acceptance provenance) and writes `analysis/design_study_accepta
   only; production approval is **not** claimed.
 
 **Canonical demo + regression** (`aieng-ui/backend/tests/test_design_study_demo.py`) exercises
-the full PR1–PR4 pipeline end-to-end using deterministic static metrics (no external solver):
+the full PR1–PR5 pipeline end-to-end using deterministic static/neutral metrics (no external solver):
 - Fixture: `aieng-ui/backend/tests/fixtures/design_study_demo/` — bracket-like baseline Shape IR,
   4 variables (wall_thickness, rib_thickness, fillet_radius, bolt_dia), 5 candidates:
   - `candidate_good` — valid, improves volume, within constraints
@@ -815,7 +830,7 @@ the full PR1–PR4 pipeline end-to-end using deterministic static metrics (no ex
 - Unsafe-data test: only bad candidates → ranking says no viable candidate → acceptance blocked.
 - Missing-ranking test: acceptance without prior ranking → `needs_user_input`.
 
-Future work: optimizer/search loop, multi-objective Pareto ranking, candidate CAE evaluation,
+Future work: optimizer/search loop, multi-objective Pareto ranking, richer candidate CAE evidence ingestion,
 auto-promotion to baseline, and design-history branching.
 
 **Related docs:**

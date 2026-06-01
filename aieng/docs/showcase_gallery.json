@@ -203,12 +203,12 @@
       "capability_area": "design_study",
       "maturity": "stable",
       "showcase_ready": true,
-      "why_impressive": "An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, ranks them by objective and constraints using deterministic metrics, and allows explicit acceptance of the best safe candidate — all without ever modifying baseline geometry.",
+      "why_impressive": "An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, evaluates candidate-local static/neutral evidence, ranks by objective and constraints, and allows explicit acceptance of the best safe candidate ? all without ever modifying baseline geometry.",
       "what_it_demonstrates": [
         "Design study problem contract with variables, bounds, constraints, objective",
         "Candidate patch validation (bounds, protected variables, assembly scope)",
         "Explicit candidate execution into derived workspace",
-        "Static metric injection for deterministic evaluation",
+        "Candidate-local evaluation from static/solver-neutral evidence",
         "Feasibility classification (feasible/infeasible/unknown/failed)",
         "Conservative deterministic scoring by objective",
         "Best-candidate selection with safe_to_accept gating",
@@ -228,6 +228,7 @@
         "patches/design_candidates/candidate_good.json",
         "candidates/candidate_good/geometry/shape_ir.json",
         "candidates/candidate_good/analysis/evaluation.json",
+        "candidates/candidate_good/diagnostics/evaluation_report.json",
         "analysis/design_study_iterations.json",
         "analysis/design_study_candidate_ranking.json",
         "diagnostics/design_study_scoring_report.json",
@@ -242,7 +243,7 @@
         "accepted/candidate_good/geometry/shape_ir.json"
       ],
       "honesty_boundary": [
-        "Static metrics only in demo; real CAE evaluation is future work",
+        "Candidate evaluation reads existing static/solver-neutral evidence only; no solver or recompile is run",
         "No autonomous optimization — candidates explicitly proposed and executed one at a time",
         "No baseline overwrite — accepted candidate is derived artifact only",
         "No production approval claimed",
@@ -253,7 +254,7 @@
         "Only single-objective deterministic scoring (not Pareto)",
         "No search/grid/random exploration loop",
         "No automatic promotion to baseline",
-        "Real CAE evaluation would require external solver integration"
+        "Richer solver-backed candidate evidence requires external solver integration"
       ],
       "talking_points": [
         "Show validation: protected bolt_dia rejected, out-of-bounds rejected",

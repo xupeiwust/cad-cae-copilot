@@ -153,13 +153,13 @@ pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
 ## 4. Agent-guided parameter design study
 
-**Why it is impressive:** An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, ranks them by objective and constraints using deterministic metrics, and allows explicit acceptance of the best safe candidate — all without ever modifying baseline geometry.
+**Why it is impressive:** An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, evaluates candidate-local static/neutral evidence, ranks by objective and constraints, and allows explicit acceptance of the best safe candidate — all without ever modifying baseline geometry.
 
 **What it demonstrates:**
 - Design study problem contract with variables, bounds, constraints, objective
 - Candidate patch validation (bounds, protected variables, assembly scope)
 - Explicit candidate execution into derived workspace
-- Static metric injection for deterministic evaluation
+- Candidate-local evaluation from static/solver-neutral evidence
 - Feasibility classification (`feasible` / `infeasible` / `unknown` / `failed`)
 - Conservative deterministic scoring by objective
 - Best-candidate selection with `safe_to_accept` gating
@@ -176,7 +176,8 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - `diagnostics/design_study_candidate_validation.json` — validation results
 - `patches/design_candidates/candidate_good.json` — proposed patch
 - `candidates/candidate_good/geometry/shape_ir.json` — derived geometry
-- `candidates/candidate_good/analysis/evaluation.json` — evaluation metrics
+- `candidates/candidate_good/analysis/evaluation.json` — normalized evaluation metrics
+- `candidates/candidate_good/diagnostics/evaluation_report.json` — evaluation diagnostics
 - `analysis/design_study_iterations.json` — execution history
 - `analysis/design_study_candidate_ranking.json` — ranked candidates
 - `diagnostics/design_study_scoring_report.json` — scoring diagnostics
@@ -192,7 +193,7 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - The accepted Shape IR: derived, traceable, with full provenance
 
 **Honesty boundary:**
-- Static metrics only in demo; real CAE evaluation is future work
+- Candidate evaluation reads existing static/solver-neutral evidence only; no solver or recompile is run
 - No autonomous optimization — candidates explicitly proposed and executed one at a time
 - No baseline overwrite — accepted candidate is derived artifact only
 - No production approval claimed

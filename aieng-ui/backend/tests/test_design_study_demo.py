@@ -123,6 +123,18 @@ def test_canonical_demo_package_full_flow(tmp_path: Path) -> None:
     inject_static_evaluation(pkg, "candidate_unknown")
     inject_static_evaluation(pkg, "candidate_infeasible")
 
+    # Explicit candidate-local evaluation endpoint: backend-only post-process,
+    # no solver/recompile/baseline mutation.
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/candidates/candidate_good/evaluate",
+        json={},
+    )
+    assert resp.status_code == 200, f"evaluate failed: {resp.text}"
+    eval_body = resp.json()
+    assert eval_body["baseline_modified"] is False
+    assert eval_body["candidate_id"] == "candidate_good"
+    assert "candidates/candidate_good/diagnostics/evaluation_report.json" in eval_body["artifacts"]
+
     # Verify baseline still untouched after all executions
     assert _baseline_unchanged(pkg, baseline)
 

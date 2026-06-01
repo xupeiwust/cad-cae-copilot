@@ -20,6 +20,7 @@ from typing import Any
 
 from aieng import FORMAT_VERSION
 from aieng.converters.design_study import DESIGN_STUDY_PROBLEM_PATH
+from aieng.converters.design_study_evaluation import evaluate_design_study_candidate
 from aieng.converters.design_study_execution import (
     CANDIDATE_WORKSPACE_ROOT,
     DESIGN_STUDY_ITERATIONS_PATH,
@@ -113,14 +114,46 @@ def _extract_metrics(
                 metrics[k] = v
         sources.append("iteration.metrics")
 
-    # 2. evaluation metrics
+    # 2. evaluation metrics.  Prefer candidate-local evaluation.json because it
+    # is the only place that can preserve source paths, load-case ids, units and
+    # constraint evidence.  It may be legacy flat metrics or the normalized v0
+    # shape produced by design_study_evaluation.
     if evaluation:
         ev_metrics = evaluation.get("metrics")
         if isinstance(ev_metrics, dict) and ev_metrics:
             for k, v in ev_metrics.items():
-                if v is not None:
+                if isinstance(v, dict) and "value" in v:
+                    metrics[k] = v.get("value")
+                elif v is not None:
                     metrics[k] = v
             sources.append("evaluation.json")
+        ev_norm = evaluation.get("normalized_metrics")
+        if isinstance(ev_norm, dict):
+            canonical_to_flat = {
+                "mass": "mass_kg",
+                "volume": "volume_mm3",
+                "max_stress": "max_stress",
+                "max_deflection": "max_deflection",
+                "min_safety_factor": "min_safety_factor",
+                "compliance": "compliance",
+                "stiffness": "stiffness",
+            }
+            for canonical, entry in ev_norm.items():
+                if not isinstance(entry, dict):
+                    continue
+                key = canonical_to_flat.get(canonical, canonical)
+                if entry.get("value") is not None:
+                    metrics[key] = entry.get("value")
+                if entry.get("proxy_derived"):
+                    metrics["proxy_derived"] = True
+            if ev_norm and "evaluation.json" not in sources:
+                sources.append("evaluation.json")
+        if evaluation.get("confidence"):
+            metrics["evaluation_confidence"] = evaluation.get("confidence")
+        if evaluation.get("evaluation_status"):
+            metrics["evaluation_status"] = evaluation.get("evaluation_status")
+        if evaluation.get("feasibility"):
+            metrics["evaluation_feasibility"] = evaluation.get("feasibility")
 
     # 3. manifest metrics (geometry execution)
     if manifest:
@@ -335,7 +368,10 @@ def _proxy_penalty(metrics: dict[str, Any]) -> float:
     penalty = 0.0
     non_trivial = [k for k in metrics if k not in (
         "executed", "geometry_kind", "representation_kind", "artifacts",
+        "evaluation_status", "evaluation_confidence", "evaluation_feasibility",
     )]
+    if metrics.get("proxy_derived") is True:
+        penalty += 0.2
     if not non_trivial:
         penalty += 0.5
     elif len(non_trivial) < 2:
@@ -505,6 +541,10 @@ def _score_candidate(
     if proxy_penalty > 0:
         score = max(-1.0, score - proxy_penalty)
         reasons.append(f"proxy/partial evidence penalty: -{proxy_penalty}")
+    if metrics.get("evaluation_confidence") == CONF_LOW:
+        confidence = CONF_LOW
+    elif metrics.get("evaluation_confidence") == CONF_MEDIUM and confidence == CONF_HIGH:
+        confidence = CONF_MEDIUM
 
     return round(score, 6), confidence, delta, reasons
 
@@ -753,7 +793,10 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
             iterations = [i for i in (iterations_doc.get("iterations") or [])
                           if isinstance(i, dict)] if iterations_doc else []
 
-            # Pre-load per-candidate artifacts
+            # Pre-load per-candidate artifacts.  Ranking may build or refresh
+            # candidate-local evaluation artifacts from existing evidence, but
+            # it still never executes candidates, recompiles geometry, or runs
+            # CAE/solver tools.
             candidate_artifacts: dict[str, dict[str, Any]] = {}
             for it in iterations:
                 cid = it.get("candidate_id") or "unknown"
@@ -793,6 +836,34 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
 
     baseline_metrics = _get_baseline_metrics(problem, iterations)
     candidates_data: list[dict[str, Any]] = []
+    evaluation_artifacts: list[str] = []
+
+    # Build/refresh candidate-local normalized evaluation artifacts when a
+    # workspace exists.  This consumes only local static/neutral/proxy evidence.
+    for it in iterations:
+        if it.get("validation_status") == "rejected" or it.get("execution_status") == "rejected":
+            continue
+        res = evaluate_design_study_candidate(package_path, it.get("candidate_id") or "unknown")
+        if isinstance(res, dict) and res.get("artifacts"):
+            evaluation_artifacts.extend([a for a in res["artifacts"] if a not in evaluation_artifacts])
+
+    # Re-read candidate artifacts after optional evaluation refresh.
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
+            for it in iterations:
+                cid = it.get("candidate_id") or "unknown"
+                sid = _sanitize_cid(cid)
+                ev = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/analysis/evaluation.json", names)
+                mf = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/provenance/geometry_execution_manifest.json", names)
+                vr = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/diagnostics/verification.json", names)
+                candidate_artifacts[cid] = {
+                    "evaluation": ev if isinstance(ev, dict) else None,
+                    "manifest": mf if isinstance(mf, dict) else None,
+                    "verification": vr if isinstance(vr, dict) else None,
+                }
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "failed", "reason": f"{type(exc).__name__}: {exc}"}
 
     for it in iterations:
         cid = it.get("candidate_id") or "unknown"
@@ -850,5 +921,5 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         "best_candidate_id": ranking["best_candidate_id"],
         "safe_to_accept": ranking["safe_to_accept"],
         "next_action": ranking["next_action"],
-        "artifacts": [DESIGN_STUDY_CANDIDATE_RANKING_PATH, DESIGN_STUDY_SCORING_REPORT_PATH],
+        "artifacts": [DESIGN_STUDY_CANDIDATE_RANKING_PATH, DESIGN_STUDY_SCORING_REPORT_PATH] + evaluation_artifacts,
     }

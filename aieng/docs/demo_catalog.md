@@ -15,7 +15,7 @@ For a higher-level showcase with demo talking points and visual guidance, see [`
 | Single-part topology optimization | Structural optimization | `aieng/tests/test_topology_optimization.py` | `pytest aieng/tests/test_topology_optimization.py -q` | `analysis/topology_optimization.json`, `geometry/shape_ir.json`, `diagnostics/topology_optimization_problem_derivation.json` | Compliance reduces, volume fraction met, contract fields present | Stable (2D) / Experimental (3D) | 2D plane-stress; 3D SIMP is reference-only |
 | Mesh-to-CAD B-Rep reconstruction | Mesh → analytic CAD | `aieng/tests/test_mesh_brep_*.py` | `pytest aieng/tests/test_mesh_brep_solidification.py -q` | `geometry/reconstructed.step`, `diagnostics/mesh_brep_sewing.json`, `graph/mesh_brep_stitching_plan.json` | Closed shell → valid solid → STEP export when possible | Stable | Mesh-derived/lossy; not production CAD; freeform/NURBS future work |
 | Assembly-aware topology optimization | Multi-part assembly optimization | `aieng-ui/backend/tests/test_assembly_topopt_demo.py` | `pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q` | `analysis/assembly_topology_optimization.json`, `parts/bracket/geometry/optimized_shape_ir.json`, `diagnostics/assembly_post_optimization_verification.json` | Derived part artifact written, frozen parts untouched, verification passed | Stable | Proxy connections only; no real contact; no bolt preload; one design part only |
-| Agent-guided parameter design study | Parameter exploration + ranking + acceptance | `aieng-ui/backend/tests/test_design_study_demo.py` | `pytest aieng-ui/backend/tests/test_design_study_demo.py -q` | `analysis/design_study_candidate_ranking.json`, `analysis/design_study_acceptance.json`, `accepted/candidate_good/geometry/shape_ir.json` | Best candidate ranked, accepted into derived workspace, baseline untouched | Stable | Static metrics only; no autonomous optimization; no baseline overwrite |
+| Agent-guided parameter design study | Parameter exploration + evaluation + ranking + acceptance | `aieng-ui/backend/tests/test_design_study_demo.py` | `pytest aieng-ui/backend/tests/test_design_study_demo.py -q` | `candidates/candidate_good/analysis/evaluation.json`, `analysis/design_study_candidate_ranking.json`, `analysis/design_study_acceptance.json`, `accepted/candidate_good/geometry/shape_ir.json` | Best candidate evaluated, ranked, accepted into derived workspace; baseline untouched | Stable | Candidate-local static/neutral evidence only; no autonomous optimization; no baseline overwrite |
 
 ---
 
@@ -143,7 +143,7 @@ pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
 ## 4. Agent-Guided Parameter Design Study Demo
 
-**Purpose:** Validate the full PR1–PR4 design-study pipeline: problem contract → candidate validation → execution → ranking → explicit acceptance.
+**Purpose:** Validate the full PR1–PR5 design-study pipeline: problem contract → candidate validation → execution → candidate-local evaluation → ranking → explicit acceptance.
 
 **Test file:** `aieng-ui/backend/tests/test_design_study_demo.py` (4 tests)
 
@@ -160,7 +160,8 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - `diagnostics/design_study_candidate_validation.json` — per-candidate validation
 - `patches/design_candidates/<candidate_id>.json` — 5 candidate patches
 - `candidates/<candidate_id>/geometry/shape_ir.json` — derived Shape IR (valid candidates)
-- `candidates/<candidate_id>/analysis/evaluation.json` — evaluation with static metrics
+- `candidates/<candidate_id>/analysis/evaluation.json` — normalized candidate-local evaluation with static/neutral metrics
+- `candidates/<candidate_id>/diagnostics/evaluation_report.json` — evaluation missingness/constraint diagnostics
 - `analysis/design_study_iterations.json` — execution history
 - `diagnostics/design_study_report.json` — aggregated report
 - `analysis/design_study_candidate_ranking.json` — ranked candidates
@@ -176,7 +177,7 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
   - `candidate_bad_bounds` → rejected (out of bounds)
   - `candidate_protected` → rejected (tries to change protected `bolt_dia`)
   - `candidate_good`, `candidate_unknown`, `candidate_infeasible` → patch applied
-  - Inject static evaluations → rank
+  - Inject static evaluations → explicit candidate-local evaluation endpoint → rank
   - `candidate_good` → feasible, score > 0, **best_candidate_id**
   - `candidate_infeasible` → infeasible (stress 250 > limit 200)
   - `candidate_unknown` → unknown (no volume metric)
@@ -190,7 +191,7 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
   - Acceptance without prior ranking → `needs_user_input`
 
 **Honesty boundaries:**
-- Uses **static metrics only** — no external solver, no real CAE
+- Uses **static/solver-neutral candidate-local metrics only** — no external solver is executed
 - **No autonomous optimization** — candidates are explicitly proposed and executed one at a time
 - **No baseline overwrite** — accepted candidate is a derived artifact only
 - **No production approval** claimed
@@ -213,7 +214,7 @@ pytest aieng/tests/test_mesh_brep_solidification.py -q
 # Assembly-aware topology optimization
 pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
-# Agent-guided parameter design study (PR1–PR4)
+# Agent-guided parameter design study (PR1–PR5)
 pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 ```
 
@@ -234,7 +235,7 @@ pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_stud
 | Assembly CAE | No bolt preload modeled | `bolt_preload_modeled: False` |
 | Mesh-to-CAD reconstruction | Freeform/NURBS fitting is future work | Plane/cylinder/sphere/cone/torus dominant |
 | Design study | No autonomous optimization or Pareto search | Explicit single-shot execution only |
-| Design study | Static metrics in demo; real CAE evaluation is future work | Deterministic for regression |
+| Design study | Candidate evaluation reads existing static/neutral/proxy artifacts only | No solver/recompile/promotion during evaluation |
 
 ---
 

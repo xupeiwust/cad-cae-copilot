@@ -197,6 +197,34 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 44: Assembly result-guided postprocess recommendations v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / new optimizer). Adds a conservative
+postprocess recommendation/report layer on top of Phase 43 assembly
+post-optimization verification.
+
+- New helper: `write_assembly_design_recommendations(package_path, ...)` in
+  `aieng.converters.assembly_topopt`.
+- Trigger: `run_assembly_topology_optimization(...)` now runs the recommendation
+  writer best-effort after post-optimization verification and writes:
+  - `analysis/assembly_design_recommendations.json`
+  - `diagnostics/assembly_postprocess_report.json`
+  - `analysis/assembly_next_actions.json`
+- Recommendation rules stay honest and machine-readable: accepted candidate,
+  rerun/preserve/stiffness suggestions, interface-review requests,
+  request-user-input degradation, downstream export blocking, and advisory
+  continue-to-dimension-optimization / mesh-to-CAD suggestions.
+- Inputs are read-only: the postprocess layer never reruns topopt, never edits
+  geometry, and never upgrades proxy-derived evidence into stronger physical
+  claims.
+- Degraded paths are explicit: missing inputs or low-confidence/unmapped result
+  guidance return `insufficient_data` / `needs_user_input` instead of silently
+  producing confident rerun advice.
+- Tests: accepted canonical demo recommendation set, rerun recommendation when
+  high-confidence guidance was not consumed, low-confidence mapping degradation,
+  single-part/no-assembly no-op behavior, backend demo artifact coverage, and
+  explicit API endpoint regression.
+
 ## Phase 43: Assembly post-optimization verification v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent / new optimizer). Adds a conservative

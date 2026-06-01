@@ -796,6 +796,9 @@ those artifacts, calls the existing single-part SIMP optimizer, and writes:
 - `diagnostics/assembly_topopt_execution.json`
 - `diagnostics/assembly_post_optimization_verification.json`
 - `analysis/assembly_optimization_summary.json`
+- `analysis/assembly_design_recommendations.json`
+- `diagnostics/assembly_postprocess_report.json`
+- `analysis/assembly_next_actions.json`
 - `parts/<selected_part_id>/analysis/topology_optimization.json`
 - `parts/<selected_part_id>/geometry/optimized_shape_ir.json` when writeback is safe
 
@@ -808,12 +811,17 @@ geometry or reference parts. Post-optimization verification checks that only the
 selected part got derived artifacts, that preserve interfaces stay traceable (or
 warn honestly when they do not), and that proxy/contact/preload limitations are
 still explicit. It does **not** certify physical interface equivalence.
+After verification, a best-effort rule-based postprocess pass writes structured
+assembly design recommendations and a postprocess report. These are advisory
+only: they do not rerun topopt automatically, do not mutate geometry, and do
+not certify downstream export/reconstruction safety beyond the same proxy-model
+honesty boundaries.
 
 Canonical backend regression/demo fixture: `aieng-ui/backend/tests/fixtures/assembly_topopt_demo/`
 plus `aieng-ui/backend/tests/test_assembly_topopt_demo.py`. It exercises the full
 backend-only loop on a deterministic proxy-based assembly:
 `/assembly/process` → `write_assembly_topopt_problem(...)` →
-`/assembly/topology-optimization/run` → post-optimization verification, and also pins the unsafe-data
+`/assembly/topology-optimization/run` → post-optimization verification + recommendation/report writeback, and also pins the unsafe-data
 `needs_user_input` path where no standard problem is emitted and no geometry is
 overwritten. Run it with:
 `pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q`

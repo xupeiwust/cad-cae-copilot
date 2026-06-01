@@ -40,6 +40,9 @@ ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH = "analysis/assembly_topology_optimization.j
 ASSEMBLY_TOPOPT_EXECUTION_PATH = "diagnostics/assembly_topopt_execution.json"
 ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH = "diagnostics/assembly_post_optimization_verification.json"
 ASSEMBLY_OPTIMIZATION_SUMMARY_PATH = "analysis/assembly_optimization_summary.json"
+ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH = "analysis/assembly_design_recommendations.json"
+ASSEMBLY_POSTPROCESS_REPORT_PATH = "diagnostics/assembly_postprocess_report.json"
+ASSEMBLY_NEXT_ACTIONS_PATH = "analysis/assembly_next_actions.json"
 PART_TOPOLOGY_OPTIMIZATION_TEMPLATE = "parts/{part_id}/analysis/topology_optimization.json"
 PART_OPTIMIZED_SHAPE_IR_TEMPLATE = "parts/{part_id}/geometry/optimized_shape_ir.json"
 
@@ -66,6 +69,13 @@ _LIMITATIONS = [
     "Reference, fixture, fastener, load_source, and frozen parts are not optimized.",
     "Result guidance is advisory unless use_result_guidance=true is explicitly requested.",
     "Multi-part simultaneous optimization is future work.",
+]
+_POSTPROCESS_LIMITATIONS = [
+    "Assembly design recommendations v0 are rule-based advisory post-processing only.",
+    "Recommendations do not rerun topology optimization automatically.",
+    "Recommendations do not certify physical correctness, interface equivalence, or production CAD readiness.",
+    "Real nonlinear contact, friction, and bolt preload are not modeled.",
+    "Proceed-to-dimension-optimization and mesh-to-CAD recommendations are advisory future-step suggestions only.",
 ]
 _UNSUPPORTED_CLAIM_KEYS = {
     "contact_physics_modeled",
@@ -1011,6 +1021,28 @@ def _update_post_optimization_manifest(
     return manifest
 
 
+def _update_design_recommendation_manifest(
+    manifest: dict[str, Any],
+    recommendations: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    next_actions_written: bool,
+) -> dict[str, Any]:
+    manifest = manifest if isinstance(manifest, dict) else {"format": "aieng.conversion_manifest"}
+    asm = manifest.setdefault("assembly", {})
+    if not isinstance(asm, dict):
+        asm = {}
+        manifest["assembly"] = asm
+    asm["assembly_design_recommendations_status"] = recommendations.get("status")
+    asm["assembly_design_recommendations_path"] = ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH
+    asm["assembly_postprocess_report_path"] = ASSEMBLY_POSTPROCESS_REPORT_PATH
+    asm["assembly_postprocess_selected_part_id"] = recommendations.get("selected_part_id")
+    asm["assembly_postprocess_recommendation_count"] = len(_as_list(recommendations.get("recommendations")))
+    asm["assembly_postprocess_next_actions_path"] = ASSEMBLY_NEXT_ACTIONS_PATH if next_actions_written else None
+    asm["assembly_postprocess_report_status"] = report.get("status")
+    return manifest
+
+
 def _needs_input_execution(
     *,
     reason: str,
@@ -1034,10 +1066,100 @@ def _needs_input_execution(
             "explicit_execution_required": True,
             "optimizer_executed": False,
             "source_artifacts": [ASSEMBLY_TOPOPT_PROBLEM_PATH, STANDARD_TOPOPT_PROBLEM_PATH],
+            "assembly_connections_are_proxy_derived": True,
+            "contact_physics_modeled": False,
+            "bolt_preload_modeled": False,
+            "multi_part_simultaneous_optimization": False,
             "production_ready": False,
         },
     }
     return execution, _execution_diag(execution)
+
+
+def _recommendation_entry(
+    *,
+    rec_id: str,
+    rec_type: str,
+    severity: str,
+    reason: str,
+    source_artifacts: list[str],
+    confidence: str,
+    source_part_id: str | None = None,
+    source_interface_id: str | None = None,
+    source_connection_id: str | None = None,
+    source_ir_node: str | None = None,
+    load_case_id: str | None = None,
+    result_type: str | None = None,
+    suggested_parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    out = {
+        "id": rec_id,
+        "type": rec_type,
+        "severity": severity,
+        "reason": reason,
+        "source_artifacts": sorted(set(str(x) for x in source_artifacts if x)),
+        "confidence": confidence,
+    }
+    if source_part_id is not None:
+        out["source_part_id"] = source_part_id
+    if source_interface_id is not None:
+        out["source_interface_id"] = source_interface_id
+    if source_connection_id is not None:
+        out["source_connection_id"] = source_connection_id
+    if source_ir_node is not None:
+        out["source_ir_node"] = source_ir_node
+    if load_case_id is not None:
+        out["load_case_id"] = load_case_id
+    if result_type is not None:
+        out["result_type"] = result_type
+    if suggested_parameters:
+        out["suggested_parameters"] = suggested_parameters
+    return out
+
+
+def _severity_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"info": 0, "warning": 0, "critical": 0}
+    for item in items:
+        sev = str(item.get("severity") or "warning")
+        counts[sev] = counts.get(sev, 0) + 1
+    return counts
+
+
+def _next_actions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    order = {"critical": 0, "warning": 1, "info": 2}
+    ranked = sorted(items, key=lambda item: (order.get(str(item.get("severity")), 3), str(item.get("id") or "")))
+    return [
+        {
+            "recommendation_id": item.get("id"),
+            "type": item.get("type"),
+            "severity": item.get("severity"),
+            "reason": item.get("reason"),
+        }
+        for item in ranked
+    ]
+
+
+def _report_status(
+    *,
+    missing_inputs: list[str],
+    recommendations: list[dict[str, Any]],
+    verification_status: str | None = None,
+) -> str:
+    if missing_inputs:
+        return "insufficient_data"
+    if verification_status == "insufficient_data":
+        return "insufficient_data"
+    if verification_status == "needs_user_input":
+        return "needs_user_input"
+    if any(str(item.get("severity")) == "critical" for item in recommendations):
+        return "failed"
+    if any(str(item.get("type")) in {"rerun_topopt", "increase_preserve", "increase_stiffness_weight"} for item in recommendations):
+        return "rerun_recommended"
+    if any(str(item.get("type")) == "request_user_input" for item in recommendations):
+        return "needs_user_input"
+    if recommendations:
+        return "accept"
+    return "warning"
 
 
 def _shape_writeback_payload(
@@ -1428,6 +1550,448 @@ def verify_assembly_post_optimization(
     }
 
 
+def write_assembly_design_recommendations(
+    package_path: str | Path,
+    *,
+    emit_next_actions: bool = True,
+) -> dict[str, Any]:
+    """Build rule-based assembly design recommendations from existing execution artifacts.
+
+    This is post-processing only. It never re-runs optimization or modifies geometry.
+    Missing inputs degrade honestly to insufficient_data / needs_user_input artifacts.
+    """
+    package_path = Path(package_path)
+    if not package_path.exists():
+        return {"assembly_present": False, "reason": "package not found"}
+
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
+            if ASSEMBLY_IR_PATH not in names:
+                return {"assembly_present": False}
+            manifest = _read_json(zf, names, CONVERSION_MANIFEST_PATH) or {"format": "aieng.conversion_manifest"}
+            part_registry = _read_json(zf, names, PART_REGISTRY_PATH) or {}
+            connection_graph = _read_json(zf, names, CONNECTION_GRAPH_PATH) or {}
+            interface_resolution = _read_json(zf, names, INTERFACE_RESOLUTION_PATH) or {}
+            connection_geometry = _read_json(zf, names, ASSEMBLY_CONNECTION_GEOMETRY_PATH) or {}
+            result_map = _read_json(zf, names, ASSEMBLY_RESULT_MAP_PATH) or {}
+            assembly_problem = _read_json(zf, names, ASSEMBLY_TOPOPT_PROBLEM_PATH) or {}
+            execution = _read_json(zf, names, ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH) or {}
+            execution_diag = _read_json(zf, names, ASSEMBLY_TOPOPT_EXECUTION_PATH) or {}
+            verification = _read_json(zf, names, ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH) or {}
+            optimization_summary = _read_json(zf, names, ASSEMBLY_OPTIMIZATION_SUMMARY_PATH) or {}
+            selected_part_id = str(
+                assembly_problem.get("selected_part_id")
+                or execution.get("selected_part_id")
+                or verification.get("selected_part_id")
+                or ""
+            ).strip() or None
+            selected_shape_path = (
+                PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id=selected_part_id)
+                if selected_part_id
+                else None
+            )
+            selected_part_shape = _read_json(zf, names, selected_shape_path) if selected_shape_path in names else {}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "assembly_present": True,
+            "status": "insufficient_data",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    required_inputs = [
+        PART_REGISTRY_PATH,
+        CONNECTION_GRAPH_PATH,
+        INTERFACE_RESOLUTION_PATH,
+        ASSEMBLY_CONNECTION_GEOMETRY_PATH,
+        ASSEMBLY_TOPOPT_PROBLEM_PATH,
+        ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
+        ASSEMBLY_TOPOPT_EXECUTION_PATH,
+        ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH,
+    ]
+    optional_inputs = [
+        ASSEMBLY_RESULT_MAP_PATH,
+        ASSEMBLY_OPTIMIZATION_SUMMARY_PATH,
+    ]
+    present_inputs = [member for member in required_inputs + optional_inputs if member in names]
+    missing_inputs = [member for member in required_inputs if member not in names]
+
+    registry_by_id = {
+        str(part.get("part_id")): part
+        for part in _as_list(part_registry.get("parts"))
+        if isinstance(part, dict) and part.get("part_id")
+    }
+    selected_part = registry_by_id.get(str(selected_part_id)) if selected_part_id else None
+    selected_part_block = verification.get("selected_part") if isinstance(verification.get("selected_part"), dict) else {}
+    non_selected_block = verification.get("non_selected_parts") if isinstance(verification.get("non_selected_parts"), dict) else {}
+    preserve_block = verification.get("preserve_interfaces") if isinstance(verification.get("preserve_interfaces"), dict) else {}
+    provenance_block = verification.get("provenance") if isinstance(verification.get("provenance"), dict) else {}
+    topo_result = ((execution.get("topology_optimization") or {}).get("result") if isinstance(execution.get("topology_optimization"), dict) else {}) or {}
+    mapped_results = [item for item in _as_list(result_map.get("mapped_results")) if isinstance(item, dict)]
+    selected_results = [item for item in mapped_results if str(item.get("part_id")) == str(selected_part_id)]
+    connection_edges = {
+        str(edge.get("id")): edge
+        for edge in _as_list(connection_graph.get("edges"))
+        if isinstance(edge, dict) and edge.get("id")
+    }
+    interface_records = interface_resolution.get("interfaces") if isinstance(interface_resolution.get("interfaces"), dict) else {}
+    geometry_records = [item for item in _as_list(connection_geometry.get("connections")) if isinstance(item, dict)]
+    geometry_by_conn = {str(item.get("connection_id")): item for item in geometry_records if item.get("connection_id")}
+
+    unresolved_interface_count = sum(
+        1
+        for record in interface_records.values()
+        if isinstance(record, dict) and str(record.get("resolution_status")) != "resolved"
+    )
+    proxy_connection_count = sum(
+        1
+        for edge in connection_edges.values()
+        if bool(edge.get("is_proxy")) or "proxy" in str(edge.get("type") or "")
+    )
+    low_confidence_results = [
+        item for item in selected_results if str(item.get("confidence") or "low").lower() not in _ENFORCEABLE_CONFIDENCE
+    ]
+    low_confidence_mapping_count = len(low_confidence_results)
+    unmapped_region_count = len(_as_list(result_map.get("unmapped_regions")))
+    preserve_regions_unmapped = int(preserve_block.get("preserve_regions_unmapped") or 0)
+    unexpected_modified_parts = _as_list(non_selected_block.get("unexpected_modified_parts"))
+    frozen_parts_modified = _as_list(non_selected_block.get("frozen_parts_modified"))
+    verification_status = str(verification.get("status") or "insufficient_data")
+    guidance_consumed = bool(topo_result.get("result_guidance_consumed"))
+    achieved_volume_fraction = topo_result.get("achieved_volume_fraction")
+    target_volume_fraction = topo_result.get("target_volume_fraction") or ((execution.get("topology_optimization") or {}).get("problem") or {}).get("volfrac")
+    representation = str(((execution.get("writeback") or {}).get("representation") or (selected_part_shape or {}).get("representation") or "")).lower()
+
+    rules_evaluated = [
+        "accept_candidate",
+        "review_interface_refs",
+        "stress_hotspot_near_connection",
+        "deflection_hotspot",
+        "low_confidence_or_unmapped_mapping",
+        "unsafe_writeback",
+        "proceed_to_dimension_optimization",
+        "proceed_to_mesh_to_cad_reconstruction",
+    ]
+    rules_triggered: list[str] = []
+    recommendations: list[dict[str, Any]] = []
+    status_reasoning: list[str] = []
+    inconsistencies: list[str] = []
+
+    if selected_part_id and isinstance(execution_diag, dict) and execution_diag.get("selected_part_id") not in {None, selected_part_id}:
+        inconsistencies.append("selected_part_id_mismatch:execution_diag")
+    if selected_part_id and isinstance(verification, dict) and verification.get("selected_part_id") not in {None, selected_part_id}:
+        inconsistencies.append("selected_part_id_mismatch:verification")
+    if selected_part_id and selected_part is None:
+        inconsistencies.append("selected_part_missing_from_registry")
+    if unexpected_modified_parts and not frozen_parts_modified:
+        inconsistencies.append("unexpected_non_selected_artifacts_present")
+
+    rec_index = 1
+
+    def add_rec(**kwargs: Any) -> None:
+        nonlocal rec_index
+        recommendations.append(_recommendation_entry(rec_id=f"rec_{rec_index:03d}", **kwargs))
+        rec_index += 1
+
+    critical_missing = [
+        member
+        for member in missing_inputs
+        if member in {
+            ASSEMBLY_TOPOPT_PROBLEM_PATH,
+            ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
+            ASSEMBLY_TOPOPT_EXECUTION_PATH,
+            ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH,
+            PART_REGISTRY_PATH,
+        }
+    ]
+    if critical_missing:
+        rules_triggered.append("missing_inputs")
+        status_reasoning.append("Critical recommendation inputs are missing.")
+        add_rec(
+            rec_type="request_user_input",
+            severity="critical",
+            reason="Missing required assembly postprocess artifacts prevents a trustworthy recommendation pass.",
+            source_artifacts=critical_missing,
+            confidence="high",
+            source_part_id=selected_part_id,
+        )
+    else:
+        verification_failed = verification_status == "failed"
+        if verification_failed:
+            rules_triggered.append("unsafe_writeback")
+            status_reasoning.append("Post-optimization verification failed; downstream export is blocked.")
+            add_rec(
+                rec_type="block_downstream_export",
+                severity="critical",
+                reason="Post-optimization verification failed; selected-part-only writeback or honesty checks did not pass.",
+                source_artifacts=[ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH, ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH],
+                confidence="high",
+                source_part_id=selected_part_id,
+                source_ir_node=(selected_part or {}).get("source_ir_node"),
+            )
+            add_rec(
+                rec_type="request_user_input",
+                severity="critical",
+                reason="A human should review the failed assembly post-optimization verification before continuing.",
+                source_artifacts=[ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH],
+                confidence="high",
+                source_part_id=selected_part_id,
+            )
+        elif verification_status == "insufficient_data":
+            rules_triggered.append("insufficient_verification_data")
+            status_reasoning.append("Post-optimization verification is still insufficient, so only advisory next steps are safe.")
+            add_rec(
+                rec_type="request_user_input",
+                severity="warning",
+                reason="The package does not yet contain enough post-optimization evidence to trust downstream export or rerun advice.",
+                source_artifacts=[ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH, ASSEMBLY_TOPOPT_EXECUTION_PATH],
+                confidence="medium",
+                source_part_id=selected_part_id,
+            )
+
+        preserve_issue = preserve_regions_unmapped > 0 or unresolved_interface_count > 0
+        if preserve_issue:
+            rules_triggered.append("review_interface_refs")
+            status_reasoning.append("Preserve regions or interface references are not fully mapped.")
+            add_rec(
+                rec_type="review_interface_refs",
+                severity="critical" if preserve_regions_unmapped > 1 else "warning",
+                reason="One or more preserve interfaces are unmapped or unresolved; review topology references before trusting the optimized candidate.",
+                source_artifacts=[ASSEMBLY_TOPOPT_PROBLEM_PATH, ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH, INTERFACE_RESOLUTION_PATH],
+                confidence="high" if preserve_regions_unmapped else "medium",
+                source_part_id=selected_part_id,
+                suggested_parameters={"review_preserve_interfaces": True},
+            )
+
+        stress_hotspots = []
+        deflection_hotspots = []
+        high_confidence_results = 0
+        for item in selected_results:
+            conf = str(item.get("confidence") or "low").lower()
+            if conf in _ENFORCEABLE_CONFIDENCE:
+                high_confidence_results += 1
+            connection = connection_edges.get(str(item.get("connection_id"))) if item.get("connection_id") else None
+            iface = interface_records.get(str(item.get("interface_id"))) if item.get("interface_id") else None
+            geom = geometry_by_conn.get(str(item.get("connection_id"))) if item.get("connection_id") else None
+            role = (iface or {}).get("semantic_role")
+            ctype = str((connection or {}).get("type") or "")
+            geom_status = str((geom or {}).get("geometry_status") or (geom or {}).get("status") or "")
+            critical_interface = ctype in {"bolted_proxy", "welded_proxy", "rigid_tie"} or role in {"mounting_face", "bolt_hole", "support_face"}
+            if not critical_interface:
+                continue
+            rtype = str(item.get("result_type") or "").lower()
+            if rtype in _STRESS_TYPES:
+                stress_hotspots.append((item, ctype, role, geom_status))
+            elif rtype in _DEFLECTION_TYPES:
+                deflection_hotspots.append((item, ctype, role, geom_status))
+
+        enforceable_stress_hotspots = [
+            item for item in stress_hotspots if str(item[0].get("confidence") or "low").lower() in _ENFORCEABLE_CONFIDENCE
+        ]
+        should_advise_rerun = bool(enforceable_stress_hotspots) and (preserve_issue or not guidance_consumed or verification_status == "warning")
+        if should_advise_rerun:
+            rules_triggered.append("stress_hotspot_near_connection")
+            hotspot, ctype, role, geom_status = enforceable_stress_hotspots[0]
+            status_reasoning.append("A stress hotspot remains associated with a critical assembly interface/connection and the current candidate lacks fully trusted preservation evidence.")
+            add_rec(
+                rec_type="rerun_topopt",
+                severity="warning" if str(hotspot.get("confidence") or "low").lower() in _ENFORCEABLE_CONFIDENCE else "critical",
+                reason="Re-run assembly-aware topopt with stronger preserve guidance around the hotspot-linked connection/interface.",
+                source_artifacts=[ASSEMBLY_RESULT_MAP_PATH, ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH, ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH],
+                confidence=str(hotspot.get("confidence") or "low").lower(),
+                source_part_id=str(hotspot.get("part_id") or selected_part_id),
+                source_interface_id=hotspot.get("interface_id"),
+                source_connection_id=hotspot.get("connection_id"),
+                source_ir_node=hotspot.get("source_ir_node"),
+                load_case_id=hotspot.get("load_case_id"),
+                result_type=hotspot.get("result_type"),
+                suggested_parameters={
+                    "use_result_guidance": True,
+                    "preserve_min_density": 0.98,
+                    "guidance_radius_cells": 2,
+                    "focus_connection_type": ctype or role or geom_status,
+                },
+            )
+
+        enforceable_deflection_hotspots = [
+            item for item in deflection_hotspots if str(item[0].get("confidence") or "low").lower() in _ENFORCEABLE_CONFIDENCE
+        ]
+        should_increase_stiffness = bool(enforceable_deflection_hotspots) and (not guidance_consumed or verification_status == "warning")
+        if should_increase_stiffness:
+            rules_triggered.append("deflection_hotspot")
+            hotspot, ctype, role, _geom_status = enforceable_deflection_hotspots[0]
+            status_reasoning.append("A deflection hotspot remains on the selected part without fully trusted stiffness guidance consumption.")
+            params = {
+                "use_result_guidance": True,
+                "stiffness_weight_multiplier": 1.25,
+            }
+            if ctype in {"bolted_proxy", "rigid_tie", "welded_proxy"} or role in {"mounting_face", "bolt_hole"}:
+                params["preserve_min_density"] = 0.97
+            add_rec(
+                rec_type="increase_stiffness_weight",
+                severity="warning",
+                reason="Increase stiffness weighting around the deflection-sensitive region before re-running the selected-part optimization.",
+                source_artifacts=[ASSEMBLY_RESULT_MAP_PATH, ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH],
+                confidence=str(hotspot.get("confidence") or "low").lower(),
+                source_part_id=str(hotspot.get("part_id") or selected_part_id),
+                source_interface_id=hotspot.get("interface_id"),
+                source_connection_id=hotspot.get("connection_id"),
+                source_ir_node=hotspot.get("source_ir_node"),
+                load_case_id=hotspot.get("load_case_id"),
+                result_type=hotspot.get("result_type"),
+                suggested_parameters=params,
+            )
+
+        low_confidence_issue = low_confidence_mapping_count > 0 or (unmapped_region_count > 1) or (unmapped_region_count > 0 and high_confidence_results == 0)
+        if low_confidence_issue:
+            rules_triggered.append("low_confidence_or_unmapped_mapping")
+            status_reasoning.append("Assembly result mappings are low-confidence or too incomplete for an automatic next-step decision.")
+            add_rec(
+                rec_type="request_user_input",
+                severity="warning",
+                reason="Result mapping confidence is too low or too incomplete to recommend an automatic rerun/export path confidently.",
+                source_artifacts=[ASSEMBLY_RESULT_MAP_PATH, INTERFACE_RESOLUTION_PATH, ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH],
+                confidence="low",
+                source_part_id=selected_part_id,
+                suggested_parameters={
+                    "review_mapping_confidence": True,
+                    "review_unmapped_regions": unmapped_region_count,
+                    "review_low_confidence_regions": low_confidence_mapping_count,
+                },
+            )
+
+        candidate_ok = bool(
+            verification_status in {"passed", "warning"}
+            and bool(selected_part_block.get("optimized_artifact_found"))
+            and bool(selected_part_block.get("optimization_result_found"))
+            and not frozen_parts_modified
+            and not unexpected_modified_parts
+            and preserve_regions_unmapped == 0
+            and bool(provenance_block.get("proxy_limitations_preserved"))
+        )
+        if candidate_ok:
+            rules_triggered.append("accept_candidate")
+            status_reasoning.append("The selected part was optimized and verified without non-selected part modifications or preserve-region failures.")
+            add_rec(
+                rec_type="accept_candidate",
+                severity="info",
+                reason="The current optimized assembly candidate is acceptable for downstream review under the proxy-model limitations.",
+                source_artifacts=[ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH, ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH, ASSEMBLY_OPTIMIZATION_SUMMARY_PATH],
+                confidence="high" if verification_status == "passed" else "medium",
+                source_part_id=selected_part_id,
+                source_ir_node=(selected_part or {}).get("source_ir_node"),
+            )
+            if isinstance(achieved_volume_fraction, (int, float)) and achieved_volume_fraction < 0.98:
+                rules_triggered.append("proceed_to_dimension_optimization")
+                add_rec(
+                    rec_type="proceed_to_dimension_optimization",
+                    severity="info",
+                    reason="The candidate appears stable enough for a later dimension-optimization pass; do not treat this as an automatic next step.",
+                    source_artifacts=[ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH, ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH],
+                    confidence="medium",
+                    source_part_id=selected_part_id,
+                    source_ir_node=(selected_part or {}).get("source_ir_node"),
+                    suggested_parameters={
+                        "achieved_volume_fraction": achieved_volume_fraction,
+                        "target_volume_fraction": target_volume_fraction,
+                    },
+                )
+            if representation in {"manifold_mesh", "smooth_mesh"}:
+                rules_triggered.append("proceed_to_mesh_to_cad_reconstruction")
+                add_rec(
+                    rec_type="proceed_to_mesh_to_cad_reconstruction",
+                    severity="info",
+                    reason="The optimized part is a mesh-like derived artifact and can be evaluated by the existing mesh-to-CAD reconstruction ladder, with partial/failure outcomes still possible.",
+                    source_artifacts=[selected_shape_path or PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id=selected_part_id), ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH],
+                    confidence="medium",
+                    source_part_id=selected_part_id,
+                    source_ir_node=(selected_part or {}).get("source_ir_node"),
+                )
+
+    recommendation_status = _report_status(
+        missing_inputs=missing_inputs,
+        recommendations=recommendations,
+        verification_status=verification_status,
+    )
+    severity_count = _severity_counts(recommendations)
+    report = {
+        "format": "aieng.assembly.postprocess_report.v0",
+        "format_version": FORMAT_VERSION,
+        "generated_at_utc": _now(),
+        "status": recommendation_status,
+        "selected_part_id": selected_part_id,
+        "input_artifacts_present": present_inputs,
+        "input_artifacts_missing": missing_inputs,
+        "rules_evaluated": rules_evaluated,
+        "rules_triggered": rules_triggered,
+        "recommendation_count": len(recommendations),
+        "severity_count": severity_count,
+        "proxy_connection_count": proxy_connection_count,
+        "unresolved_interface_count": unresolved_interface_count,
+        "low_confidence_mapping_count": low_confidence_mapping_count,
+        "unmapped_region_count": unmapped_region_count,
+        "status_reasoning": status_reasoning or ["No recommendation rules triggered."],
+        "inconsistencies": inconsistencies,
+        "limitations": list(_POSTPROCESS_LIMITATIONS),
+    }
+    recommendations_doc = {
+        "format": "aieng.assembly.design_recommendations.v0",
+        "format_version": FORMAT_VERSION,
+        "generated_at_utc": report["generated_at_utc"],
+        "status": recommendation_status,
+        "candidate_id": f"assembly_topopt:{selected_part_id or 'unknown'}",
+        "selected_part_id": selected_part_id,
+        "recommendations": recommendations,
+        "summary": {
+            "recommendation_count": len(recommendations),
+            "severity_count": severity_count,
+            "proxy_connection_count": proxy_connection_count,
+            "unresolved_interface_count": unresolved_interface_count,
+            "low_confidence_mapping_count": low_confidence_mapping_count,
+            "unmapped_region_count": unmapped_region_count,
+            "verification_status": verification_status,
+            "optimized_artifact_found": bool(selected_part_block.get("optimized_artifact_found")),
+            "optimization_result_found": bool(selected_part_block.get("optimization_result_found")),
+            "optimization_summary_status": optimization_summary.get("status") if isinstance(optimization_summary, dict) else None,
+        },
+        "limitations": list(_POSTPROCESS_LIMITATIONS),
+        "source_artifacts": _dedupe(present_inputs + missing_inputs),
+    }
+    next_actions = {
+        "format": "aieng.assembly.next_actions.v0",
+        "format_version": FORMAT_VERSION,
+        "generated_at_utc": report["generated_at_utc"],
+        "status": recommendation_status,
+        "selected_part_id": selected_part_id,
+        "actions": _next_actions(recommendations),
+        "limitations": list(_POSTPROCESS_LIMITATIONS),
+    }
+    members = {
+        ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH: _dumps(recommendations_doc),
+        ASSEMBLY_POSTPROCESS_REPORT_PATH: _dumps(report),
+        CONVERSION_MANIFEST_PATH: _dumps(
+            _update_design_recommendation_manifest(
+                manifest,
+                recommendations_doc,
+                report,
+                next_actions_written=emit_next_actions,
+            )
+        ),
+    }
+    if emit_next_actions:
+        members[ASSEMBLY_NEXT_ACTIONS_PATH] = _dumps(next_actions)
+    _replace_members(package_path, members)
+    return {
+        "assembly_present": True,
+        "status": recommendation_status,
+        "selected_part_id": selected_part_id,
+        "recommendations": recommendations_doc,
+        "report": report,
+        "next_actions": next_actions if emit_next_actions else None,
+        "artifacts": sorted(members.keys()),
+    }
+
+
 def write_assembly_topopt_problem(
     package_path: str | Path,
     *,
@@ -1551,12 +2115,19 @@ def run_assembly_topology_optimization(
         }
         _replace_members(package_path, members)
         verification_result = verify_assembly_post_optimization(package_path)
+        recommendation_result = write_assembly_design_recommendations(package_path)
         return {
             "assembly_present": True,
             **execution,
             "verification_status": verification_result.get("status"),
             "post_optimization_verification": verification_result.get("verification"),
-            "artifacts": sorted(set(members.keys()) | set(_as_list(verification_result.get("artifacts")))),
+            "recommendation_status": recommendation_result.get("status"),
+            "design_recommendations": recommendation_result.get("recommendations"),
+            "artifacts": sorted(
+                set(members.keys())
+                | set(_as_list(verification_result.get("artifacts")))
+                | set(_as_list(recommendation_result.get("artifacts")))
+            ),
         }
 
     selected_part_id = assembly_problem.get("selected_part_id")
@@ -1592,12 +2163,19 @@ def run_assembly_topology_optimization(
         }
         _replace_members(package_path, members)
         verification_result = verify_assembly_post_optimization(package_path)
+        recommendation_result = write_assembly_design_recommendations(package_path)
         return {
             "assembly_present": True,
             **execution,
             "verification_status": verification_result.get("status"),
             "post_optimization_verification": verification_result.get("verification"),
-            "artifacts": sorted(set(members.keys()) | set(_as_list(verification_result.get("artifacts")))),
+            "recommendation_status": recommendation_result.get("status"),
+            "design_recommendations": recommendation_result.get("recommendations"),
+            "artifacts": sorted(
+                set(members.keys())
+                | set(_as_list(verification_result.get("artifacts")))
+                | set(_as_list(recommendation_result.get("artifacts")))
+            ),
         }
 
     assert isinstance(standard_problem, dict)
@@ -1720,6 +2298,7 @@ def run_assembly_topology_optimization(
     )
     _replace_members(package_path, members)
     verification_result = verify_assembly_post_optimization(package_path)
+    recommendation_result = write_assembly_design_recommendations(package_path)
     return {
         "assembly_present": True,
         "status": execution.get("status"),
@@ -1733,6 +2312,12 @@ def run_assembly_topology_optimization(
         "preserve_constraints": preserve_diag,
         "verification_status": verification_result.get("status"),
         "post_optimization_verification": verification_result.get("verification"),
-        "artifacts": sorted(set(members.keys()) | set(_as_list(verification_result.get("artifacts")))),
+        "recommendation_status": recommendation_result.get("status"),
+        "design_recommendations": recommendation_result.get("recommendations"),
+        "artifacts": sorted(
+            set(members.keys())
+            | set(_as_list(verification_result.get("artifacts")))
+            | set(_as_list(recommendation_result.get("artifacts")))
+        ),
         "execution": execution,
     }

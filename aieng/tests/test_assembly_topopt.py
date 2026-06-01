@@ -32,8 +32,11 @@ from aieng.converters.assembly_ir import (
     build_part_registry,
 )
 from aieng.converters.assembly_topopt import (
+    ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH,
+    ASSEMBLY_NEXT_ACTIONS_PATH,
     ASSEMBLY_OPTIMIZATION_SUMMARY_PATH,
     ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH,
+    ASSEMBLY_POSTPROCESS_REPORT_PATH,
     ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
     ASSEMBLY_TOPOPT_EXECUTION_PATH,
     ASSEMBLY_TOPOPT_DERIVATION_PATH,
@@ -44,6 +47,7 @@ from aieng.converters.assembly_topopt import (
     derive_assembly_topopt_problem,
     run_assembly_topology_optimization,
     verify_assembly_post_optimization,
+    write_assembly_design_recommendations,
     write_assembly_topopt_problem,
 )
 from aieng.converters.topology_optimization import run_topology_optimization
@@ -370,6 +374,9 @@ def test_run_assembly_topology_optimization_executes_existing_optimizer_and_writ
         assert ASSEMBLY_TOPOPT_EXECUTION_PATH in names
         assert ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH in names
         assert ASSEMBLY_OPTIMIZATION_SUMMARY_PATH in names
+        assert ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH in names
+        assert ASSEMBLY_POSTPROCESS_REPORT_PATH in names
+        assert ASSEMBLY_NEXT_ACTIONS_PATH in names
         assert part_result in names
         assert part_shape in names
         assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="wall") not in names
@@ -377,6 +384,8 @@ def test_run_assembly_topology_optimization_executes_existing_optimizer_and_writ
         topo = json.loads(zf.read(part_result))
         shape = json.loads(zf.read(part_shape))
         verification = json.loads(zf.read(ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH))
+        recommendations = json.loads(zf.read(ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH))
+        report = json.loads(zf.read(ASSEMBLY_POSTPROCESS_REPORT_PATH))
     assert execution["topology_optimization"]["provenance"]["selected_part_id"] == "bracket"
     assert topo["problem"]["bcs_source"] == "explicit"
     assert topo["result"]["guidance_field_summary"]["cells_preserved"] > 0
@@ -385,6 +394,14 @@ def test_run_assembly_topology_optimization_executes_existing_optimizer_and_writ
     assert verification["status"] == "passed"
     assert verification["selected_part"]["optimized_artifact_found"] is True
     assert verification["provenance"]["proxy_limitations_preserved"] is True
+    assert recommendations["status"] == "accept"
+    assert {item["type"] for item in recommendations["recommendations"]} >= {
+        "accept_candidate",
+        "proceed_to_dimension_optimization",
+        "proceed_to_mesh_to_cad_reconstruction",
+    }
+    assert report["status"] == "accept"
+    assert report["recommendation_count"] >= 3
 
 
 def test_run_without_runnable_standard_problem_returns_needs_user_input(tmp_path: Path) -> None:
@@ -396,9 +413,57 @@ def test_run_without_runnable_standard_problem_returns_needs_user_input(tmp_path
     with zipfile.ZipFile(pkg) as zf:
         assert ASSEMBLY_TOPOPT_EXECUTION_PATH in zf.namelist()
         assert ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH in zf.namelist()
+        assert ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH in zf.namelist()
+        assert ASSEMBLY_POSTPROCESS_REPORT_PATH in zf.namelist()
         assert PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id="bracket") not in zf.namelist()
         verification = json.loads(zf.read(ASSEMBLY_POST_OPTIMIZATION_VERIFICATION_PATH))
+        recommendations = json.loads(zf.read(ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH))
     assert verification["status"] == "insufficient_data"
+    assert recommendations["status"] == "insufficient_data"
+    assert recommendations["recommendations"][0]["type"] == "request_user_input"
+
+
+def test_recommendations_request_rerun_when_high_confidence_stress_guidance_was_not_consumed(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6, use_result_guidance=True)
+    run_assembly_topology_optimization(pkg, method="voxels", representation="manifold_mesh")
+    with zipfile.ZipFile(pkg) as zf:
+        execution = json.loads(zf.read(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH))
+    execution["topology_optimization"]["result"]["result_guidance_consumed"] = False
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            if item.filename != ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH:
+                dst.writestr(item, src.read(item.filename))
+        dst.writestr(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH, json.dumps(execution))
+    tmp.replace(pkg)
+    rec_result = write_assembly_design_recommendations(pkg)
+    assert rec_result["status"] == "rerun_recommended"
+    rec_types = {item["type"] for item in rec_result["recommendations"]["recommendations"]}
+    assert "rerun_topopt" in rec_types
+    assert "increase_stiffness_weight" in rec_types
+
+
+def test_recommendations_request_user_input_for_low_confidence_result_mapping(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map(confidence="low"))
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6, use_result_guidance=True)
+    run_assembly_topology_optimization(pkg, method="voxels", representation="manifold_mesh")
+    rec_result = write_assembly_design_recommendations(pkg)
+    assert rec_result["status"] == "needs_user_input"
+    rec_types = {item["type"] for item in rec_result["recommendations"]["recommendations"]}
+    assert "request_user_input" in rec_types
+    assert "rerun_topopt" not in rec_types
+
+
+def test_recommendation_writer_leaves_non_assembly_package_unchanged(tmp_path: Path) -> None:
+    pkg = tmp_path / "plain_recommendations.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("geometry/shape_ir.json", "{}")
+    before = set(zipfile.ZipFile(pkg).namelist())
+    result = write_assembly_design_recommendations(pkg)
+    after = set(zipfile.ZipFile(pkg).namelist())
+    assert result["assembly_present"] is False
+    assert before == after
 
 
 def test_preserve_regions_without_grid_cells_are_warned_not_silent(tmp_path: Path) -> None:
@@ -549,6 +614,8 @@ def test_assembly_cae_processing_writes_topopt_setup_without_running_optimizer(t
         assert ASSEMBLY_TOPOPT_DERIVATION_PATH in names
         assert STANDARD_TOPOPT_PROBLEM_PATH in names
         assert "analysis/topology_optimization.json" not in names
+        assert ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH not in names
+        assert ASSEMBLY_POSTPROCESS_REPORT_PATH not in names
 
 
 def test_package_without_assembly_is_unchanged(tmp_path: Path) -> None:

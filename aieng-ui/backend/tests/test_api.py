@@ -10911,7 +10911,12 @@ def test_assembly_topology_optimization_run_endpoint_is_explicit_and_part_scoped
         build_connection_graph,
         build_part_registry,
     )
-    from aieng.converters.assembly_topopt import write_assembly_topopt_problem
+    from aieng.converters.assembly_topopt import (
+        ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH,
+        ASSEMBLY_NEXT_ACTIONS_PATH,
+        ASSEMBLY_POSTPROCESS_REPORT_PATH,
+        write_assembly_topopt_problem,
+    )
     from starlette.testclient import TestClient
 
     settings = _make_patch_settings(tmp_path)
@@ -11011,10 +11016,14 @@ def test_assembly_topology_optimization_run_endpoint_is_explicit_and_part_scoped
     data = resp.json()
     assert data["tool"] == "opt.run_assembly_topology_optimization"
     assert data["status"] == "derived_part_artifact_written"
+    assert data["assembly_topology_optimization"]["recommendation_status"] == "accept"
     with zipfile.ZipFile(pkg) as zf:
         names = set(zf.namelist())
         assert "analysis/assembly_topology_optimization.json" in names
         assert "diagnostics/assembly_topopt_execution.json" in names
+        assert ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH in names
+        assert ASSEMBLY_POSTPROCESS_REPORT_PATH in names
+        assert ASSEMBLY_NEXT_ACTIONS_PATH in names
         assert "parts/bracket/analysis/topology_optimization.json" in names
         assert "parts/bracket/geometry/optimized_shape_ir.json" in names
         assert "parts/wall/geometry/optimized_shape_ir.json" not in names

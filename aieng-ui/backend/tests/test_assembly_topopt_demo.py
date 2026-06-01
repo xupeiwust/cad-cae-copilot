@@ -17,6 +17,9 @@ if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
 from aieng.converters.assembly_topopt import (
+    ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH,
+    ASSEMBLY_NEXT_ACTIONS_PATH,
+    ASSEMBLY_POSTPROCESS_REPORT_PATH,
     ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
     ASSEMBLY_TOPOPT_EXECUTION_PATH,
     ASSEMBLY_TOPOPT_PROBLEM_PATH,
@@ -105,6 +108,9 @@ def test_canonical_demo_package_runs_full_loop_and_preserves_scope(tmp_path: Pat
         execution_diag = json.loads(zf.read(ASSEMBLY_TOPOPT_EXECUTION_PATH))
         verification = json.loads(zf.read("diagnostics/assembly_post_optimization_verification.json"))
         summary = json.loads(zf.read("analysis/assembly_optimization_summary.json"))
+        recommendations = json.loads(zf.read(ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH))
+        report = json.loads(zf.read(ASSEMBLY_POSTPROCESS_REPORT_PATH))
+        next_actions = json.loads(zf.read(ASSEMBLY_NEXT_ACTIONS_PATH))
         part_result = json.loads(
             zf.read(PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id=SELECTED_PART_ID))
         )
@@ -142,11 +148,16 @@ def test_canonical_demo_package_runs_full_loop_and_preserves_scope(tmp_path: Pat
     assert verification["preserve_interfaces"]["preserve_regions_mapped"] >= 2
     assert verification["provenance"]["proxy_limitations_preserved"] is True
     assert summary["status"] == "passed"
+    assert recommendations["status"] == "accept"
+    assert any(item["type"] == "accept_candidate" for item in recommendations["recommendations"])
+    assert report["status"] == "accept"
+    assert next_actions["actions"][0]["type"] == "accept_candidate"
     assert manifest["assembly"]["assembly_topopt_execution_status"] == "derived_part_artifact_written"
     assert manifest["assembly"]["assembly_topopt_part_shape_path"] == (
         f"parts/{SELECTED_PART_ID}/geometry/optimized_shape_ir.json"
     )
     assert manifest["assembly"]["assembly_post_optimization_verification_status"] == "passed"
+    assert manifest["assembly"]["assembly_design_recommendations_status"] == "accept"
 
 
 def test_canonical_demo_package_unsafe_data_stays_needs_input_and_does_not_overwrite(tmp_path: Path) -> None:
@@ -179,6 +190,9 @@ def test_canonical_demo_package_unsafe_data_stays_needs_input_and_does_not_overw
         assert ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH in after_names
         assert ASSEMBLY_TOPOPT_EXECUTION_PATH in after_names
         assert "diagnostics/assembly_post_optimization_verification.json" in after_names
+        assert ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH in after_names
+        assert ASSEMBLY_POSTPROCESS_REPORT_PATH in after_names
+        assert ASSEMBLY_NEXT_ACTIONS_PATH in after_names
         assert PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id=SELECTED_PART_ID) not in after_names
         assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id=SELECTED_PART_ID) not in after_names
         assert "geometry/shape_ir.json" not in after_names
@@ -186,15 +200,22 @@ def test_canonical_demo_package_unsafe_data_stays_needs_input_and_does_not_overw
         execution = json.loads(zf.read(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH))
         diag = json.loads(zf.read(ASSEMBLY_TOPOPT_EXECUTION_PATH))
         verification = json.loads(zf.read("diagnostics/assembly_post_optimization_verification.json"))
+        recommendations = json.loads(zf.read(ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH))
 
     assert execution["writeback"]["status"] == "not_attempted"
     assert execution["provenance"]["optimizer_executed"] is False
+    assert execution["provenance"]["contact_physics_modeled"] is False
+    assert execution["provenance"]["bolt_preload_modeled"] is False
     assert diag["status"] == "needs_user_input"
     assert verification["status"] == "insufficient_data"
+    assert recommendations["status"] == "insufficient_data"
     assert after_names - before_names <= {
         ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
         ASSEMBLY_TOPOPT_EXECUTION_PATH,
         "diagnostics/assembly_post_optimization_verification.json",
         "analysis/assembly_optimization_summary.json",
+        ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH,
+        ASSEMBLY_POSTPROCESS_REPORT_PATH,
+        ASSEMBLY_NEXT_ACTIONS_PATH,
         "provenance/conversion_manifest.json",
     }

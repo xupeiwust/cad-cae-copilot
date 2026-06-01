@@ -249,6 +249,42 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 46: Design study candidate execution + derived workspace v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). PR2 after Phase 45. Safely EXECUTES a validated design-study
+candidate patch into a DERIVED candidate workspace, optionally recompiles/evaluates it, and records
+the iteration. **The baseline geometry is never overwritten and no candidate is ever auto-promoted
+into the baseline.** No optimizer/search/Pareto/loop — exactly one explicitly-requested candidate
+runs per call. No CAE is run.
+
+- New module `aieng/src/aieng/converters/design_study_execution.py`.
+- **`execute_design_study_candidate(package_path, candidate_id, *, recompiler=None)`**: loads the
+  problem + candidate, re-validates via `validate_design_candidate_patch`. Rejected/unknown-path
+  candidates record an iteration and create NO derived geometry. Valid candidates get a derived
+  workspace `candidates/<id>/` (path-sanitized id): `patch.json`, derived `geometry/shape_ir.json`
+  (or `parts/<selected_part_id>/geometry/shape_ir.json` for assembly part-scoped), and
+  `provenance/candidate.json`. The patch is applied to a DEEP COPY of the baseline Shape IR by
+  resolving each variable's declared path; an unresolved path fails safely (baseline untouched).
+- **Decoupled compile** — the optional `recompiler` callback is injected by the backend
+  (`make_candidate_recompiler` in `cad_generation.py`), which compiles the candidate's derived Shape
+  IR in a **throwaway copy** of the package via `recompile_shape_ir_package` and reads back the
+  geometry-execution manifest + verification. With no recompiler, evaluation is honestly partial.
+  Candidate compile artifacts live only under `candidates/<id>/` — global preview/model/generated.step
+  are never created/overwritten; nothing is published to the viewer.
+- **Conservative scoring** (Part F): rejected→`reject_candidate`; unknown-path→`request_user_input`;
+  patch applied, compile skipped→`needs_more_evaluation`; compile failed→`compile_failed`; compiled
+  but no usable metric→`needs_more_evaluation`; compiled + metrics→`refine_candidate` (NEVER
+  auto-accept in v0).
+- **Iteration tracking** — appends deterministic `iter_NNN` records to
+  `analysis/design_study_iterations.json` and rebuilds `diagnostics/design_study_report.json`
+  (status/recommendation tallies). `baseline_modified:false` everywhere.
+- **Integration** — explicit only: `POST /api/projects/{id}/design-study/candidates/{candidate_id}/run`
+  (`compile` flag, default true). Creating/validating a study never auto-executes a candidate.
+- Tests: 14 core (`aieng/tests/test_design_study_execution.py`) + 2 backend endpoint (one real
+  build123d compile). PR1 validation + topopt/assembly focused tests stay green. No UI files.
+- **Out of scope (future):** optimizer/search loop, multi-objective ranking, candidate CAE
+  evaluation, promoting a candidate to baseline.
+
 ## Phase 45: Design study problem contract + candidate patch validation v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent). Adds contracts for agent-guided PARAMETER design studies and

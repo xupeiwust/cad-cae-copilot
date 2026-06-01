@@ -2839,6 +2839,59 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
     return summary
 
 
+def make_candidate_recompiler(baseline_package_path: Path) -> Any:
+    """Build a recompiler for design-study candidate execution that compiles a candidate's
+    DERIVED Shape IR in a THROWAWAY copy of the baseline package — the baseline is never touched.
+
+    The returned callable matches the contract expected by
+    ``design_study_execution.execute_design_study_candidate``:
+    ``(candidate_shape_ir: dict, context: dict) -> dict``.
+    """
+    baseline_package_path = Path(baseline_package_path)
+
+    def _recompiler(candidate_shape_ir: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        sid = context.get("candidate_id", "candidate")
+        tmp = baseline_package_path.with_suffix(f".dscand_{sid}.tmp.aieng")
+        try:
+            # throwaway copy with geometry/shape_ir.json swapped for the candidate's derived IR
+            with (
+                zipfile.ZipFile(baseline_package_path, "r") as src,
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+            ):
+                for item in src.infolist():
+                    if item.filename != "geometry/shape_ir.json":
+                        dst.writestr(item, src.read(item.filename))
+                dst.writestr("geometry/shape_ir.json",
+                             json.dumps(candidate_shape_ir).encode())
+            summary = recompile_shape_ir_package(tmp)
+            ge, verification, metrics = {}, None, {}
+            with zipfile.ZipFile(tmp, "r") as zf:
+                names = set(zf.namelist())
+                if "provenance/conversion_manifest.json" in names:
+                    ge = (json.loads(zf.read("provenance/conversion_manifest.json"))
+                          .get("geometry_execution") or {})
+                if "diagnostics/shape_ir_verification.json" in names:
+                    verification = json.loads(zf.read("diagnostics/shape_ir_verification.json"))
+            executed = bool(ge.get("executed"))
+            metrics = {"executed": executed, "geometry_kind": ge.get("geometry_kind"),
+                       "representation_kind": ge.get("representation_kind"),
+                       "artifacts": ge.get("artifacts")}
+            return {
+                "compile_status": "compile_succeeded" if executed else "compile_failed",
+                "geometry_execution": ge or None,
+                "verification": verification,
+                "metrics": metrics,
+                "errors": list(ge.get("errors") or []) + ([summary["error"]] if summary.get("error") else []),
+                "warnings": list(ge.get("warnings") or []),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"compile_status": "compile_failed", "errors": [f"{type(exc).__name__}: {exc}"]}
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    return _recompiler
+
+
 # ── backend class ─────────────────────────────────────────────────────────────
 
 class Build123dBackend:

@@ -11138,3 +11138,98 @@ def test_design_study_validate_endpoint_no_study(tmp_path: Path) -> None:
     resp = client.post(f"/api/projects/{project_id}/design-study/validate", json={})
     assert resp.status_code == 200
     assert resp.json()["design_study_present"] is False
+
+
+def _design_study_run_project(settings, name):
+    """A project with a box Shape IR baseline + a design study problem + one valid candidate."""
+    from app.main import default_project, project_dir, save_project
+    project = save_project(settings, default_project(name))
+    project_id = project["id"]
+    pkg = project_dir(settings, project_id) / "ds.aieng"
+    pkg.parent.mkdir(parents=True, exist_ok=True)
+    baseline = {"representation": "brep_build123d",
+                "parts": [{"id": "blk", "type": "box",
+                           "parameters": {"length": 20.0, "width": 20.0, "height": 10.0}}]}
+    problem = {
+        "format": "aieng.design_study_problem", "schema_version": "0.1",
+        "variables": [
+            {"id": "h", "path": "parts/0/parameters/height", "type": "continuous",
+             "current_value": 10.0, "min_value": 5.0, "max_value": 30.0, "unit": "mm",
+             "safe_to_modify": True, "semantic_role": "height"},
+        ],
+        "settings": {"max_variables_per_candidate": 1, "require_reasoning": True},
+    }
+    cand = {"format": "aieng.design_candidate_patch", "candidate_id": "taller",
+            "reasoning": "raise the part", "variable_changes": [{"variable_id": "h", "new_value": 18.0}]}
+    with zipfile.ZipFile(pkg, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": name, "resources": {}}))
+        zf.writestr("geometry/shape_ir.json", json.dumps(baseline))
+        zf.writestr("analysis/design_study_problem.json", json.dumps(problem))
+        zf.writestr("patches/design_candidates/taller.json", json.dumps(cand))
+    project["aieng_file"] = "ds.aieng"
+    save_project(settings, project)
+    return project_id, pkg, baseline
+
+
+def test_design_study_run_candidate_endpoint_no_compile(tmp_path: Path) -> None:
+    """Explicit candidate run with compile disabled: derived workspace written, baseline
+    Shape IR untouched, evaluation honestly partial."""
+    from app.main import create_app
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project_id, pkg, baseline = _design_study_run_project(settings, "ds-run")
+
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/candidates/taller/run", json={"compile": False})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["execution_status"] == "patch_applied"
+    assert data["recommendation"] == "needs_more_evaluation"
+    assert data["baseline_modified"] is False
+
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        assert "candidates/taller/geometry/shape_ir.json" in names
+        assert "analysis/design_study_iterations.json" in names
+        assert "diagnostics/design_study_report.json" in names
+        # baseline untouched
+        assert json.loads(zf.read("geometry/shape_ir.json")) == baseline
+        derived = json.loads(zf.read("candidates/taller/geometry/shape_ir.json"))
+        assert derived["parts"][0]["parameters"]["height"] == 18.0
+        # no candidate generated.step leaked into the global baseline paths
+        assert "candidates/taller/geometry/generated.step" not in names
+
+
+def test_design_study_run_candidate_endpoint_real_compile(tmp_path: Path) -> None:
+    """With compile enabled (default), the candidate compiles in a throwaway copy; the baseline
+    package's geometry artifacts are never created/overwritten by the candidate run."""
+    import pytest
+    pytest.importorskip("build123d")
+    from app.main import create_app
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project_id, pkg, baseline = _design_study_run_project(settings, "ds-run-real")
+
+    resp = client.post(f"/api/projects/{project_id}/design-study/candidates/taller/run", json={})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["execution_status"] in ("evaluation_complete", "compile_succeeded")
+    assert data["recommendation"] in ("refine_candidate", "needs_more_evaluation")
+    assert data["baseline_modified"] is False
+
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        # candidate compile artifacts live ONLY under the candidate workspace
+        assert "candidates/taller/provenance/geometry_execution_manifest.json" in names
+        # baseline Shape IR + (absence of) baseline generated geometry preserved
+        assert json.loads(zf.read("geometry/shape_ir.json")) == baseline
+        assert "geometry/generated.step" not in names
+        # no throwaway temp package left behind
+    assert not list(pkg.parent.glob("*.tmp.aieng"))
+    assert not list(pkg.parent.glob("*.dscand_*.aieng"))

@@ -745,6 +745,7 @@ The backend manages all package I/O; never read it directly. Structure:
 ├── registry/                object_registry.json (Shape IR node ↔ topology/mesh/viewer ids + params)
 ├── analysis/                computed_metrics.json, field_regions.json (solver-neutral CAE), cae_result_map.json (CAE ↔ topology/node), topology_optimization.json, design_study_problem.json
 ├── patches/                 (optional) design_candidates/<candidate_id>.json (proposed, validated, NEVER auto-applied)
+├── candidates/              (optional) <candidate_id>/ derived design-study workspace (patch.json, geometry/shape_ir.json, provenance/, analysis/evaluation.json) — never overwrites baseline
 ├── provenance/              conversion_manifest.json (converter + geometry_execution record)
 ├── assembly/                (optional, multi-part) assembly_ir.json, part_registry.json, connection_graph.json, interface_resolution.json
 ├── simulation/              setup/deck artifacts, including assembly_cae_setup_draft.json, assembly_cae_model.json, optional assembly_calculix.inp
@@ -765,8 +766,20 @@ candidate (`diagnostics/design_study_candidate_validation.json`) — checking bo
 `safe_to_modify`, **protected interface variables**, `max_variables_per_candidate`, assembly
 `selected_part_id` scope, and reasoning. **No optimization/search is run, no candidate is applied,
 no geometry is recompiled, no CAE is run, and the baseline geometry is never modified.** Valid
-candidates are normalized (`applied:false`) but not applied. Future work: optimization/search
-execution, patch application, and CAE evaluation of candidates.
+candidates are normalized (`applied:false`) but not applied.
+
+A validated candidate can then be **explicitly executed** into a derived workspace via
+`POST /api/projects/{id}/design-study/candidates/{candidate_id}/run` (PR2). This applies the
+patch to a DEEP COPY of the baseline Shape IR, writes `candidates/<id>/` (patch + derived
+`geometry/shape_ir.json` — or `parts/<part>/geometry/shape_ir.json` for assembly part-scoped —
++ provenance + `analysis/evaluation.json`), and, when `compile` is enabled (default), recompiles
+the candidate in a **throwaway copy** of the package so the baseline package's geometry artifacts
+are never created or overwritten. Each run appends a deterministic `iter_NNN` record to
+`analysis/design_study_iterations.json` and rebuilds `diagnostics/design_study_report.json`.
+Execution is explicit and single-shot — **no optimizer/search/Pareto loop, no CAE, and no
+candidate is ever auto-promoted into the baseline** (`baseline_modified:false` everywhere; best a
+valid candidate reaches is `refine_candidate`). Future work: optimizer/search loop, multi-objective
+ranking, candidate CAE evaluation, and promoting a candidate to baseline.
 
 ### Assembly IR v0 (optional, multi-part)
 

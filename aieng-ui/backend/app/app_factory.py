@@ -1237,6 +1237,31 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail=".aieng package not found")
         return {"project_id": project_id, **process_design_study_package(package_path)}
 
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/run")
+    def run_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """EXPLICITLY execute ONE validated design-study candidate into a derived workspace
+        (candidates/<id>/...). Applies the patch to a DERIVED Shape IR only; the baseline is
+        never overwritten and no candidate is auto-promoted. Compiles the candidate in a
+        throwaway copy when ``compile`` is enabled (default true); records the iteration in
+        analysis/design_study_iterations.json + diagnostics/design_study_report.json. No
+        optimizer/search/loop and no CAE are run."""
+        from aieng.converters.design_study_execution import execute_design_study_candidate
+        from .cad_generation import make_candidate_recompiler
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        do_compile = (payload or {}).get("compile", True)
+        recompiler = make_candidate_recompiler(package_path) if do_compile else None
+        return {"project_id": project_id,
+                **execute_design_study_candidate(package_path, candidate_id, recompiler=recompiler)}
+
     @app.post("/api/projects/{project_id}/brep/pick-face")
     def pick_face_endpoint(
         project_id: str,

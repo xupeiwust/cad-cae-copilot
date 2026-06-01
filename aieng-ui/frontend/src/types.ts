@@ -1255,7 +1255,44 @@ export type AutopilotApproval = {
   code_preview?: string | null;
   artifact_preview?: string | null;
   recommended_action?: string | null;
+  skill_plan_brief?: string | null;
+  skill_plan_assumptions?: string[];
+  skill_plan_warnings?: string[];
+  skill_plan_verification_targets?: string[];
   created_at: string;
+};
+
+export type AutopilotAgentPlanStep = {
+  id: string;
+  title: string;
+  kind: "observe" | "skill" | "tool" | "approval" | "verify" | "repair" | "summarize" | string;
+  status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped" | string;
+  tool_name?: string | null;
+  skill_name?: string | null;
+  summary: string;
+  evidence: Record<string, unknown>;
+};
+
+export type AutopilotAgentPlan = {
+  id: string;
+  objective: string;
+  status: "pending" | "running" | "completed" | "blocked" | "failed" | "cancelled" | string;
+  steps: AutopilotAgentPlanStep[];
+  current_step_id?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AutopilotWorkingState = {
+  objective: string;
+  current_mode: string;
+  accepted_assumptions: string[];
+  open_questions: string[];
+  latest_evidence: Array<Record<string, unknown>>;
+  current_blockers: string[];
+  last_successful_tool?: string | null;
+  recommended_next_action?: string | null;
+  updated_at: string;
 };
 
 export type AutopilotRunState = {
@@ -1279,6 +1316,8 @@ export type AutopilotRunState = {
     created_at: string;
   }>;
   pending_approval?: AutopilotApproval | null;
+  plan?: AutopilotAgentPlan | null;
+  working_state?: AutopilotWorkingState;
   final_message?: string | null;
   errors: string[];
   queued_user_messages?: string[];

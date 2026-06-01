@@ -208,6 +208,7 @@ type ChatPanelProps = {
   approveAutopilot(runId: string): void;
   rejectAutopilot(runId: string): void;
   cancelAutopilot(runId: string): void;
+  reviseAutopilot?(runId: string, message: string): void;
   approveSimulation(): void;
   rejectSimulation(): void;
   recentPickedFaces: PickedFace[];
@@ -239,6 +240,7 @@ export function ChatPanel({
   approveAutopilot,
   rejectAutopilot,
   cancelAutopilot,
+  reviseAutopilot,
   approveSimulation,
   rejectSimulation,
   recentPickedFaces,
@@ -399,6 +401,7 @@ export function ChatPanel({
             onApproveAutopilot={approveAutopilot}
             onRejectAutopilot={rejectAutopilot}
             onCancelAutopilot={cancelAutopilot}
+            onReviseAutopilot={reviseAutopilot}
           />
         ) : (
           <div className="summary-note summary-muted chat-empty-state">

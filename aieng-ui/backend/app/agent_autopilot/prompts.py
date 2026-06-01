@@ -34,7 +34,7 @@ OPERATING_RULES = [
     "Retrieve facts before claims: use aieng.agent_context for model details; do not guess topology, dimensions, materials, or results.",
     "For greetings/meta questions use chat. For factual model work use tool_call.",
     "When the user asks what tools are available or what the workbench can do, call aieng.agent_readme (do not guess or summarize from memory). Return the result via chat, not final.",
-    "CAD SKILL ROUTING: for create-new CAD requests, call cad.plan_build123d_skill first when the request matches a supported skill/template. Review its assumptions and execute_input, then call cad.execute_build123d only if the plan fits the user intent.",
+    "CAD SKILL ROUTING: for create-new CAD requests, call cad.plan_build123d_skill first when the request matches a supported skill/template. Review its assumptions and proposed_input, then call cad.execute_build123d only if the plan fits the user intent.",
     "CAD BRIEF GATE: before cad.execute_build123d, form a compact brief from either cad.plan_build123d_skill output or your own analysis: model, units/origin, key dimensions, features, labels, validation targets, assumptions. Put a <=900 char summary in user_message when requesting approval.",
     "For new CAD call cad.get_source first unless clearly starting empty. Then propose cad.execute_build123d with result bound to final geometry.",
     "CAD SOURCE STYLE: named parameters first; semantic .label and .color on each part; Compound(children=[...]); closed solids; no export/show calls.",
@@ -42,6 +42,8 @@ OPERATING_RULES = [
     "Visible products/vehicles/characters: use loft/revolve/sweep + mirror + final fillets; avoid Box stacking for exterior curves.",
     "After cad.execute_build123d, review named_parts/parts_added and thumbnail if provided. State 3-5 fail-first visual/geometric objections before further CAD edits.",
     "If cad.critique output is present, treat fail_first_objections as blockers before finalizing engineering parts.",
+    "REPAIR LOOP: for recoverable tool_error, repair only failed input; preserve user intent and project_id; avoid redesign unless required.",
+    "CAD BUILD REPAIR: when cad.execute_build123d fails, use the compact traceback line and source_snippet to fix imports/API misuse first; keep constants, labels, and dimensions unless the error proves they are invalid.",
     "CAE setup: use selected @face:/@edge:/@group: pointers when available; ask one concise question only if required support/load face is ambiguous.",
     "cae.apply_setup_patch is followed by solver preflight; cae.run_solver only after preflight/input are ready and requires confirmation.",
     "CAD mutation and solver execution are approval-gated; user_message must explain side effects and include the compact CAD brief/plan for CAD actions.",
@@ -115,24 +117,31 @@ def _compact_tool_output(output: Any) -> Any:
     if not isinstance(output, dict):
         return _json_safe_truncate(output, 3000)
     if output.get("skill_name") == "cad.plan_build123d_skill":
-        execute_input = output.get("execute_input") if isinstance(output.get("execute_input"), dict) else {}
+        proposed_input = output.get("proposed_input") if isinstance(output.get("proposed_input"), dict) else {}
+        if not proposed_input:
+            proposed_input = output.get("execute_input") if isinstance(output.get("execute_input"), dict) else {}
         return {
             "status": output.get("status"),
             "skill_name": output.get("skill_name"),
             "pattern": output.get("pattern"),
+            "intent": output.get("intent"),
             "brief": output.get("brief"),
             "assumptions": output.get("assumptions"),
             "warnings": output.get("warnings"),
-            "validation_targets": output.get("validation_targets"),
-            "next_tool": output.get("next_tool"),
-            "execute_input": {
-                "project_id": execute_input.get("project_id"),
-                "name": execute_input.get("name"),
-                "code": execute_input.get("code"),
-                "mode": execute_input.get("mode"),
-                "model_kind": execute_input.get("model_kind"),
-                "timeout": execute_input.get("timeout"),
-            } if execute_input else None,
+            "verification_targets": output.get("verification_targets") or output.get("validation_targets"),
+            "fallback_recommendation": output.get("fallback_recommendation") or output.get("recommendation"),
+            "match_confidence": output.get("match_confidence"),
+            "matched_terms": output.get("matched_terms"),
+            "rejection_reason": output.get("rejection_reason"),
+            "proposed_tool": output.get("proposed_tool") or output.get("next_tool"),
+            "proposed_input": {
+                "project_id": proposed_input.get("project_id"),
+                "name": proposed_input.get("name"),
+                "code": proposed_input.get("code"),
+                "mode": proposed_input.get("mode"),
+                "model_kind": proposed_input.get("model_kind"),
+                "timeout": proposed_input.get("timeout"),
+            } if proposed_input else None,
         }
     if "schema_version" in output and "project_id" in output:
         cad = output.get("cad") if isinstance(output.get("cad"), dict) else {}
@@ -195,6 +204,52 @@ def _compact_tool_output(output: Any) -> Any:
     return _json_safe_truncate(output, 8000)
 
 
+def _top_traceback_line(error: str) -> str:
+    lines = [line.strip() for line in error.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    for line in reversed(lines):
+        if line.startswith("File ") or line.startswith("^") or line == "Traceback (most recent call last):":
+            continue
+        return line[:500]
+    return lines[-1][:500]
+
+
+def _exception_type(line: str) -> str | None:
+    if ":" not in line:
+        return None
+    candidate = line.split(":", 1)[0].strip()
+    if not candidate or " " in candidate:
+        return None
+    if candidate.endswith(("Error", "Exception")) or "." in candidate:
+        return candidate
+    return None
+
+
+def _compact_cad_build_error(data: dict[str, Any]) -> dict[str, Any]:
+    tool_input = data.get("input") if isinstance(data.get("input"), dict) else {}
+    code = tool_input.get("code") if isinstance(tool_input, dict) else None
+    top_line = _top_traceback_line(str(data.get("error") or ""))
+    compact: dict[str, Any] = {
+        "tool_name": data.get("tool_name") or "cad.execute_build123d",
+        "error_class": data.get("error_class") or "cad_build_error",
+        "recoverable": data.get("recoverable", True),
+        "exception_type": _exception_type(top_line),
+        "top_traceback_line": top_line,
+        "failing_input": {
+            "project_id": tool_input.get("project_id"),
+            "name": tool_input.get("name"),
+            "mode": tool_input.get("mode"),
+            "model_kind": tool_input.get("model_kind"),
+            "timeout": tool_input.get("timeout"),
+            "code_chars": len(code) if isinstance(code, str) else 0,
+        },
+    }
+    if isinstance(code, str):
+        compact["source_snippet"] = _truncate_text(code, 1800)
+    return compact
+
+
 def _compact_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for observation in observations[-12:]:
@@ -209,6 +264,11 @@ def _compact_observations(observations: list[dict[str, Any]]) -> list[dict[str, 
             if "output" in next_data:
                 next_data["output"] = _compact_tool_output(next_data.get("output"))
             next_item["data"] = _json_safe_truncate(next_data, 12000)
+        elif observation.get("kind") == "tool_error" and (
+            data.get("error_class") == "cad_build_error"
+            or (data.get("tool_name") == "cad.execute_build123d" and data.get("error"))
+        ):
+            next_item["data"] = _compact_cad_build_error(data)
         else:
             next_item["data"] = _json_safe_truncate(data, 5000)
         compact.append(next_item)

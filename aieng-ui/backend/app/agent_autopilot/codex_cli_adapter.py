@@ -18,6 +18,7 @@ from .adapters import (
     _first_line,
     capability_from_missing,
     parse_action_json,
+    progress_event,
     resolve_command,
     run_probe_command,
 )
@@ -133,11 +134,7 @@ class CodexCliAdapter:
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
         if on_progress is not None:
-            on_progress({
-                "phase": "started",
-                "adapter_id": self.adapter_id,
-                "message": "Starting Codex CLI capability check.",
-            })
+            on_progress(progress_event(self.adapter_id, "started", "Starting Codex CLI capability check."))
         capability = (
             self._capability_cache
             if self._capability_cache and self._capability_cache.status == "available"
@@ -163,13 +160,13 @@ class CodexCliAdapter:
                 duration_ms=_elapsed_ms(start),
             )
         if on_progress is not None:
-            on_progress({
-                "phase": "command_resolved",
-                "adapter_id": self.adapter_id,
-                "message": "Codex CLI is available; preparing structured output schema.",
-                "command_path": command_path,
-                "step_index": step_index,
-            })
+            on_progress(progress_event(
+                self.adapter_id,
+                "prompt_prepared",
+                "Codex CLI is available; preparing structured output schema.",
+                command_path=command_path,
+                step_index=step_index,
+            ))
         with tempfile.TemporaryDirectory(prefix="aieng-codex-autopilot-") as tmp:
             schema_path = Path(tmp) / "agent_action_schema.json"
             output_path = Path(tmp) / "last_message.json"
@@ -193,13 +190,20 @@ class CodexCliAdapter:
                 # (~8191 chars).  Codex exec reads the prompt from stdin when no
                 # positional prompt arg is supplied.
                 if on_progress is not None:
-                    on_progress({
-                        "phase": "process_running",
-                        "adapter_id": self.adapter_id,
-                        "message": "Codex exec is running in read-only sandbox; waiting for final action JSON.",
-                        "schema_path": str(schema_path),
-                        "step_index": step_index,
-                    })
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "request_sent",
+                        "Codex exec request prepared; starting subprocess.",
+                        schema_path=str(schema_path),
+                        step_index=step_index,
+                    ))
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "waiting_for_model",
+                        "Codex exec is running in read-only sandbox; waiting for final action JSON.",
+                        schema_path=str(schema_path),
+                        step_index=step_index,
+                    ))
                 result = subprocess.run(
                     cmd,
                     input=prompt.encode("utf-8"),
@@ -215,6 +219,8 @@ class CodexCliAdapter:
                     else stdout_decoded
                 )
             except subprocess.TimeoutExpired as exc:
+                if on_progress is not None:
+                    on_progress(progress_event(self.adapter_id, "timeout", f"Codex CLI step timed out after {timeout_seconds}s.", step_index=step_index))
                 return AdapterInvocationResult(
                     status="timeout",
                     raw_output=_decode_output(exc.stdout),
@@ -223,6 +229,8 @@ class CodexCliAdapter:
                     duration_ms=_elapsed_ms(start),
                 )
             except OSError as exc:
+                if on_progress is not None:
+                    on_progress(progress_event(self.adapter_id, "error", str(exc), step_index=step_index))
                 return AdapterInvocationResult(
                     status="error",
                     stderr="",
@@ -236,6 +244,8 @@ class CodexCliAdapter:
                     f"stdout_preview: {stdout_decoded[:600]!r}"
                 )
                 logger.error("codex invoke failed: %s", diag)
+                if on_progress is not None:
+                    on_progress(progress_event(self.adapter_id, "error", "Codex CLI exited with an error.", step_index=step_index))
                 return AdapterInvocationResult(
                     status="error",
                     raw_output=stdout_decoded,
@@ -245,17 +255,17 @@ class CodexCliAdapter:
                 )
             try:
                 if on_progress is not None:
-                    on_progress({
-                        "phase": "parsing_output",
-                        "adapter_id": self.adapter_id,
-                        "message": (
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "parsing_output",
+                        (
                             "Codex CLI returned output; validating the structured action "
                             f"({len(output_text)} output chars, {len(stderr_decoded)} stderr chars)."
                         ),
-                        "output_chars": len(output_text),
-                        "stderr_chars": len(stderr_decoded),
-                        "step_index": step_index,
-                    })
+                        output_chars=len(output_text),
+                        stderr_chars=len(stderr_decoded),
+                        step_index=step_index,
+                    ))
                 action = parse_action_json(output_text)
             except Exception as exc:
                 diag = (
@@ -264,6 +274,8 @@ class CodexCliAdapter:
                     f"stdout_preview: {stdout_decoded[:600]!r}"
                 )
                 logger.error("codex parse failed: %s", diag)
+                if on_progress is not None:
+                    on_progress(progress_event(self.adapter_id, "error", "Codex CLI returned invalid action JSON.", step_index=step_index))
                 return AdapterInvocationResult(
                     status="error",
                     raw_output=output_text,
@@ -272,14 +284,14 @@ class CodexCliAdapter:
                     duration_ms=_elapsed_ms(start),
                 )
             if on_progress is not None:
-                on_progress({
-                    "phase": "completed",
-                    "adapter_id": self.adapter_id,
-                    "message": f"Codex CLI selected action {action.action.type}.",
-                    "action_type": action.action.type,
-                    "duration_ms": _elapsed_ms(start),
-                    "step_index": step_index,
-                })
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "completed",
+                    f"Codex CLI selected action {action.action.type}.",
+                    action_type=action.action.type,
+                    duration_ms=_elapsed_ms(start),
+                    step_index=step_index,
+                ))
             return AdapterInvocationResult(
                 status="success",
                 action=action,

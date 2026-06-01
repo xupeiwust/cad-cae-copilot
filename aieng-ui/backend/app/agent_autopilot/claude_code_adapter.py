@@ -17,6 +17,7 @@ from .adapters import (
     _first_line,
     capability_from_missing,
     parse_action_json,
+    progress_event,
     resolve_command,
     run_probe_command,
 )
@@ -39,6 +40,13 @@ def _resolve_claude_exe(command: str) -> str | None:
         if os.path.isfile(exe_candidate):
             return exe_candidate
     return path
+
+
+# Track which deterministic sessions have already been created by this adapter.
+# Key = effective_session_id (UUID string).  Value = True.
+# Used to decide between --session-id (first call) and --resume (subsequent calls).
+# A module-level dict survives across per-request engine/adapter rebuilds.
+_session_created_flags: dict[str, bool] = {}
 
 
 def _run_claude_step(cmd: list[str], prompt: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
@@ -108,14 +116,18 @@ class ClaudeCodeAdapter:
     def __init__(self, command: str | None = None, workspace: str | None = None) -> None:
         self.command = command or os.environ.get("AIENG_CLAUDE_CODE_COMMAND", "claude")
         self.workspace = workspace or os.environ.get("AIENG_LOCAL_AGENT_WORKSPACE", "")
+        # Allowlist for Claude's built-in tools. Empty string disables all built-in
+        # tools; a comma-separated list (e.g. "Read,Edit,Grep") enables only those.
+        # Default allows most common tools except Bash to avoid arbitrary shell execution.
+        self.tools = os.environ.get("AIENG_CLAUDE_CODE_TOOLS", "Read,Edit,Grep,Glob,LS,Search")
 
     @staticmethod
     def _claude_session_id(session_id: str | None) -> str:
-        """Return a valid UUID for --session-id.
+        """Return a valid UUID for --session-id / --resume.
 
         The frontend chat session ID is an arbitrary string (e.g. 12-char hex).
-        Claude CLI --session-id requires a strict UUID format, so we map
-        non-UUID values deterministically via uuid5.  This is stateless and
+        Claude CLI --session-id and --resume require a strict UUID format, so we
+        map non-UUID values deterministically via uuid5.  This is stateless and
         survives adapter instance rebuilds (e.g. per-request engine creation).
         """
         if session_id is None:
@@ -199,11 +211,7 @@ class ClaudeCodeAdapter:
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
         if on_progress is not None:
-            on_progress({
-                "phase": "started",
-                "adapter_id": self.adapter_id,
-                "message": "Starting Claude Code CLI in non-interactive JSON mode.",
-            })
+            on_progress(progress_event(self.adapter_id, "started", "Starting Claude Code CLI in non-interactive JSON mode."))
         command_path = _resolve_claude_exe(self.command)
         if not command_path:
             return AdapterInvocationResult(
@@ -212,48 +220,66 @@ class ClaudeCodeAdapter:
                 duration_ms=_elapsed_ms(start),
             )
         # Session-aware invocation:
-        #   Always pass --session-id so the CLI explicitly binds to the named
-        #   session instead of relying on --continue (which resumes the *most
-        #   recent* session in the working directory and could leak into a user's
-        #   interactive CLI session).  --bare is kept to skip hooks/LSP startup.
+        #   First call for a session uses --session-id to create it.
+        #   Subsequent calls use --resume <session_id> to reconnect to the
+        #   same session instead of --continue (which resumes the *most recent*
+        #   session and could leak into a user's interactive CLI session).
+        #   A module-level dict tracks which sessions have already been created
+        #   so the adapter survives per-request rebuilds.
         effective_session_id = self._claude_session_id(session_id)
+        has_existing_session = _session_created_flags.get(effective_session_id, False)
+        use_resume = has_existing_session or step_index > 0
         if on_progress is not None:
-            on_progress({
-                "phase": "command_resolved",
-                "adapter_id": self.adapter_id,
-                "message": f"Claude Code command resolved; using session {effective_session_id}.",
-                "command_path": command_path,
-                "session_id": effective_session_id,
-                "step_index": step_index,
-            })
-        cmd = [
-            command_path,
-            "-p",
-            "--bare",
-            "--session-id",
-            effective_session_id,
-            "--output-format",
-            "json",
-            "--json-schema",
-            json.dumps(action_schema),
-            "--permission-mode",
-            "dontAsk",
-            "--tools",
-            "",
-        ]
-        if self.workspace:
-            cmd.extend(["--add-dir", self.workspace])
+            on_progress(progress_event(
+                self.adapter_id,
+                "prompt_prepared",
+                f"Claude Code command resolved; session={effective_session_id} mode={'--resume' if use_resume else '--session-id'}.",
+                command_path=command_path,
+                session_id=effective_session_id,
+                step_index=step_index,
+            ))
+
+        def _build_cmd(session_flag: str) -> list[str]:
+            cmd = [
+                command_path,
+                "-p",
+                "--bare",
+                session_flag,
+                effective_session_id,
+                "--output-format",
+                "json",
+                "--json-schema",
+                json.dumps(action_schema),
+                "--permission-mode",
+                "auto",
+                "--tools",
+                self.tools,
+            ]
+            if self.workspace:
+                cmd.extend(["--add-dir", self.workspace])
+            return cmd
+
+        cmd = _build_cmd("--resume" if use_resume else "--session-id")
         try:
             if on_progress is not None:
-                on_progress({
-                    "phase": "process_running",
-                    "adapter_id": self.adapter_id,
-                    "message": "Claude Code process is running; waiting for structured action JSON.",
-                    "session_id": effective_session_id,
-                    "step_index": step_index,
-                })
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "request_sent",
+                    "Claude Code request prepared; starting subprocess.",
+                    session_id=effective_session_id,
+                    step_index=step_index,
+                ))
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "waiting_for_model",
+                    "Claude Code process is running; waiting for structured action JSON.",
+                    session_id=effective_session_id,
+                    step_index=step_index,
+                ))
             result = _run_claude_step(cmd, prompt, timeout_seconds)
         except subprocess.TimeoutExpired as exc:
+            if on_progress is not None:
+                on_progress(progress_event(self.adapter_id, "timeout", f"Claude Code step timed out after {timeout_seconds}s.", step_index=step_index))
             return AdapterInvocationResult(
                 status="timeout",
                 raw_output=exc.stdout or "",
@@ -262,11 +288,46 @@ class ClaudeCodeAdapter:
                 duration_ms=_elapsed_ms(start),
             )
         except OSError as exc:
+            if on_progress is not None:
+                on_progress(progress_event(self.adapter_id, "error", str(exc), step_index=step_index))
             return AdapterInvocationResult(
                 status="error",
                 diagnostic=str(exc),
                 duration_ms=_elapsed_ms(start),
             )
+        # If the CLI reports the session is already locked, mark it as created
+        # and retry with --resume (handles backend restarts where the module
+        # dict was cleared but the session still exists on disk).
+        if result.returncode != 0 and "already in use" in (result.stderr or ""):
+            logger.warning(
+                "claude session '%s' already in use; retrying with --resume.",
+                effective_session_id,
+            )
+            _session_created_flags[effective_session_id] = True
+            cmd = _build_cmd("--resume")
+            try:
+                result = _run_claude_step(cmd, prompt, timeout_seconds)
+            except subprocess.TimeoutExpired as exc:
+                if on_progress is not None:
+                    on_progress(progress_event(self.adapter_id, "timeout", f"Claude Code step timed out after {timeout_seconds}s.", step_index=step_index))
+                return AdapterInvocationResult(
+                    status="timeout",
+                    raw_output=exc.stdout or "",
+                    stderr=exc.stderr or "",
+                    diagnostic=f"Claude Code step timed out after {timeout_seconds}s.",
+                    duration_ms=_elapsed_ms(start),
+                )
+            except OSError as exc:
+                if on_progress is not None:
+                    on_progress(progress_event(self.adapter_id, "error", str(exc), step_index=step_index))
+                return AdapterInvocationResult(
+                    status="error",
+                    diagnostic=str(exc),
+                    duration_ms=_elapsed_ms(start),
+                )
+        # Mark the session as created on success so future calls use --resume.
+        if result.returncode == 0:
+            _session_created_flags[effective_session_id] = True
         if result.returncode != 0:
             diag = (
                 f"Claude Code exited with code {result.returncode}.\n"
@@ -275,6 +336,8 @@ class ClaudeCodeAdapter:
                 f"stdout_preview: {result.stdout[:800]!r}"
             )
             logger.error("claude invoke failed: %s", diag)
+            if on_progress is not None:
+                on_progress(progress_event(self.adapter_id, "error", "Claude Code exited with an error.", step_index=step_index))
             return AdapterInvocationResult(
                 status="error",
                 raw_output=result.stdout,
@@ -284,17 +347,17 @@ class ClaudeCodeAdapter:
             )
         try:
             if on_progress is not None:
-                on_progress({
-                    "phase": "parsing_output",
-                    "adapter_id": self.adapter_id,
-                    "message": (
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "parsing_output",
+                    (
                         "Claude Code returned output; validating the structured action "
                         f"({len(result.stdout)} stdout chars, {len(result.stderr)} stderr chars)."
                     ),
-                    "stdout_chars": len(result.stdout),
-                    "stderr_chars": len(result.stderr),
-                    "step_index": step_index,
-                })
+                    stdout_chars=len(result.stdout),
+                    stderr_chars=len(result.stderr),
+                    step_index=step_index,
+                ))
             action = parse_action_json(result.stdout)
         except Exception as exc:
             diag = (
@@ -304,6 +367,8 @@ class ClaudeCodeAdapter:
                 f"stdout_preview: {result.stdout[:800]!r}"
             )
             logger.error("claude parse failed: %s", diag)
+            if on_progress is not None:
+                on_progress(progress_event(self.adapter_id, "error", "Claude Code returned invalid action JSON.", step_index=step_index))
             return AdapterInvocationResult(
                 status="error",
                 raw_output=result.stdout,
@@ -312,14 +377,14 @@ class ClaudeCodeAdapter:
                 duration_ms=_elapsed_ms(start),
             )
         if on_progress is not None:
-            on_progress({
-                "phase": "completed",
-                "adapter_id": self.adapter_id,
-                "message": f"Claude Code selected action {action.action.type}.",
-                "action_type": action.action.type,
-                "duration_ms": _elapsed_ms(start),
-                "step_index": step_index,
-            })
+            on_progress(progress_event(
+                self.adapter_id,
+                "completed",
+                f"Claude Code selected action {action.action.type}.",
+                action_type=action.action.type,
+                duration_ms=_elapsed_ms(start),
+                step_index=step_index,
+            ))
         return AdapterInvocationResult(
             status="success",
             action=action,

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .. import agent_engine
-from .adapters import DEFAULT_PROBE_TIMEOUT_SECONDS, DEFAULT_STEP_TIMEOUT_SECONDS, _elapsed_ms, parse_action_json
+from .adapters import DEFAULT_PROBE_TIMEOUT_SECONDS, DEFAULT_STEP_TIMEOUT_SECONDS, _elapsed_ms, parse_action_json, progress_event
 from .schema import AdapterInvocationResult, LocalAgentCapability
 
 
@@ -57,7 +57,7 @@ class LlmApiAdapter:
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
         if on_progress is not None:
-            on_progress({"phase": "started", "adapter_id": self.adapter_id})
+            on_progress(progress_event(self.adapter_id, "started", "Starting LLM API adapter."))
         try:
             provider = self.provider_factory(self.settings, self.llm_config)
             system_prompt = (
@@ -77,36 +77,76 @@ class LlmApiAdapter:
                 },
                 ensure_ascii=False,
             )
+            if on_progress is not None:
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "prompt_prepared",
+                    "LLM API prompt prepared.",
+                    step_index=step_index,
+                ))
             with ThreadPoolExecutor(max_workers=1) as pool:
+                if on_progress is not None:
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "request_sent",
+                        "LLM API request sent.",
+                        step_index=step_index,
+                    ))
                 future = pool.submit(
                     provider.generate,
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                 )
+                if on_progress is not None:
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "waiting_for_model",
+                        "Waiting for LLM API response.",
+                        step_index=step_index,
+                    ))
                 raw = future.result(timeout=timeout_seconds)
             if on_progress is not None:
-                on_progress({"phase": "completed", "adapter_id": self.adapter_id})
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "parsing_output",
+                    "LLM API returned output; validating structured action.",
+                    step_index=step_index,
+                ))
+            action = parse_action_json(raw)
+            if on_progress is not None:
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "completed",
+                    f"LLM API selected action {action.action.type}.",
+                    action_type=action.action.type,
+                    duration_ms=_elapsed_ms(start),
+                    step_index=step_index,
+                ))
             return AdapterInvocationResult(
                 status="success",
-                action=parse_action_json(raw),
+                action=action,
                 raw_output=raw,
                 duration_ms=_elapsed_ms(start),
             )
         except FutureTimeoutError:
             if on_progress is not None:
-                on_progress({"phase": "timeout", "adapter_id": self.adapter_id})
+                on_progress(progress_event(self.adapter_id, "timeout", f"LLM API call timed out after {timeout_seconds}s.", step_index=step_index))
             return AdapterInvocationResult(
                 status="timeout",
                 diagnostic=f"LLM API call timed out after {timeout_seconds}s.",
                 duration_ms=_elapsed_ms(start),
             )
         except TimeoutError as exc:
+            if on_progress is not None:
+                on_progress(progress_event(self.adapter_id, "timeout", str(exc), step_index=step_index))
             return AdapterInvocationResult(
                 status="timeout",
                 diagnostic=str(exc),
                 duration_ms=_elapsed_ms(start),
             )
         except Exception as exc:
+            if on_progress is not None:
+                on_progress(progress_event(self.adapter_id, "error", f"{type(exc).__name__}: {exc}", step_index=step_index))
             return AdapterInvocationResult(
                 status="error",
                 diagnostic=f"{type(exc).__name__}: {exc}",

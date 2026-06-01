@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+AutopilotErrorClass = Literal[
+    "schema_error",
+    "policy_error",
+    "tool_runtime_error",
+    "cad_build_error",
+    "timeout",
+    "missing_context",
+    "user_decision_required",
+    "non_recoverable",
+]
 
 
 def now_iso() -> str:
@@ -97,6 +110,39 @@ class AutopilotObservation(StrictModel):
     created_at: str = Field(default_factory=now_iso)
 
 
+class AgentPlanStep(StrictModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12], min_length=1)
+    title: str = Field(default="", min_length=0)
+    kind: Literal["observe", "skill", "tool", "approval", "verify", "repair", "summarize"] = "observe"
+    status: Literal["pending", "running", "completed", "blocked", "failed", "skipped"] = "pending"
+    tool_name: str | None = None
+    skill_name: str | None = None
+    summary: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentPlan(StrictModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12], min_length=1)
+    objective: str = ""
+    status: Literal["pending", "running", "completed", "blocked", "failed", "cancelled"] = "pending"
+    steps: list[AgentPlanStep] = Field(default_factory=list)
+    current_step_id: str | None = None
+    created_at: str = Field(default_factory=now_iso)
+    updated_at: str = Field(default_factory=now_iso)
+
+
+class AgentWorkingState(StrictModel):
+    objective: str = ""
+    current_mode: str = ""
+    accepted_assumptions: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    latest_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    current_blockers: list[str] = Field(default_factory=list)
+    last_successful_tool: str | None = None
+    recommended_next_action: str | None = None
+    updated_at: str = Field(default_factory=now_iso)
+
+
 class AutopilotApproval(StrictModel):
     id: str
     tool_name: str
@@ -109,6 +155,10 @@ class AutopilotApproval(StrictModel):
     code_preview: str | None = None
     artifact_preview: str | None = None
     recommended_action: str | None = None
+    skill_plan_brief: str | None = None
+    skill_plan_assumptions: list[str] = Field(default_factory=list)
+    skill_plan_warnings: list[str] = Field(default_factory=list)
+    skill_plan_verification_targets: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -156,10 +206,13 @@ class AutopilotRunState(StrictModel):
     updated_at: str = Field(default_factory=now_iso)
     observations: list[AutopilotObservation] = Field(default_factory=list)
     steps: list[AutopilotStep] = Field(default_factory=list)
+    plan: AgentPlan | None = None
+    working_state: AgentWorkingState = Field(default_factory=AgentWorkingState)
     pending_approval: AutopilotApproval | None = None
     final_message: str | None = None
     errors: list[str] = Field(default_factory=list)
     queued_user_messages: list[str] = Field(default_factory=list)
+    repair_attempts: dict[str, int] = Field(default_factory=dict)
 
 
 class LocalAgentCapability(StrictModel):
@@ -185,3 +238,21 @@ class AdapterInvocationResult(StrictModel):
     stderr: str = ""
     diagnostic: str = ""
     duration_ms: int = 0
+
+
+class SkillToolOutput(StrictModel):
+    status: Literal["ready", "unsupported", "needs_clarification", "error"]
+    skill_name: str
+    intent: str = ""
+    brief: str = ""
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    proposed_tool: str | None = None
+    proposed_input: dict[str, Any] = Field(default_factory=dict)
+    verification_targets: list[str] = Field(default_factory=list)
+    fallback_recommendation: str | None = None
+    match_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    matched_terms: list[str] = Field(default_factory=list)
+    rejection_reason: str | None = None
+    question: str | None = None
+    code: str | None = None

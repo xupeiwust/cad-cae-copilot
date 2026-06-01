@@ -1,13 +1,13 @@
 import type { PersistedChatMessage } from "../api";
 import type { ChatHistoryItem } from "../appTypes";
-import type { AutopilotObservation, AutopilotRunState } from "../types";
+import type { AutopilotAgentPlan, AutopilotAgentPlanStep, AutopilotObservation, AutopilotRunState } from "../types";
 
 export type TranscriptStatus = "pending" | "running" | "done" | "failed" | "blocked" | "approval" | "queued";
 
 type TranscriptBase = {
   id: string;
   sourceId: string;
-  kind: "message" | "tool" | "approval" | "artifact" | "status" | "error";
+  kind: "message" | "tool" | "approval" | "artifact" | "status" | "error" | "plan";
   runId?: string | null;
   sessionId?: string | null;
   projectId?: string | null;
@@ -47,6 +47,10 @@ export type TranscriptApprovalLine = TranscriptBase & {
   codePreview?: string | null;
   artifactPreview?: string | null;
   recommendedAction?: string | null;
+  skillPlanBrief?: string | null;
+  skillPlanAssumptions?: string[];
+  skillPlanWarnings?: string[];
+  skillPlanVerificationTargets?: string[];
 };
 
 export type TranscriptArtifactLine = TranscriptBase & {
@@ -72,6 +76,14 @@ export type TranscriptErrorLine = TranscriptBase & {
   summary: string;
 };
 
+export type TranscriptAgentPlanLine = TranscriptBase & {
+  kind: "plan";
+  status: TranscriptStatus;
+  objective: string;
+  steps: AutopilotAgentPlanStep[];
+  currentStepId?: string | null;
+};
+
 export type ChatTranscriptItem =
   | TranscriptUserMessage
   | TranscriptAgentMessage
@@ -79,7 +91,8 @@ export type ChatTranscriptItem =
   | TranscriptApprovalLine
   | TranscriptArtifactLine
   | TranscriptStatusLine
-  | TranscriptErrorLine;
+  | TranscriptErrorLine
+  | TranscriptAgentPlanLine;
 
 export type AgentTranscriptEvent = {
   event_id?: string;
@@ -121,6 +134,18 @@ export function runToTranscriptItems(
 
   for (const [index, obs] of run.observations.entries()) {
     items.push(...observationToTranscriptItems(run, obs, index));
+  }
+
+  if (run.plan) {
+    items.push(planToTranscriptItem(run.plan, {
+      runId: run.run_id,
+      sessionId: run.session_id ?? null,
+      projectId: run.project_id ?? null,
+      createdAt: safeDate(run.plan.updated_at || run.updated_at || run.created_at),
+      sourceId: `run:${run.run_id}:plan:${run.plan.id}`,
+      id: `run-${run.run_id}-plan-${run.plan.id}`,
+      detail: run.plan,
+    }));
   }
 
   if (run.pending_approval) {
@@ -220,8 +245,11 @@ export function chatHistoryToTranscriptItems(
     if (runId && status && terminalTranscriptStatus(status)) {
       runStatusById.set(runId, status);
     }
-    items.push(...agentEventToTranscriptItems(event));
+    if (event.type !== "agent_plan_created" && event.type !== "agent_plan_step_updated") {
+      items.push(...agentEventToTranscriptItems(event));
+    }
   }
+  items.push(...planEventsToTranscriptItems(agentEvents));
 
   return dedupeAndSort(
     collapseProgressRows(
@@ -287,7 +315,7 @@ export function agentEventToTranscriptItems(event: AgentTranscriptEvent): ChatTr
           kind: "tool",
           status: payload.status === "error" ? "failed" : "done",
           toolName: stringValue(payload.tool_name) || stringValue(payload.tool) || "tool",
-          summary: event.content || stringValue(payload.summary) || "Tool completed",
+          summary: skillDiagnosticSummary(payload) || event.content || stringValue(payload.summary) || "Tool completed",
         }];
       }
     case "tool_failed":
@@ -311,7 +339,14 @@ export function agentEventToTranscriptItems(event: AgentTranscriptEvent): ChatTr
         codePreview: stringValue(payload.code_preview),
         artifactPreview: stringValue(payload.artifact_preview),
         recommendedAction: stringValue(payload.recommended_action),
+        skillPlanBrief: stringValue(payload.skill_plan_brief),
+        skillPlanAssumptions: stringArray(payload.skill_plan_assumptions),
+        skillPlanWarnings: stringArray(payload.skill_plan_warnings),
+        skillPlanVerificationTargets: stringArray(payload.skill_plan_verification_targets),
       }];
+    case "agent_plan_created":
+    case "agent_plan_step_updated":
+      return planEventsToTranscriptItems([event]);
     case "artifact_ready":
     case "viewer_asset_changed":
       return [artifactLineFromPayload(base, payload, event.content || "Viewer refreshed")];
@@ -328,6 +363,13 @@ export function agentEventToTranscriptItems(event: AgentTranscriptEvent): ChatTr
         kind: "status",
         status: normalizeStatus(event.status || stringValue(payload.status)),
         summary: event.content || `Run ${event.status || payload.status || "updated"}`,
+      }];
+    case "agent_phase_changed":
+      return [{
+        ...base,
+        kind: "status",
+        status: normalizeStatus(event.status || stringValue(payload.status)),
+        summary: phaseSummary(payload, event.content),
       }];
     default:
       return [];
@@ -358,8 +400,9 @@ function observationToTranscriptItems(run: AutopilotRunState, obs: AutopilotObse
   }
   if (obs.kind === "tool_result") {
     const artifact = outputToArtifactLine(base, obs.data, "done");
+    const output = objectValue(obs.data?.output);
     return [
-      { ...base, kind: "tool", status: "done", toolName: toolName || "tool", summary: obs.summary },
+      { ...base, kind: "tool", status: "done", toolName: toolName || "tool", summary: skillDiagnosticSummary(output) || obs.summary },
       ...(artifact ? [artifact] : []),
     ];
   }
@@ -408,7 +451,132 @@ function approvalToTranscriptItem(
     codePreview: stringValue(approval.code_preview) || stringValue(objectValue(approval.input).code),
     artifactPreview: stringValue(approval.artifact_preview),
     recommendedAction: stringValue(approval.recommended_action),
+    skillPlanBrief: stringValue(approval.skill_plan_brief),
+    skillPlanAssumptions: stringArray(approval.skill_plan_assumptions),
+    skillPlanWarnings: stringArray(approval.skill_plan_warnings),
+    skillPlanVerificationTargets: stringArray(approval.skill_plan_verification_targets),
     detail: detail ?? approval,
+  };
+}
+
+function planEventsToTranscriptItems(events: AgentTranscriptEvent[]): TranscriptAgentPlanLine[] {
+  const plans = new Map<string, {
+    plan: AutopilotAgentPlan;
+    event: AgentTranscriptEvent;
+    createdAt: string;
+  }>();
+
+  for (const event of events) {
+    const payload = objectValue(event.payload);
+    if (event.type === "agent_plan_created") {
+      const plan = planValue(payload.plan);
+      if (!plan) continue;
+      const key = planKey(event, plan.id);
+      plans.set(key, {
+        plan,
+        event,
+        createdAt: safeDate(event.created_at || plan.updated_at || plan.created_at),
+      });
+      continue;
+    }
+    if (event.type !== "agent_plan_step_updated") continue;
+    const step = planStepValue(payload.step);
+    if (!step) continue;
+    const planId = stringValue(payload.plan_id) || stringValue(step.evidence.plan_id) || "plan";
+    const key = planKey(event, planId);
+    const existing = plans.get(key);
+    const plan = existing?.plan ?? {
+      id: planId,
+      objective: event.content || "Agent plan",
+      status: event.status || step.status,
+      steps: [],
+      current_step_id: stringValue(payload.current_step_id),
+      created_at: safeDate(event.created_at),
+      updated_at: safeDate(event.created_at),
+    };
+    const index = plan.steps.findIndex((item) => item.id === step.id);
+    const nextSteps = [...plan.steps];
+    if (index >= 0) nextSteps[index] = step;
+    else nextSteps.push(step);
+    const updatedPlan = {
+      ...plan,
+      status: planStatusFromSteps(nextSteps, event.status || plan.status),
+      steps: nextSteps,
+      current_step_id: stringValue(payload.current_step_id) || plan.current_step_id,
+      updated_at: safeDate(event.created_at || plan.updated_at),
+    };
+    plans.set(key, {
+      plan: updatedPlan,
+      event,
+      createdAt: safeDate(event.created_at || updatedPlan.updated_at),
+    });
+  }
+
+  return [...plans.values()].map(({ plan, event, createdAt }) => planToTranscriptItem(plan, {
+    id: `event-plan-${event.run_id || "run"}-${plan.id}`,
+    sourceId: `event-plan:${event.run_id || ""}:${plan.id}`,
+    runId: event.run_id ?? null,
+    sessionId: event.session_id ?? null,
+    projectId: event.project_id ?? null,
+    createdAt,
+    detail: { type: "agent_plan_replay", plan },
+  }));
+}
+
+function planToTranscriptItem(
+  plan: AutopilotAgentPlan,
+  base: Omit<TranscriptAgentPlanLine, "kind" | "status" | "objective" | "steps" | "currentStepId">,
+): TranscriptAgentPlanLine {
+  return {
+    ...base,
+    kind: "plan",
+    status: normalizeStatus(plan.status),
+    objective: plan.objective || "Agent plan",
+    steps: plan.steps,
+    currentStepId: plan.current_step_id,
+  };
+}
+
+function planKey(event: AgentTranscriptEvent, planId: string): string {
+  return `${event.run_id || "run"}:${planId}`;
+}
+
+function planStatusFromSteps(steps: AutopilotAgentPlanStep[], fallback?: string | null): string {
+  if (steps.some((step) => step.status === "failed")) return "failed";
+  if (steps.some((step) => step.status === "blocked")) return "blocked";
+  if (steps.some((step) => step.status === "running")) return "running";
+  if (steps.length && steps.every((step) => step.status === "completed" || step.status === "skipped")) return "completed";
+  return fallback || "running";
+}
+
+function planValue(value: unknown): AutopilotAgentPlan | null {
+  const plan = objectValue(value);
+  const id = stringValue(plan.id);
+  if (!id) return null;
+  return {
+    id,
+    objective: stringValue(plan.objective) || "",
+    status: stringValue(plan.status) || "running",
+    steps: Array.isArray(plan.steps) ? plan.steps.map(planStepValue).filter((step): step is AutopilotAgentPlanStep => Boolean(step)) : [],
+    current_step_id: stringValue(plan.current_step_id),
+    created_at: safeDate(stringValue(plan.created_at)),
+    updated_at: safeDate(stringValue(plan.updated_at) || stringValue(plan.created_at)),
+  };
+}
+
+function planStepValue(value: unknown): AutopilotAgentPlanStep | null {
+  const step = objectValue(value);
+  const id = stringValue(step.id);
+  if (!id) return null;
+  return {
+    id,
+    title: stringValue(step.title) || id,
+    kind: stringValue(step.kind) || "tool",
+    status: stringValue(step.status) || "pending",
+    tool_name: stringValue(step.tool_name),
+    skill_name: stringValue(step.skill_name),
+    summary: stringValue(step.summary) || "",
+    evidence: objectValue(step.evidence),
   };
 }
 
@@ -536,6 +704,42 @@ function artifactSummary({
   return "Artifact ready";
 }
 
+function skillDiagnosticSummary(payload: Record<string, unknown>): string | null {
+  if (payload.skill_name !== "cad.plan_build123d_skill") return null;
+  const status = stringValue(payload.status) || "updated";
+  const confidence = typeof payload.match_confidence === "number"
+    ? ` (${Math.round(payload.match_confidence * 100)}%)`
+    : "";
+  const terms = stringArray(payload.matched_terms);
+  if (status === "ready") {
+    return terms.length
+      ? `CAD skill matched: ${terms.join(" / ")}${confidence}`
+      : `CAD skill matched${confidence}`;
+  }
+  const reason = stringValue(payload.rejection_reason) || stringValue(payload.fallback_recommendation);
+  if (status === "unsupported") {
+    return reason
+      ? `No deterministic CAD skill matched: ${reason}`
+      : "No deterministic CAD skill matched";
+  }
+  if (status === "needs_clarification") {
+    return stringValue(payload.question) || "CAD skill needs clarification";
+  }
+  if (status === "error") {
+    return reason ? `CAD skill error: ${reason}` : "CAD skill error";
+  }
+  return null;
+}
+
+function phaseSummary(payload: Record<string, unknown>, content?: string | null): string {
+  const phase = stringValue(payload.phase) || "working";
+  const message = content || stringValue(payload.message) || phase.replace(/_/g, " ");
+  const elapsed = typeof payload.elapsed_seconds === "number" && payload.elapsed_seconds > 0
+    ? ` (${payload.elapsed_seconds}s)`
+    : "";
+  return `${phase.replace(/_/g, " ")}: ${message}${elapsed}`;
+}
+
 function normalizeStatus(status?: string | null): TranscriptStatus {
   if (status === "completed" || status === "ok" || status === "done") return "done";
   if (status === "failed" || status === "error") return "failed";
@@ -644,6 +848,9 @@ function comparableActivityKey(item: ChatTranscriptItem): string | null {
   }
   if (item.kind === "artifact") {
     return `${run}:artifact:${item.summary}`;
+  }
+  if (item.kind === "plan") {
+    return `${run}:plan:${item.objective}`;
   }
   return null;
 }

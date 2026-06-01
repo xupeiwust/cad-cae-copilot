@@ -1,6 +1,6 @@
 import subprocess
 
-from app.agent_autopilot.adapters import parse_action_json
+from app.agent_autopilot.adapters import COMMON_PROGRESS_PHASES, parse_action_json
 from app.agent_autopilot.claude_code_adapter import ClaudeCodeAdapter
 from app.agent_autopilot.codex_cli_adapter import CodexCliAdapter
 
@@ -122,10 +122,14 @@ def test_claude_invoke_parses_successful_json(monkeypatch) -> None:
             stderr="",
         ),
     )
-    result = ClaudeCodeAdapter().invoke(prompt="p", action_schema={})
+    events = []
+    result = ClaudeCodeAdapter().invoke(prompt="p", action_schema={}, on_progress=events.append)
     assert result.status == "success"
     assert result.action is not None
     assert result.action.action.type == "final"
+    phases = [event["phase"] for event in events]
+    assert phases == ["started", "prompt_prepared", "request_sent", "waiting_for_model", "parsing_output", "completed"]
+    assert set(phases) <= set(COMMON_PROGRESS_PHASES)
 
 
 def test_claude_invoke_reports_invalid_json(monkeypatch) -> None:
@@ -157,6 +161,8 @@ def test_claude_invoke_reports_timeout(monkeypatch) -> None:
         raise subprocess.TimeoutExpired(cmd=["claude"], timeout=1, output="", stderr="")
 
     monkeypatch.setattr("app.agent_autopilot.claude_code_adapter._run_claude_step", _raise_timeout)
-    result = ClaudeCodeAdapter().invoke(prompt="p", action_schema={}, timeout_seconds=1)
+    events = []
+    result = ClaudeCodeAdapter().invoke(prompt="p", action_schema={}, timeout_seconds=1, on_progress=events.append)
     assert result.status == "timeout"
     assert "timed out" in result.diagnostic
+    assert events[-1]["phase"] == "timeout"

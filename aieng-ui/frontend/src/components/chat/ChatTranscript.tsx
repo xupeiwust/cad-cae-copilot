@@ -2,6 +2,7 @@ import { AlertCircle } from "lucide-react";
 
 import type { ChatTranscriptItem } from "../../app/chatTranscript";
 import type { StreamingState } from "../../app/useChatTranscript";
+import { AgentPlanCard } from "../agent/AgentPlanCard";
 import { PointerText } from "../PointerText";
 import { ApprovalLine } from "./ApprovalLine";
 import { ArtifactLine } from "./ArtifactLine";
@@ -19,7 +20,7 @@ type ChatTranscriptProps = {
   onApproveAutopilot(runId: string): void;
   onRejectAutopilot(runId: string): void;
   onCancelAutopilot(runId: string): void;
-  onReviseAutopilot?(runId: string): void;
+  onReviseAutopilot?(runId: string, message: string): void;
 };
 
 export function ChatTranscript({
@@ -36,6 +37,7 @@ export function ChatTranscript({
     <div className="chat-transcript">
       {items.map((item) => {
         if (item.kind === "message") return <TranscriptMessage key={item.id} item={item} />;
+        if (item.kind === "plan") return <AgentPlanCard key={item.id} item={item} />;
         if (item.kind === "tool") return <ToolLine key={item.id} item={item} />;
         if (item.kind === "approval") {
           return (

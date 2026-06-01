@@ -232,18 +232,34 @@ Known viable capabilities:
 - `claude -p` for non-interactive output.
 - `--output-format json` or `stream-json`.
 - `--json-schema` for schema-constrained output.
-- `--permission-mode plan` for non-mutating behavior.
-- `--tools ""` to disable built-in tools.
+- `--permission-mode auto` to let Claude auto-approve safe built-in tool calls.
+- `--tools <allowlist>` to control which built-in tools Claude can use (default allows Read/Edit/Grep/Glob/LS/Search; Bash is excluded for safety).
+- `--session-id <uuid>` for the first call (creates the session).
+- `--resume <uuid>` for subsequent calls (reconnects to the same specific session; avoids `--continue` which would resume the user's interactive CLI session).
+- If `--session-id` fails with "already in use" (e.g. after a backend restart where the module dict was cleared), the adapter falls back to `--resume` automatically.
 - `--add-dir <workspace>` to make the trusted workspace explicit.
 
 Initial invocation shape:
 
 ```powershell
 claude -p `
+  --bare `
+  --session-id "a0b1c2d3-e4f5-6789-abcd-ef0123456789" `
   --output-format json `
   --json-schema "<agent-action-schema>" `
-  --permission-mode plan `
-  --tools "" `
+  --permission-mode auto `
+  --tools "Read,Edit,Grep,Glob,LS,Search" `
+  --add-dir "G:\Code\workspace_aieng" `
+  "<packed autopilot prompt>"
+
+# Subsequent calls in the same chat session:
+claude -p `
+  --bare `
+  --resume "a0b1c2d3-e4f5-6789-abcd-ef0123456789" `
+  --output-format json `
+  --json-schema "<agent-action-schema>" `
+  --permission-mode auto `
+  --tools "Read,Edit,Grep,Glob,LS,Search" `
   --add-dir "G:\Code\workspace_aieng" `
   "<packed autopilot prompt>"
 ```

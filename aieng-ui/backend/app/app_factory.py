@@ -411,7 +411,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         return adapters
 
     def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
-        from .agent_autopilot.engine import AutopilotEngine
+        from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
 
         agent_context_snapshot = None
         if request.project_id:
@@ -439,8 +439,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     def create_agent_autopilot_run(
         payload: dict[str, Any] = Body(default=None),
     ) -> dict[str, Any]:
-        from .agent_autopilot.engine import AutopilotEngine
-        from .agent_autopilot.schema import AutopilotObservation, AutopilotRunRequest, AutopilotRunState
+        from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
+        from .agent_autopilot.schema import AgentWorkingState, AutopilotObservation, AutopilotRunRequest, AutopilotRunState
 
         data = payload or {}
         if isinstance(data.get("llm_config"), dict):
@@ -452,8 +452,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
         # Fast-path: create initial state without building agent_context (that can be slow).
         store = _autopilot_store()
+        run_id = uuid.uuid4().hex[:12]
         state = AutopilotRunState(
-            run_id=uuid.uuid4().hex[:12],
+            run_id=run_id,
             status="running",
             message=request.message,
             project_id=request.project_id,
@@ -463,6 +464,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             dry_run=request.dry_run,
             selected_geometry=request.selected_geometry,
             llm_config=request.llm_config,
+            plan=create_default_agent_plan(request.message, plan_id=f"{run_id}-plan"),
+            working_state=AgentWorkingState(objective=request.message, current_mode=request.mode),
         )
         state.observations.append(
             AutopilotObservation(
@@ -489,6 +492,18 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "payload": {"message": state.message, "adapter_id": state.adapter_id},
             "created_at": state.created_at,
         })
+        if state.plan is not None:
+            _publish_agent_event({
+                "event_id": f"{state.run_id}-plan-{state.plan.id}-created",
+                "type": "agent_plan_created",
+                "project_id": state.project_id,
+                "session_id": state.session_id,
+                "run_id": state.run_id,
+                "status": state.plan.status,
+                "content": state.plan.objective,
+                "payload": {"plan": state.plan.model_dump()},
+                "created_at": state.plan.created_at,
+            })
         _write_autopilot_audit(state.project_id, "agent_autopilot_started", {
             "run_id": state.run_id,
             "adapter_id": state.adapter_id,

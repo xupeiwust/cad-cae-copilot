@@ -205,11 +205,14 @@ def test_full_prompt_includes_optional_fields() -> None:
         project_id="proj_001",
         selected_geometry={"faces": ["f1"]},
         agent_context={"brief": "hello"},
+        working_state={"objective": "test", "current_blockers": ["needs approval"]},
     )
     payload = json.loads(prompt)
     assert payload["active_project_id"] == "proj_001"
     assert payload["selected_geometry"] == {"faces": ["f1"]}
     assert payload["agent_context"] == {"brief": "hello"}
+    assert payload["working_state"]["current_blockers"] == ["needs approval"]
+    assert list(payload).index("working_state") < list(payload).index("working_memory")
 
 
 def test_incremental_prompt_only_has_new_obs() -> None:
@@ -237,6 +240,32 @@ def test_incremental_prompt_without_new_observation() -> None:
     payload = json.loads(prompt)
     assert "new_observation" not in payload
     assert "instruction" in payload
+
+
+def test_resume_prompt_includes_compact_state_not_working_tail() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": [{"name": "cad.execute_build123d"}]})
+    mgr.add_observations([
+        _obs("user_message", "make a flange"),
+        _tool_obs("cad.plan_build123d_skill", "planned", {"brief": "40mm flange"}),
+    ])
+
+    prompt = mgr.build_resume_prompt(
+        objective="make a flange",
+        working_state={
+            "objective": "make a flange",
+            "accepted_assumptions": ["Defaulted thickness to 6mm."],
+            "current_blockers": [],
+        },
+        current_plan_step={"id": "execute_tool", "status": "completed"},
+        latest_observation=_obs("user_message", "User approved cad.execute_build123d."),
+    )
+    payload = json.loads(prompt)
+
+    assert payload["resume_summary"]["working_state"]["accepted_assumptions"] == ["Defaulted thickness to 6mm."]
+    assert payload["resume_summary"]["current_plan_step"]["id"] == "execute_tool"
+    assert payload["resume_summary"]["latest_observation"]["kind"] == "user_message"
+    assert "working_memory" not in payload
+    assert payload["system_context"]["tools"][0]["name"] == "cad.execute_build123d"
 
 
 # -- Memory stats --
@@ -298,6 +327,71 @@ def test_compact_critique_output() -> None:
     data = working[0].get("data", {})
     assert data.get("verdict") == "needs_work"
     assert data.get("finding_count") == 3
+
+
+def test_compact_skill_plan_prefers_common_contract_fields() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": []})
+    mgr.add_observation(_tool_obs(
+        "cad.plan_build123d_skill",
+        "planned skill",
+        output={
+            "status": "ready",
+            "skill_name": "cad.plan_build123d_skill",
+            "intent": "make a flange",
+            "brief": "40mm flange",
+            "proposed_tool": "cad.execute_build123d",
+            "proposed_input": {"project_id": "p1", "code": "result = None", "mode": "replace"},
+            "verification_targets": ["base_plate named part exists"],
+            "match_confidence": 0.96,
+            "matched_terms": ["flange"],
+        },
+    ))
+
+    working = mgr._build_working_layer_payload()
+    data = working[0].get("data", {})
+
+    assert data["proposed_tool"] == "cad.execute_build123d"
+    assert data["proposed_input"]["code"] == "result = None"
+    assert data["verification_targets"] == ["base_plate named part exists"]
+    assert data["match_confidence"] == 0.96
+    assert data["matched_terms"] == ["flange"]
+
+
+def test_compact_cad_build_error_keeps_repair_context() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": []})
+    code = "from build123d import *\nBODY_WIDTH = 40\nresult = Box(BODY_WIDTH, 20, missing_height)"
+    mgr.add_observation(
+        _obs(
+            "tool_error",
+            "Tool cad.execute_build123d failed",
+            {
+                "tool_name": "cad.execute_build123d",
+                "error_class": "cad_build_error",
+                "recoverable": True,
+                "input": {
+                    "project_id": "p1",
+                    "mode": "replace",
+                    "model_kind": "mechanical",
+                    "code": code,
+                },
+                "error": (
+                    "Traceback (most recent call last):\n"
+                    "  File \"geometry/source.py\", line 3, in <module>\n"
+                    "NameError: name 'missing_height' is not defined"
+                ),
+            },
+        )
+    )
+
+    working = mgr._build_working_layer_payload()
+    data = working[0].get("data", {})
+
+    assert data["error_class"] == "cad_build_error"
+    assert data["exception_type"] == "NameError"
+    assert data["top_traceback_line"] == "NameError: name 'missing_height' is not defined"
+    assert data["failing_input"]["project_id"] == "p1"
+    assert data["failing_input"]["code_chars"] == len(code)
+    assert data["source_snippet"] == code
 
 
 # -- Edge cases --

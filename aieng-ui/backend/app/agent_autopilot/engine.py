@@ -10,7 +10,11 @@ from .context_memory import ContextMemoryManager
 from .policy import evaluate_tool_call
 from .prompts import build_system_layer, OPERATING_RULES
 from .schema import (
+    AgentPlan,
+    AgentPlanStep,
+    AgentWorkingState,
     AutopilotAgentAction,
+    AutopilotErrorClass,
     AutopilotApproval,
     AutopilotObservation,
     AutopilotRunRequest,
@@ -19,6 +23,32 @@ from .schema import (
     now_iso,
 )
 from .store import AutopilotStore
+
+
+DEFAULT_PLAN_STEPS = [
+    ("observe_context", "Observe context", "observe"),
+    ("select_skill_or_tool", "Select skill/tool", "skill"),
+    ("prepare_action", "Prepare action", "tool"),
+    ("await_approval", "Await approval when needed", "approval"),
+    ("execute_tool", "Execute", "tool"),
+    ("repair_tool_input", "Repair tool input", "repair"),
+    ("verify_result", "Verify", "verify"),
+    ("summarize_result", "Summarize", "summarize"),
+]
+
+
+def create_default_agent_plan(objective: str, *, plan_id: str | None = None) -> AgentPlan:
+    steps = [
+        AgentPlanStep(id=step_id, title=title, kind=kind)  # type: ignore[arg-type]
+        for step_id, title, kind in DEFAULT_PLAN_STEPS
+    ]
+    return AgentPlan(
+        id=plan_id or uuid.uuid4().hex[:12],
+        objective=objective,
+        status="running",
+        steps=steps,
+        current_step_id="observe_context",
+    )
 
 
 def _publish_autopilot_update(state: AutopilotRunState) -> None:
@@ -44,6 +74,40 @@ def _observation(kind: str, summary: str, data: dict[str, Any] | None = None) ->
         summary=summary,
         data=data or {},
     )
+
+
+def _classified_error_data(
+    error_class: AutopilotErrorClass,
+    *,
+    tool_name: str | None = None,
+    tool_input: dict[str, Any] | None = None,
+    policy: dict[str, Any] | None = None,
+    error: str | None = None,
+    recoverable: bool | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    if recoverable is None:
+        recoverable = error_class in {"schema_error", "tool_runtime_error", "cad_build_error", "timeout", "missing_context"}
+    return {
+        "error_class": error_class,
+        "recoverable": recoverable,
+        **({"tool_name": tool_name} if tool_name else {}),
+        **({"input": tool_input} if tool_input is not None else {}),
+        **({"policy": policy} if policy is not None else {}),
+        **({"error": error} if error else {}),
+        **extra,
+    }
+
+
+def _classify_exception(tool_name: str | None, exc: Exception) -> AutopilotErrorClass:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if isinstance(exc, TimeoutError) or "timed out" in text or "timeout" in text:
+        return "timeout"
+    if tool_name == "cad.execute_build123d" or "build123d" in text or "cad build" in text:
+        return "cad_build_error"
+    if "project_id" in text or "missing" in text:
+        return "missing_context"
+    return "tool_runtime_error"
 
 
 class AutopilotEngine:
@@ -97,11 +161,13 @@ class AutopilotEngine:
             state = self._new_state(request, run_id=run_id)
             state.status = "failed"
             state.errors.append(f"Unknown local agent adapter: {request.adapter_id}")
+            self._finish_plan(state, "failed", state.errors[-1])
             self.store.save(state)
             self._publish_state(state)
             return state
         state = self._new_state(request, run_id=run_id)
         self._reset_memory(state.run_id)
+        self._emit_plan_created(state)
         state.observations.append(
             _observation(
                 "context",
@@ -115,14 +181,16 @@ class AutopilotEngine:
         )
         if not request.fake_actions:
             self._bootstrap_project_context(state)
+        self._set_plan_step(state, "observe_context", "completed", summary="Initial run context is ready.")
         self._step_loop(state, adapter, request.max_steps)
         self.store.save(state)
         self._publish_state(state)
         return state
 
     def _new_state(self, request: AutopilotRunRequest, *, run_id: str | None = None) -> AutopilotRunState:
+        resolved_run_id = run_id or uuid.uuid4().hex[:12]
         return AutopilotRunState(
-            run_id=run_id or uuid.uuid4().hex[:12],
+            run_id=resolved_run_id,
             status="running",
             message=request.message,
             project_id=request.project_id,
@@ -132,7 +200,150 @@ class AutopilotEngine:
             dry_run=request.dry_run,
             selected_geometry=request.selected_geometry,
             llm_config=request.llm_config,
+            plan=self._new_plan(request, run_id=resolved_run_id),
+            working_state=AgentWorkingState(objective=request.message, current_mode=request.mode),
         )
+
+    def _new_plan(self, request: AutopilotRunRequest, *, run_id: str) -> AgentPlan:
+        return create_default_agent_plan(request.message, plan_id=f"{run_id}-plan")
+
+    def _set_plan_step(
+        self,
+        state: AutopilotRunState,
+        step_id: str,
+        status: str,
+        *,
+        summary: str | None = None,
+        evidence: dict[str, Any] | None = None,
+        tool_name: str | None = None,
+        skill_name: str | None = None,
+        current: bool | None = None,
+    ) -> None:
+        if state.plan is None:
+            return
+        for step in state.plan.steps:
+            if step.id != step_id:
+                continue
+            previous_status = step.status
+            step.status = status  # type: ignore[assignment]
+            if summary is not None:
+                step.summary = summary
+            if evidence is not None:
+                step.evidence.update(evidence)
+            if tool_name is not None:
+                step.tool_name = tool_name
+            if skill_name is not None:
+                step.skill_name = skill_name
+            if current is True or (current is None and status == "running"):
+                state.plan.current_step_id = step_id
+            state.plan.updated_at = now_iso()
+            if state.plan.status not in {"failed", "cancelled"}:
+                if status in {"blocked", "failed"}:
+                    state.plan.status = status  # type: ignore[assignment]
+                elif state.status == "running":
+                    state.plan.status = "running"
+            if previous_status != step.status:
+                self._emit_plan_step_updated(state, step)
+            return
+
+    def _plan_step_status(self, state: AutopilotRunState, step_id: str) -> str | None:
+        if state.plan is None:
+            return None
+        for step in state.plan.steps:
+            if step.id == step_id:
+                return step.status
+        return None
+
+    def _current_plan_step_payload(self, state: AutopilotRunState) -> dict[str, Any] | None:
+        if state.plan is None or not state.plan.current_step_id:
+            return None
+        for step in state.plan.steps:
+            if step.id == state.plan.current_step_id:
+                return step.model_dump()
+        return None
+
+    def _finish_plan(self, state: AutopilotRunState, status: str, summary: str) -> None:
+        if state.plan is None:
+            return
+        state.plan.status = status  # type: ignore[assignment]
+        step_status = "completed" if status == "completed" else "failed" if status == "failed" else "blocked"
+        self._set_plan_step(state, "summarize_result", step_status, summary=summary, current=True)
+
+    def _add_working_evidence(self, state: AutopilotRunState, evidence: dict[str, Any]) -> None:
+        compact = {key: value for key, value in evidence.items() if value is not None}
+        state.working_state.latest_evidence.append(compact)
+        state.working_state.latest_evidence = state.working_state.latest_evidence[-8:]
+        state.working_state.updated_at = now_iso()
+
+    def _update_working_state_for_tool_result(
+        self,
+        state: AutopilotRunState,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        output: dict[str, Any],
+        *,
+        followup_for: str | None = None,
+    ) -> None:
+        state.working_state.objective = state.working_state.objective or state.message
+        state.working_state.current_mode = state.mode
+        state.working_state.last_successful_tool = tool_name
+        evidence: dict[str, Any] = {
+            "tool_name": tool_name,
+            "followup_for": followup_for,
+            "summary": output.get("summary") or output.get("brief") or output.get("verdict") or output.get("status"),
+        }
+        if isinstance(output.get("named_parts"), list):
+            evidence["named_parts"] = output.get("named_parts")
+        if isinstance(output.get("parts_added"), list):
+            evidence["parts_added"] = output.get("parts_added")
+        if output.get("skill_name") == "cad.plan_build123d_skill":
+            evidence["intent"] = output.get("intent")
+            evidence["brief"] = output.get("brief")
+            evidence["assumptions"] = output.get("assumptions")
+            proposed_tool = output.get("proposed_tool") or output.get("next_tool")
+            if proposed_tool:
+                state.working_state.recommended_next_action = f"Review skill plan, then call {proposed_tool} if it matches the user intent."
+            if output.get("status") in {"unsupported", "needs_clarification", "error"}:
+                blocker = output.get("rejection_reason") or output.get("fallback_recommendation") or output.get("brief")
+                if blocker:
+                    state.working_state.current_blockers = [str(blocker)]
+            else:
+                state.working_state.current_blockers = []
+        elif tool_name == "cad.critique":
+            objections = output.get("fail_first_objections") if isinstance(output.get("fail_first_objections"), list) else []
+            findings = output.get("findings") if isinstance(output.get("findings"), list) else []
+            blockers = [str(item) for item in objections[:5]]
+            if not blockers:
+                blockers = [
+                    str(item.get("observation") or item.get("suggested_fix") or item)
+                    for item in findings[:5]
+                    if isinstance(item, dict)
+                ]
+            state.working_state.current_blockers = blockers
+            state.working_state.recommended_next_action = "Address CAD critique blockers before finalizing." if blockers else "No critique blockers found."
+        else:
+            if state.working_state.current_blockers and tool_name != "aieng.agent_context":
+                state.working_state.current_blockers = []
+            state.working_state.recommended_next_action = f"Use {tool_name} result to decide the next agent action."
+        self._add_working_evidence(state, evidence)
+
+    def _record_working_blocker(self, state: AutopilotRunState, blocker: str, *, next_action: str | None = None) -> None:
+        if blocker:
+            state.working_state.current_blockers = [blocker]
+        if next_action:
+            state.working_state.recommended_next_action = next_action
+        state.working_state.updated_at = now_iso()
+
+    def _accept_working_assumptions(self, state: AutopilotRunState, assumptions: list[str]) -> None:
+        if not assumptions:
+            return
+        seen = set(state.working_state.accepted_assumptions)
+        for assumption in assumptions:
+            text = str(assumption).strip()
+            if text and text not in seen:
+                state.working_state.accepted_assumptions.append(text)
+                seen.add(text)
+        state.working_state.updated_at = now_iso()
 
     def _registered_tool_names(self) -> set[str]:
         return {str(tool.get("name")) for tool in self.runtime_tools if tool.get("name")}
@@ -184,12 +395,67 @@ class AutopilotEngine:
         except Exception:
             pass
 
+    def _emit_plan_created(self, state: AutopilotRunState) -> None:
+        if state.plan is None:
+            return
+        self._emit_event(
+            state,
+            "agent_plan_created",
+            status=state.plan.status,
+            content=state.plan.objective,
+            payload={"plan": state.plan.model_dump()},
+            event_id=f"{state.run_id}-plan-{state.plan.id}-created",
+        )
+
+    def _emit_plan_step_updated(self, state: AutopilotRunState, step: AgentPlanStep) -> None:
+        if state.plan is None:
+            return
+        event_version = step.updated_at if hasattr(step, "updated_at") else state.plan.updated_at
+        event_version = str(event_version).replace(":", "").replace("+", "_")
+        self._emit_event(
+            state,
+            "agent_plan_step_updated",
+            status=step.status,
+            content=step.summary or step.title,
+            payload={"plan_id": state.plan.id, "current_step_id": state.plan.current_step_id, "step": step.model_dump()},
+            event_id=f"{state.run_id}-plan-{state.plan.id}-step-{step.id}-{step.status}-{event_version}",
+        )
+
+    def _emit_phase_changed(
+        self,
+        state: AutopilotRunState,
+        phase: str,
+        message: str,
+        *,
+        adapter_id: str | None = None,
+        plan_step_id: str | None = None,
+        elapsed_seconds: int | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        phase_payload = {
+            "phase": phase,
+            "adapter_id": adapter_id or state.adapter_id,
+            "plan_step_id": plan_step_id or (state.plan.current_step_id if state.plan else None),
+            "elapsed_seconds": elapsed_seconds,
+            "progress_event": True,
+            **(payload or {}),
+        }
+        self._emit_event(
+            state,
+            "agent_phase_changed",
+            status=state.status,
+            content=message,
+            payload=phase_payload,
+            event_id=f"{state.run_id}-phase-{phase}-{plan_step_id or phase_payload.get('plan_step_id') or 'run'}-{len(state.observations)}",
+        )
+
     def _cancel_if_requested(self, state: AutopilotRunState) -> bool:
         if not self.store.is_cancel_requested(state.run_id):
             return False
         state.status = "cancelled"
         state.pending_approval = None
         state.observations.append(_observation("user_message", "Autopilot run cancelled."))
+        self._finish_plan(state, "cancelled", "Autopilot run cancelled.")
         self.store.clear_cancel(state.run_id)
         self._emit_event(state, "run_cancelled", status="cancelled", content="Autopilot run cancelled.")
         self._checkpoint(state)
@@ -207,6 +473,12 @@ class AutopilotEngine:
                 {"tool_name": "aieng.agent_context", "input": {"project_id": state.project_id}},
             )
         )
+        self._emit_phase_changed(
+            state,
+            "context_bootstrap",
+            "Loading project context with aieng.agent_context.",
+            plan_step_id="observe_context",
+        )
         self._checkpoint(state)
         try:
             output = self.tool_executor("aieng.agent_context", {"project_id": state.project_id})
@@ -215,7 +487,12 @@ class AutopilotEngine:
                 _observation(
                     "tool_error",
                     f"Initial aieng.agent_context failed: {exc}",
-                    {"tool_name": "aieng.agent_context", "input": {"project_id": state.project_id}},
+                    _classified_error_data(
+                        _classify_exception("aieng.agent_context", exc),
+                        tool_name="aieng.agent_context",
+                        tool_input={"project_id": state.project_id},
+                        error=str(exc),
+                    ),
                 )
             )
             return
@@ -235,6 +512,13 @@ class AutopilotEngine:
                     "output": output if isinstance(output, dict) else {"value": output},
                 },
             )
+        )
+        output_payload = output if isinstance(output, dict) else {"value": output}
+        self._update_working_state_for_tool_result(
+            state,
+            "aieng.agent_context",
+            {"project_id": state.project_id},
+            output_payload,
         )
         self._checkpoint(state)
         # Sync bootstrapped observations into the memory manager so that
@@ -258,6 +542,13 @@ class AutopilotEngine:
                     f"Invoking {adapter.adapter_id} for the next action.",
                     {"adapter_id": adapter.adapter_id, "step_index": len(state.steps)},
                 )
+            )
+            self._set_plan_step(
+                state,
+                "select_skill_or_tool",
+                "running",
+                summary=f"Invoking {adapter.adapter_id} for the next structured action.",
+                evidence={"adapter_id": adapter.adapter_id, "step_index": len(state.steps)},
             )
             self._checkpoint(state)
             self._emit_event(
@@ -284,17 +575,28 @@ class AutopilotEngine:
                     objective=state.message,
                     new_observation=new_obs[-1] if new_obs else None,
                 )
+                prompt_kind = "incremental"
+            elif len(state.steps) > 0:
+                prompt = self.memory.build_resume_prompt(
+                    objective=state.message,
+                    working_state=state.working_state.model_dump(),
+                    current_plan_step=self._current_plan_step_payload(state),
+                    latest_observation=new_obs[-1] if new_obs else None,
+                    pending_approval=state.pending_approval.model_dump() if state.pending_approval else None,
+                )
+                prompt_kind = "resume"
             else:
                 prompt = self.memory.build_full_prompt(
                     objective=state.message,
                     project_id=state.project_id,
                     selected_geometry=state.selected_geometry,
                     agent_context=self.agent_context,
+                    working_state=state.working_state.model_dump(),
                 )
+                prompt_kind = "full"
 
             memory_stats = self.memory.get_memory_stats()
             prompt_tokens = max(1, len(prompt) // 4)
-            prompt_kind = "incremental" if supports_session and len(state.steps) > 0 else "full"
             self._emit_event(
                 state,
                 "run_status_changed",
@@ -307,6 +609,18 @@ class AutopilotEngine:
                 payload={
                     "adapter_id": adapter.adapter_id,
                     "phase": "prompt_prepared",
+                    "prompt_kind": prompt_kind,
+                    "prompt_tokens_estimate": prompt_tokens,
+                    "memory": memory_stats,
+                },
+            )
+            self._emit_phase_changed(
+                state,
+                "prompt_prepared",
+                f"Prepared {prompt_kind} prompt for {adapter.adapter_id}.",
+                adapter_id=adapter.adapter_id,
+                plan_step_id="select_skill_or_tool",
+                payload={
                     "prompt_kind": prompt_kind,
                     "prompt_tokens_estimate": prompt_tokens,
                     "memory": memory_stats,
@@ -345,6 +659,14 @@ class AutopilotEngine:
                     payload={"adapter_id": adapter.adapter_id, "phase": phase, "progress_event": True},
                     event_id=f"{state.run_id}-progress-{len(state.steps)}-{phase}",
                 )
+                self._emit_phase_changed(
+                    state,
+                    "waiting_for_model" if phase == "waiting_for_cli" else str(phase),
+                    str(message),
+                    adapter_id=adapter.adapter_id,
+                    plan_step_id="select_skill_or_tool",
+                    payload={**evt, "progress_event": True},
+                )
 
             def _heartbeat() -> None:
                 """Emit a lightweight keep-alive while a non-streaming CLI runs."""
@@ -357,10 +679,10 @@ class AutopilotEngine:
                         continue
                     elapsed = int(time.perf_counter() - invoke_started_at)
                     _on_adapter_progress({
-                        "phase": "waiting_for_cli",
+                        "phase": "waiting_for_model",
                         "message": (
-                            f"Waiting for {adapter.adapter_id} CLI output "
-                            f"({elapsed}s elapsed; JSON mode has no token stream)."
+                            f"Waiting for {adapter.adapter_id} model output "
+                            f"({elapsed}s elapsed; streaming is unavailable for this adapter call)."
                         ),
                     })
 
@@ -383,7 +705,22 @@ class AutopilotEngine:
             if result.status != "success" or result.action is None:
                 state.status = "failed"
                 state.errors.append(result.diagnostic or "Local agent adapter failed.")
-                state.observations.append(_observation("tool_error", state.errors[-1], result.model_dump()))
+                self._set_plan_step(state, "select_skill_or_tool", "failed", summary=state.errors[-1])
+                self._finish_plan(state, "failed", state.errors[-1])
+                adapter_error_class: AutopilotErrorClass = "timeout" if result.status == "timeout" else "tool_runtime_error"
+                state.observations.append(
+                    _observation(
+                        "tool_error",
+                        state.errors[-1],
+                        _classified_error_data(
+                            adapter_error_class,
+                            error=state.errors[-1],
+                            adapter_id=adapter.adapter_id,
+                            adapter_status=result.status,
+                            raw=result.model_dump(),
+                        ),
+                    )
+                )
                 self._checkpoint(state)
                 self._emit_event(state, "tool_failed", status="failed", content=state.errors[-1], payload=result.model_dump())
                 return
@@ -391,6 +728,22 @@ class AutopilotEngine:
             step = AutopilotStep(index=len(state.steps), adapter_id=state.adapter_id, action=action)
             state.steps.append(step)
             state.updated_at = now_iso()
+            self._set_plan_step(
+                state,
+                "select_skill_or_tool",
+                "completed",
+                summary=f"{adapter.adapter_id} selected {action.action.type}.",
+                evidence={"action_type": action.action.type},
+                current=False,
+            )
+            self._set_plan_step(
+                state,
+                "prepare_action",
+                "completed",
+                summary=f"Prepared {action.action.type} action.",
+                evidence={"action_type": action.action.type},
+                current=True,
+            )
             state.observations.append(
                 _observation(
                     "agent_activity",
@@ -426,6 +779,11 @@ class AutopilotEngine:
                 state.status = "completed"
                 state.final_message = action.action.message
                 state.observations.append(_observation("final", action.action.message))
+                if self._plan_step_status(state, "execute_tool") == "pending":
+                    self._set_plan_step(state, "execute_tool", "skipped", summary="No tool execution was needed for the final answer.", current=False)
+                if self._plan_step_status(state, "verify_result") == "pending":
+                    self._set_plan_step(state, "verify_result", "skipped", summary="No verification was needed for the final answer.", current=False)
+                self._finish_plan(state, "completed", action.action.message)
                 self._emit_event(state, "agent_message", status="completed", content=action.action.message, payload={"kind": "final"})
                 self._emit_event(state, "run_status_changed", status="completed", content="Autopilot run completed.")
                 self._checkpoint(state)
@@ -433,18 +791,21 @@ class AutopilotEngine:
             if action.action.type == "ask_user":
                 state.status = "blocked"
                 state.observations.append(_observation("user_message", action.action.question))
+                self._finish_plan(state, "blocked", action.action.question)
                 self._emit_event(state, "agent_message", status="blocked", content=action.action.question, payload={"kind": "ask_user"})
                 self._checkpoint(state)
                 return
             if action.action.type == "chat":
                 state.status = "chatting"
                 state.observations.append(_observation("user_message", action.action.message))
+                self._set_plan_step(state, "summarize_result", "blocked", summary=action.action.message, current=True)
                 self._emit_event(state, "agent_message", status="chatting", content=action.action.message, payload={"kind": "chat"})
                 self._checkpoint(state)
                 return
             if action.action.type == "pause":
                 state.status = "blocked"
                 state.observations.append(_observation("policy_block", action.action.reason))
+                self._finish_plan(state, "blocked", action.action.reason)
                 self._checkpoint(state)
                 return
             tool_call = action.action
@@ -457,11 +818,26 @@ class AutopilotEngine:
             )
             state.steps[-1].policy = policy.model_dump()
             if not policy.allowed:
+                self._set_plan_step(
+                    state,
+                    "prepare_action",
+                    "blocked",
+                    summary=policy.explanation,
+                    evidence={"tool_name": tool_call.tool_name, "level": policy.level},
+                    tool_name=tool_call.tool_name,
+                )
                 state.observations.append(
                     _observation(
                         "policy_block",
                         policy.explanation,
-                        {"tool_name": tool_call.tool_name, "level": policy.level},
+                        _classified_error_data(
+                            "policy_error",
+                            tool_name=tool_call.tool_name,
+                            tool_input=tool_call.input,
+                            error=policy.explanation,
+                            level=policy.level,
+                            recoverable=False,
+                        ),
                     )
                 )
                 self._checkpoint(state)
@@ -484,6 +860,15 @@ class AutopilotEngine:
                 )
                 state.status = "awaiting_approval"
                 state.pending_approval = approval
+                self._set_plan_step(
+                    state,
+                    "await_approval",
+                    "blocked",
+                    summary=policy.explanation,
+                    evidence={"approval_id": approval.id, "level": policy.level},
+                    tool_name=tool_call.tool_name,
+                    current=True,
+                )
                 state.observations.append(
                     _observation("approval_required", policy.explanation, approval.model_dump())
                 )
@@ -497,10 +882,12 @@ class AutopilotEngine:
                 )
                 self._checkpoint(state)
                 return
+            self._set_plan_step(state, "await_approval", "skipped", summary="Policy allowed the tool without approval.", current=False)
             if not self._execute_allowed_tool(state, tool_call.tool_name, tool_call.input, policy.model_dump()):
                 return
         state.status = "failed"
         state.errors.append(f"Autopilot exceeded max step count ({max_steps}).")
+        self._finish_plan(state, "failed", state.errors[-1])
         self._emit_event(state, "run_status_changed", status="failed", content=state.errors[-1])
         self._checkpoint(state)
 
@@ -512,14 +899,15 @@ class AutopilotEngine:
         level: str,
         explanation: str,
         state: AutopilotRunState,
-    ) -> dict[str, str | None]:
+    ) -> dict[str, Any]:
         code = tool_input.get("code")
         project_id = tool_input.get("project_id") or state.project_id
         mutates = tool_name.startswith("cad.") or tool_name.startswith("cae.") or tool_name == "aieng.convert"
         side_effect = "Will update project geometry/artifacts." if mutates else "Will run the selected workbench tool."
         if tool_name == "cae.run_solver":
             side_effect = "Will run the external solver and write result artifacts."
-        return {
+        skill_plan = self._latest_skill_plan_for_tool(state, tool_name)
+        payload: dict[str, Any] = {
             "side_effect_summary": side_effect,
             "risk_summary": explanation or f"Policy level: {level}",
             "target_project_id": str(project_id) if project_id else None,
@@ -527,6 +915,32 @@ class AutopilotEngine:
             "artifact_preview": None,
             "recommended_action": "Approve if the target project, code, and side effects match your intent.",
         }
+        if skill_plan:
+            payload.update(skill_plan)
+        return payload
+
+    def _latest_skill_plan_for_tool(self, state: AutopilotRunState, tool_name: str) -> dict[str, Any] | None:
+        for obs in reversed(state.observations):
+            if obs.kind != "tool_result":
+                continue
+            output = obs.data.get("output") if isinstance(obs.data, dict) else None
+            if not isinstance(output, dict) or output.get("skill_name") != "cad.plan_build123d_skill":
+                continue
+            proposed_tool = output.get("proposed_tool") or output.get("next_tool")
+            if proposed_tool != tool_name:
+                continue
+            assumptions = output.get("assumptions") if isinstance(output.get("assumptions"), list) else []
+            warnings = output.get("warnings") if isinstance(output.get("warnings"), list) else []
+            verification_targets = output.get("verification_targets") or output.get("validation_targets")
+            if not isinstance(verification_targets, list):
+                verification_targets = []
+            return {
+                "skill_plan_brief": output.get("brief") if isinstance(output.get("brief"), str) else None,
+                "skill_plan_assumptions": [str(item) for item in assumptions],
+                "skill_plan_warnings": [str(item) for item in warnings],
+                "skill_plan_verification_targets": [str(item) for item in verification_targets],
+            }
+        return None
 
     def _execute_allowed_tool(
         self,
@@ -538,6 +952,15 @@ class AutopilotEngine:
         if self._cancel_if_requested(state):
             return False
         if state.dry_run or self.tool_executor is None:
+            self._set_plan_step(
+                state,
+                "execute_tool",
+                "completed",
+                summary=f"Dry-run accepted tool call: {tool_name}",
+                evidence={"dry_run": True, "tool_name": tool_name},
+                tool_name=tool_name,
+            )
+            self._set_plan_step(state, "verify_result", "skipped", summary="Dry-run did not execute artifacts to verify.", current=False)
             state.observations.append(
                 _observation(
                     "tool_result",
@@ -559,6 +982,14 @@ class AutopilotEngine:
                 {"tool_name": tool_name, "input": tool_input, "policy": policy_data},
             )
         )
+        self._set_plan_step(
+            state,
+            "execute_tool",
+            "running",
+            summary=f"Executing workbench tool: {tool_name}",
+            evidence={"tool_name": tool_name},
+            tool_name=tool_name,
+        )
         self._emit_event(
             state,
             "tool_started",
@@ -566,20 +997,44 @@ class AutopilotEngine:
             content=f"Executing workbench tool: {tool_name}",
             payload={"tool_name": tool_name, "input": tool_input, "policy": policy_data},
         )
+        self._emit_phase_changed(
+            state,
+            "tool_execution",
+            f"Executing workbench tool: {tool_name}",
+            plan_step_id="execute_tool",
+            payload={"tool_name": tool_name},
+        )
         self._checkpoint(state)
         try:
             output = self.tool_executor(tool_name, tool_input)
         except Exception as exc:
+            error_class = _classify_exception(tool_name, exc)
+            repair_allowed = self._record_repair_attempt(state, tool_name, error_class, str(exc))
+            self._set_plan_step(
+                state,
+                "execute_tool",
+                "failed" if not repair_allowed else "blocked",
+                summary=f"Tool {tool_name} failed: {exc}",
+                evidence={"tool_name": tool_name, "error": str(exc)},
+                tool_name=tool_name,
+            )
             state.observations.append(
                 _observation(
                     "tool_error",
                     f"Tool {tool_name} failed: {exc}",
-                    {
-                        "tool_name": tool_name,
-                        "input": tool_input,
-                        "policy": policy_data,
-                    },
+                    _classified_error_data(
+                        error_class,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        policy=policy_data,
+                        error=str(exc),
+                    ),
                 )
+            )
+            self._record_working_blocker(
+                state,
+                f"Tool {tool_name} failed: {exc}",
+                next_action="Repair the failed tool input and retry within the bounded repair loop." if repair_allowed else "Stop and report the failed tool execution.",
             )
             self._emit_event(
                 state,
@@ -589,7 +1044,13 @@ class AutopilotEngine:
                 payload={"tool_name": tool_name, "input": tool_input, "policy": policy_data, "error": str(exc)},
             )
             self._checkpoint(state)
-            return True
+            if repair_allowed:
+                return True
+            state.status = "failed"
+            state.errors.append(f"Repair attempts exceeded for {tool_name}: {exc}")
+            self._finish_plan(state, "failed", state.errors[-1])
+            self._checkpoint(state)
+            return False
         if self._cancel_if_requested(state):
             return False
         state.observations.append(
@@ -605,7 +1066,26 @@ class AutopilotEngine:
                 },
             )
         )
+        self._set_plan_step(
+            state,
+            "execute_tool",
+            "completed",
+            summary=f"Executed tool call: {tool_name}",
+            evidence={"tool_name": tool_name},
+            tool_name=tool_name,
+        )
+        if self._plan_step_status(state, "repair_tool_input") == "running":
+            self._set_plan_step(
+                state,
+                "repair_tool_input",
+                "completed",
+                summary=f"Recovered by executing corrected input for {tool_name}.",
+                evidence={"tool_name": tool_name},
+                tool_name=tool_name,
+                current=False,
+            )
         output_payload = output if isinstance(output, dict) else {"value": output}
+        self._update_working_state_for_tool_result(state, tool_name, tool_input, output_payload)
         self._emit_event(
             state,
             "tool_completed",
@@ -624,6 +1104,50 @@ class AutopilotEngine:
             )
         self._checkpoint(state)
         self._execute_followups(state, tool_name, tool_input)
+        return True
+
+    def _record_repair_attempt(
+        self,
+        state: AutopilotRunState,
+        tool_name: str,
+        error_class: AutopilotErrorClass,
+        error: str,
+        *,
+        max_attempts: int = 2,
+    ) -> bool:
+        recoverable = error_class in {"schema_error", "tool_runtime_error", "cad_build_error", "timeout", "missing_context"}
+        if not recoverable:
+            return False
+        key = f"{tool_name}:{error_class}"
+        attempt = state.repair_attempts.get(key, 0) + 1
+        state.repair_attempts[key] = attempt
+        if attempt > max_attempts:
+            if self._plan_step_status(state, "repair_tool_input") == "running":
+                self._set_plan_step(
+                    state,
+                    "repair_tool_input",
+                    "failed",
+                    summary=f"Repair attempts exceeded for {tool_name}.",
+                    evidence={"tool_name": tool_name, "error_class": error_class, "error": error, "attempt": attempt, "max_attempts": max_attempts},
+                    tool_name=tool_name,
+                    current=False,
+                )
+            return False
+        self._set_plan_step(
+            state,
+            "repair_tool_input",
+            "running",
+            summary=f"Repair attempt {attempt}/{max_attempts} for {tool_name}.",
+            evidence={"tool_name": tool_name, "error_class": error_class, "error": error},
+            tool_name=tool_name,
+        )
+        self._emit_phase_changed(
+            state,
+            "repair",
+            f"Repair attempt {attempt}/{max_attempts} for {tool_name}.",
+            plan_step_id="repair_tool_input",
+            payload={"tool_name": tool_name, "error_class": error_class, "attempt": attempt, "max_attempts": max_attempts},
+        )
         return True
 
     def _artifact_payload(self, output: dict[str, Any]) -> dict[str, Any] | None:
@@ -685,6 +1209,7 @@ class AutopilotEngine:
                 ]
             )
         if not followups:
+            self._set_plan_step(state, "verify_result", "skipped", summary="No automatic verification follow-up was registered.", current=False)
             return
         registered = {str(tool.get("name")) for tool in self.runtime_tools if tool.get("name")}
         for followup_name, followup_input in followups:
@@ -695,7 +1220,12 @@ class AutopilotEngine:
                     _observation(
                         "tool_error",
                         f"Skipped Autopilot follow-up; tool is not registered: {followup_name}",
-                        {"tool_name": followup_name, "input": followup_input},
+                        _classified_error_data(
+                            "missing_context",
+                            tool_name=followup_name,
+                            tool_input=followup_input,
+                            error="tool is not registered",
+                        ),
                     )
                 )
                 self._checkpoint(state)
@@ -707,6 +1237,14 @@ class AutopilotEngine:
                     {"tool_name": followup_name, "input": followup_input, "followup_for": tool_name},
                 )
             )
+            self._set_plan_step(
+                state,
+                "verify_result",
+                "running",
+                summary=f"Executing Autopilot follow-up: {followup_name}",
+                evidence={"tool_name": followup_name, "followup_for": tool_name},
+                tool_name=followup_name,
+            )
             self._emit_event(
                 state,
                 "tool_started",
@@ -714,15 +1252,37 @@ class AutopilotEngine:
                 content=f"Executing Autopilot follow-up: {followup_name}",
                 payload={"tool_name": followup_name, "input": followup_input, "followup_for": tool_name},
             )
+            self._emit_phase_changed(
+                state,
+                "verification",
+                f"Executing Autopilot follow-up: {followup_name}",
+                plan_step_id="verify_result",
+                payload={"tool_name": followup_name, "followup_for": tool_name},
+            )
             self._checkpoint(state)
             try:
                 output = self.tool_executor(followup_name, followup_input)
             except Exception as exc:
+                error_class = _classify_exception(followup_name, exc)
+                self._set_plan_step(
+                    state,
+                    "verify_result",
+                    "failed",
+                    summary=f"Autopilot follow-up {followup_name} failed: {exc}",
+                    evidence={"tool_name": followup_name, "error": str(exc)},
+                    tool_name=followup_name,
+                )
                 state.observations.append(
                     _observation(
                         "tool_error",
                         f"Autopilot follow-up {followup_name} failed: {exc}",
-                        {"tool_name": followup_name, "input": followup_input},
+                        _classified_error_data(
+                            error_class,
+                            tool_name=followup_name,
+                            tool_input=followup_input,
+                            error=str(exc),
+                            followup_for=tool_name,
+                        ),
                     )
                 )
                 self._emit_event(
@@ -748,12 +1308,27 @@ class AutopilotEngine:
                 )
             )
             output_payload = output if isinstance(output, dict) else {"value": output}
+            self._update_working_state_for_tool_result(
+                state,
+                followup_name,
+                followup_input,
+                output_payload,
+                followup_for=tool_name,
+            )
             self._emit_event(
                 state,
                 "tool_completed",
                 status="done",
                 content=f"Executed Autopilot follow-up: {followup_name}",
                 payload={"tool_name": followup_name, "input": followup_input, "followup_for": tool_name, **output_payload},
+            )
+            self._set_plan_step(
+                state,
+                "verify_result",
+                "completed",
+                summary=f"Executed Autopilot follow-up: {followup_name}",
+                evidence={"tool_name": followup_name, "followup_for": tool_name},
+                tool_name=followup_name,
             )
             self._checkpoint(state)
 
@@ -770,8 +1345,14 @@ class AutopilotEngine:
             return self.reply_to_run(run_id, user_message, max_steps=max_steps)
         if user_message and state.status == "awaiting_approval":
             state.observations.append(_observation("user_message", f"Revision request: {user_message}", {"revision_request": True}))
+            self._record_working_blocker(
+                state,
+                f"User requested revision: {user_message}",
+                next_action="Revise the pending tool input according to the user request.",
+            )
             state.pending_approval = None
             state.status = "running"
+            self._set_plan_step(state, "await_approval", "blocked", summary="User requested a revision instead of approving.", current=True)
             self._emit_event(
                 state,
                 "approval_resolved",
@@ -792,6 +1373,12 @@ class AutopilotEngine:
         if not approved:
             state.status = "blocked"
             state.errors.append(f"User rejected approval for {approval.tool_name}.")
+            self._record_working_blocker(
+                state,
+                state.errors[-1],
+                next_action="Ask for clarification or propose a safer revised action.",
+            )
+            self._set_plan_step(state, "await_approval", "blocked", summary=state.errors[-1], tool_name=approval.tool_name, current=True)
             state.observations.append(
                 _observation(
                     "user_message",
@@ -811,6 +1398,22 @@ class AutopilotEngine:
             self._publish_state(state)
             return state
         state.status = "running"
+        self._add_working_evidence(
+            state,
+            {"event": "approval_accepted", "tool_name": approval.tool_name, "approval_id": approval.id},
+        )
+        self._accept_working_assumptions(state, approval.skill_plan_assumptions)
+        state.working_state.current_blockers = []
+        state.working_state.recommended_next_action = f"Execute approved tool {approval.tool_name}."
+        self._set_plan_step(
+            state,
+            "await_approval",
+            "completed",
+            summary=f"User approved {approval.tool_name}.",
+            evidence={"approval_id": approval.id},
+            tool_name=approval.tool_name,
+            current=False,
+        )
         state.observations.append(
             _observation("user_message", f"User approved {approval.tool_name}.", approval.model_dump())
         )
@@ -834,6 +1437,7 @@ class AutopilotEngine:
         if adapter is None:
             state.status = "failed"
             state.errors.append(f"Unknown local agent adapter: {state.adapter_id}")
+            self._finish_plan(state, "failed", state.errors[-1])
         else:
             self._step_loop(state, adapter, max_steps)
         state.updated_at = now_iso()
@@ -848,6 +1452,11 @@ class AutopilotEngine:
         if state.status == "awaiting_approval":
             state.pending_approval = None
             state.observations.append(_observation("user_message", f"Revision request: {message}", {"revision_request": True}))
+            self._record_working_blocker(
+                state,
+                f"User requested revision: {message}",
+                next_action="Revise the pending action according to the user request.",
+            )
             self._emit_event(
                 state,
                 "approval_resolved",
@@ -857,6 +1466,8 @@ class AutopilotEngine:
             )
         else:
             state.observations.append(_observation("user_message", message, {"reply": True}))
+            state.working_state.recommended_next_action = f"Address user follow-up: {message[:240]}"
+            state.working_state.updated_at = now_iso()
         state.status = "running"
         self._emit_event(state, "agent_message", status="running", content=message, payload={"role": "user", "kind": "reply"})
         self._checkpoint(state)
@@ -864,6 +1475,7 @@ class AutopilotEngine:
         if adapter is None:
             state.status = "failed"
             state.errors.append(f"Unknown local agent adapter: {state.adapter_id}")
+            self._finish_plan(state, "failed", state.errors[-1])
         else:
             self._step_loop(state, adapter, max_steps)
         state.updated_at = now_iso()
@@ -878,6 +1490,8 @@ class AutopilotEngine:
         if state.status in {"running", "awaiting_approval"}:
             state.queued_user_messages.append(message)
             state.observations.append(_observation("user_message", f"Queued follow-up: {message}", {"queued": True}))
+            state.working_state.recommended_next_action = f"Address queued user follow-up: {message[:240]}"
+            state.working_state.updated_at = now_iso()
             self._emit_event(
                 state,
                 "run_status_changed",
@@ -896,6 +1510,7 @@ class AutopilotEngine:
         state.pending_approval = None
         state.updated_at = now_iso()
         state.observations.append(_observation("user_message", "Autopilot run cancelled."))
+        self._finish_plan(state, "cancelled", "Autopilot run cancelled.")
         self._emit_event(state, "run_cancelled", status="cancelled", content="Autopilot run cancelled.")
         self.store.save(state)
         self._publish_state(state)

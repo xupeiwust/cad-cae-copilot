@@ -67,6 +67,7 @@ Environment variables:
 | `AIENG_CLAUDE_CODE_COMMAND` | Override the Claude Code command; default `claude`. |
 | `AIENG_CODEX_CLI_COMMAND` | Override the Codex command; default `codex`. |
 | `AIENG_LOCAL_AGENT_WORKSPACE` | Optional workspace passed to Claude Code via `--add-dir`. |
+| `AIENG_CLAUDE_CODE_TOOLS` | Comma-separated allowlist of Claude built-in tools; default `Read,Edit,Grep,Glob,LS,Search`. Set to `''` to disable all. |
 | `AIENG_DISABLE_CLAUDE_CODE_ADAPTER=1` | Force Claude adapter to blocked. |
 | `AIENG_DISABLE_CODEX_CLI_ADAPTER=1` | Force Codex adapter to blocked. |
 | `AIENG_RUN_LOCAL_AGENT_SMOKE=1` | Enable the real Claude Code smoke test. |
@@ -87,8 +88,10 @@ Claude Code expected support:
 - `--no-session-persistence`
 - `--output-format json`
 - `--json-schema`
-- `--permission-mode plan`
-- `--tools ""`
+- `--permission-mode auto`
+- `--tools` with a comma-separated allowlist (default `Read,Edit,Grep,Glob,LS,Search`; Bash is excluded for safety)
+- `--session-id <uuid>` for the first call (creates the session)
+- `--resume <uuid>` for subsequent calls (reconnects to the same specific session; avoids `--continue` which would resume the user's interactive CLI session)
 
 Codex expected support:
 

@@ -10150,6 +10150,39 @@ def test_agent_autopilot_run_dry_run(tmp_path: Path) -> None:
     assert get_resp.json()["run_id"] == data["run_id"]
 
 
+def test_autopilot_plan_events_are_persisted(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("plan-events"))
+    client = TestClient(create_app(settings))
+
+    resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "inspect the active project",
+            "project_id": project["id"],
+            "adapter_id": "fake",
+            "fake_actions": [
+                {"action": {"type": "final", "message": "Dry run done."}, "done": True}
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    run_id = resp.json()["run_id"]
+    _wait_for_autopilot_status(client, run_id, {"completed"})
+
+    events_resp = client.get(f"/api/projects/{project['id']}/agent-events")
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    plan_created = [event for event in events if event["type"] == "agent_plan_created"]
+    step_updates = [event for event in events if event["type"] == "agent_plan_step_updated"]
+    assert plan_created
+    assert step_updates
+    assert plan_created[0]["run_id"] == run_id
+    assert plan_created[0]["payload"]["plan"]["objective"] == "inspect the active project"
+    assert any(event["payload"]["step"]["id"] == "summarize_result" for event in step_updates)
+
+
 def test_agent_autopilot_continue_and_cancel(tmp_path: Path) -> None:
     settings = _make_runtime_settings(tmp_path)
     client = TestClient(create_app(settings))

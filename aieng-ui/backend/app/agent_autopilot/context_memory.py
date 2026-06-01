@@ -172,6 +172,7 @@ class ContextMemoryManager:
         project_id: str | None = None,
         selected_geometry: dict[str, Any] | None = None,
         agent_context: dict[str, Any] | None = None,
+        working_state: dict[str, Any] | None = None,
     ) -> str:
         """Build a full hierarchical prompt.
 
@@ -184,6 +185,7 @@ class ContextMemoryManager:
             "objective": objective,
             "system_context": self.system_content,
             "archive_digest": self._archive or "No prior history.",
+            "working_state": working_state or {},
             "working_memory": self._build_working_layer_payload(),
         }
         if project_id is not None:
@@ -213,6 +215,32 @@ class ContextMemoryManager:
         }
         if new_observation is not None:
             payload["new_observation"] = self._compact_single_observation(new_observation)
+
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    def build_resume_prompt(
+        self,
+        objective: str,
+        *,
+        working_state: dict[str, Any] | None = None,
+        current_plan_step: dict[str, Any] | None = None,
+        latest_observation: AutopilotObservation | dict[str, Any] | None = None,
+        pending_approval: dict[str, Any] | None = None,
+        instruction: str = "Resume the run from this compact state. Do not re-ask questions already answered in accepted_assumptions.",
+    ) -> str:
+        payload: dict[str, Any] = {
+            "objective": objective,
+            "instruction": instruction,
+            "system_context": self.system_content,
+            "archive_digest": self._archive or "No prior history.",
+            "resume_summary": {
+                "working_state": working_state or {},
+                "current_plan_step": current_plan_step,
+                "pending_approval": pending_approval,
+            },
+        }
+        if latest_observation is not None:
+            payload["resume_summary"]["latest_observation"] = self._compact_single_observation(latest_observation)
 
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -432,25 +460,38 @@ class ContextMemoryManager:
         output = data.get("output")
         tool_name = data.get("tool_name", "")
 
+        if data.get("error_class") == "cad_build_error" or (
+            tool_name == "cad.execute_build123d" and data.get("error")
+        ):
+            return self._compact_cad_build_error(data)
+
         if isinstance(output, dict):
             if output.get("skill_name") == "cad.plan_build123d_skill":
-                execute_input = output.get("execute_input") if isinstance(output.get("execute_input"), dict) else {}
+                proposed_input = output.get("proposed_input") if isinstance(output.get("proposed_input"), dict) else {}
+                if not proposed_input:
+                    proposed_input = output.get("execute_input") if isinstance(output.get("execute_input"), dict) else {}
                 return {
                     "tool_name": tool_name,
                     "status": output.get("status"),
                     "skill_name": output.get("skill_name"),
+                    "intent": output.get("intent"),
                     "brief": output.get("brief"),
                     "assumptions": output.get("assumptions"),
                     "warnings": output.get("warnings"),
-                    "next_tool": output.get("next_tool"),
-                    "execute_input": {
-                        "project_id": execute_input.get("project_id"),
-                        "name": execute_input.get("name"),
-                        "code": execute_input.get("code"),
-                        "mode": execute_input.get("mode"),
-                        "model_kind": execute_input.get("model_kind"),
-                        "timeout": execute_input.get("timeout"),
-                    } if execute_input else None,
+                    "verification_targets": output.get("verification_targets") or output.get("validation_targets"),
+                    "fallback_recommendation": output.get("fallback_recommendation") or output.get("recommendation"),
+                    "match_confidence": output.get("match_confidence"),
+                    "matched_terms": output.get("matched_terms"),
+                    "rejection_reason": output.get("rejection_reason"),
+                    "proposed_tool": output.get("proposed_tool") or output.get("next_tool"),
+                    "proposed_input": {
+                        "project_id": proposed_input.get("project_id"),
+                        "name": proposed_input.get("name"),
+                        "code": proposed_input.get("code"),
+                        "mode": proposed_input.get("mode"),
+                        "model_kind": proposed_input.get("model_kind"),
+                        "timeout": proposed_input.get("timeout"),
+                    } if proposed_input else None,
                 }
 
             # agent_context output
@@ -492,6 +533,54 @@ class ContextMemoryManager:
         if len(text) > 2000:
             return {"summary": text[:2000] + f"...[truncated {len(text) - 2000} chars]"}
         return data
+
+    def _compact_cad_build_error(self, data: dict[str, Any]) -> dict[str, Any]:
+        error = str(data.get("error") or "")
+        tool_input = data.get("input") if isinstance(data.get("input"), dict) else {}
+        code = tool_input.get("code") if isinstance(tool_input, dict) else None
+        top_line = self._top_traceback_line(error)
+        compact: dict[str, Any] = {
+            "tool_name": data.get("tool_name") or "cad.execute_build123d",
+            "error_class": data.get("error_class") or "cad_build_error",
+            "recoverable": data.get("recoverable", True),
+            "exception_type": self._exception_type(top_line),
+            "top_traceback_line": top_line,
+            "failing_input": {
+                "project_id": tool_input.get("project_id"),
+                "name": tool_input.get("name"),
+                "mode": tool_input.get("mode"),
+                "model_kind": tool_input.get("model_kind"),
+                "timeout": tool_input.get("timeout"),
+                "code_chars": len(code) if isinstance(code, str) else 0,
+            },
+        }
+        if isinstance(code, str) and len(code) <= 1800:
+            compact["source_snippet"] = code
+        elif isinstance(code, str):
+            compact["source_snippet"] = code[:1800] + f"...[truncated {len(code) - 1800} chars]"
+        return compact
+
+    @staticmethod
+    def _top_traceback_line(error: str) -> str:
+        lines = [line.strip() for line in error.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        for line in reversed(lines):
+            if line.startswith("File ") or line.startswith("^") or line == "Traceback (most recent call last):":
+                continue
+            return line[:500]
+        return lines[-1][:500]
+
+    @staticmethod
+    def _exception_type(line: str) -> str | None:
+        if ":" not in line:
+            return None
+        candidate = line.split(":", 1)[0].strip()
+        if not candidate or " " in candidate:
+            return None
+        if candidate.endswith(("Error", "Exception")) or "." in candidate:
+            return candidate
+        return None
 
     @staticmethod
     def _estimate_tokens(obj: Any) -> int:

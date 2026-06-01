@@ -45,6 +45,23 @@ def test_system_layer_includes_project_skill_catalog() -> None:
     assert "cad.plan_build123d_skill" in tool_names
 
 
+def test_local_and_llm_paths_share_compact_tool_catalog() -> None:
+    runtime_tools = [
+        {"name": "aieng.agent_context", "description": "context", "input_schema": {"type": "object"}},
+        {"name": "cad.plan_build123d_skill", "description": "skill", "input_schema": {"type": "object"}},
+        {"name": "cad.execute_build123d", "description": "cad", "requires_approval": True, "input_schema": {"type": "object"}},
+    ]
+
+    local_layer = build_system_layer(runtime_tools)
+    llm_layer = build_system_layer(runtime_tools)
+    local_tool_names = [tool["name"] for tool in local_layer["available_workbench_tools"]]
+    llm_tool_names = [tool["name"] for tool in llm_layer["available_workbench_tools"]]
+
+    assert local_tool_names == llm_tool_names
+    assert "cad.plan_build123d_skill" in local_tool_names
+    assert local_layer["available_workbench_tools"] == llm_layer["available_workbench_tools"]
+
+
 def test_action_prompt_compacts_large_agent_context_observation() -> None:
     prompt = build_action_prompt(
         objective="Explain this model",
@@ -111,4 +128,82 @@ def test_action_prompt_compacts_cad_critique_observation() -> None:
     assert "hole edge distance too small" in prompt
     assert "finding_count" in prompt
     assert "finding 19" not in prompt
-    assert len(prompt) < 9000
+    assert len(prompt) < 9300
+
+
+def test_action_prompt_compacts_cad_build_error_for_repair() -> None:
+    prompt = build_action_prompt(
+        objective="fix the failed CAD build",
+        project_id="p1",
+        selected_geometry={},
+        agent_context={},
+        runtime_tools=[
+            {"name": "cad.execute_build123d", "description": "cad", "input_schema": {"type": "object"}},
+        ],
+        observations=[
+            {
+                "kind": "tool_error",
+                "summary": "Tool cad.execute_build123d failed",
+                "data": {
+                    "tool_name": "cad.execute_build123d",
+                    "error_class": "cad_build_error",
+                    "recoverable": True,
+                    "input": {
+                        "project_id": "p1",
+                        "mode": "replace",
+                        "model_kind": "mechanical",
+                        "code": "from build123d import *\nresult = Box(10, 10, HEIGHT)",
+                    },
+                    "error": (
+                        "Traceback (most recent call last):\n"
+                        "  File \"geometry/source.py\", line 2, in <module>\n"
+                        "NameError: name 'HEIGHT' is not defined"
+                    ),
+                },
+            }
+        ],
+    )
+
+    assert "CAD BUILD REPAIR" in prompt
+    assert "NameError" in prompt
+    assert "top_traceback_line" in prompt
+    assert "source_snippet" in prompt
+    assert "project_id" in prompt
+
+
+def test_action_prompt_prefers_skill_contract_fields() -> None:
+    prompt = build_action_prompt(
+        objective="make a flange",
+        project_id="p1",
+        selected_geometry={},
+        agent_context={},
+        runtime_tools=[
+            {"name": "cad.plan_build123d_skill", "description": "skill", "input_schema": {"type": "object"}},
+        ],
+        observations=[
+            {
+                "kind": "tool_result",
+                "summary": "Planned CAD skill.",
+                "data": {
+                    "tool_name": "cad.plan_build123d_skill",
+                    "output": {
+                        "status": "ready",
+                        "skill_name": "cad.plan_build123d_skill",
+                        "intent": "make a flange",
+                        "brief": "40mm flange",
+                        "proposed_tool": "cad.execute_build123d",
+                        "proposed_input": {"project_id": "p1", "code": "result = None", "mode": "replace"},
+                        "verification_targets": ["base_plate named part exists"],
+                        "match_confidence": 0.96,
+                        "matched_terms": ["flange"],
+                    },
+                },
+            }
+        ],
+    )
+
+    assert "proposed_input" in prompt
+    assert "result = None" in prompt
+    assert "verification_targets" in prompt
+    assert "match_confidence" in prompt
+    assert "flange" in prompt

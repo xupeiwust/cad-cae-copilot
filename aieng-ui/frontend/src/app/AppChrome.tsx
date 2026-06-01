@@ -135,6 +135,7 @@ export function AppChrome({ app }: AppChromeProps) {
               approveAutopilot={(runId) => void app.updateAutopilotRun(runId, "approve")}
               rejectAutopilot={(runId) => void app.updateAutopilotRun(runId, "reject")}
               cancelAutopilot={(runId) => void app.updateAutopilotRun(runId, "cancel")}
+              reviseAutopilot={(runId, message) => void app.updateAutopilotRun(runId, "reply", message)}
               approveSimulation={() => void app.executeSimulation()}
               rejectSimulation={() => app.setSimulationPending(false)}
               recentPickedFaces={app.pickedFaces}

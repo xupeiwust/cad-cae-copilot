@@ -31,3 +31,29 @@ def test_llm_api_adapter_returns_autopilot_action() -> None:
     assert result.status == "success"
     assert result.action is not None
     assert result.action.action.type == "final"
+
+
+def test_llm_api_adapter_emits_common_progress_phases() -> None:
+    adapter = LlmApiAdapter(
+        settings=object(),
+        llm_config={"provider": "openai-compatible", "model": "demo"},
+        provider_factory=lambda _settings, _config: _FakeProvider(),
+    )
+    events = []
+
+    result = adapter.invoke(
+        prompt="explain the model",
+        action_schema=AutopilotAgentAction.json_schema_for_adapter(),
+        on_progress=events.append,
+    )
+
+    assert result.status == "success"
+    phases = [event["phase"] for event in events]
+    assert phases == [
+        "started",
+        "prompt_prepared",
+        "request_sent",
+        "waiting_for_model",
+        "parsing_output",
+        "completed",
+    ]

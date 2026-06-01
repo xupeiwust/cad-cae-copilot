@@ -33,6 +33,11 @@ def test_engine_completes_on_final_action(tmp_path: Path) -> None:
     )
     assert state.status == "completed"
     assert state.final_message == "All set."
+    assert state.plan is not None
+    assert state.plan.objective == "hello"
+    assert state.plan.status == "completed"
+    assert state.plan.steps[0].status == "completed"
+    assert state.plan.steps[-1].status == "completed"
 
 
 def test_engine_blocks_then_recovers_when_agent_selects_legal_action(tmp_path: Path) -> None:
@@ -48,7 +53,8 @@ def test_engine_blocks_then_recovers_when_agent_selects_legal_action(tmp_path: P
         )
     )
     assert state.status == "completed"
-    assert any(obs.kind == "policy_block" for obs in state.observations)
+    policy_obs = next(obs for obs in state.observations if obs.kind == "policy_block")
+    assert policy_obs.data["error_class"] == "policy_error"
     assert any(obs.kind == "tool_result" for obs in state.observations)
 
 
@@ -71,6 +77,70 @@ def test_engine_pauses_for_approval_required_action(tmp_path: Path) -> None:
     assert state.status == "awaiting_approval"
     assert state.pending_approval is not None
     assert state.pending_approval.tool_name == "cad.execute_build123d"
+    assert state.plan is not None
+    approval_step = next(step for step in state.plan.steps if step.id == "await_approval")
+    assert approval_step.status == "blocked"
+    assert approval_step.tool_name == "cad.execute_build123d"
+    assert state.plan.current_step_id == "await_approval"
+
+
+def test_engine_emits_plan_lifecycle_events(tmp_path: Path) -> None:
+    events = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        on_event=events.append,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="make cad",
+            project_id="p1",
+            fake_actions=[
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    }
+                },
+            ],
+        )
+    )
+
+    assert state.status == "awaiting_approval"
+    created = next(event for event in events if event["type"] == "agent_plan_created")
+    assert created["event_id"] == f"{state.run_id}-plan-{state.plan.id}-created"  # type: ignore[union-attr]
+    assert created["payload"]["plan"]["objective"] == "make cad"
+    updates = [event for event in events if event["type"] == "agent_plan_step_updated"]
+    assert any(event["payload"]["step"]["id"] == "observe_context" for event in updates)
+    approval = next(event for event in updates if event["payload"]["step"]["id"] == "await_approval")
+    assert approval["status"] == "blocked"
+    assert "cad.execute_build123d" in approval["payload"]["step"]["tool_name"]
+
+
+def test_engine_emits_typed_phase_events(tmp_path: Path) -> None:
+    events = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        on_event=events.append,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="hello",
+            fake_actions=[
+                {"action": {"type": "final", "message": "All set."}, "done": True},
+            ],
+        )
+    )
+
+    assert state.status == "completed"
+    phases = [event for event in events if event["type"] == "agent_phase_changed"]
+    assert phases
+    assert any(event["payload"]["phase"] == "prompt_prepared" for event in phases)
+    assert all(event["payload"].get("adapter_id") for event in phases)
 
 
 def test_engine_executes_auto_allowed_tool_when_not_dry_run(tmp_path: Path) -> None:
@@ -96,12 +166,175 @@ def test_engine_executes_auto_allowed_tool_when_not_dry_run(tmp_path: Path) -> N
     assert any(obs.data.get("dry_run") is False for obs in state.observations)
 
 
+def test_engine_classifies_tool_runtime_errors(tmp_path: Path) -> None:
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        tool_executor=lambda _name, _inp: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="context please",
+            project_id="p1",
+            dry_run=False,
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "aieng.agent_context", "input": {"project_id": "p1"}}},
+                {"action": {"type": "final", "message": "Observed."}, "done": True},
+            ],
+        )
+    )
+
+    tool_errors = [obs for obs in state.observations if obs.kind == "tool_error"]
+    assert tool_errors
+    assert tool_errors[-1].data["error_class"] == "tool_runtime_error"
+    assert tool_errors[-1].data["recoverable"] is True
+
+
+def test_engine_repairs_recoverable_tool_input_once(tmp_path: Path) -> None:
+    class RepairAdapter:
+        adapter_id = "repair"
+        label = "Repair"
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.prompts: list[str] = []
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            self.prompts.append(prompt)
+            action = (
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "aieng.agent_context",
+                        "input": {"project_id": "p1", "bad": True},
+                    }
+                }
+                if self.calls == 1
+                else (
+                    {
+                        "action": {
+                            "type": "tool_call",
+                            "tool_name": "aieng.agent_context",
+                            "input": {"project_id": "p1"},
+                        }
+                    }
+                    if self.calls == 2
+                    else {"action": {"type": "final", "message": "Recovered."}, "done": True}
+                )
+            )
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(action),
+            )
+
+    calls = []
+    events = []
+    adapter = RepairAdapter()
+
+    def _execute(name: str, inp: dict) -> dict:
+        calls.append((name, inp))
+        if inp.get("bad"):
+            raise RuntimeError("bad field should be removed")
+        return {"ok": True}
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"repair": adapter},
+        tool_executor=_execute,
+        on_event=events.append,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="load context",
+            project_id="p1",
+            adapter_id="repair",
+            dry_run=False,
+            max_steps=5,
+        )
+    )
+
+    assert state.status == "completed"
+    assert state.final_message == "Recovered."
+    assert calls == [
+        ("aieng.agent_context", {"project_id": "p1"}),
+        ("aieng.agent_context", {"project_id": "p1", "bad": True}),
+        ("aieng.agent_context", {"project_id": "p1"}),
+    ]
+    assert state.repair_attempts == {"aieng.agent_context:tool_runtime_error": 1}
+    assert "tool_error" in adapter.prompts[1]
+    assert "bad field should be removed" in adapter.prompts[1]
+    repair_step = next(step for step in state.plan.steps if step.id == "repair_tool_input")  # type: ignore[union-attr]
+    assert repair_step.status == "completed"
+    assert any(event["payload"].get("phase") == "repair" for event in events if event["type"] == "agent_phase_changed")
+
+
+def test_engine_fails_after_repair_attempts_are_exceeded(tmp_path: Path) -> None:
+    class FailingAdapter:
+        adapter_id = "repair"
+        label = "Repair"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(
+                    {
+                        "action": {
+                            "type": "tool_call",
+                            "tool_name": "aieng.agent_context",
+                            "input": {"project_id": "p1", "bad": self.calls},
+                        }
+                    }
+                ),
+            )
+
+    calls = []
+
+    def _execute(name: str, inp: dict) -> dict:
+        calls.append((name, inp))
+        raise RuntimeError("still broken")
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"repair": FailingAdapter()},
+        tool_executor=_execute,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="load context",
+            project_id="p1",
+            adapter_id="repair",
+            dry_run=False,
+            max_steps=5,
+        )
+    )
+
+    assert state.status == "failed"
+    assert len(calls) == 4
+    assert calls[0] == ("aieng.agent_context", {"project_id": "p1"})
+    assert state.repair_attempts == {"aieng.agent_context:tool_runtime_error": 3}
+    assert state.errors == ["Repair attempts exceeded for aieng.agent_context: still broken"]
+    repair_step = next(step for step in state.plan.steps if step.id == "repair_tool_input")  # type: ignore[union-attr]
+    assert repair_step.status == "failed"
+
+
 def test_engine_allows_agent_to_orchestrate_cad_skill_before_approval(tmp_path: Path) -> None:
     calls = []
     skill_output = {
         "status": "ready",
         "skill_name": "cad.plan_build123d_skill",
         "brief": "Mechanical flange: OD 40mm.",
+        "assumptions": ["Defaulted thickness to 6mm."],
+        "warnings": [],
+        "proposed_tool": "cad.execute_build123d",
+        "verification_targets": ["base_plate named part exists"],
         "execute_input": {
             "project_id": "p1",
             "code": "result = None",
@@ -150,6 +383,503 @@ def test_engine_allows_agent_to_orchestrate_cad_skill_before_approval(tmp_path: 
     ]
     assert state.pending_approval is not None
     assert state.pending_approval.tool_name == "cad.execute_build123d"
+    assert state.pending_approval.skill_plan_brief == "Mechanical flange: OD 40mm."
+    assert state.pending_approval.skill_plan_assumptions == ["Defaulted thickness to 6mm."]
+    assert state.pending_approval.skill_plan_verification_targets == ["base_plate named part exists"]
+
+
+def test_engine_updates_working_state_from_skill_plan(tmp_path: Path) -> None:
+    skill_output = {
+        "status": "ready",
+        "skill_name": "cad.plan_build123d_skill",
+        "intent": "make a flange",
+        "brief": "Mechanical flange: OD 40mm.",
+        "assumptions": ["Defaulted thickness to 6mm."],
+        "proposed_tool": "cad.execute_build123d",
+        "proposed_input": {"project_id": "p1", "code": "result = None"},
+    }
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        tool_executor=lambda _name, _inp: skill_output,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="建模一个40mm的法兰盘",
+            project_id="p1",
+            dry_run=False,
+            fake_actions=[
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.plan_build123d_skill",
+                        "input": {"project_id": "p1", "message": "建模一个40mm的法兰盘"},
+                    }
+                },
+                {"action": {"type": "final", "message": "Planned."}, "done": True},
+            ],
+        )
+    )
+
+    assert state.status == "completed"
+    assert state.working_state.objective == "建模一个40mm的法兰盘"
+    assert state.working_state.current_mode == "autopilot"
+    assert state.working_state.last_successful_tool == "cad.plan_build123d_skill"
+    assert state.working_state.recommended_next_action == "Review skill plan, then call cad.execute_build123d if it matches the user intent."
+    assert state.working_state.latest_evidence[-1]["brief"] == "Mechanical flange: OD 40mm."
+
+
+def test_engine_persists_approved_skill_assumptions_in_next_prompt(tmp_path: Path) -> None:
+    class SkillThenCadAdapter:
+        adapter_id = "skill-cad"
+        label = "Skill CAD"
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.prompts: list[str] = []
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            self.prompts.append(prompt)
+            if self.calls == 1:
+                action = {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.plan_build123d_skill",
+                        "input": {"project_id": "p1", "message": "建模一个40mm的法兰盘"},
+                    }
+                }
+            elif self.calls == 2:
+                action = {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    },
+                    "user_message": "Approval required for CAD write.",
+                }
+            else:
+                action = {"action": {"type": "final", "message": "Built."}, "done": True}
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(action),
+            )
+
+    skill_output = {
+        "status": "ready",
+        "skill_name": "cad.plan_build123d_skill",
+        "brief": "Mechanical flange: OD 40mm.",
+        "assumptions": ["Defaulted thickness to 6mm."],
+        "proposed_tool": "cad.execute_build123d",
+        "proposed_input": {"project_id": "p1", "code": "result = None"},
+    }
+
+    def _execute(name: str, inp: dict) -> dict:
+        if name == "cad.plan_build123d_skill":
+            return skill_output
+        return {"named_parts": ["base_plate"], "parts_added": ["base_plate"]}
+
+    adapter = SkillThenCadAdapter()
+    store = AutopilotStore(tmp_path / "runs")
+    engine = AutopilotEngine(
+        store=store,
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"skill-cad": adapter},
+        tool_executor=_execute,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="建模一个40mm的法兰盘",
+            project_id="p1",
+            adapter_id="skill-cad",
+            dry_run=False,
+        )
+    )
+
+    assert state.status == "awaiting_approval"
+    resumed = engine.continue_run(state.run_id, approved=True)
+
+    assert resumed.status == "completed"
+    assert resumed.working_state.accepted_assumptions == ["Defaulted thickness to 6mm."]
+    assert len(adapter.prompts) == 3
+    assert '"resume_summary"' in adapter.prompts[2]
+    assert '"working_memory"' not in adapter.prompts[2]
+    assert '"accepted_assumptions":["Defaulted thickness to 6mm."]' in adapter.prompts[2]
+
+
+def test_engine_does_not_accept_assumptions_when_approval_rejected(tmp_path: Path) -> None:
+    skill_output = {
+        "status": "ready",
+        "skill_name": "cad.plan_build123d_skill",
+        "brief": "Mechanical flange: OD 40mm.",
+        "assumptions": ["Defaulted thickness to 6mm."],
+        "proposed_tool": "cad.execute_build123d",
+        "proposed_input": {"project_id": "p1", "code": "result = None"},
+    }
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        tool_executor=lambda _name, _inp: skill_output,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="建模一个40mm的法兰盘",
+            project_id="p1",
+            dry_run=False,
+            fake_actions=[
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.plan_build123d_skill",
+                        "input": {"project_id": "p1", "message": "建模一个40mm的法兰盘"},
+                    }
+                },
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    },
+                },
+            ],
+        )
+    )
+    rejected = engine.continue_run(state.run_id, approved=False)
+
+    assert rejected.status == "blocked"
+    assert rejected.working_state.accepted_assumptions == []
+    assert rejected.working_state.current_blockers == ["User rejected approval for cad.execute_build123d."]
+
+
+def test_end_to_end_smoke_40mm_flange_skill_approval_execute_critique(tmp_path: Path) -> None:
+    class FlangeAdapter:
+        adapter_id = "flange"
+        label = "Flange"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                action = {
+                    "thought_summary": "Need deterministic CAD skill planning before CAD write.",
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.plan_build123d_skill",
+                        "input": {"project_id": "p1", "message": "建模一个40mm的法兰盘"},
+                    },
+                }
+            elif self.calls == 2:
+                action = {
+                    "thought_summary": "Skill produced a flange plan; request approval for geometry write.",
+                    "user_message": "CAD skill planned a 40mm flange with default 6mm thickness; approval required to write geometry.",
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "mode": "replace", "model_kind": "mechanical", "code": "result = None"},
+                    },
+                }
+            else:
+                action = {
+                    "thought_summary": "CAD executed and critique follow-up returned clean.",
+                    "action": {"type": "final", "message": "40mm flange built and checked."},
+                    "done": True,
+                }
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(action),
+            )
+
+    calls: list[tuple[str, dict]] = []
+
+    def _execute(name: str, inp: dict) -> dict:
+        calls.append((name, inp))
+        if name == "aieng.agent_context":
+            return {"schema_version": "0.1", "project_id": "p1", "project": {"name": "Smoke"}}
+        if name == "cad.plan_build123d_skill":
+            return {
+                "status": "ready",
+                "skill_name": "cad.plan_build123d_skill",
+                "intent": "建模一个40mm的法兰盘",
+                "brief": "40mm flange with four M6 holes.",
+                "assumptions": ["Defaulted thickness to 6mm."],
+                "proposed_tool": "cad.execute_build123d",
+                "proposed_input": {"project_id": "p1", "mode": "replace", "model_kind": "mechanical", "code": "result = None"},
+                "verification_targets": ["base_plate named part exists", "mounting_hole_pattern exists"],
+            }
+        if name == "cad.execute_build123d":
+            return {
+                "named_parts": ["base_plate", "mounting_hole_pattern"],
+                "parts_added": ["base_plate", "mounting_hole_pattern"],
+                "mode": "replace",
+                "used_base": False,
+                "geometry_report": {"overall_proportions": {"x": 1.0, "y": 1.0, "z": 0.15}},
+            }
+        if name == "cad.critique":
+            return {"status": "ok", "verdict": "pass", "findings": [], "fail_first_objections": []}
+        raise AssertionError(f"unexpected tool {name}")
+
+    runtime_tools = RUNTIME_TOOLS + [
+        {"name": "cad.critique", "description": "critique", "input_schema": {"type": "object"}},
+    ]
+    adapter = FlangeAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=runtime_tools,
+        adapters={"flange": adapter},
+        tool_executor=_execute,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="建模一个40mm的法兰盘",
+            project_id="p1",
+            adapter_id="flange",
+            dry_run=False,
+        )
+    )
+
+    assert state.status == "awaiting_approval"
+    assert state.pending_approval is not None
+    assert state.pending_approval.skill_plan_brief == "40mm flange with four M6 holes."
+    resumed = engine.continue_run(state.run_id, approved=True)
+
+    assert resumed.status == "completed"
+    assert resumed.final_message == "40mm flange built and checked."
+    assert [name for name, _inp in calls] == [
+        "aieng.agent_context",
+        "cad.plan_build123d_skill",
+        "cad.execute_build123d",
+        "cad.critique",
+    ]
+    assert resumed.working_state.accepted_assumptions == ["Defaulted thickness to 6mm."]
+    assert resumed.working_state.last_successful_tool == "cad.critique"
+    assert any(obs.kind == "tool_result" and obs.data.get("tool_name") == "cad.critique" for obs in resumed.observations)
+
+
+def test_end_to_end_smoke_unsupported_cad_skill_falls_back_to_authored_build(tmp_path: Path) -> None:
+    class UnsupportedAdapter:
+        adapter_id = "unsupported"
+        label = "Unsupported"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                action = {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.plan_build123d_skill",
+                        "input": {"project_id": "p1", "message": "建模一个复杂机器人外壳"},
+                    }
+                }
+            elif self.calls == 2:
+                action = {
+                    "thought_summary": "No deterministic skill matched; inspect source before authoring fallback CAD.",
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.get_source",
+                        "input": {"project_id": "p1"},
+                    },
+                }
+            elif self.calls == 3:
+                action = {
+                    "thought_summary": "Fallback path will author build123d directly and still requires approval.",
+                    "user_message": "No deterministic CAD skill matched this robot shell, so I will use a direct build123d fallback; approval is still required before writing geometry.",
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "mode": "replace", "model_kind": "organic", "code": "result = None"},
+                    },
+                }
+            else:
+                action = {"action": {"type": "final", "message": "Fallback CAD path completed."}, "done": True}
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(action),
+            )
+
+    calls: list[tuple[str, dict]] = []
+
+    def _execute(name: str, inp: dict) -> dict:
+        calls.append((name, inp))
+        if name == "aieng.agent_context":
+            return {"schema_version": "0.1", "project_id": "p1", "project": {"name": "Robot"}}
+        if name == "cad.plan_build123d_skill":
+            return {
+                "status": "unsupported",
+                "skill_name": "cad.plan_build123d_skill",
+                "intent": "建模一个复杂机器人外壳",
+                "brief": "No deterministic template matched.",
+                "match_confidence": 0.12,
+                "matched_terms": [],
+                "rejection_reason": "complex_robot_shell_not_supported",
+                "fallback_recommendation": "Use direct build123d industrial-design fallback with user approval.",
+            }
+        if name == "cad.get_source":
+            return {"named_parts": [], "has_base": False, "source": ""}
+        if name == "cad.execute_build123d":
+            return {"named_parts": ["robot_shell"], "parts_added": ["robot_shell"], "mode": "replace", "used_base": False}
+        raise AssertionError(f"unexpected tool {name}")
+
+    runtime_tools = RUNTIME_TOOLS + [
+        {"name": "cad.get_source", "description": "source", "input_schema": {"type": "object"}},
+    ]
+    adapter = UnsupportedAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=runtime_tools,
+        adapters={"unsupported": adapter},
+        tool_executor=_execute,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="建模一个复杂机器人外壳",
+            project_id="p1",
+            adapter_id="unsupported",
+            dry_run=False,
+            max_steps=5,
+        )
+    )
+
+    assert state.status == "awaiting_approval"
+    assert [name for name, _inp in calls] == [
+        "aieng.agent_context",
+        "cad.plan_build123d_skill",
+        "cad.get_source",
+    ]
+    skill_obs = next(obs for obs in state.observations if obs.kind == "tool_result" and obs.data.get("tool_name") == "cad.plan_build123d_skill")
+    assert skill_obs.data["output"]["status"] == "unsupported"
+    assert "direct build123d" in skill_obs.data["output"]["fallback_recommendation"]
+    assert state.pending_approval is not None
+    assert state.pending_approval.tool_name == "cad.execute_build123d"
+
+    resumed = engine.continue_run(state.run_id, approved=True)
+
+    assert resumed.status == "completed"
+    assert resumed.final_message == "Fallback CAD path completed."
+    assert [name for name, _inp in calls] == [
+        "aieng.agent_context",
+        "cad.plan_build123d_skill",
+        "cad.get_source",
+        "cad.execute_build123d",
+    ]
+
+
+def test_engine_includes_working_state_in_adapter_prompt(tmp_path: Path) -> None:
+    class CapturingAdapter:
+        adapter_id = "spy"
+        label = "Spy"
+
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.prompts.append(prompt)
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(
+                    {"action": {"type": "final", "message": "Done."}, "done": True}
+                ),
+            )
+
+    adapter = CapturingAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"spy": adapter},
+        tool_executor=lambda _name, _inp: {"ok": True},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="Explain current blockers",
+            project_id="p1",
+            adapter_id="spy",
+            dry_run=False,
+        )
+    )
+
+    assert state.status == "completed"
+    assert adapter.prompts
+    assert '"working_state"' in adapter.prompts[0]
+    assert '"objective":"Explain current blockers"' in adapter.prompts[0]
+
+
+def test_local_and_llm_adapters_follow_equivalent_skill_policy_path(tmp_path: Path) -> None:
+    class ScriptedAdapter:
+        def __init__(self, adapter_id: str) -> None:
+            self.adapter_id = adapter_id
+            self.label = adapter_id
+            self.calls = 0
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            action = (
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.plan_build123d_skill",
+                        "input": {"project_id": "p1", "message": "建模一个40mm的法兰盘"},
+                    }
+                }
+                if self.calls == 1
+                else {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    },
+                    "user_message": "CAD skill prepared geometry; approval is needed.",
+                }
+            )
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(action),
+            )
+
+    def run(adapter_id: str):
+        calls: list[tuple[str, dict]] = []
+        engine = AutopilotEngine(
+            store=AutopilotStore(tmp_path / adapter_id / "runs"),
+            runtime_tools=RUNTIME_TOOLS,
+            adapters={adapter_id: ScriptedAdapter(adapter_id)},
+            tool_executor=lambda name, inp: calls.append((name, inp)) or {
+                "status": "ready",
+                "skill_name": "cad.plan_build123d_skill",
+                "proposed_tool": "cad.execute_build123d",
+                "proposed_input": {"project_id": "p1", "code": "result = None"},
+            },
+        )
+        state = engine.start(
+            AutopilotRunRequest(
+                message="建模一个40mm的法兰盘",
+                project_id="p1",
+                adapter_id=adapter_id,
+                dry_run=False,
+            )
+        )
+        return state, calls, engine
+
+    local_state, local_calls, _local_engine = run("local-fake")
+    llm_state, llm_calls, _llm_engine = run("llm-api")
+
+    assert local_state.status == llm_state.status == "awaiting_approval"
+    assert local_calls == llm_calls == [
+        ("aieng.agent_context", {"project_id": "p1"}),
+        ("cad.plan_build123d_skill", {"project_id": "p1", "message": "建模一个40mm的法兰盘"})
+    ]
+    assert [step.action.action.type for step in local_state.steps] == [step.action.action.type for step in llm_state.steps]
+    assert [step.policy for step in local_state.steps] == [step.policy for step in llm_state.steps]
+    assert [obs.kind for obs in local_state.observations] == [obs.kind for obs in llm_state.observations]
+    assert local_state.pending_approval is not None
+    assert llm_state.pending_approval is not None
+    assert local_state.pending_approval.tool_name == llm_state.pending_approval.tool_name == "cad.execute_build123d"
 
 
 def test_engine_bootstraps_project_context_before_real_adapter_step(tmp_path: Path) -> None:
@@ -222,6 +952,11 @@ def test_engine_continue_executes_approved_pending_tool(tmp_path: Path) -> None:
     resumed = engine.continue_run(state.run_id, approved=True)
     assert resumed.status == "completed"
     assert calls == [("cad.execute_build123d", {"project_id": "p1", "code": "result = None"})]
+    assert resumed.plan is not None
+    approval_step = next(step for step in resumed.plan.steps if step.id == "await_approval")
+    execute_step = next(step for step in resumed.plan.steps if step.id == "execute_tool")
+    assert approval_step.status == "completed"
+    assert execute_step.status == "completed"
 
 
 def test_engine_rejects_pending_approval_without_execution(tmp_path: Path) -> None:

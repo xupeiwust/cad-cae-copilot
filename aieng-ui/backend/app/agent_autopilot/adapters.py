@@ -6,13 +6,33 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 from .schema import AdapterInvocationResult, AutopilotAgentAction, LocalAgentCapability
 
 
 DEFAULT_PROBE_TIMEOUT_SECONDS = 3
 DEFAULT_STEP_TIMEOUT_SECONDS = 1800
+ProgressPhase = Literal[
+    "started",
+    "prompt_prepared",
+    "request_sent",
+    "waiting_for_model",
+    "parsing_output",
+    "completed",
+    "timeout",
+    "error",
+]
+COMMON_PROGRESS_PHASES: tuple[ProgressPhase, ...] = (
+    "started",
+    "prompt_prepared",
+    "request_sent",
+    "waiting_for_model",
+    "parsing_output",
+    "completed",
+    "timeout",
+    "error",
+)
 
 
 class LocalAgentAdapter(Protocol):
@@ -37,6 +57,15 @@ class LocalAgentAdapter(Protocol):
 
 def _elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
+
+
+def progress_event(adapter_id: str, phase: ProgressPhase, message: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "phase": phase,
+        "adapter_id": adapter_id,
+        "message": message,
+        **extra,
+    }
 
 
 def resolve_command(command: str) -> str | None:
@@ -148,7 +177,7 @@ class FakeLocalAgentAdapter:
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
         if on_progress is not None:
-            on_progress({"phase": "started", "adapter_id": self.adapter_id})
+            on_progress(progress_event(self.adapter_id, "started", "Fake adapter started."))
         if self.actions:
             action = self.actions.pop(0)
         else:
@@ -164,7 +193,7 @@ class FakeLocalAgentAdapter:
                 }
             )
         if on_progress is not None:
-            on_progress({"phase": "completed", "adapter_id": self.adapter_id})
+            on_progress(progress_event(self.adapter_id, "completed", "Fake adapter completed."))
         return AdapterInvocationResult(
             status="success",
             action=action,
@@ -212,10 +241,13 @@ __all__ = [
     "DEFAULT_PROBE_TIMEOUT_SECONDS",
     "DEFAULT_STEP_TIMEOUT_SECONDS",
     "FakeLocalAgentAdapter",
+    "COMMON_PROGRESS_PHASES",
     "LocalAgentAdapter",
+    "ProgressPhase",
     "adapter_registry",
     "capability_from_missing",
     "parse_action_json",
+    "progress_event",
     "probe_local_agent_capabilities",
     "resolve_command",
     "run_probe_command",

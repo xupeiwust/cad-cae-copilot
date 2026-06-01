@@ -28,6 +28,8 @@ An **AI-CAD/CAE backend prototype** that combines:
 - Mesh-to-CAD works best for plane/cylinder-dominant geometry; freeform/NURBS fitting is future work
 - Design study is agent-guided explicit execution, not autonomous global optimization
 
+![Architecture Overview](docs/assets/showcase/architecture_overview.svg)
+
 ## Highlights
 
 - **Real geometry, no API key** — the agent writes build123d code; the backend runs it deterministically and returns STEP/STL/GLB plus a 4-view thumbnail.
@@ -45,6 +47,8 @@ An **AI-CAD/CAE backend prototype** that combines:
 ## Showcase demos
 
 Four canonical backend demos, each deterministic and self-contained (no external solver required).
+
+![Showcase Flows](docs/assets/showcase/showcase_flows.svg)
 
 ### 1. Single-part topology optimization
 

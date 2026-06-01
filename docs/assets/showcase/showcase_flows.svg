@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 400" width="880" height="400">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="880" height="400" fill="#0d1117" rx="12"/>
+  <text x="440" y="28" text-anchor="middle" fill="#e6edf3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600">Four Canonical Backend Demos</text>
+
+  <!-- Top-left: Topopt -->
+  <rect x="20" y="48" width="410" height="162" fill="#1e1b2e" rx="8" stroke="#a855f7" stroke-width="1.5"/>
+  <text x="40" y="70" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600">1. Topology Optimization</text>
+  <rect x="40" y="82" width="84" height="28" fill="#3b0764" rx="4" stroke="#a855f7" stroke-width="1"/>
+  <text x="82" y="100" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">CAE Setup</text>
+  <line x1="124" y1="96" x2="146" y2="96" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="150" y="82" width="84" height="28" fill="#3b0764" rx="4" stroke="#a855f7" stroke-width="1"/>
+  <text x="192" y="100" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Derive Problem</text>
+  <line x1="234" y1="96" x2="256" y2="96" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="260" y="82" width="70" height="28" fill="#3b0764" rx="4" stroke="#a855f7" stroke-width="1"/>
+  <text x="295" y="100" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Run SIMP</text>
+  <line x1="330" y1="96" x2="352" y2="96" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="356" y="82" width="60" height="28" fill="#14532d" rx="4" stroke="#22c55e" stroke-width="1"/>
+  <text x="386" y="100" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Writeback</text>
+  <text x="40" y="128" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Boundary: 2D plane-stress; 3D experimental/reference</text>
+  <text x="40" y="144" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Artifacts: topology_optimization.json, shape_ir.json</text>
+  <text x="40" y="160" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Cmd: pytest aieng/tests/test_topology_optimization.py -q</text>
+
+  <!-- Top-right: Mesh-to-CAD -->
+  <rect x="450" y="48" width="410" height="162" fill="#1a1a2e" rx="8" stroke="#38bdf8" stroke-width="1.5"/>
+  <text x="470" y="70" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600">2. Mesh-to-CAD Reconstruction</text>
+  <rect x="470" y="82" width="70" height="28" fill="#1e3a5f" rx="4" stroke="#38bdf8" stroke-width="1"/>
+  <text x="505" y="100" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Input Mesh</text>
+  <line x1="540" y1="96" x2="558" y2="96" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="562" y="82" width="70" height="28" fill="#1e3a5f" rx="4" stroke="#38bdf8" stroke-width="1"/>
+  <text x="597" y="100" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Segment</text>
+  <line x1="632" y1="96" x2="650" y2="96" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="654" y="82" width="70" height="28" fill="#1e3a5f" rx="4" stroke="#38bdf8" stroke-width="1"/>
+  <text x="689" y="100" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Fit</text>
+  <line x1="724" y1="96" x2="742" y2="96" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="746" y="82" width="70" height="28" fill="#1e3a5f" rx="4" stroke="#38bdf8" stroke-width="1"/>
+  <text x="781" y="100" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Sew</text>
+  <line x1="816" y1="96" x2="834" y2="96" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="470" y="118" width="70" height="28" fill="#14532d" rx="4" stroke="#22c55e" stroke-width="1"/>
+  <text x="505" y="136" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">STEP Export</text>
+  <text x="470" y="164" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Boundary: Only when shell closes; mesh-derived/lossy</text>
+  <text x="470" y="180" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Artifacts: reconstructed.step, stitching_plan.json</text>
+  <text x="470" y="196" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Cmd: pytest aieng/tests/test_mesh_brep_solidification.py -q</text>
+
+  <!-- Bottom-left: Assembly-aware -->
+  <rect x="20" y="224" width="410" height="162" fill="#0f1a1a" rx="8" stroke="#2dd4bf" stroke-width="1.5"/>
+  <text x="40" y="246" fill="#5eead4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600">3. Assembly-Aware Topology Optimization</text>
+  <rect x="40" y="258" width="84" height="28" fill="#064e3b" rx="4" stroke="#2dd4bf" stroke-width="1"/>
+  <text x="82" y="276" text-anchor="middle" fill="#5eead4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Assembly IR</text>
+  <line x1="124" y1="272" x2="146" y2="272" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="150" y="258" width="84" height="28" fill="#064e3b" rx="4" stroke="#2dd4bf" stroke-width="1"/>
+  <text x="192" y="276" text-anchor="middle" fill="#5eead4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Resolve</text>
+  <line x1="234" y1="272" x2="256" y2="272" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="260" y="258" width="70" height="28" fill="#064e3b" rx="4" stroke="#2dd4bf" stroke-width="1"/>
+  <text x="295" y="276" text-anchor="middle" fill="#5eead4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Proxy CAE</text>
+  <line x1="330" y1="272" x2="352" y2="272" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="356" y="258" width="60" height="28" fill="#3b0764" rx="4" stroke="#a855f7" stroke-width="1"/>
+  <text x="386" y="276" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Topopt</text>
+  <text x="40" y="304" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Boundary: Proxy connections; no contact/friction/bolt preload</text>
+  <text x="40" y="320" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Artifacts: assembly_topology_optimization.json, optimized_shape_ir.json</text>
+  <text x="40" y="336" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Cmd: pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q</text>
+
+  <!-- Bottom-right: Design Study -->
+  <rect x="450" y="224" width="410" height="162" fill="#2e1a1a" rx="8" stroke="#f472b6" stroke-width="1.5"/>
+  <text x="470" y="246" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600">4. Agent-Guided Parameter Design Study</text>
+  <rect x="470" y="258" width="70" height="28" fill="#3f1d38" rx="4" stroke="#f472b6" stroke-width="1"/>
+  <text x="505" y="276" text-anchor="middle" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Problem</text>
+  <line x1="540" y1="272" x2="558" y2="272" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="562" y="258" width="70" height="28" fill="#3f1d38" rx="4" stroke="#f472b6" stroke-width="1"/>
+  <text x="597" y="276" text-anchor="middle" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Validate</text>
+  <line x1="632" y1="272" x2="650" y2="272" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="654" y="258" width="70" height="28" fill="#3f1d38" rx="4" stroke="#f472b6" stroke-width="1"/>
+  <text x="689" y="276" text-anchor="middle" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Execute</text>
+  <line x1="724" y1="272" x2="742" y2="272" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="746" y="258" width="70" height="28" fill="#3f1d38" rx="4" stroke="#f472b6" stroke-width="1"/>
+  <text x="781" y="276" text-anchor="middle" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Rank</text>
+  <line x1="816" y1="272" x2="834" y2="272" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="470" y="294" width="70" height="28" fill="#3f1d38" rx="4" stroke="#f472b6" stroke-width="1"/>
+  <text x="505" y="312" text-anchor="middle" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Accept</text>
+  <text x="470" y="340" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Boundary: Static metrics; no autonomous optimizer; baseline never overwritten</text>
+  <text x="470" y="356" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Artifacts: design_study_acceptance.json, accepted/candidate/...</text>
+  <text x="470" y="372" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">Cmd: pytest aieng-ui/backend/tests/test_design_study_demo.py -q</text>
+</svg>

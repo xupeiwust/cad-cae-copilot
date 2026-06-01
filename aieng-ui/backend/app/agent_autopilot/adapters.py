@@ -6,13 +6,13 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .schema import AdapterInvocationResult, AutopilotAgentAction, LocalAgentCapability
 
 
 DEFAULT_PROBE_TIMEOUT_SECONDS = 3
-DEFAULT_STEP_TIMEOUT_SECONDS = 900
+DEFAULT_STEP_TIMEOUT_SECONDS = 1800
 
 
 class LocalAgentAdapter(Protocol):
@@ -28,6 +28,9 @@ class LocalAgentAdapter(Protocol):
         prompt: str,
         action_schema: dict[str, Any],
         timeout_seconds: int = DEFAULT_STEP_TIMEOUT_SECONDS,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+        session_id: str | None = None,
+        step_index: int = 0,
     ) -> AdapterInvocationResult:
         ...
 
@@ -129,6 +132,7 @@ class FakeLocalAgentAdapter:
             supports_json=True,
             supports_json_schema=True,
             supports_tool_disable=True,
+            supports_session_continuation=False,
             diagnostic="Deterministic in-process adapter for dry-run tests.",
         )
 
@@ -138,8 +142,13 @@ class FakeLocalAgentAdapter:
         prompt: str,
         action_schema: dict[str, Any],
         timeout_seconds: int = DEFAULT_STEP_TIMEOUT_SECONDS,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+        session_id: str | None = None,
+        step_index: int = 0,
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
+        if on_progress is not None:
+            on_progress({"phase": "started", "adapter_id": self.adapter_id})
         if self.actions:
             action = self.actions.pop(0)
         else:
@@ -154,6 +163,8 @@ class FakeLocalAgentAdapter:
                     "user_message": "Autopilot dry run completed.",
                 }
             )
+        if on_progress is not None:
+            on_progress({"phase": "completed", "adapter_id": self.adapter_id})
         return AdapterInvocationResult(
             status="success",
             action=action,

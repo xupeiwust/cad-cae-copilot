@@ -378,6 +378,28 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         thread = threading.Thread(target=target, name="aieng-autopilot-worker", daemon=True)
         thread.start()
 
+    def _mark_autopilot_failed(store: Any, run_id: str, exc: Exception) -> None:
+        try:
+            loaded = store.load(run_id)
+        except Exception:
+            return
+        loaded.status = "failed"
+        loaded.errors.append(str(exc))
+        store.save(loaded)
+        _sync_autopilot_session(loaded)
+        _publish_autopilot_state(loaded)
+        _publish_agent_event({
+            "event_id": f"{run_id}-worker-failed-{uuid.uuid4().hex[:8]}",
+            "type": "tool_failed",
+            "project_id": loaded.project_id,
+            "session_id": loaded.session_id,
+            "run_id": loaded.run_id,
+            "status": "failed",
+            "content": f"Local agent worker failed: {exc}",
+            "payload": {"error": str(exc), "adapter_id": loaded.adapter_id},
+            "created_at": now_iso(),
+        })
+
     def _autopilot_adapters(llm_config: dict[str, Any] | None = None) -> dict[str, Any]:
         from .agent_autopilot.adapters import adapter_registry
 
@@ -485,12 +507,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     "step_count": len(final_state.steps),
                 })
             except Exception as exc:
-                loaded = store.load(state.run_id)
-                loaded.status = "failed"
-                loaded.errors.append(str(exc))
-                store.save(loaded)
-                _sync_autopilot_session(loaded)
-                _publish_autopilot_state(loaded)
+                _mark_autopilot_failed(store, state.run_id, exc)
 
         _start_autopilot_worker(_run_in_background)
         return state.model_dump()
@@ -521,25 +538,20 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        # If already in a terminal state, return as-is
         if current.status in ("completed", "failed", "cancelled"):
             return current.model_dump()
-
-        # For chatting mode with user_message, append it and transition to running.
-        if current.status == "chatting" and user_message:
-            current.status = "running"
-            current.updated_at = now_iso()
-            store.save(current)
-            _sync_autopilot_session(current)
-            _publish_autopilot_state(current)
-        elif current.status == "awaiting_approval":
-            # Update status to running immediately so the client sees the transition
-            current.status = "running"
-            current.pending_approval = None
-            current.updated_at = now_iso()
-            store.save(current)
-            _sync_autopilot_session(current)
-            _publish_autopilot_state(current)
+        if current.status == "awaiting_approval":
+            _publish_agent_event({
+                "event_id": f"{run_id}-approval-received-{uuid.uuid4().hex[:8]}",
+                "type": "run_status_changed",
+                "project_id": current.project_id,
+                "session_id": current.session_id,
+                "run_id": current.run_id,
+                "status": "running",
+                "content": "Approval response received; resuming local agent run.",
+                "payload": {"approved": approved, "has_revision_request": bool(user_message)},
+                "created_at": now_iso(),
+            })
 
         engine = AutopilotEngine(
             store=store,
@@ -563,12 +575,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     "status": state.status,
                 })
             except Exception as exc:
-                loaded = store.load(run_id)
-                loaded.status = "failed"
-                loaded.errors.append(str(exc))
-                store.save(loaded)
-                _sync_autopilot_session(loaded)
-                _publish_autopilot_state(loaded)
+                _mark_autopilot_failed(store, run_id, exc)
 
         _start_autopilot_worker(_run_continue_in_background)
         return current.model_dump()
@@ -613,12 +620,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             try:
                 engine.reply_to_run(run_id, message)
             except Exception as exc:
-                loaded = store.load(run_id)
-                loaded.status = "failed"
-                loaded.errors.append(str(exc))
-                store.save(loaded)
-                _sync_autopilot_session(loaded)
-                _publish_autopilot_state(loaded)
+                _mark_autopilot_failed(store, run_id, exc)
 
         _start_autopilot_worker(_run_reply_in_background)
         return current.model_dump()
@@ -634,12 +636,21 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if not message:
             raise HTTPException(status_code=400, detail="message is required")
         store = _autopilot_store()
+        try:
+            current = store.load(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         engine = AutopilotEngine(
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(),
+            adapters=_autopilot_adapters(current.llm_config),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
+            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                tool_name,
+                tool_input,
+                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+            ),
         )
         try:
             state = engine.follow_up_run(run_id, message)
@@ -5484,6 +5495,24 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "Import an external solver result file as evidence into a .aieng package. "
             "Scans the result file for known numeric observations (max von Mises, max displacement, etc.) "
             "and appends them to results/evidence_index.json. Does not auto-advance claim status."
+        ),
+    )
+
+    def _tool_cad_plan_build123d_skill(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_skill_planner as _planner
+
+        return _planner.plan_build123d_skill(inp)
+
+    _rt.register_tool(
+        "cad.plan_build123d_skill",
+        _tool_cad_plan_build123d_skill,
+        input_schema=_schema("cad.plan_build123d_skill"),
+        description=(
+            "Read-only CAD skill planner. Use this before cad.execute_build123d for common "
+            "create-new mechanical parts such as flanges. It interprets the user's request, "
+            "records assumptions, and returns a parameterized build123d execute_input for "
+            "the agent to review and then pass to cad.execute_build123d through the normal "
+            "approval gate. It does not mutate the package and does not bypass Autopilot."
         ),
     )
 

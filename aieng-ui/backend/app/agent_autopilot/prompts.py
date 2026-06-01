@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from .schema import AutopilotAgentAction
+from .project_skills import project_skill_context
 
 
 CORE_TOOL_ORDER = [
@@ -13,6 +14,7 @@ CORE_TOOL_ORDER = [
     "aieng.validate",
     "aieng.read_audit_log",
     "cad.get_source",
+    "cad.plan_build123d_skill",
     "cad.execute_build123d",
     "cad.edit_parameter",
     "cad.critique",
@@ -23,6 +25,28 @@ CORE_TOOL_ORDER = [
     "cae.extract_solver_results",
     "cae.extract_field_regions",
     "postprocess.refresh_cae_summary",
+]
+
+OPERATING_RULES = [
+    "TOKEN BUDGET: be concise. Do not paste long source/context unless needed; prefer compact named parameters and brief validation notes.",
+    "PROJECT SKILLS: before planning or choosing a tool, check project_agent_skills. Use matching skills as workflow/claim-discipline guidance, but do not invent tools from them.",
+    "Skill conflict rule: active workbench runtime tools and AGENTS.md instructions override legacy skill workflows unless the user explicitly asks for that legacy/schema-bound flow.",
+    "Retrieve facts before claims: use aieng.agent_context for model details; do not guess topology, dimensions, materials, or results.",
+    "For greetings/meta questions use chat. For factual model work use tool_call.",
+    "When the user asks what tools are available or what the workbench can do, call aieng.agent_readme (do not guess or summarize from memory). Return the result via chat, not final.",
+    "CAD SKILL ROUTING: for create-new CAD requests, call cad.plan_build123d_skill first when the request matches a supported skill/template. Review its assumptions and execute_input, then call cad.execute_build123d only if the plan fits the user intent.",
+    "CAD BRIEF GATE: before cad.execute_build123d, form a compact brief from either cad.plan_build123d_skill output or your own analysis: model, units/origin, key dimensions, features, labels, validation targets, assumptions. Put a <=900 char summary in user_message when requesting approval.",
+    "For new CAD call cad.get_source first unless clearly starting empty. Then propose cad.execute_build123d with result bound to final geometry.",
+    "CAD SOURCE STYLE: named parameters first; semantic .label and .color on each part; Compound(children=[...]); closed solids; no export/show calls.",
+    "Mechanical parts: use canonical labels base_plate, mounting_hole_pattern, rib, boss, flange, interface_face, wall, cover; honor min wall >=3mm, hole-edge >=2x radius, internal radius >=2mm where practical.",
+    "Visible products/vehicles/characters: use loft/revolve/sweep + mirror + final fillets; avoid Box stacking for exterior curves.",
+    "After cad.execute_build123d, review named_parts/parts_added and thumbnail if provided. State 3-5 fail-first visual/geometric objections before further CAD edits.",
+    "If cad.critique output is present, treat fail_first_objections as blockers before finalizing engineering parts.",
+    "CAE setup: use selected @face:/@edge:/@group: pointers when available; ask one concise question only if required support/load face is ambiguous.",
+    "cae.apply_setup_patch is followed by solver preflight; cae.run_solver only after preflight/input are ready and requires confirmation.",
+    "CAD mutation and solver execution are approval-gated; user_message must explain side effects and include the compact CAD brief/plan for CAD actions.",
+    "Schema note: if action.input_json is required, encode tool input as a JSON object string; unused flattened string fields should be empty strings, not null.",
+    "Final/chat messages must be complete and report only checks that actually ran. Use exact counts from tool outputs when available.",
 ]
 
 
@@ -90,6 +114,26 @@ def _json_safe_truncate(value: Any, limit: int = 8000) -> Any:
 def _compact_tool_output(output: Any) -> Any:
     if not isinstance(output, dict):
         return _json_safe_truncate(output, 3000)
+    if output.get("skill_name") == "cad.plan_build123d_skill":
+        execute_input = output.get("execute_input") if isinstance(output.get("execute_input"), dict) else {}
+        return {
+            "status": output.get("status"),
+            "skill_name": output.get("skill_name"),
+            "pattern": output.get("pattern"),
+            "brief": output.get("brief"),
+            "assumptions": output.get("assumptions"),
+            "warnings": output.get("warnings"),
+            "validation_targets": output.get("validation_targets"),
+            "next_tool": output.get("next_tool"),
+            "execute_input": {
+                "project_id": execute_input.get("project_id"),
+                "name": execute_input.get("name"),
+                "code": execute_input.get("code"),
+                "mode": execute_input.get("mode"),
+                "model_kind": execute_input.get("model_kind"),
+                "timeout": execute_input.get("timeout"),
+            } if execute_input else None,
+        }
     if "schema_version" in output and "project_id" in output:
         cad = output.get("cad") if isinstance(output.get("cad"), dict) else {}
         cae = output.get("cae") if isinstance(output.get("cae"), dict) else {}
@@ -193,6 +237,36 @@ def _compact_agent_context(agent_context: dict[str, Any] | None) -> dict[str, An
     }
 
 
+def build_system_layer(
+    runtime_tools: list[dict[str, Any]],
+    rules: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build the immutable system-layer payload for ContextMemoryManager.
+
+    This is extracted from the legacy build_action_prompt so that the
+    system context (rules + tool catalog + schema) can be initialized
+    once and reused across steps instead of being re-transmitted every
+    time.
+    """
+    return {
+        "operating_rules": (rules or OPERATING_RULES) + [_THOUGHT_SUMMARY_GUIDELINE],
+        "project_agent_skills": project_skill_context(),
+        "available_workbench_tools": compact_tool_catalog(runtime_tools),
+        "required_action_json_schema": AutopilotAgentAction.json_schema_for_adapter(),
+    }
+
+
+_THOUGHT_SUMMARY_GUIDELINE = (
+    "THOUGHT_SUMMARY: Every action MUST include a concise thought_summary. "
+    "It should (1) briefly summarize what the PREVIOUS step produced and what it means, "
+    "(2) point out any key numbers, issues, or blockers noticed, and "
+    "(3) state the intent for the NEXT action. "
+    "Example good: 'Generated bracket with 3 parts. Critique found wall thickness 2.1mm < 3mm minimum. "
+    "Next: edit WALL_THICKNESS parameter.' "
+    "Example bad: 'Proceeding with next tool call.'"
+)
+
+
 def build_action_prompt(
     *,
     objective: str,
@@ -202,24 +276,14 @@ def build_action_prompt(
     runtime_tools: list[dict[str, Any]],
     observations: list[dict[str, Any]],
 ) -> str:
-    operating_rules = [
-        "TOKEN BUDGET: be concise. Do not paste long source/context unless needed; prefer compact named parameters and brief validation notes.",
-        "Retrieve facts before claims: use aieng.agent_context for model details; do not guess topology, dimensions, materials, or results.",
-        "For greetings/meta questions use chat. For factual model work use tool_call.",
-        "When the user asks what tools are available or what the workbench can do, call aieng.agent_readme (do not guess or summarize from memory). Return the result via chat, not final.",
-        "CAD BRIEF GATE: before cad.execute_build123d, internally form a compact brief: model, units/origin, key dimensions, features, labels, validation targets, assumptions. Put a <=900 char summary in user_message when requesting approval.",
-        "For new CAD call cad.get_source first unless clearly starting empty. Then propose cad.execute_build123d with result bound to final geometry.",
-        "CAD SOURCE STYLE: named parameters first; semantic .label and .color on each part; Compound(children=[...]); closed solids; no export/show calls.",
-        "Mechanical parts: use canonical labels base_plate, mounting_hole_pattern, rib, boss, flange, interface_face, wall, cover; honor min wall >=3mm, hole-edge >=2x radius, internal radius >=2mm where practical.",
-        "Visible products/vehicles/characters: use loft/revolve/sweep + mirror + final fillets; avoid Box stacking for exterior curves.",
-        "After cad.execute_build123d, review named_parts/parts_added and thumbnail if provided. State 3-5 fail-first visual/geometric objections before further CAD edits.",
-        "If cad.critique output is present, treat fail_first_objections as blockers before finalizing engineering parts.",
-        "CAE setup: use selected @face:/@edge:/@group: pointers when available; ask one concise question only if required support/load face is ambiguous.",
-        "cae.apply_setup_patch is followed by solver preflight; cae.run_solver only after preflight/input are ready and requires confirmation.",
-        "CAD mutation and solver execution are approval-gated; user_message must explain side effects and include the compact CAD brief/plan for CAD actions.",
-        "Schema note: if action.input_json is required, encode tool input as a JSON object string; unused flattened string fields should be empty strings, not null.",
-        "Final/chat messages must be complete and report only checks that actually ran. Use exact counts from tool outputs when available.",
-    ]
+    """DEPRECATED: Use ContextMemoryManager instead.
+
+    Kept temporarily for backward compatibility during the migration.
+    Will be removed once engine.py is fully migrated.
+    """
+    # Use the module-level constant to avoid duplicating the rule list.
+    # This function is deprecated; new code should use ContextMemoryManager.
+    operating_rules = list(OPERATING_RULES)
 
     payload = {
         "objective": objective,
@@ -227,6 +291,7 @@ def build_action_prompt(
         "selected_geometry": selected_geometry,
         "agent_context": _compact_agent_context(agent_context),
         "operating_rules": operating_rules,
+        "project_agent_skills": project_skill_context(),
         "available_workbench_tools": compact_tool_catalog(runtime_tools),
         "previous_observations": _compact_observations(observations),
         "required_action_json_schema": AutopilotAgentAction.json_schema_for_adapter(),

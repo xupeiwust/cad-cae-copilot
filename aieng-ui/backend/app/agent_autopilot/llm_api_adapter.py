@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -40,6 +41,7 @@ class LlmApiAdapter:
             supports_json=True,
             supports_json_schema=False,
             supports_tool_disable=True,
+            supports_session_continuation=False,
             diagnostic=diagnostic,
         )
 
@@ -49,8 +51,13 @@ class LlmApiAdapter:
         prompt: str,
         action_schema: dict[str, Any],
         timeout_seconds: int = DEFAULT_STEP_TIMEOUT_SECONDS,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+        session_id: str | None = None,
+        step_index: int = 0,
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
+        if on_progress is not None:
+            on_progress({"phase": "started", "adapter_id": self.adapter_id})
         try:
             provider = self.provider_factory(self.settings, self.llm_config)
             system_prompt = (
@@ -70,11 +77,27 @@ class LlmApiAdapter:
                 },
                 ensure_ascii=False,
             )
-            raw = provider.generate(system_prompt=system_prompt, user_prompt=user_prompt)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    provider.generate,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+                raw = future.result(timeout=timeout_seconds)
+            if on_progress is not None:
+                on_progress({"phase": "completed", "adapter_id": self.adapter_id})
             return AdapterInvocationResult(
                 status="success",
                 action=parse_action_json(raw),
                 raw_output=raw,
+                duration_ms=_elapsed_ms(start),
+            )
+        except FutureTimeoutError:
+            if on_progress is not None:
+                on_progress({"phase": "timeout", "adapter_id": self.adapter_id})
+            return AdapterInvocationResult(
+                status="timeout",
+                diagnostic=f"LLM API call timed out after {timeout_seconds}s.",
                 duration_ms=_elapsed_ms(start),
             )
         except TimeoutError as exc:

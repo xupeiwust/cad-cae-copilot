@@ -7,6 +7,7 @@ from app.agent_autopilot.store import AutopilotStore
 
 RUNTIME_TOOLS = [
     {"name": "aieng.agent_context", "description": "context", "input_schema": {"type": "object"}},
+    {"name": "cad.plan_build123d_skill", "description": "skill", "input_schema": {"type": "object"}},
     {"name": "cad.execute_build123d", "description": "cad", "input_schema": {"type": "object"}},
     {"name": "cae.apply_setup_patch", "description": "setup", "input_schema": {"type": "object"}},
     {"name": "cae.prepare_solver_run", "description": "preflight", "input_schema": {"type": "object"}},
@@ -95,6 +96,62 @@ def test_engine_executes_auto_allowed_tool_when_not_dry_run(tmp_path: Path) -> N
     assert any(obs.data.get("dry_run") is False for obs in state.observations)
 
 
+def test_engine_allows_agent_to_orchestrate_cad_skill_before_approval(tmp_path: Path) -> None:
+    calls = []
+    skill_output = {
+        "status": "ready",
+        "skill_name": "cad.plan_build123d_skill",
+        "brief": "Mechanical flange: OD 40mm.",
+        "execute_input": {
+            "project_id": "p1",
+            "code": "result = None",
+            "mode": "replace",
+            "model_kind": "mechanical",
+        },
+    }
+
+    def _execute(name: str, inp: dict) -> dict:
+        calls.append((name, inp))
+        return skill_output
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        tool_executor=_execute,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="建模一个40mm的法兰盘",
+            project_id="p1",
+            dry_run=False,
+            fake_actions=[
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.plan_build123d_skill",
+                        "input": {"project_id": "p1", "message": "建模一个40mm的法兰盘"},
+                    }
+                },
+                {
+                    "user_message": "CAD skill prepared a 40mm flange; approval is needed to write geometry.",
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    },
+                },
+            ],
+        )
+    )
+
+    assert state.status == "awaiting_approval"
+    assert calls == [
+        ("cad.plan_build123d_skill", {"project_id": "p1", "message": "建模一个40mm的法兰盘"})
+    ]
+    assert state.pending_approval is not None
+    assert state.pending_approval.tool_name == "cad.execute_build123d"
+
+
 def test_engine_bootstraps_project_context_before_real_adapter_step(tmp_path: Path) -> None:
     class CapturingAdapter:
         adapter_id = "spy"
@@ -103,7 +160,7 @@ def test_engine_bootstraps_project_context_before_real_adapter_step(tmp_path: Pa
         def __init__(self) -> None:
             self.prompts: list[str] = []
 
-        def invoke(self, *, prompt, action_schema, timeout_seconds=300):  # type: ignore[no-untyped-def]
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
             self.prompts.append(prompt)
             return AdapterInvocationResult(
                 status="success",
@@ -342,7 +399,7 @@ def test_reply_to_chatting_run_resumes_without_approval(tmp_path: Path) -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def invoke(self, *, prompt, action_schema, timeout_seconds=300):  # type: ignore[no-untyped-def]
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
             self.calls += 1
             action = (
                 {"action": {"type": "chat", "message": "What size bracket do you need?"}}
@@ -391,7 +448,7 @@ def test_cancel_marker_stops_before_next_adapter_step(tmp_path: Path) -> None:
         adapter_id = "finalizer"
         label = "Finalizer"
 
-        def invoke(self, *, prompt, action_schema, timeout_seconds=300):  # type: ignore[no-untyped-def]
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
             return AdapterInvocationResult(
                 status="success",
                 action=AutopilotAgentAction.model_validate(

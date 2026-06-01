@@ -29,7 +29,6 @@ type UseAgentActivityStreamArgs = {
   setNotice: Dispatch<SetStateAction<Notice | null>>;
   setChatHistory: Dispatch<SetStateAction<ChatHistoryItem[]>>;
   setCadGenerationProgress: Dispatch<SetStateAction<CadGenerationProgress | null>>;
-  clearAgentEvents(): void;
   clearStreamingState(): void;
 };
 
@@ -50,7 +49,6 @@ export function useAgentActivityStream({
   setNotice,
   setChatHistory,
   setCadGenerationProgress,
-  clearAgentEvents,
   clearStreamingState,
 }: UseAgentActivityStreamArgs) {
   const [liveSyncStatus, setLiveSyncStatus] = useState<LiveSyncStatus>("connecting");
@@ -133,7 +131,6 @@ export function useAgentActivityStream({
         if (run.status !== "running") {
           stopAutopilotPoll();
           setAgentBusy(false);
-          clearAgentEvents();
           clearStreamingState();
         }
         if (run.project_id && current && run.project_id !== current) return;

@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,25 @@ from app import runtime as _rt
 # test_api.py -> backend/tests -> backend -> aieng-ui -> workspace_aieng
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 from app.providers.registry import get_provider
+
+
+def _wait_for_autopilot_status(
+    client: TestClient,
+    run_id: str,
+    statuses: set[str],
+    timeout_s: float = 5.0,
+) -> dict[str, Any]:
+    deadline = time.time() + timeout_s
+    last: dict[str, Any] | None = None
+    while time.time() < deadline:
+        response = client.get(f"/api/agent/autopilot/runs/{run_id}")
+        assert response.status_code == 200
+        last = response.json()
+        if last.get("status") in statuses:
+            return last
+        time.sleep(0.05)
+    assert last is not None
+    raise AssertionError(f"Autopilot run {run_id} did not reach {statuses}; last={last}")
 
 
 def test_health_endpoint() -> None:
@@ -10121,6 +10141,7 @@ def test_agent_autopilot_run_dry_run(tmp_path: Path) -> None:
 
     assert resp.status_code == 200
     data = resp.json()
+    data = _wait_for_autopilot_status(client, data["run_id"], {"completed"})
     assert data["status"] == "completed"
     assert data["final_message"] == "Dry run done."
 
@@ -10152,11 +10173,13 @@ def test_agent_autopilot_continue_and_cancel(tmp_path: Path) -> None:
     )
     assert resp.status_code == 200
     run = resp.json()
+    run = _wait_for_autopilot_status(client, run["run_id"], {"awaiting_approval"})
     assert run["status"] == "awaiting_approval"
 
     continued = client.post(f"/api/agent/autopilot/runs/{run['run_id']}/continue", json={"approved": True})
     assert continued.status_code == 200
-    assert continued.json()["status"] == "completed"
+    completed = _wait_for_autopilot_status(client, run["run_id"], {"completed"})
+    assert completed["status"] == "completed"
 
     second = client.post(
         "/api/agent/autopilot/runs",
@@ -10196,14 +10219,17 @@ def test_agent_autopilot_writes_project_audit_events(tmp_path: Path) -> None:
     )
     assert start.status_code == 200
     run_id = start.json()["run_id"]
+    _wait_for_autopilot_status(client, run_id, {"awaiting_approval"})
 
     reject = client.post(f"/api/agent/autopilot/runs/{run_id}/continue", json={"approved": False})
     assert reject.status_code == 200
+    _wait_for_autopilot_status(client, run_id, {"blocked"})
 
     log_dir = project_dir(settings, project["id"]) / "logs"
     payloads = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in log_dir.glob("agent_autopilot_*.json")
+        if path.read_text(encoding="utf-8").strip()
     ]
     kinds = {payload["kind"] for payload in payloads}
     assert {"agent_autopilot_started", "agent_autopilot_approval"} <= kinds

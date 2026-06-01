@@ -165,9 +165,13 @@ export function runToTranscriptItems(
   return dedupeAndSort(dedupeAgentMessagesByText(items));
 }
 
-export function chatHistoryToTranscriptItems(chatHistory: ChatHistoryItem[]): ChatTranscriptItem[] {
+export function chatHistoryToTranscriptItems(
+  chatHistory: ChatHistoryItem[],
+  agentEvents: AgentTranscriptEvent[] = [],
+): ChatTranscriptItem[] {
   const items: ChatTranscriptItem[] = [];
   const seenRunIds = new Set<string>();
+  const runStatusById = new Map<string, string>();
 
   for (const entry of chatHistory) {
     const base = {
@@ -198,14 +202,35 @@ export function chatHistoryToTranscriptItems(chatHistory: ChatHistoryItem[]): Ch
     }
 
     if (entry.autopilotRun && !seenRunIds.has(entry.autopilotRun.run_id)) {
+      runStatusById.set(entry.autopilotRun.run_id, entry.autopilotRun.status);
       seenRunIds.add(entry.autopilotRun.run_id);
       items.push(...runToTranscriptItems(entry.autopilotRun));
+    } else if (entry.autopilotRun) {
+      runStatusById.set(entry.autopilotRun.run_id, entry.autopilotRun.status);
     }
 
     items.push(...legacyArtifactsToTranscriptItems(entry));
   }
 
-  return dedupeAndSort(items);
+  for (const event of agentEvents) {
+    const runId = event.run_id ?? stringValue(objectValue(event.payload).run_id);
+    const status = event.type === "run_cancelled"
+      ? "cancelled"
+      : event.status ?? stringValue(objectValue(event.payload).status);
+    if (runId && status && terminalTranscriptStatus(status)) {
+      runStatusById.set(runId, status);
+    }
+    items.push(...agentEventToTranscriptItems(event));
+  }
+
+  return dedupeAndSort(
+    collapseProgressRows(
+      normalizeTerminalRunRows(
+        dedupeSnapshotRowsCoveredByEvents(items),
+        runStatusById,
+      ),
+    ),
+  );
 }
 
 export function persistedMessageToTranscriptItems(message: PersistedChatMessage): ChatTranscriptItem[] {
@@ -343,6 +368,9 @@ function observationToTranscriptItems(run: AutopilotRunState, obs: AutopilotObse
   }
   if (obs.kind === "approval_required") {
     return [approvalToTranscriptItem(run, obs.data, sourceId, obs)];
+  }
+  if (obs.kind === "agent_thought") {
+    return [{ ...base, kind: "message", role: "agent", text: obs.summary }];
   }
   if (obs.kind === "user_message") {
     return [{ ...base, kind: "message", role: "agent", text: obs.summary }];
@@ -517,6 +545,58 @@ function normalizeStatus(status?: string | null): TranscriptStatus {
   return "running";
 }
 
+function terminalTranscriptStatus(runStatus?: string | null): TranscriptStatus | null {
+  if (runStatus === "completed") return "done";
+  if (runStatus === "failed") return "failed";
+  if (runStatus === "cancelled" || runStatus === "blocked") return "blocked";
+  return null;
+}
+
+function normalizeTerminalRunRows(
+  items: ChatTranscriptItem[],
+  runStatusById: Map<string, string>,
+): ChatTranscriptItem[] {
+  return items.map((item) => {
+    if (
+      (item.kind !== "tool" && item.kind !== "status" && item.kind !== "artifact") ||
+      item.status !== "running" ||
+      !item.runId
+    ) {
+      return item;
+    }
+    const terminal = terminalTranscriptStatus(runStatusById.get(item.runId));
+    if (!terminal) return item;
+    return { ...item, status: terminal };
+  });
+}
+
+function collapseProgressRows(items: ChatTranscriptItem[]): ChatTranscriptItem[] {
+  const latestByProgressKey = new Map<string, string>();
+  for (const item of items) {
+    const key = progressRowKey(item);
+    if (!key) continue;
+    latestByProgressKey.set(key, item.sourceId);
+  }
+  if (!latestByProgressKey.size) return items;
+  return items.filter((item) => {
+    const key = progressRowKey(item);
+    return !key || latestByProgressKey.get(key) === item.sourceId;
+  });
+}
+
+function progressRowKey(item: ChatTranscriptItem): string | null {
+  if (item.kind !== "tool" && item.kind !== "status") return null;
+  const run = item.runId || "";
+  if (!run) return null;
+  const detail = objectValue(item.detail);
+  const payload = objectValue(detail.payload);
+  const data = objectValue(detail.data);
+  const isProgress = payload.progress_event === true || data.progress_event === true;
+  if (!isProgress) return null;
+  const phase = stringValue(payload.phase) || stringValue(data.phase) || item.summary;
+  return `${run}:progress:${phase}`;
+}
+
 /**
  * Remove duplicate agent messages within the same run by text content.
  * Preserves the first occurrence (usually from an observation).
@@ -530,6 +610,42 @@ function dedupeAgentMessagesByText(items: ChatTranscriptItem[]): ChatTranscriptI
     }
     return true;
   });
+}
+
+function dedupeSnapshotRowsCoveredByEvents(items: ChatTranscriptItem[]): ChatTranscriptItem[] {
+  const eventKeys = new Set<string>();
+  for (const item of items) {
+    if (!item.sourceId.startsWith("event:")) continue;
+    const key = comparableActivityKey(item);
+    if (key) eventKeys.add(key);
+  }
+  if (!eventKeys.size) return items;
+  return items.filter((item) => {
+    if (item.sourceId.startsWith("event:")) return true;
+    const key = comparableActivityKey(item);
+    return !key || !eventKeys.has(key);
+  });
+}
+
+function comparableActivityKey(item: ChatTranscriptItem): string | null {
+  const run = item.runId || "";
+  if (!run) return null;
+  if (item.kind === "message" && item.role === "agent") {
+    return `${run}:message:${item.text}`;
+  }
+  if (item.kind === "tool") {
+    return `${run}:tool:${item.toolName}:${item.summary}`;
+  }
+  if (item.kind === "status") {
+    return `${run}:status:${item.summary}`;
+  }
+  if (item.kind === "approval") {
+    return `${run}:approval:${item.toolName}:${item.summary}`;
+  }
+  if (item.kind === "artifact") {
+    return `${run}:artifact:${item.summary}`;
+  }
+  return null;
 }
 
 function dedupeAndSort(items: ChatTranscriptItem[]): ChatTranscriptItem[] {

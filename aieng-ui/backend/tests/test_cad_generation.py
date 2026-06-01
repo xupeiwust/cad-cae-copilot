@@ -942,6 +942,10 @@ def test_cad_execute_build123d_tool_registered_with_approval() -> None:
 
     _ca()
     tools = {t["name"]: t for t in runtime.list_tools_for_mcp()}
+    assert "cad.plan_build123d_skill" in tools
+    assert tools["cad.plan_build123d_skill"]["requires_approval"] is False
+    skill_schema = tools["cad.plan_build123d_skill"]["input_schema"]
+    assert set(skill_schema["required"]) == {"project_id", "message"}
     assert "cad.execute_build123d" in tools
     assert tools["cad.execute_build123d"]["requires_approval"] is True
     schema = tools["cad.execute_build123d"]["input_schema"]

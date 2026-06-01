@@ -34,6 +34,7 @@ AUTO_READ_TOOLS = {
     "aieng.write_completeness_report",
     "cad.get_source",
     "cad.get_named_part_bbox",
+    "cad.plan_build123d_skill",
     "cad.critique",
 }
 

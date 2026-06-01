@@ -360,6 +360,46 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    # ── CAD skill planner (read-only, agent-orchestrated) ───────────────────
+    "cad.plan_build123d_skill": {
+        "type": "object",
+        "required": ["project_id", "message"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "message": {
+                "type": "string",
+                "description": "Natural-language CAD request to route through a deterministic CAD skill template.",
+            },
+            "outer_diameter_mm": {
+                "type": "number",
+                "description": "Optional explicit flange outside diameter override.",
+            },
+            "thickness_mm": {
+                "type": "number",
+                "description": "Optional explicit flange thickness override.",
+            },
+            "center_bore_diameter_mm": {
+                "type": "number",
+                "description": "Optional explicit center bore diameter override.",
+            },
+            "bolt_circle_diameter_mm": {
+                "type": "number",
+                "description": "Optional explicit bolt pitch-circle diameter override.",
+            },
+            "bolt_hole_diameter_mm": {
+                "type": "number",
+                "description": "Optional explicit bolt through-hole diameter override.",
+            },
+            "bolt_hole_count": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 16,
+                "description": "Optional explicit bolt-hole count override.",
+            },
+        },
+        "additionalProperties": True,
+    },
+
     # ── Reference image attach (per-project, used by thumbnails) ─────────────
     "cad.set_reference_image": {
         "type": "object",

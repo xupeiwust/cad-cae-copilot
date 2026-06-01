@@ -88,6 +88,7 @@ class AutopilotObservation(StrictModel):
         "policy_block",
         "approval_required",
         "agent_activity",
+        "agent_thought",
         "user_message",
         "final",
     ]
@@ -172,6 +173,7 @@ class LocalAgentCapability(StrictModel):
     supports_json: bool = False
     supports_json_schema: bool = False
     supports_tool_disable: bool = False
+    supports_session_continuation: bool = False
     diagnostic: str = ""
     probe_duration_ms: int = 0
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, Square } from "lucide-react";
 
-import { chatHistoryToTranscriptItems } from "../../app/chatTranscript";
+import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "../../app/chatTranscript";
 import type { StreamingState } from "../../app/useChatTranscript";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
 import type { AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
@@ -192,6 +192,7 @@ type ChatPanelProps = {
   cadGenerating: boolean;
   cadGenerationProgress: CadGenerationProgress | null;
   chatHistory: ChatHistoryItem[];
+  agentEvents: AgentTranscriptEvent[];
   chatLogRef: RefObject<HTMLDivElement | null>;
   message: string;
   lastRuntimeRun: RuntimeRun | null;
@@ -222,6 +223,7 @@ export function ChatPanel({
   cadGenerating,
   cadGenerationProgress,
   chatHistory,
+  agentEvents,
   chatLogRef,
   message,
   lastRuntimeRun,
@@ -253,8 +255,8 @@ export function ChatPanel({
 
   const activeAutopilotRun = latestActiveAutopilotRun(chatHistory);
   const transcriptItems = useMemo(
-    () => chatHistoryToTranscriptItems(chatHistory).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.sourceId.localeCompare(b.sourceId)),
-    [chatHistory],
+    () => chatHistoryToTranscriptItems(chatHistory, agentEvents).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.sourceId.localeCompare(b.sourceId)),
+    [agentEvents, chatHistory],
   );
 
   useEffect(() => {

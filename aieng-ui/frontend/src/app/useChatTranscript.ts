@@ -30,6 +30,8 @@ export type StreamingState = {
   runId: string;
   toolName?: string;
   status: "streaming" | "tool_call";
+  /** 'progress' = heartbeat phase message; 'content' = real agent output */
+  kind?: "progress" | "content";
 } | null;
 
 export function useChatTranscript({
@@ -83,9 +85,9 @@ export function useChatTranscript({
     if (event.type === "agent_message" && content && runId) {
       setStreamingState((current) => {
         if (!current || current.runId !== runId) {
-          return { text: content, runId, status: "streaming" };
+          return { text: content, runId, status: "streaming", kind: "content" };
         }
-        return { ...current, text: content, status: "streaming" };
+        return { ...current, text: content, status: "streaming", kind: "content" };
       });
     }
     if (event.type === "tool_started" && runId) {
@@ -97,6 +99,17 @@ export function useChatTranscript({
         }
         return { ...current, toolName, status: "tool_call" };
       });
+    }
+    if (event.type === "run_status_changed" && runId && content) {
+      const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+      if (payload.progress_event) {
+        setStreamingState((current) => {
+          if (!current || current.runId !== runId) {
+            return { text: content, runId, status: "streaming", kind: "progress" };
+          }
+          return { ...current, text: content, status: "streaming", kind: "progress" };
+        });
+      }
     }
     setAgentEvents((current) => upsertAgentEvent(current, event));
   }, []);

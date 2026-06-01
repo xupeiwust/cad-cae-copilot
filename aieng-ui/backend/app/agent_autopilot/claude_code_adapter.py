@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
-from typing import Any
+import uuid
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 from .adapters import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
@@ -19,6 +23,24 @@ from .adapters import (
 from .schema import AdapterInvocationResult, LocalAgentCapability
 
 
+def _resolve_claude_exe(command: str) -> str | None:
+    """On Windows, npm global CLI tools are often installed as .cmd wrappers.
+    Those wrappers can trigger interactive 'Terminate batch job (Y/N)?'
+    prompts when the underlying Node process exits.  Prefer the .exe if it
+    exists alongside the .cmd."""
+    path = resolve_command(command)
+    if not path or os.name != "nt":
+        return path
+    lower = path.lower()
+    if lower.endswith((".cmd", ".bat")):
+        # Try replacing .cmd/.bat with .exe in the same directory
+        base = path[:-4] if lower.endswith(".cmd") else path[:-4]
+        exe_candidate = base + ".exe"
+        if os.path.isfile(exe_candidate):
+            return exe_candidate
+    return path
+
+
 def _run_claude_step(cmd: list[str], prompt: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update({
@@ -26,6 +48,12 @@ def _run_claude_step(cmd: list[str], prompt: str, timeout_seconds: int) -> subpr
         "PYTHONUTF8": "1",
         "NO_COLOR": "1",
     })
+    # On Windows use CREATE_NO_WINDOW to prevent the child process from
+    # creating a console window (and possibly interactive prompts like the
+    # infamous "Terminate batch job (Y/N)?").
+    kwargs: dict[str, Any] = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[call-arg]
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -35,6 +63,7 @@ def _run_claude_step(cmd: list[str], prompt: str, timeout_seconds: int) -> subpr
         encoding="utf-8",
         errors="replace",
         env=env,
+        **kwargs,
     )
     try:
         stdout, stderr = proc.communicate(input=prompt, timeout=timeout_seconds)
@@ -55,6 +84,20 @@ def _run_claude_step(cmd: list[str], prompt: str, timeout_seconds: int) -> subpr
             output=stdout or exc.output,
             stderr=stderr or exc.stderr,
         ) from exc
+    logger.info(
+        "claude step finished: rc=%s stdout=%d chars stderr=%d chars cmd=%s",
+        proc.returncode,
+        len(stdout),
+        len(stderr),
+        cmd[:6],
+    )
+    if proc.returncode != 0:
+        logger.warning(
+            "claude step nonzero exit: rc=%s stderr=%r stdout_preview=%r",
+            proc.returncode,
+            stderr[:500],
+            stdout[:500],
+        )
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout=stdout, stderr=stderr)
 
 
@@ -65,6 +108,23 @@ class ClaudeCodeAdapter:
     def __init__(self, command: str | None = None, workspace: str | None = None) -> None:
         self.command = command or os.environ.get("AIENG_CLAUDE_CODE_COMMAND", "claude")
         self.workspace = workspace or os.environ.get("AIENG_LOCAL_AGENT_WORKSPACE", "")
+
+    @staticmethod
+    def _claude_session_id(session_id: str | None) -> str:
+        """Return a valid UUID for --session-id.
+
+        The frontend chat session ID is an arbitrary string (e.g. 12-char hex).
+        Claude CLI --session-id requires a strict UUID format, so we map
+        non-UUID values deterministically via uuid5.  This is stateless and
+        survives adapter instance rebuilds (e.g. per-request engine creation).
+        """
+        if session_id is None:
+            return str(uuid.uuid4())
+        try:
+            uuid.UUID(session_id)
+            return session_id
+        except ValueError:
+            return str(uuid.uuid5(uuid.NAMESPACE_OID, session_id))
 
     def probe(self, timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS) -> LocalAgentCapability:
         start = time.perf_counter()
@@ -122,6 +182,7 @@ class ClaudeCodeAdapter:
             supports_json=supports_json,
             supports_json_schema=supports_json_schema,
             supports_tool_disable=supports_tool_disable,
+            supports_session_continuation=True,
             diagnostic=diagnostic,
             probe_duration_ms=_elapsed_ms(start),
         )
@@ -132,20 +193,45 @@ class ClaudeCodeAdapter:
         prompt: str,
         action_schema: dict[str, Any],
         timeout_seconds: int = DEFAULT_STEP_TIMEOUT_SECONDS,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+        session_id: str | None = None,
+        step_index: int = 0,
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
-        command_path = resolve_command(self.command)
+        if on_progress is not None:
+            on_progress({
+                "phase": "started",
+                "adapter_id": self.adapter_id,
+                "message": "Starting Claude Code CLI in non-interactive JSON mode.",
+            })
+        command_path = _resolve_claude_exe(self.command)
         if not command_path:
             return AdapterInvocationResult(
                 status="error",
                 diagnostic=f"Command not found on PATH: {self.command}",
                 duration_ms=_elapsed_ms(start),
             )
+        # Session-aware invocation:
+        #   Always pass --session-id so the CLI explicitly binds to the named
+        #   session instead of relying on --continue (which resumes the *most
+        #   recent* session in the working directory and could leak into a user's
+        #   interactive CLI session).  --bare is kept to skip hooks/LSP startup.
+        effective_session_id = self._claude_session_id(session_id)
+        if on_progress is not None:
+            on_progress({
+                "phase": "command_resolved",
+                "adapter_id": self.adapter_id,
+                "message": f"Claude Code command resolved; using session {effective_session_id}.",
+                "command_path": command_path,
+                "session_id": effective_session_id,
+                "step_index": step_index,
+            })
         cmd = [
             command_path,
             "-p",
             "--bare",
-            "--no-session-persistence",
+            "--session-id",
+            effective_session_id,
             "--output-format",
             "json",
             "--json-schema",
@@ -158,6 +244,14 @@ class ClaudeCodeAdapter:
         if self.workspace:
             cmd.extend(["--add-dir", self.workspace])
         try:
+            if on_progress is not None:
+                on_progress({
+                    "phase": "process_running",
+                    "adapter_id": self.adapter_id,
+                    "message": "Claude Code process is running; waiting for structured action JSON.",
+                    "session_id": effective_session_id,
+                    "step_index": step_index,
+                })
             result = _run_claude_step(cmd, prompt, timeout_seconds)
         except subprocess.TimeoutExpired as exc:
             return AdapterInvocationResult(
@@ -174,23 +268,58 @@ class ClaudeCodeAdapter:
                 duration_ms=_elapsed_ms(start),
             )
         if result.returncode != 0:
+            diag = (
+                f"Claude Code exited with code {result.returncode}.\n"
+                f"session_id={effective_session_id} step={step_index}\n"
+                f"stderr: {result.stderr[:800]!r}\n"
+                f"stdout_preview: {result.stdout[:800]!r}"
+            )
+            logger.error("claude invoke failed: %s", diag)
             return AdapterInvocationResult(
                 status="error",
                 raw_output=result.stdout,
                 stderr=result.stderr,
-                diagnostic=f"Claude Code exited with code {result.returncode}.",
+                diagnostic=diag,
                 duration_ms=_elapsed_ms(start),
             )
         try:
+            if on_progress is not None:
+                on_progress({
+                    "phase": "parsing_output",
+                    "adapter_id": self.adapter_id,
+                    "message": (
+                        "Claude Code returned output; validating the structured action "
+                        f"({len(result.stdout)} stdout chars, {len(result.stderr)} stderr chars)."
+                    ),
+                    "stdout_chars": len(result.stdout),
+                    "stderr_chars": len(result.stderr),
+                    "step_index": step_index,
+                })
             action = parse_action_json(result.stdout)
         except Exception as exc:
+            diag = (
+                f"Claude Code returned invalid action JSON: {exc}\n"
+                f"session_id={effective_session_id} step={step_index}\n"
+                f"stderr: {result.stderr[:800]!r}\n"
+                f"stdout_preview: {result.stdout[:800]!r}"
+            )
+            logger.error("claude parse failed: %s", diag)
             return AdapterInvocationResult(
                 status="error",
                 raw_output=result.stdout,
                 stderr=result.stderr,
-                diagnostic=f"Claude Code returned invalid action JSON: {exc}",
+                diagnostic=diag,
                 duration_ms=_elapsed_ms(start),
             )
+        if on_progress is not None:
+            on_progress({
+                "phase": "completed",
+                "adapter_id": self.adapter_id,
+                "message": f"Claude Code selected action {action.action.type}.",
+                "action_type": action.action.type,
+                "duration_ms": _elapsed_ms(start),
+                "step_index": step_index,
+            })
         return AdapterInvocationResult(
             status="success",
             action=action,

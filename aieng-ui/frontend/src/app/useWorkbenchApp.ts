@@ -74,6 +74,7 @@ export function useWorkbenchApp() {
   } = useChatSessions({ selectedId });
   const {
     chatHistory,
+    agentEvents,
     setChatHistory,
     setPersistentChatHistory,
     handleLiveChatMessage,
@@ -251,7 +252,6 @@ export function useWorkbenchApp() {
     setNotice,
     setChatHistory: setPersistentChatHistory,
     setCadGenerationProgress,
-    clearAgentEvents,
     clearStreamingState,
   });
   const chatBusy = agentBusy || busy;
@@ -654,6 +654,7 @@ export function useWorkbenchApp() {
     chatBusy,
     cadGenerating,
     chatHistory,
+    agentEvents,
     chatLogRef,
     message,
     lastRuntimeRun,

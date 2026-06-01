@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import threading
+import time
 import uuid
 from typing import Any, Callable
 
 from .adapters import DEFAULT_STEP_TIMEOUT_SECONDS, LocalAgentAdapter, adapter_registry
+from .context_memory import ContextMemoryManager
 from .policy import evaluate_tool_call
-from .prompts import build_action_prompt
+from .prompts import build_system_layer, OPERATING_RULES
 from .schema import (
     AutopilotAgentAction,
     AutopilotApproval,
@@ -62,6 +65,29 @@ class AutopilotEngine:
         self.tool_executor = tool_executor
         self.on_state_update = on_state_update
         self.on_event = on_event
+        self._system_layer = build_system_layer(
+            runtime_tools=self.runtime_tools,
+            rules=OPERATING_RULES,
+        )
+        self.memory = ContextMemoryManager(system_content=self._system_layer)
+        self._memory_run_id: str | None = None
+
+    def _reset_memory(self, run_id: str) -> None:
+        self.memory = ContextMemoryManager(system_content=self._system_layer)
+        self._memory_run_id = run_id
+
+    def _ensure_memory_for_state(self, state: AutopilotRunState) -> None:
+        """Bind the prompt memory to the current run.
+
+        Engines are short-lived in the API path, but tests and direct callers may
+        reuse one instance. Keeping the memory keyed by run prevents observations
+        from one local-agent turn from leaking into the next.
+        """
+        if self._memory_run_id == state.run_id:
+            return
+        self._reset_memory(state.run_id)
+        if state.observations:
+            self.memory.add_observations([obs.model_dump() for obs in state.observations])
 
     def start(self, request: AutopilotRunRequest, *, run_id: str | None = None) -> AutopilotRunState:
         adapters = adapter_registry(request.fake_actions)
@@ -75,6 +101,7 @@ class AutopilotEngine:
             self._publish_state(state)
             return state
         state = self._new_state(request, run_id=run_id)
+        self._reset_memory(state.run_id)
         state.observations.append(
             _observation(
                 "context",
@@ -210,8 +237,12 @@ class AutopilotEngine:
             )
         )
         self._checkpoint(state)
+        # Sync bootstrapped observations into the memory manager so that
+        # the first adapter step already has compacted context.
+        self.memory.add_observations([obs.model_dump() for obs in state.observations])
 
     def _step_loop(self, state: AutopilotRunState, adapter: LocalAgentAdapter, max_steps: int) -> None:
+        self._ensure_memory_for_state(state)
         for _ in range(max_steps):
             if self._cancel_if_requested(state):
                 return
@@ -236,19 +267,117 @@ class AutopilotEngine:
                 content=f"Invoking {adapter.adapter_id} for the next action.",
                 payload={"adapter_id": adapter.adapter_id, "step_index": len(state.steps)},
             )
-            prompt = build_action_prompt(
-                objective=state.message,
-                project_id=state.project_id,
-                selected_geometry=state.selected_geometry,
-                agent_context=self.agent_context,
-                runtime_tools=self.runtime_tools,
-                observations=[obs.model_dump() for obs in state.observations],
+            # Sync any new observations added since the last step into the
+            # memory manager so that compression and budget tracking stay current.
+            new_obs = state.observations[self.memory.seen_count :]
+            self.memory.add_observations([obs.model_dump() for obs in new_obs])
+
+            # Choose prompt strategy based on adapter capabilities.
+            # Session-aware adapters (e.g. Claude CLI with --continue) can
+            # receive incremental prompts after the first step because the
+            # system context is retained in the adapter's session state.
+            supports_session = getattr(
+                adapter, "supports_session_continuation", False
             )
+            if supports_session and len(state.steps) > 0:
+                prompt = self.memory.build_incremental_prompt(
+                    objective=state.message,
+                    new_observation=new_obs[-1] if new_obs else None,
+                )
+            else:
+                prompt = self.memory.build_full_prompt(
+                    objective=state.message,
+                    project_id=state.project_id,
+                    selected_geometry=state.selected_geometry,
+                    agent_context=self.agent_context,
+                )
+
+            memory_stats = self.memory.get_memory_stats()
+            prompt_tokens = max(1, len(prompt) // 4)
+            prompt_kind = "incremental" if supports_session and len(state.steps) > 0 else "full"
+            self._emit_event(
+                state,
+                "run_status_changed",
+                status=state.status,
+                content=(
+                    f"Prepared {prompt_kind} prompt for {adapter.adapter_id}: "
+                    f"{memory_stats['working_count']} working observations, "
+                    f"~{prompt_tokens} prompt tokens."
+                ),
+                payload={
+                    "adapter_id": adapter.adapter_id,
+                    "phase": "prompt_prepared",
+                    "prompt_kind": prompt_kind,
+                    "prompt_tokens_estimate": prompt_tokens,
+                    "memory": memory_stats,
+                },
+            )
+
+            # Progress reporting during the potentially-long adapter call.
+            # A background thread emits honest keep-alive observations because
+            # CLI JSON modes do not stream tokens. Adapter callbacks provide the
+            # real process milestones; the heartbeat only says that we are still
+            # waiting for the local CLI to finish.
+            invoke_done = threading.Event()
+            invoke_started_at = time.perf_counter()
+            last_progress_at = time.perf_counter()
+
+            def _on_adapter_progress(evt: dict[str, Any]) -> None:
+                nonlocal last_progress_at
+                last_progress_at = time.perf_counter()
+                phase = evt.get("phase", "working")
+                message = evt.get("message", f"{adapter.adapter_id} {phase}...")
+                state.observations.append(
+                    _observation(
+                        "agent_activity",
+                        message,
+                        {"adapter_id": adapter.adapter_id, "phase": phase, "progress_event": True},
+                    )
+                )
+                # Emit the event over SSE so the UI updates immediately, but do
+                # NOT call _checkpoint here — store.save() is not thread-safe on
+                # Windows and the main thread will checkpoint after invoke returns.
+                self._emit_event(
+                    state,
+                    "run_status_changed",
+                    status=state.status,
+                    content=message,
+                    payload={"adapter_id": adapter.adapter_id, "phase": phase, "progress_event": True},
+                    event_id=f"{state.run_id}-progress-{len(state.steps)}-{phase}",
+                )
+
+            def _heartbeat() -> None:
+                """Emit a lightweight keep-alive while a non-streaming CLI runs."""
+                while not invoke_done.is_set():
+                    invoke_done.wait(timeout=12)
+                    if invoke_done.is_set():
+                        break
+                    quiet_for = time.perf_counter() - last_progress_at
+                    if quiet_for < 10:
+                        continue
+                    elapsed = int(time.perf_counter() - invoke_started_at)
+                    _on_adapter_progress({
+                        "phase": "waiting_for_cli",
+                        "message": (
+                            f"Waiting for {adapter.adapter_id} CLI output "
+                            f"({elapsed}s elapsed; JSON mode has no token stream)."
+                        ),
+                    })
+
+            heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+            heartbeat_thread.start()
+
             result = adapter.invoke(
                 prompt=prompt,
                 action_schema=AutopilotAgentAction.json_schema_for_adapter(),
                 timeout_seconds=DEFAULT_STEP_TIMEOUT_SECONDS,
+                on_progress=_on_adapter_progress,
+                session_id=state.session_id,
+                step_index=len(state.steps),
             )
+
+            invoke_done.set()
+            heartbeat_thread.join(timeout=1)
             if self._cancel_if_requested(state):
                 return
             if result.status != "success" or result.action is None:
@@ -270,6 +399,13 @@ class AutopilotEngine:
                 )
             )
             if action.thought_summary:
+                state.observations.append(
+                    _observation(
+                        "agent_thought",
+                        action.thought_summary,
+                        {"step_index": len(state.steps), "adapter_id": state.adapter_id},
+                    )
+                )
                 self._emit_event(
                     state,
                     "agent_message",

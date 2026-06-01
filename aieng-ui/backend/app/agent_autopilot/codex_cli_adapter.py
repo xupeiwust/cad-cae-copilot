@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import subprocess
-import json
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 from .adapters import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
@@ -21,12 +24,25 @@ from .adapters import (
 from .schema import AdapterInvocationResult, LocalAgentCapability
 
 
+def _decode_output(data: bytes | None) -> str:
+    """Decode subprocess output on Windows where Node.js tools may emit GBK."""
+    if not data:
+        return ""
+    for encoding in ("utf-8", "gbk", "gb2312", "cp1252", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 class CodexCliAdapter:
     adapter_id = "codex-cli"
     label = "Codex CLI"
 
     def __init__(self, command: str | None = None) -> None:
         self.command = command or os.environ.get("AIENG_CODEX_CLI_COMMAND", "codex")
+        self._capability_cache: LocalAgentCapability | None = None
 
     def probe(self, timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS) -> LocalAgentCapability:
         start = time.perf_counter()
@@ -100,6 +116,7 @@ class CodexCliAdapter:
             supports_json=supports_json,
             supports_json_schema=supports_schema,
             supports_tool_disable=supports_tool_disable,
+            supports_session_continuation=False,
             diagnostic=diagnostic,
             probe_duration_ms=_elapsed_ms(start),
         )
@@ -110,12 +127,30 @@ class CodexCliAdapter:
         prompt: str,
         action_schema: dict[str, Any],
         timeout_seconds: int = DEFAULT_STEP_TIMEOUT_SECONDS,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
+        session_id: str | None = None,
+        step_index: int = 0,
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
-        capability = self.probe()
+        if on_progress is not None:
+            on_progress({
+                "phase": "started",
+                "adapter_id": self.adapter_id,
+                "message": "Starting Codex CLI capability check.",
+            })
+        capability = (
+            self._capability_cache
+            if self._capability_cache and self._capability_cache.status == "available"
+            else None
+        )
+        if capability is None:
+            capability = self.probe()
+            if capability.status == "available":
+                self._capability_cache = capability
         if capability.status != "available":
             return AdapterInvocationResult(
                 status="error",
+                stderr="",
                 diagnostic=capability.diagnostic,
                 duration_ms=_elapsed_ms(start),
             )
@@ -123,9 +158,18 @@ class CodexCliAdapter:
         if not command_path:
             return AdapterInvocationResult(
                 status="error",
+                stderr="",
                 diagnostic=f"Command not found on PATH: {self.command}",
                 duration_ms=_elapsed_ms(start),
             )
+        if on_progress is not None:
+            on_progress({
+                "phase": "command_resolved",
+                "adapter_id": self.adapter_id,
+                "message": "Codex CLI is available; preparing structured output schema.",
+                "command_path": command_path,
+                "step_index": step_index,
+            })
         with tempfile.TemporaryDirectory(prefix="aieng-codex-autopilot-") as tmp:
             schema_path = Path(tmp) / "agent_action_schema.json"
             output_path = Path(tmp) / "last_message.json"
@@ -143,50 +187,103 @@ class CodexCliAdapter:
                 str(schema_path),
                 "--output-last-message",
                 str(output_path),
-                prompt,
             ]
             try:
+                # Pipe the prompt via stdin to avoid Windows command-line length limit
+                # (~8191 chars).  Codex exec reads the prompt from stdin when no
+                # positional prompt arg is supplied.
+                if on_progress is not None:
+                    on_progress({
+                        "phase": "process_running",
+                        "adapter_id": self.adapter_id,
+                        "message": "Codex exec is running in read-only sandbox; waiting for final action JSON.",
+                        "schema_path": str(schema_path),
+                        "step_index": step_index,
+                    })
                 result = subprocess.run(
                     cmd,
+                    input=prompt.encode("utf-8"),
                     capture_output=True,
-                    text=True,
-                    encoding="utf-8",
                     timeout=timeout_seconds,
                     check=False,
                 )
-                output_text = output_path.read_text(encoding="utf-8") if output_path.exists() else result.stdout
+                stdout_decoded = _decode_output(result.stdout)
+                stderr_decoded = _decode_output(result.stderr)
+                output_text = (
+                    _decode_output(output_path.read_bytes())
+                    if output_path.exists()
+                    else stdout_decoded
+                )
             except subprocess.TimeoutExpired as exc:
                 return AdapterInvocationResult(
                     status="timeout",
-                    raw_output=exc.stdout or "",
-                    stderr=exc.stderr or "",
+                    raw_output=_decode_output(exc.stdout),
+                    stderr=_decode_output(exc.stderr),
                     diagnostic=f"Codex CLI step timed out after {timeout_seconds}s.",
                     duration_ms=_elapsed_ms(start),
                 )
             except OSError as exc:
-                return AdapterInvocationResult(status="error", diagnostic=str(exc), duration_ms=_elapsed_ms(start))
-            if result.returncode != 0:
                 return AdapterInvocationResult(
                     status="error",
-                    raw_output=result.stdout,
-                    stderr=result.stderr,
-                    diagnostic=f"Codex CLI exited with code {result.returncode}.",
+                    stderr="",
+                    diagnostic=str(exc),
+                    duration_ms=_elapsed_ms(start),
+                )
+            if result.returncode != 0:
+                diag = (
+                    f"Codex CLI exited with code {result.returncode}.\n"
+                    f"stderr: {stderr_decoded[:600]!r}\n"
+                    f"stdout_preview: {stdout_decoded[:600]!r}"
+                )
+                logger.error("codex invoke failed: %s", diag)
+                return AdapterInvocationResult(
+                    status="error",
+                    raw_output=stdout_decoded,
+                    stderr=stderr_decoded,
+                    diagnostic=diag,
                     duration_ms=_elapsed_ms(start),
                 )
             try:
+                if on_progress is not None:
+                    on_progress({
+                        "phase": "parsing_output",
+                        "adapter_id": self.adapter_id,
+                        "message": (
+                            "Codex CLI returned output; validating the structured action "
+                            f"({len(output_text)} output chars, {len(stderr_decoded)} stderr chars)."
+                        ),
+                        "output_chars": len(output_text),
+                        "stderr_chars": len(stderr_decoded),
+                        "step_index": step_index,
+                    })
                 action = parse_action_json(output_text)
             except Exception as exc:
+                diag = (
+                    f"Codex CLI returned invalid action JSON: {exc}\n"
+                    f"stderr: {stderr_decoded[:600]!r}\n"
+                    f"stdout_preview: {stdout_decoded[:600]!r}"
+                )
+                logger.error("codex parse failed: %s", diag)
                 return AdapterInvocationResult(
                     status="error",
                     raw_output=output_text,
-                    stderr=result.stderr,
-                    diagnostic=f"Codex CLI returned invalid action JSON: {exc}",
+                    stderr=stderr_decoded,
+                    diagnostic=diag,
                     duration_ms=_elapsed_ms(start),
                 )
+            if on_progress is not None:
+                on_progress({
+                    "phase": "completed",
+                    "adapter_id": self.adapter_id,
+                    "message": f"Codex CLI selected action {action.action.type}.",
+                    "action_type": action.action.type,
+                    "duration_ms": _elapsed_ms(start),
+                    "step_index": step_index,
+                })
             return AdapterInvocationResult(
                 status="success",
                 action=action,
                 raw_output=output_text,
-                stderr=result.stderr,
+                stderr=stderr_decoded,
                 duration_ms=_elapsed_ms(start),
             )

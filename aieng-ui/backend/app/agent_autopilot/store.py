@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import uuid
 from pathlib import Path
 
 from .schema import AutopilotRunState
@@ -22,12 +24,25 @@ class AutopilotStore:
 
     def save(self, state: AutopilotRunState) -> None:
         path = self._path(state.run_id)
-        tmp_path = path.with_suffix(".tmp")
+        tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         tmp_path.write_text(
             state.model_dump_json(indent=2),
             encoding="utf-8",
         )
-        os.replace(tmp_path, path)
+        last_error: PermissionError | None = None
+        for attempt in range(8):
+            try:
+                os.replace(tmp_path, path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(0.025 * (attempt + 1))
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        if last_error is not None:
+            raise last_error
 
     def load(self, run_id: str) -> AutopilotRunState:
         path = self._path(run_id)

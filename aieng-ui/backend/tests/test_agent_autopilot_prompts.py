@@ -1,4 +1,5 @@
-from app.agent_autopilot.prompts import build_action_prompt, compact_tool_catalog
+from app.agent_autopilot.prompts import build_action_prompt, build_system_layer, compact_tool_catalog
+from app.agent_autopilot.project_skills import discover_project_skills
 
 
 def test_compact_tool_catalog_strips_verbose_schema_descriptions() -> None:
@@ -21,6 +22,27 @@ def test_compact_tool_catalog_strips_verbose_schema_descriptions() -> None:
     assert catalog[0]["description"].endswith("]")
     assert catalog[0]["input_schema"]["properties"]["project_id"] == {"type": "string"}
     assert "description" not in catalog[0]["input_schema"]["properties"]["field"]
+
+
+def test_project_skills_are_discovered_for_local_agent_prompt() -> None:
+    skills = discover_project_skills()
+    names = {skill["name"] for skill in skills}
+    assert {"aieng-cad-authoring", "aieng-cad-cae-copilot", "aieng-closed-loop-copilot"} <= names
+    cae = next(skill for skill in skills if skill["name"] == "aieng-cad-cae-copilot")
+    assert "inspect cae state" in cae["description"]
+    assert "Operating Rules" in cae["instruction_excerpt"]
+
+
+def test_system_layer_includes_project_skill_catalog() -> None:
+    layer = build_system_layer([
+        {"name": "aieng.agent_context", "description": "context", "input_schema": {"type": "object"}},
+        {"name": "cad.plan_build123d_skill", "description": "skill", "input_schema": {"type": "object"}},
+    ])
+    skills = layer["project_agent_skills"]["skills"]
+    assert any(skill["name"] == "aieng-cad-cae-copilot" for skill in skills)
+    assert "legacy" in layer["project_agent_skills"]["activation_policy"]
+    tool_names = [tool["name"] for tool in layer["available_workbench_tools"]]
+    assert "cad.plan_build123d_skill" in tool_names
 
 
 def test_action_prompt_compacts_large_agent_context_observation() -> None:
@@ -52,6 +74,9 @@ def test_action_prompt_compacts_large_agent_context_observation() -> None:
     assert "Schenkel" in prompt
     assert "face adjacency" in prompt
     assert "CAD BRIEF GATE" in prompt
+    assert "CAD SKILL ROUTING" in prompt
+    assert "project_agent_skills" in prompt
+    assert "aieng-cad-cae-copilot" in prompt
     assert len(prompt) < 17000
 
 

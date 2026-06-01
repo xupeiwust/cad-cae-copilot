@@ -2769,6 +2769,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_freeform_brep_face_generation import write_freeform_brep_faces
                 fbf = write_freeform_brep_faces(package_path)
                 summary["mesh_freeform_face_candidate_count"] = (fbf.get("summary") or {}).get("generated_face_count", 0)
+                # Freeform face TRIMMING readiness v0 (diagnostic-only; no trimming/stitch/STEP).
+                from aieng.converters.mesh_freeform_face_trimming_readiness import write_freeform_trimming_readiness
+                ftr = write_freeform_trimming_readiness(package_path)
+                summary["mesh_freeform_trimming_readiness"] = ftr.get("status")
                 from aieng.converters.mesh_reconstruction_readiness import write_mesh_reconstruction_readiness
                 rr = write_mesh_reconstruction_readiness(package_path)
                 summary["reconstruction_next_action"] = (rr.get("readiness") or {}).get("recommended_next_action")

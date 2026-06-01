@@ -69,6 +69,7 @@ reconstruction or assembly stage succeeded.
 | `diagnostics/mesh_freeform_reconstruction_readiness.json` | freeform readiness stage v0 | Quality/readiness scoring and recommended next actions per freeform surface | Advisory/readiness-only; does not generate B-Rep faces or export STEP |
 | `geometry/partial_freeform_brep_faces.json` | freeform face candidate generation v0 | Validated OCC BSpline face candidates from ready freeform surfaces | Candidate-only; not stitched, not a shell/solid, not STEP-exported |
 | `diagnostics/freeform_brep_face_generation.json` | freeform face candidate generation v0 | Face generation diagnostics: generated/skipped/failed counts, OCP availability | Diagnostic only |
+| `diagnostics/freeform_face_trimming_readiness.json` | freeform trimming readiness v0 | Boundary/adjacency readiness for future trimming; per-face quality scoring | Diagnostic-only; does not generate trimmed faces, stitch, or export STEP |
 | `diagnostics/mesh_reconstruction_readiness.json` | readiness analysis | Honest readiness classification for future reconstruction | Does not reconstruct geometry |
 | `graph/mesh_reconstruction_plan.json` | readiness analysis | Per-region readiness/recommended-next-action plan | Planning evidence only |
 | `graph/mesh_brep_reconstruction_plan.json` | partial B-Rep planning | Conservative reconstruction plan for analytic regions | Planning evidence only |

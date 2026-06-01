@@ -70,6 +70,7 @@ pytest aieng/tests/test_mesh_brep_solidification.py -q
 pytest aieng/tests/test_mesh_freeform_surface_fitting.py -q
 pytest aieng/tests/test_mesh_freeform_surface_readiness.py -q
 pytest aieng/tests/test_mesh_freeform_brep_faces.py -q
+pytest aieng/tests/test_freeform_face_trimming_readiness.py -q
 ```
 
 **Expected artifacts:**
@@ -80,6 +81,7 @@ pytest aieng/tests/test_mesh_freeform_brep_faces.py -q
 - `diagnostics/mesh_freeform_reconstruction_readiness.json` — freeform readiness/quality scoring and next actions
 - `geometry/partial_freeform_brep_faces.json` — validated OCC BSpline face candidates from ready freeform surfaces
 - `diagnostics/freeform_brep_face_generation.json` — face generation diagnostics
+- `diagnostics/freeform_face_trimming_readiness.json` — boundary/adjacency readiness for future trimming
 - `diagnostics/mesh_reconstruction_readiness.json` — readiness gates
 - `geometry/partial_brep_surfaces.json` — analytic surface candidates
 - `geometry/partial_brep_faces.json` — validated OCC face candidates
@@ -96,6 +98,7 @@ pytest aieng/tests/test_mesh_freeform_brep_faces.py -q
 - Poor/high-error/missing-boundary fits are explicitly not_ready with recommended next actions
 - Ready freeform surfaces produce validated OCC BSpline face candidates when OCP is available
 - Generated freeform face candidates remain candidate-only: not stitched, not a shell, not STEP-exported
+- Trimming readiness assesses boundary and adjacency for future trimming; does not generate trimmed faces
 - OCP-unavailable environments skip honestly with clear diagnostics
 - Freeform evidence does NOT trigger analytic STEP export or interfere with plane/cylinder reconstruction
 - Missing/degenerate faces are skipped honestly (no false STEP)
@@ -108,6 +111,7 @@ pytest aieng/tests/test_mesh_freeform_brep_faces.py -q
 - Freeform/BSpline fitting is evidence-only v0; NOT B-Rep faces, NOT STEP, NOT CAD-editable
 - Freeform readiness scoring is advisory/readiness-only; does NOT generate B-Rep faces or export STEP
 - Freeform face candidates are candidate-only; NOT stitched, NOT a solid, NOT STEP-exported
+- Freeform trimming readiness is diagnostic-only; does NOT generate trimmed faces, stitch, or export STEP
 - `geometry/reconstructed.step` never overwrites the source STEP
 - Failed reconstruction removes stale artifacts and restores mesh topology
 

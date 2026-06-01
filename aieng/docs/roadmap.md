@@ -27,8 +27,9 @@ Completed/currently present in the reference backend:
 - Single-part topology optimization with 2D SIMP, result-guidance fields, and
   writeback paths for `extruded_region`, `density_contour`, and `density_voxels`
 - Conservative mesh reconstruction ladder: mesh region graph, analytic surface
-  fits, readiness analysis, candidate face generation, stitching/sewing
-  diagnostics, and validated-only `geometry/reconstructed.step`
+  fits, freeform/BSpline surface fitting evidence, freeform readiness scoring,
+  freeform B-Rep face candidate generation, freeform trimming readiness diagnostics,
+  stitching/sewing diagnostics, and validated-only `geometry/reconstructed.step`
 - Assembly IR processing, simplified proxy assembly CAE artifacts, explicit
   selected-part assembly-aware topology optimization, post-optimization
   verification, and advisory recommendation/next-action artifacts
@@ -52,6 +53,9 @@ Not currently claimed:
 
 - production manufacturing signoff or certification
 - general freeform mesh -> production NURBS/B-Rep reconstruction
+- trimmed freeform face generation (trimming readiness is diagnostic-only)
+- mixed analytic/freeform stitching or sewing
+- automatic execution of freeform readiness recommendations
 - automatic recommendation execution
 - real contact/preload-driven assembly optimization
 
@@ -665,6 +669,32 @@ certification.
 - Tests cover cube STEP roundtrip, partial/no-STEP degradation, missing inputs,
   unavailable OCC, STEP writer/reimport failure, stale reconstructed artifact cleanup,
   mesh topology restoration, and manifest/provenance preservation. No UI files.
+
+## Phase 37b: Freeform face trimming readiness v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). Diagnostic-only milestone that assesses whether
+generated freeform BSpline face candidates have enough boundary and adjacency
+information to attempt future trimming and mixed analytic/freeform stitching.
+
+- `assess_freeform_trimming_readiness(freeform_faces, freeform_fit, freeform_readiness, region_graph)`:
+  per-face boundary quality (existence, closure, self-intersection risk, UV domain sanity),
+  adjacency compatibility with neighboring analytic/freeform regions, and a weighted
+  trimming-readiness score (boundary 50%, adjacency 30%, source quality 20%).
+- Classifies each face as `ready` / `partial` / `not_ready` with recommended next actions:
+  `attempt_trimmed_face_generation` (only when ready), `improve_boundary`, `improve_segmentation`,
+  `keep_evidence_only`, `insufficient_data`.
+- Honesty flags: `trimmed_faces_generated:false`, `faces_stitched:false`, `step_exported:false`,
+  `cad_editable:false`, `readiness_only:true`. Boundaries are explicitly approximate, not exact
+  trimming curves.
+- Output: `diagnostics/freeform_face_trimming_readiness.json`.
+- Integration: `recompile_shape_ir_package` auto-runs it after freeform face candidate generation;
+  `plan_partial_brep` optionally annotates evidence-only plan rows with trimming readiness fields.
+- Tests: closed approximate boundary → partial/ready; missing boundary → not_ready;
+  convex hull → approximate; self-intersecting UV loop → not_ready; missing candidates → skipped;
+  adjacency with fitted analytic neighbor recognized; missing region graph degrades honestly;
+  plan annotation remains candidate-only; existing analytic STEP path unchanged. No UI files.
+- **Out of scope (future):** trimmed freeform face generation, mixed analytic/freeform stitching,
+  conditional STEP export after validation, exact boundary curve extraction.
 
 ## Phase 36: Closed shell → valid solid → STEP export — COMPLETE (2026-05-31)
 

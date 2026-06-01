@@ -19,6 +19,7 @@ from aieng.converters.mesh_reconstruction_readiness import MESH_RECONSTRUCTION_R
 from aieng.converters.mesh_freeform_surface_fitting import FREEFORM_SURFACE_FIT_PATH
 from aieng.converters.mesh_freeform_surface_readiness import FREEFORM_READINESS_PATH
 from aieng.converters.mesh_freeform_brep_face_generation import FREEFORM_BREP_FACES_PATH
+from aieng.converters.mesh_freeform_face_trimming_readiness import TRIMMING_READINESS_PATH
 
 MESH_BREP_PLAN_PATH = "graph/mesh_brep_reconstruction_plan.json"
 PARTIAL_BREP_SURFACES_PATH = "geometry/partial_brep_surfaces.json"
@@ -113,12 +114,13 @@ def plan_partial_brep(
     freeform_fit: dict[str, Any] | None = None,
     freeform_readiness: dict[str, Any] | None = None,
     freeform_brep_faces: dict[str, Any] | None = None,
+    freeform_trimming_readiness: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Plan partial B-Rep reconstruction from accepted fits. Returns
     ``(plan, surfaces, diagnostics)``. Pure. Produces FACE CANDIDATES only — no shell,
     no solid, no STEP. Gated out (no candidates + warning) when readiness says the mesh
     needs cleanup or is insufficient. Freeform fits are included as evidence-only entries
-    optionally annotated with readiness quality scores and face generation status."""
+    optionally annotated with readiness, face generation, and trimming readiness."""
     prov_src = (surface_fit or {}).get("provenance") or (region_graph or {}).get("provenance") or {}
     provenance = {
         "source_mesh_artifact": prov_src.get("source_mesh_artifact"),
@@ -130,6 +132,7 @@ def plan_partial_brep(
         "freeform_surface_fit": FREEFORM_SURFACE_FIT_PATH,
         "freeform_readiness": FREEFORM_READINESS_PATH,
         "freeform_brep_faces": FREEFORM_BREP_FACES_PATH,
+        "freeform_trimming_readiness": TRIMMING_READINESS_PATH,
         "readiness": MESH_RECONSTRUCTION_READINESS_PATH,
         "representation_kind": "mesh",
         "geometry_kind": "mesh",
@@ -179,6 +182,12 @@ def plan_partial_brep(
             str(f.get("source_region_id")): f for f in (freeform_brep_faces.get("faces") or [])
             if f.get("status") == "generated"}
 
+    trimming_by_region: dict[str, dict[str, Any]] = {}
+    if isinstance(freeform_trimming_readiness, dict):
+        trimming_by_region = {
+            str(f.get("source_region_id")): f for f in (freeform_trimming_readiness.get("faces") or [])
+        }
+
     if not gated:
         fitted_by_region: dict[str, dict[str, Any]] = {
             str(s.get("source_region_id")): s for s in (surface_fit.get("surfaces") or [])}
@@ -212,6 +221,13 @@ def plan_partial_brep(
                         row["freeform_face_generation_status"] = fg.get("status")
                         row["freeform_face_validation_status"] = (fg.get("occ_validation") or {}).get("valid")
                         row["future_stitching_possible"] = True
+                    # Optional trimming readiness annotation
+                    tr = trimming_by_region.get(rid)
+                    if tr:
+                        row["freeform_trimming_readiness"] = tr.get("trimming_readiness")
+                        row["freeform_trimming_quality_score"] = tr.get("quality_score")
+                        row["freeform_trimming_next_action"] = tr.get("recommended_next_action")
+                        row["can_attempt_future_trimming"] = tr.get("trimming_readiness") == "ready"
                     plan_rows.append(row)
                     continue
                 reason = ("freeform region (no analytic fit)" if cls == "freeform_candidate"
@@ -315,12 +331,13 @@ def build_partial_brep_plan(package_path: str | Path) -> tuple[dict[str, Any], d
             freeform_fit = _read_json(zf, FREEFORM_SURFACE_FIT_PATH, names)
             freeform_readiness = _read_json(zf, FREEFORM_READINESS_PATH, names)
             freeform_brep_faces = _read_json(zf, FREEFORM_BREP_FACES_PATH, names)
+            freeform_trimming_readiness = _read_json(zf, TRIMMING_READINESS_PATH, names)
             readiness = _read_json(zf, MESH_RECONSTRUCTION_READINESS_PATH, names)
     except FileNotFoundError:
         return plan_partial_brep(None, None, None)
     except Exception:  # noqa: BLE001
         return plan_partial_brep(None, None, None)
-    return plan_partial_brep(region_graph, surface_fit, readiness, freeform_fit, freeform_readiness, freeform_brep_faces)
+    return plan_partial_brep(region_graph, surface_fit, readiness, freeform_fit, freeform_readiness, freeform_brep_faces, freeform_trimming_readiness)
 
 
 def write_partial_brep_plan(package_path: str | Path) -> dict[str, Any]:

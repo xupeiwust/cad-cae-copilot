@@ -27,10 +27,19 @@ from aieng.converters.assembly_ir import (
     CONVERSION_MANIFEST_PATH,
     PART_REGISTRY_PATH,
 )
+from aieng.converters.topology_optimization import (
+    build_guidance_field,
+    run_topology_optimization,
+    topology_result_to_shape_ir,
+)
 
 ASSEMBLY_TOPOPT_PROBLEM_PATH = "analysis/assembly_topopt_problem.json"
 ASSEMBLY_TOPOPT_DERIVATION_PATH = "diagnostics/assembly_topopt_derivation.json"
 STANDARD_TOPOPT_PROBLEM_PATH = "analysis/topology_optimization_problem.json"
+ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH = "analysis/assembly_topology_optimization.json"
+ASSEMBLY_TOPOPT_EXECUTION_PATH = "diagnostics/assembly_topopt_execution.json"
+PART_TOPOLOGY_OPTIMIZATION_TEMPLATE = "parts/{part_id}/analysis/topology_optimization.json"
+PART_OPTIMIZED_SHAPE_IR_TEMPLATE = "parts/{part_id}/geometry/optimized_shape_ir.json"
 
 _SOURCE_ARTIFACTS = [
     ASSEMBLY_IR_PATH,
@@ -692,6 +701,275 @@ def _update_manifest(manifest: dict[str, Any], problem: dict[str, Any], standard
     return manifest
 
 
+def _update_execution_manifest(
+    manifest: dict[str, Any],
+    execution: dict[str, Any],
+    *,
+    part_result_path: str | None = None,
+    part_shape_path: str | None = None,
+) -> dict[str, Any]:
+    manifest = manifest if isinstance(manifest, dict) else {"format": "aieng.conversion_manifest"}
+    asm = manifest.setdefault("assembly", {})
+    if not isinstance(asm, dict):
+        asm = {}
+        manifest["assembly"] = asm
+    asm["assembly_topopt_execution_status"] = execution.get("status")
+    asm["assembly_topopt_execution_selected_part_id"] = execution.get("selected_part_id")
+    asm["assembly_topopt_optimizer"] = (execution.get("optimizer") or {}).get("name")
+    asm["assembly_topopt_writeback_status"] = (execution.get("writeback") or {}).get("status")
+    asm["assembly_topopt_part_result_path"] = part_result_path
+    asm["assembly_topopt_part_shape_path"] = part_shape_path
+    asm["assembly_topopt_execution_explicit"] = True
+    asm["assembly_topopt_execution_limitations"] = list(_LIMITATIONS)
+    return manifest
+
+
+def _part_registry_by_id(registry: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(p.get("part_id")): p for p in _as_list(registry.get("parts")) if isinstance(p, dict) and p.get("part_id")}
+
+
+def _is_part_optimizable(pid: str, assembly_problem: dict[str, Any], registry: dict[str, Any]) -> tuple[bool, str | None]:
+    reg = _part_registry_by_id(registry).get(str(pid), {})
+    role = reg.get("role") or ((assembly_problem.get("target_part") or {}).get("role"))
+    editable = bool(reg.get("editable", (assembly_problem.get("target_part") or {}).get("editable", role == "design_part")))
+    if role in _NON_OPTIMIZABLE_ROLES:
+        return False, "selected_part_is_reference_or_frozen"
+    if not editable:
+        return False, "selected_part_not_editable"
+    candidates = {str(c.get("part_id")) for c in _as_list(assembly_problem.get("candidate_parts")) if isinstance(c, dict)}
+    if candidates and str(pid) not in candidates:
+        return False, "selected_part_not_in_candidate_parts"
+    return True, None
+
+
+def _blank_field(shape: tuple[int, ...], value: float = 0.0) -> list[Any]:
+    if len(shape) == 3:
+        nz, ny, nx = shape
+        return [[[value for _i in range(nx)] for _j in range(ny)] for _k in range(nz)]
+    nely, nelx = shape
+    return [[value for _i in range(nelx)] for _j in range(nely)]
+
+
+def _field_shape(grid: dict[str, Any]) -> tuple[tuple[int, ...], bool]:
+    if "nx" in grid:
+        return (int(grid.get("nz", 1)), int(grid.get("ny", 1)), int(grid.get("nx", 1))), True
+    return (int(grid.get("nely", 1)), int(grid.get("nelx", 1))), False
+
+
+def _mark_cell(mask: list[Any], cell: list[int], is3d: bool) -> bool:
+    try:
+        if is3d:
+            i, j, k = int(cell[0]), int(cell[1]), int(cell[2])
+            if 0 <= k < len(mask) and 0 <= j < len(mask[k]) and 0 <= i < len(mask[k][j]):
+                mask[k][j][i] = 1
+                return True
+        else:
+            i, j = int(cell[0]), int(cell[1])
+            if 0 <= j < len(mask) and 0 <= i < len(mask[j]):
+                mask[j][i] = 1
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _count_marked(mask: list[Any], is3d: bool) -> int:
+    if is3d:
+        return sum(1 for plane in mask for row in plane for v in row if float(v) > 0.5)
+    return sum(1 for row in mask for v in row if float(v) > 0.5)
+
+
+def _merge_numeric_field(base: list[Any], other: Any, *, take_max: bool, is3d: bool) -> None:
+    if not isinstance(other, list):
+        return
+    try:
+        if is3d:
+            for k, plane in enumerate(other):
+                for j, row in enumerate(plane):
+                    for i, val in enumerate(row):
+                        if k < len(base) and j < len(base[k]) and i < len(base[k][j]):
+                            base[k][j][i] = max(float(base[k][j][i]), float(val)) if take_max else float(val)
+        else:
+            for j, row in enumerate(other):
+                for i, val in enumerate(row):
+                    if j < len(base) and i < len(base[j]):
+                        base[j][i] = max(float(base[j][i]), float(val)) if take_max else float(val)
+    except Exception:
+        return
+
+
+def _assembly_preserve_guidance_field(
+    standard_problem: dict[str, Any],
+    assembly_problem: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """Build an explicit optimizer guidance field from assembly preserve cells.
+
+    Result guidance from assembly_result_map is merged with interface preserve masks
+    when available.  This is still solver-neutral: it only supplies the existing SIMP
+    optimizers with guidance fields they already know how to consume.
+    """
+    warnings: list[str] = []
+    grid = standard_problem.get("grid") or assembly_problem.get("grid") or {}
+    frame = standard_problem.get("frame") or (standard_problem.get("derivation") or {}).get("frame") or assembly_problem.get("frame") or {}
+    shape, is3d = _field_shape(grid)
+    preserve_mask = _blank_field(shape, 0.0)
+    stiffness_weight = _blank_field(shape, 1.0)
+    ignore_mask = _blank_field(shape, 0.0)
+    base_field = None
+    if (standard_problem.get("result_guidance") or {}).get("available"):
+        try:
+            base_field = build_guidance_field({**standard_problem, "frame": frame})
+            _merge_numeric_field(preserve_mask, base_field.get("preserve_mask"), take_max=True, is3d=is3d)
+            _merge_numeric_field(stiffness_weight, base_field.get("stiffness_weight_field"), take_max=True, is3d=is3d)
+            _merge_numeric_field(ignore_mask, base_field.get("ignore_mask"), take_max=True, is3d=is3d)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"result_guidance_field_merge_failed:{type(exc).__name__}")
+
+    total = mapped = unmapped = valid_cell_count = 0
+    region_summaries: list[dict[str, Any]] = []
+    for region in _as_list(assembly_problem.get("preserve_regions")):
+        if not isinstance(region, dict):
+            continue
+        total += 1
+        region_valid = 0
+        cells = [c for c in _as_list(region.get("cells")) if isinstance(c, list)]
+        for cell in cells:
+            if _mark_cell(preserve_mask, cell, is3d):
+                region_valid += 1
+        if region_valid:
+            mapped += 1
+            valid_cell_count += region_valid
+        else:
+            unmapped += 1
+            warnings.append(f"preserve_region_unmapped:{region.get('region_id')}")
+        region_summaries.append({
+            "region_id": region.get("region_id"),
+            "interface_id": region.get("interface_id"),
+            "connection_id": region.get("connection_id"),
+            "semantic_role": region.get("semantic_role"),
+            "cells_supplied": len(cells),
+            "cells_mapped": region_valid,
+        })
+    cells_preserved = _count_marked(preserve_mask, is3d)
+    diagnostics = {
+        "preserve_regions_total": total,
+        "preserve_regions_mapped": mapped,
+        "preserve_regions_unmapped": unmapped,
+        "preserve_cells_supplied": valid_cell_count,
+        "cells_preserved": cells_preserved,
+        "result_guidance_merged": base_field is not None,
+        "region_summaries": region_summaries,
+    }
+    return {
+        "format": "aieng.assembly_topopt_guidance_field",
+        "schema_version": "0.1",
+        "dimension": "3d" if is3d else "2d",
+        "grid": dict(grid),
+        "frame": frame,
+        "options": {
+            "use_result_guidance": True,
+            "preserve_min_density": float(standard_problem.get("preserve_min_density", 0.95)),
+            "source": "assembly_interface_preserve_regions",
+        },
+        "preserve_mask": preserve_mask,
+        "stiffness_weight_field": stiffness_weight,
+        "ignore_mask": ignore_mask,
+        "diagnostics": diagnostics,
+        "provenance": {
+            "created_by": "aieng.assembly_topopt_execution_v0",
+            "assembly_problem_path": ASSEMBLY_TOPOPT_PROBLEM_PATH,
+            "standard_problem_path": STANDARD_TOPOPT_PROBLEM_PATH,
+        },
+    }, diagnostics, warnings
+
+
+def _execution_diag(execution: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "format": "aieng.assembly_topopt_execution",
+        "format_version": FORMAT_VERSION,
+        "contract_version": "0.1",
+        "status": execution.get("status"),
+        "selected_part_id": execution.get("selected_part_id"),
+        "diagnostics": execution.get("diagnostics") or [],
+        "warnings": execution.get("warnings") or [],
+        "preserve_constraints": execution.get("preserve_constraints") or {},
+        "writeback": execution.get("writeback") or {},
+        "summary": {
+            "optimizer": (execution.get("optimizer") or {}).get("name"),
+            "dimension": execution.get("dimension"),
+            "bcs_source": execution.get("bcs_source"),
+            "use_result_guidance": execution.get("use_result_guidance"),
+            "writeback_status": (execution.get("writeback") or {}).get("status"),
+        },
+        "limitations": list(_LIMITATIONS),
+        "provenance": execution.get("provenance") or {},
+    }
+
+
+def _needs_input_execution(
+    *,
+    reason: str,
+    diagnostics: list[str],
+    warnings: list[str] | None = None,
+    selected_part_id: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    execution = {
+        "format": "aieng.assembly_topology_optimization",
+        "format_version": FORMAT_VERSION,
+        "contract_version": "0.1",
+        "generated_at_utc": _now(),
+        "status": "needs_user_input",
+        "selected_part_id": selected_part_id,
+        "diagnostics": diagnostics or [reason],
+        "warnings": warnings or [],
+        "writeback": {"status": "not_attempted", "reason": reason},
+        "limitations": list(_LIMITATIONS),
+        "provenance": {
+            "created_by": "aieng.assembly_topopt_execution_v0",
+            "explicit_execution_required": True,
+            "optimizer_executed": False,
+            "source_artifacts": [ASSEMBLY_TOPOPT_PROBLEM_PATH, STANDARD_TOPOPT_PROBLEM_PATH],
+            "production_ready": False,
+        },
+    }
+    return execution, _execution_diag(execution)
+
+
+def _shape_writeback_payload(
+    topo_result: dict[str, Any],
+    *,
+    selected_part_id: str,
+    target_part: dict[str, Any],
+    method: str,
+    representation: str,
+    boundary: str,
+) -> dict[str, Any]:
+    payload = topology_result_to_shape_ir(
+        topo_result,
+        representation=representation,
+        method=method,
+        boundary=boundary,
+        node_id=f"optimized_{selected_part_id}",
+    )
+    payload.setdefault("provenance", {})
+    payload["provenance"].update({
+        "assembly_aware_topopt": True,
+        "selected_part_id": selected_part_id,
+        "source_ir_node": target_part.get("source_ir_node"),
+        "source_geometry_ref": target_part.get("geometry_ref"),
+        "derived_part_artifact": True,
+        "does_not_overwrite_assembly_geometry": True,
+    })
+    payload["assembly_writeback"] = {
+        "selected_part_id": selected_part_id,
+        "source_ir_node": target_part.get("source_ir_node"),
+        "design_space_node": target_part.get("design_space_node"),
+        "writeback_kind": "derived_selected_part_artifact",
+        "original_geometry_ref_preserved": target_part.get("geometry_ref"),
+    }
+    return payload
+
+
 def write_assembly_topopt_problem(
     package_path: str | Path,
     *,
@@ -764,4 +1042,222 @@ def write_assembly_topopt_problem(
         "artifacts": sorted(members.keys()),
         "problem": problem,
         "standard_problem": standard if emit_standard else None,
+    }
+
+
+def run_assembly_topology_optimization(
+    package_path: str | Path,
+    *,
+    optimizer: str | None = None,
+    writeback: bool = True,
+    method: str | None = None,
+    representation: str | None = None,
+    boundary: str = "spline",
+) -> dict[str, Any]:
+    """Explicitly run assembly-aware topology optimization for one selected part.
+
+    This is intentionally not called by assembly validation/CAE processing.  It
+    consumes the already-derived assembly and standard topopt problem artifacts,
+    calls the existing topology optimizer unchanged, and writes only assembly
+    diagnostics plus selected-part derived artifacts.  Package-level geometry is
+    not overwritten.
+    """
+    package_path = Path(package_path)
+    if not package_path.exists():
+        return {"assembly_present": False, "reason": "package not found"}
+    members: dict[str, bytes] = {}
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
+            if ASSEMBLY_IR_PATH not in names:
+                return {"assembly_present": False}
+            assembly_problem = _read_json(zf, names, ASSEMBLY_TOPOPT_PROBLEM_PATH)
+            standard_problem = _read_json(zf, names, STANDARD_TOPOPT_PROBLEM_PATH)
+            part_registry = _read_json(zf, names, PART_REGISTRY_PATH) or {}
+            manifest = _read_json(zf, names, CONVERSION_MANIFEST_PATH) or {"format": "aieng.conversion_manifest"}
+    except Exception as exc:  # noqa: BLE001
+        return {"assembly_present": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    diagnostics: list[str] = []
+    warnings: list[str] = []
+    selected_part_id = None
+    if not isinstance(assembly_problem, dict):
+        execution, diag = _needs_input_execution(
+            reason="missing_assembly_topopt_problem",
+            diagnostics=["missing_assembly_topopt_problem"],
+        )
+        members = {
+            ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH: _dumps(execution),
+            ASSEMBLY_TOPOPT_EXECUTION_PATH: _dumps(diag),
+            CONVERSION_MANIFEST_PATH: _dumps(_update_execution_manifest(manifest, execution)),
+        }
+        _replace_members(package_path, members)
+        return {"assembly_present": True, **execution, "artifacts": sorted(members.keys())}
+
+    selected_part_id = assembly_problem.get("selected_part_id")
+    if not selected_part_id:
+        diagnostics.append("missing_selected_part")
+    candidates = [c for c in _as_list(assembly_problem.get("candidate_parts")) if isinstance(c, dict)]
+    if len([c for c in candidates if str(c.get("part_id")) == str(selected_part_id)]) != 1:
+        diagnostics.append("selected_part_not_unique")
+    ok_part, reason = _is_part_optimizable(str(selected_part_id), assembly_problem, part_registry) if selected_part_id else (False, "missing_selected_part")
+    if not ok_part and reason:
+        diagnostics.append(reason)
+    if assembly_problem.get("status") != "ready":
+        diagnostics.append("assembly_topopt_problem_not_ready")
+    if not isinstance(standard_problem, dict):
+        diagnostics.append("missing_topology_optimization_problem")
+    elif not (standard_problem.get("bcs") or {}).get("supports") or not (standard_problem.get("bcs") or {}).get("loads"):
+        diagnostics.append("topology_optimization_problem_not_runnable")
+    target_part = assembly_problem.get("target_part") if isinstance(assembly_problem.get("target_part"), dict) else {}
+    if standard_problem and str((standard_problem.get("derivation") or {}).get("selected_part_id") or selected_part_id) != str(selected_part_id):
+        diagnostics.append("standard_problem_selected_part_mismatch")
+
+    if diagnostics:
+        execution, diag = _needs_input_execution(
+            reason=";".join(diagnostics),
+            diagnostics=diagnostics,
+            warnings=warnings,
+            selected_part_id=selected_part_id,
+        )
+        members = {
+            ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH: _dumps(execution),
+            ASSEMBLY_TOPOPT_EXECUTION_PATH: _dumps(diag),
+            CONVERSION_MANIFEST_PATH: _dumps(_update_execution_manifest(manifest, execution)),
+        }
+        _replace_members(package_path, members)
+        return {"assembly_present": True, **execution, "artifacts": sorted(members.keys())}
+
+    assert isinstance(standard_problem, dict)
+    assert selected_part_id is not None
+    guidance_field, preserve_diag, preserve_warnings = _assembly_preserve_guidance_field(standard_problem, assembly_problem)
+    warnings.extend(preserve_warnings)
+    problem_for_run = {
+        **standard_problem,
+        "guidance_field": guidance_field,
+        "use_result_guidance": True,
+        "assembly_preserve_constraints": {
+            "selected_part_id": selected_part_id,
+            "preserve_regions": assembly_problem.get("preserve_regions") or [],
+            "diagnostics": preserve_diag,
+        },
+    }
+    dim = "3d" if "nx" in (standard_problem.get("grid") or {}) else "2d"
+    opt_name = optimizer or ("simp_3d" if dim == "3d" else "simp_2d")
+    topo_result = run_topology_optimization(problem_for_run, optimizer=opt_name)
+    topo_result.setdefault("provenance", {})
+    topo_result["provenance"].update({
+        "assembly_aware_topopt": True,
+        "selected_part_id": selected_part_id,
+        "assembly_problem_path": ASSEMBLY_TOPOPT_PROBLEM_PATH,
+        "standard_problem_path": STANDARD_TOPOPT_PROBLEM_PATH,
+        "interface_preserve_constraints_applied": True,
+    })
+    topo_result.setdefault("problem", {})
+    topo_result["problem"]["assembly_preserve_constraints"] = preserve_diag
+
+    writeback_block: dict[str, Any] = {"status": "not_requested" if not writeback else "not_attempted"}
+    part_result_path = PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id=selected_part_id)
+    part_shape_path: str | None = None
+    if writeback:
+        if not (target_part.get("geometry_ref") or target_part.get("source_ir_node") or target_part.get("design_space_node")):
+            diagnostics.append("safe_writeback_target_missing")
+            writeback_block = {
+                "status": "needs_user_input",
+                "reason": "safe_writeback_target_missing",
+                "part_geometry_modified": False,
+                "derived_optimized_part_created": False,
+            }
+        else:
+            method_chosen = method or ("smooth_mesh" if dim == "3d" else "contour")
+            representation_chosen = representation or ("manifold_mesh" if dim == "3d" else "brep_build123d")
+            shape_payload = _shape_writeback_payload(
+                topo_result,
+                selected_part_id=str(selected_part_id),
+                target_part=target_part,
+                method=method_chosen,
+                representation=representation_chosen,
+                boundary=boundary,
+            )
+            part_shape_path = PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id=selected_part_id)
+            members[part_shape_path] = _dumps(shape_payload)
+            writeback_block = {
+                "status": "derived_part_artifact_written",
+                "selected_part_id": selected_part_id,
+                "source_ir_node": target_part.get("source_ir_node"),
+                "design_space_node": target_part.get("design_space_node"),
+                "source_geometry_ref": target_part.get("geometry_ref"),
+                "writeback_method": method_chosen,
+                "representation": representation_chosen,
+                "part_geometry_modified": False,
+                "derived_optimized_part_created": True,
+                "part_shape_ir_path": part_shape_path,
+                "reference_parts_modified": False,
+            }
+
+    status = "needs_user_input" if diagnostics else ("optimized_writeback_ready" if not writeback else writeback_block["status"])
+    execution = {
+        "format": "aieng.assembly_topology_optimization",
+        "format_version": FORMAT_VERSION,
+        "contract_version": "0.1",
+        "generated_at_utc": _now(),
+        "status": status,
+        "selected_part_id": selected_part_id,
+        "target_part": target_part,
+        "optimizer": topo_result.get("optimizer"),
+        "dimension": topo_result.get("dimension") or dim,
+        "bcs_source": (topo_result.get("problem") or {}).get("bcs_source"),
+        "use_result_guidance": True,
+        "preserve_constraints": preserve_diag,
+        "assembly_result_guidance": standard_problem.get("result_guidance"),
+        "topology_optimization": topo_result,
+        "writeback": writeback_block,
+        "diagnostics": diagnostics,
+        "warnings": warnings,
+        "limitations": list(_LIMITATIONS),
+        "provenance": {
+            "created_by": "aieng.assembly_topopt_execution_v0",
+            "explicit_execution_required": True,
+            "optimizer_executed": True,
+            "source_artifacts": [
+                ASSEMBLY_TOPOPT_PROBLEM_PATH,
+                STANDARD_TOPOPT_PROBLEM_PATH,
+                ASSEMBLY_IR_PATH,
+                PART_REGISTRY_PATH,
+                CONNECTION_GRAPH_PATH,
+                INTERFACE_RESOLUTION_PATH,
+                ASSEMBLY_RESULT_MAP_PATH,
+            ],
+            "assembly_connections_are_proxy_derived": True,
+            "contact_physics_modeled": False,
+            "bolt_preload_modeled": False,
+            "multi_part_simultaneous_optimization": False,
+            "production_ready": False,
+        },
+    }
+    members[ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH] = _dumps(execution)
+    members[ASSEMBLY_TOPOPT_EXECUTION_PATH] = _dumps(_execution_diag(execution))
+    members[part_result_path] = _dumps(topo_result)
+    members[CONVERSION_MANIFEST_PATH] = _dumps(
+        _update_execution_manifest(
+            manifest,
+            execution,
+            part_result_path=part_result_path,
+            part_shape_path=part_shape_path,
+        )
+    )
+    _replace_members(package_path, members)
+    return {
+        "assembly_present": True,
+        "status": execution.get("status"),
+        "selected_part_id": selected_part_id,
+        "optimizer": opt_name,
+        "dimension": execution.get("dimension"),
+        "bcs_source": execution.get("bcs_source"),
+        "writeback": writeback_block,
+        "diagnostics": diagnostics,
+        "warnings": warnings,
+        "preserve_constraints": preserve_diag,
+        "artifacts": sorted(members.keys()),
+        "execution": execution,
     }

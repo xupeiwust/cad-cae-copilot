@@ -783,9 +783,28 @@ also optional; v0 normalizes generic/fake assembly results when provided, otherw
 `diagnostics/assembly_solver_execution.json` with `solver_executed:false`. Assembly results map
 to parts/interfaces/connections/source_ir_node with confidence in
 `analysis/assembly_result_map.json` and `diagnostics/assembly_result_mapping.json`.
+
+Assembly-aware topology optimization v0 is **explicit execution only**:
+setup writes `analysis/assembly_topopt_problem.json`,
+`diagnostics/assembly_topopt_derivation.json`, and, when supports+loads are safe,
+`analysis/topology_optimization_problem.json`. A separate explicit backend helper
+`run_assembly_topology_optimization(package_path, ...)` consumes those artifacts,
+calls the existing single-part SIMP optimizer, and writes:
+- `analysis/assembly_topology_optimization.json`
+- `diagnostics/assembly_topopt_execution.json`
+- `parts/<selected_part_id>/analysis/topology_optimization.json`
+- `parts/<selected_part_id>/geometry/optimized_shape_ir.json` when writeback is safe
+
+This optimizes **one selected `design_part` only**. Reference, fixture, fastener,
+load-source, frozen, and non-editable parts are rejected. Mounting/bolt/weld/contact/
+mating connector regions are passed through as preserve masks when their grid cells
+are known; unmapped preserve regions are warned, never silently ignored. Writeback
+creates a selected-part derived artifact and does **not** overwrite package-level
+geometry or reference parts.
+
 All outputs keep `production_ready:false`, `contact_physics_modeled:false`, and
 `bolt_preload_modeled:false`. Future work: real nonlinear contact modeling, bolt preload,
-assembly meshing improvements, and assembly-aware topology/size optimization.
+assembly meshing improvements, and simultaneous multi-part topology/size optimization.
 
 ---
 

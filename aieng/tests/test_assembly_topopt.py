@@ -32,10 +32,15 @@ from aieng.converters.assembly_ir import (
     build_part_registry,
 )
 from aieng.converters.assembly_topopt import (
+    ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH,
+    ASSEMBLY_TOPOPT_EXECUTION_PATH,
     ASSEMBLY_TOPOPT_DERIVATION_PATH,
     ASSEMBLY_TOPOPT_PROBLEM_PATH,
+    PART_OPTIMIZED_SHAPE_IR_TEMPLATE,
+    PART_TOPOLOGY_OPTIMIZATION_TEMPLATE,
     STANDARD_TOPOPT_PROBLEM_PATH,
     derive_assembly_topopt_problem,
+    run_assembly_topology_optimization,
     write_assembly_topopt_problem,
 )
 from aieng.converters.topology_optimization import run_topology_optimization
@@ -342,6 +347,97 @@ def test_package_writer_emits_assembly_and_standard_artifacts(tmp_path: Path) ->
     assert diag["summary"]["standard_problem_emitted"] is True
     assert standard["bcs"]["supports"] and standard["bcs"]["loads"]
     assert manifest["assembly"]["assembly_topopt_status"] == "ready"
+
+
+def test_run_assembly_topology_optimization_executes_existing_optimizer_and_writes_part_artifacts(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6, use_result_guidance=True)
+    result = run_assembly_topology_optimization(pkg, method="voxels", representation="manifold_mesh")
+    assert result["status"] == "derived_part_artifact_written"
+    assert result["selected_part_id"] == "bracket"
+    assert result["bcs_source"] == "explicit"
+    assert result["preserve_constraints"]["preserve_regions_total"] >= 3
+    assert result["preserve_constraints"]["preserve_regions_mapped"] >= 3
+    assert result["preserve_constraints"]["cells_preserved"] > 0
+    part_result = PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id="bracket")
+    part_shape = PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="bracket")
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        assert ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH in names
+        assert ASSEMBLY_TOPOPT_EXECUTION_PATH in names
+        assert part_result in names
+        assert part_shape in names
+        assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="wall") not in names
+        execution = json.loads(zf.read(ASSEMBLY_TOPOLOGY_OPTIMIZATION_PATH))
+        topo = json.loads(zf.read(part_result))
+        shape = json.loads(zf.read(part_shape))
+    assert execution["topology_optimization"]["provenance"]["selected_part_id"] == "bracket"
+    assert topo["problem"]["bcs_source"] == "explicit"
+    assert topo["result"]["guidance_field_summary"]["cells_preserved"] > 0
+    assert shape["assembly_writeback"]["selected_part_id"] == "bracket"
+    assert shape["assembly_writeback"]["original_geometry_ref_preserved"] == "geometry/bracket.step"
+
+
+def test_run_without_runnable_standard_problem_returns_needs_user_input(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(no_load=True))
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6)
+    result = run_assembly_topology_optimization(pkg)
+    assert result["status"] == "needs_user_input"
+    assert "missing_topology_optimization_problem" in result["diagnostics"]
+    with zipfile.ZipFile(pkg) as zf:
+        assert ASSEMBLY_TOPOPT_EXECUTION_PATH in zf.namelist()
+        assert PART_TOPOLOGY_OPTIMIZATION_TEMPLATE.format(part_id="bracket") not in zf.namelist()
+
+
+def test_preserve_regions_without_grid_cells_are_warned_not_silent(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6)
+    # Corrupt one preserve region cell map in the setup artifact to mimic an unresolved mapping.
+    with zipfile.ZipFile(pkg) as zf:
+        problem = json.loads(zf.read(ASSEMBLY_TOPOPT_PROBLEM_PATH))
+    problem["preserve_regions"][0]["cells"] = []
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            if item.filename != ASSEMBLY_TOPOPT_PROBLEM_PATH:
+                dst.writestr(item, src.read(item.filename))
+        dst.writestr(ASSEMBLY_TOPOPT_PROBLEM_PATH, json.dumps(problem))
+    tmp.replace(pkg)
+    result = run_assembly_topology_optimization(pkg, method="voxels")
+    assert result["preserve_constraints"]["preserve_regions_unmapped"] == 1
+    assert any(w.startswith("preserve_region_unmapped:") for w in result["warnings"])
+
+
+def test_assembly_result_map_guidance_is_preserved_in_execution_output(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly(), result_map=_result_map())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6, use_result_guidance=True)
+    result = run_assembly_topology_optimization(pkg, method="voxels")
+    rg = result["execution"]["assembly_result_guidance"]
+    assert rg["available"] is True
+    assert rg["preserve_or_reinforce_regions"][0]["region_id"] == "hot_stress"
+    assert result["execution"]["topology_optimization"]["result"]["result_guidance_consumed"] is True
+
+
+def test_safe_writeback_target_missing_does_not_write_shape_artifact(tmp_path: Path) -> None:
+    pkg = _write_pkg(tmp_path, _assembly())
+    write_assembly_topopt_problem(pkg, resolution=12, max_iters=6)
+    with zipfile.ZipFile(pkg) as zf:
+        problem = json.loads(zf.read(ASSEMBLY_TOPOPT_PROBLEM_PATH))
+    problem["target_part"].pop("geometry_ref", None)
+    problem["target_part"].pop("source_ir_node", None)
+    problem["target_part"].pop("design_space_node", None)
+    tmp = pkg.with_suffix(".tmp.aieng")
+    with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            if item.filename != ASSEMBLY_TOPOPT_PROBLEM_PATH:
+                dst.writestr(item, src.read(item.filename))
+        dst.writestr(ASSEMBLY_TOPOPT_PROBLEM_PATH, json.dumps(problem))
+    tmp.replace(pkg)
+    result = run_assembly_topology_optimization(pkg, method="voxels")
+    assert result["status"] == "needs_user_input"
+    assert "safe_writeback_target_missing" in result["diagnostics"]
+    with zipfile.ZipFile(pkg) as zf:
+        assert PART_OPTIMIZED_SHAPE_IR_TEMPLATE.format(part_id="bracket") not in zf.namelist()
 
 
 def test_assembly_cae_processing_writes_topopt_setup_without_running_optimizer(tmp_path: Path) -> None:

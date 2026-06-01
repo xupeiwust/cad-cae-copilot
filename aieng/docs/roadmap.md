@@ -197,6 +197,41 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 42: Assembly-aware topology optimization execution/writeback v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / new optimizer). Connects Phase 41 setup to the
+existing topology-optimization execution/writeback path for one selected assembly
+`design_part`.
+
+- New explicit helper: `run_assembly_topology_optimization(package_path, ...)`.
+  It is not called automatically by assembly processing.
+- Execution reads `analysis/assembly_topopt_problem.json` and
+  `analysis/topology_optimization_problem.json`, validates one selected optimizable
+  part, rejects reference/frozen/fixture/fastener/load-source parts, and returns
+  `needs_user_input` diagnostics when prerequisites are missing.
+- Optimizer behavior is reused, not duplicated: the wrapper calls the existing
+  `run_topology_optimization` with the selected-part standard problem.
+- Preserve constraints: assembly interface preserve regions are converted into an
+  explicit guidance field for existing SIMP optimizers. Diagnostics report
+  `preserve_regions_total`, mapped/unmapped counts, and `cells_preserved`; unmapped
+  preserve regions warn rather than disappearing.
+- Result guidance: existing assembly result-map stress/deflection guidance is
+  preserved and merged with interface preserve masks where available.
+- Writeback: creates selected-part derived artifacts only:
+  `parts/<part_id>/analysis/topology_optimization.json` and, when a safe target is
+  known, `parts/<part_id>/geometry/optimized_shape_ir.json`. Package-level geometry
+  and reference parts are not overwritten.
+- Outputs: `analysis/assembly_topology_optimization.json`,
+  `diagnostics/assembly_topopt_execution.json`, selected-part result/writeback
+  artifacts, and manifest provenance.
+- Honesty boundaries: one selected part only; no nonlinear contact/friction, no bolt
+  preload, no new optimizer, no simultaneous multi-part optimization, and
+  `production_ready:false`.
+- Tests: explicit optimizer run, missing standard problem diagnostics, selected-part
+  provenance, reference-part non-modification, preserve-mask diagnostics,
+  assembly-result guidance preservation, safe writeback target failure, and
+  single-part topopt regression.
+
 ## Phase 41: Assembly-aware topology optimization setup v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent / new optimizer). Builds on Assembly IR v0,

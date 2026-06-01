@@ -1,3 +1,7 @@
+> **ARCHIVED** — This directory is historical/experimental auxiliary CAD-agent material.
+> It is NOT the active runtime, NOT the core semantic library, and NOT a development
+> entry point for new features. See `ARCHIVE_NOTICE.md` for details.
+
 # CAD-Agent Skills
 
 CAD-Agent Skills is a portable skill/workflow package for generating CadQuery CAD models through an evidence-driven CAD compiler workflow. It can be used by Cursor agents or by other coding agents that can read the skill documents, run Python scripts, inspect generated files, and follow the required review gates.

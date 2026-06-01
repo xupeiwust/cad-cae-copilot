@@ -165,7 +165,7 @@ Exit codes:
 
 ## MCP inspection
 
-MCP agents can inspect design targets through read-only tools in `aieng-freecad-mcp`:
+MCP agents can inspect design targets through read-only tools in `legacy/aieng-freecad-mcp` (legacy path):
 
 - `aieng_read_design_targets` — returns the full `task/design_targets.yaml` content:
   - `target_set_id`, `format_version`, `targets`, `claim_policy`

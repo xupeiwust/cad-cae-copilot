@@ -110,17 +110,24 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 
 ## Repository layout
 
+### Active
+
 | Path | Status | What it is |
 |------|--------|------------|
 | **`aieng-ui/`** | **Active** | FastAPI backend + React workbench + MCP server — the product |
-| `aieng/` | Library | `.aieng` semantic package format engine (schemas, validation, CLI) |
+| `aieng/` | Core library | `.aieng` semantic package format engine (schemas, validation, CLI, Shape IR, evidence model) |
 | `aieng-agent-skills/` | Active | SKILL.md contracts teaching agents how to use the ecosystem |
-| `aieng-freecad-mcp/` | **Legacy** | Old FreeCAD execution adapter — not used by the active path |
-| `CAD-Agent-main/` | Reference | Experimental/auxiliary CAD-agent material |
-| `docs/` | — | Workspace-level roadmap & planning |
+
+### Non-active but retained
+
+| Path | Status | What it is |
+|------|--------|------------|
+| `legacy/aieng-freecad-mcp/` | **Legacy** | Old FreeCAD execution adapter — not used by the active path |
+| `archive/CAD-Agent-main/` | Archived | Historical/experimental auxiliary CAD-agent material |
 
 > The active CAD engine is `aieng-ui/backend` using **build123d** — *not* `aieng/`
-> (which ships a stub backend) and *not* the legacy FreeCAD adapter.
+> (which ships a stub backend for tests) and *not* the legacy FreeCAD adapter.
+> `aieng/` is the **core semantic library**; do not treat it as legacy.
 
 ---
 

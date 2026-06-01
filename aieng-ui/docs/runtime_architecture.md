@@ -189,7 +189,7 @@ Approval and conversation are intentionally separate API concepts:
 
 **Optional FreeCAD adapter files:**
 - `backend/app/providers/freecad_preview.py` — minimal STEP preview provider through FreeCADCmd when `provider=freecad`.
-- Legacy `aieng-freecad-mcp` docs remain useful as integration notes, but they are not required for the default build123d runtime.
+- Legacy `legacy/aieng-freecad-mcp` docs remain useful as integration notes, but they are not required for the default build123d runtime.
 
 ---
 

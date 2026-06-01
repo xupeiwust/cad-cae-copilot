@@ -9,7 +9,7 @@ __pycache__/
 .eggs/
 
 # ── Virtual environments & embedded interpreters ─────────
-# .conda/ holds full embedded conda envs (aieng/.conda, aieng-freecad-mcp/.conda
+# .conda/ holds full embedded conda envs (aieng/.conda, legacy/aieng-freecad-mcp/.conda
 # are ~167 MB each) — never commit these.
 .venv/
 venv/

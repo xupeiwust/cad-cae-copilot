@@ -11,7 +11,7 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-SRC = str(Path(r"c:\Users\RL_Carla\Desktop\workspace_aieng\aieng-freecad-mcp") / "src")
+SRC = str(Path(r"c:\Users\RL_Carla\Desktop\workspace_aieng\legacy\aieng-freecad-mcp") / "src")  # legacy path
 
 
 async def main() -> None:

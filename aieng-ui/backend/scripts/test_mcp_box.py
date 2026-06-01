@@ -13,7 +13,7 @@ sys.path.insert(0, str(BACKEND))
 from app.freecad_mcp_client import FreeCADMCPClient
 
 WORKSPACE = BACKEND.parents[1]
-FREECAD_MCP_ROOT = WORKSPACE / "aieng-freecad-mcp"
+FREECAD_MCP_ROOT = WORKSPACE / "legacy" / "aieng-freecad-mcp"  # legacy path
 FREECAD_HOME = Path(r"D:\FreeCAD 1.1")
 FREECAD_PYTHON = FREECAD_HOME / "bin" / "python.exe"
 

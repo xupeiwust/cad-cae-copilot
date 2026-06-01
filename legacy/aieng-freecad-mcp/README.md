@@ -1,9 +1,14 @@
+> **LEGACY** — This directory is the old FreeCAD MCP adapter, preserved for
+> compatibility/reference only. It is NOT the current default CAD/CAE execution
+> runtime. The default runtime is `aieng-ui/backend`. See `LEGACY_NOTICE.md`
+> for details.
+
 # aieng-freecad-mcp
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-1.25%2B-purple.svg)](https://modelcontextprotocol.io/)
-[![Status](https://img.shields.io/badge/status-beta-orange.svg)]()
+[![Status](https://img.shields.io/badge/status-legacy-lightgrey.svg)]()
 
 Composable FreeCAD MCP execution interface with optional `.aieng` semantic/evidence enhancement.
 

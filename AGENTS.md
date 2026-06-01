@@ -49,9 +49,22 @@ need to construct valid tool calls.
 |------|--------|---------|
 | `aieng-ui/backend/` | **Active** | FastAPI backend + MCP server + all tools |
 | `aieng-ui/frontend/` | **Active** | React workbench UI |
-| `aieng/` | Legacy | Semantic package format library (FakeBackend only — do NOT use as a capability reference) |
-| `aieng-freecad-mcp/` | Legacy dead code | Old FreeCAD adapter |
-| `aieng-agent-skills/` | Experimental | Agent skill definitions |
+| `aieng/` | Core library | Semantic package format library — `.aieng` package engine, Shape IR, schemas, validation, CLI, artifact/evidence model |
+| `aieng-agent-skills/` | Active | Agent skill definitions |
+| `legacy/aieng-freecad-mcp/` | Legacy | Old FreeCAD adapter — not the default runtime |
+| `archive/CAD-Agent-main/` | Archived | Historical/experimental auxiliary CAD-agent material |
+
+### Development path rules
+
+- **Default do not develop in `archive/` or `legacy/`**. These areas are
+  preserved for reference and compatibility only.
+- **CAD/CAE execution work** starts from `aieng-ui/backend`. That is where
+  build123d/OCP runs, MCP tools are registered, and the active runtime lives.
+- **Shape IR, schema, validation, `.aieng` package/evidence model** work starts
+  from `aieng/`. This is the core semantic library; it is **not** legacy.
+- **If you genuinely need to migrate logic** from `archive/` or `legacy/` into
+  an active path, explicitly state: (1) what you are migrating, (2) why it is
+  needed in an active path, and (3) the target active path.
 
 ---
 

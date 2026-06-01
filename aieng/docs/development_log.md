@@ -405,7 +405,7 @@ See [docs/ocp_topology_demo.md](ocp_topology_demo.md) for full instructions.
 
 ## Checkpoint — MCP design-target inspection (2026-05-17)
 
-**Repo:** `aieng-freecad-mcp`
+**Repo:** `legacy/aieng-freecad-mcp` (legacy path)
 **Commit:** `1118944`
 
 ### Tools added

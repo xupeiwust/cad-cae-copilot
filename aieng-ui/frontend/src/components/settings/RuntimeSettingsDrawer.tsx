@@ -177,7 +177,7 @@ function PreviewAdapterSection({
                 value={runtimeDraft?.freecad_mcp_root ?? ""}
                 disabled={runtimeBusy}
                 onChange={(event) => onDraftChange("freecad_mcp_root", event.target.value)}
-                placeholder="aieng-freecad-mcp repository directory"
+                placeholder="legacy/aieng-freecad-mcp repository directory"
               />
             </label>
           </>

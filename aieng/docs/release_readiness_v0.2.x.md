@@ -30,7 +30,7 @@ What this is **not**:
 |---|---|---|---|---|---|
 | `aieng` | `main` | `github` (`github.com/armpro24-blip/aieng`) | `97b5d09` — `docs: checkpoint Phase 35 and benchmark stabilization` | Clean | Includes Phase 30 benchmark milestone, Phase 35 PR 1–4, Issue #59/#60 fixes, docs checkpoint |
 | `aieng-ui` | `master` | `origin` (`github.com/armpro24-blip/aieng-ui`) | `c3259b8` — `fix(runtime): skip field summary when field regions are missing` | Clean (last verified) | 27 runtime tools, approval gates, design target comparison UI, field summary graceful skip |
-| `aieng-freecad-mcp` | `main` | `origin` (`github.com/armpro24-blip/aieng-freecad-mcp`) | `1118944` — `feat(aieng): expose design target inspection tools` | Clean (last verified) | MCP bridge / adapter role, FreeCAD tool surface, read-only design target inspection |
+| `legacy/aieng-freecad-mcp` | `main` | `origin` (`github.com/armpro24-blip/aieng-freecad-mcp`) | `1118944` — `feat(aieng): expose design target inspection tools` | Clean (last verified) | MCP bridge / adapter role, FreeCAD tool surface, read-only design target inspection (legacy path) |
 
 All three repos were verified clean and in sync with GitHub at the time of this note.
 

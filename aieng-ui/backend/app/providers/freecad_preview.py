@@ -286,7 +286,7 @@ class FreecadPreviewProvider:
     def _resolve_freecad_mcp_root(self) -> Path | None:
         configured = str(self._config.get("freecad_mcp_root") or "").strip()
         candidates = [Path(configured)] if configured else []
-        workspace_candidate = Path(getattr(self._settings, "workspace_root", "")) / "aieng-freecad-mcp"
+        workspace_candidate = Path(getattr(self._settings, "workspace_root", "")) / "legacy" / "aieng-freecad-mcp"
         candidates.append(workspace_candidate)
         for candidate in candidates:
             if candidate and candidate.exists():

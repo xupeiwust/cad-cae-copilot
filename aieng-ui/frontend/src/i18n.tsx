@@ -87,7 +87,7 @@ const zhToEn: Record<string, string> = {
   "关闭": "Close",
   "AI 建模默认使用 build123d/OCP；FreeCAD 仅作为可选外部适配器配置。": "AI modelling uses build123d/OCP by default; FreeCAD is configured only as an optional external adapter.",
   "FreeCAD 安装目录": "FreeCAD installation directory",
-  "aieng-freecad-mcp 仓库目录": "aieng-freecad-mcp repository directory",
+  "legacy/aieng-freecad-mcp 仓库目录": "legacy/aieng-freecad-mcp repository directory",
   "aieng 仓库目录": "aieng repository directory",
   "测试 CAD 配置": "Test CAD configuration",
   "保存 CAD 配置": "Save CAD configuration",

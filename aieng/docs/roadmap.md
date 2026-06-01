@@ -135,7 +135,7 @@ For the detailed capability table and artifact/path inventory, see
 - Surface `design_target_comparisons` in project summary API.
 - Render pass/fail/unknown badges in the CAE panel.
 
-**Post-PR5 MCP inspection checkpoint (done in `aieng-freecad-mcp`)**
+**Post-PR5 MCP inspection checkpoint (done in `legacy/aieng-freecad-mcp`)**
 - `aieng_read_design_targets` — read-only MCP tool that reads `task/design_targets.yaml` from `.aieng` packages
 - `aieng_read_design_target_comparisons` — read-only MCP tool that reads `results/result_summary.json#design_target_comparisons`
 - Both tools work with zip and directory-form packages, return missing-resource states gracefully, and do not mutate packages or advance claims

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 340" width="960" height="340">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420">
   <defs>
     <linearGradient id="agentGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#2d2d3a"/>
@@ -17,109 +17,107 @@
     </marker>
   </defs>
 
-  <!-- Background -->
-  <rect width="960" height="340" fill="#0d1117" rx="12"/>
+  <rect width="1200" height="420" fill="#0d1117" rx="12"/>
 
-  <!-- Title -->
-  <text x="480" y="28" text-anchor="middle" fill="#e6edf3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" font-weight="600">AI-CAD/CAE Backend Architecture</text>
+  <text x="600" y="34" text-anchor="middle" fill="#e6edf3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600">AI-CAD/CAE Backend Architecture</text>
 
   <!-- Agent Column -->
-  <rect x="20" y="50" width="160" height="270" fill="url(#agentGrad)" rx="10" stroke="#3d3d52" stroke-width="1.5"/>
-  <text x="100" y="78" text-anchor="middle" fill="#a5b4fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600">AI Agent</text>
-  <text x="100" y="102" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10">Claude / Copilot</text>
-  <text x="100" y="118" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10">Codex / Cursor</text>
+  <rect x="24" y="60" width="190" height="330" fill="url(#agentGrad)" rx="10" stroke="#3d3d52" stroke-width="1.5"/>
+  <text x="119" y="90" text-anchor="middle" fill="#a5b4fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600">AI Agent</text>
+  <text x="119" y="112" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12">Claude · Copilot · Codex · Cursor</text>
 
-  <rect x="40" y="140" width="120" height="26" fill="#312e81" rx="5" stroke="#4f46e5" stroke-width="1"/>
-  <text x="100" y="157" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">MCP Server</text>
+  <rect x="44" y="132" width="150" height="34" fill="#312e81" rx="6" stroke="#4f46e5" stroke-width="1"/>
+  <text x="119" y="153" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">MCP Server</text>
 
-  <rect x="40" y="180" width="120" height="26" fill="#1e3a5f" rx="5" stroke="#0ea5e9" stroke-width="1"/>
-  <text x="100" y="197" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">Shape IR</text>
+  <rect x="44" y="184" width="150" height="34" fill="#1e3a5f" rx="6" stroke="#0ea5e9" stroke-width="1"/>
+  <text x="119" y="205" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Structured Design Model</text>
 
-  <rect x="40" y="220" width="120" height="26" fill="#1e3a5f" rx="5" stroke="#0ea5e9" stroke-width="1"/>
-  <text x="100" y="237" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">Assembly IR</text>
+  <rect x="44" y="236" width="150" height="34" fill="#1e3a5f" rx="6" stroke="#0ea5e9" stroke-width="1"/>
+  <text x="119" y="257" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Assembly Model</text>
 
-  <rect x="40" y="260" width="120" height="26" fill="#3f1d38" rx="5" stroke="#d946ef" stroke-width="1"/>
-  <text x="100" y="277" text-anchor="middle" fill="#f0abfc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">Design Study</text>
+  <rect x="44" y="288" width="150" height="34" fill="#3f1d38" rx="6" stroke="#d946ef" stroke-width="1"/>
+  <text x="119" y="309" text-anchor="middle" fill="#f0abfc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Design Study Setup</text>
+
+  <text x="119" y="358" text-anchor="middle" fill="#64748b" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-style="italic">Natural language + tools</text>
 
   <!-- Backend Column -->
-  <rect x="210" y="50" width="420" height="270" fill="url(#backendGrad)" rx="10" stroke="#334155" stroke-width="1.5"/>
-  <text x="420" y="78" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600">Workbench Backend</text>
+  <rect x="244" y="60" width="530" height="330" fill="url(#backendGrad)" rx="10" stroke="#334155" stroke-width="1.5"/>
+  <text x="509" y="90" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600">Workbench Backend</text>
 
-  <!-- Backend capability boxes -->
-  <rect x="230" y="95" width="120" height="42" fill="#14532d" rx="6" stroke="#22c55e" stroke-width="1"/>
-  <text x="290" y="114" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">CAD Generation</text>
-  <text x="290" y="128" text-anchor="middle" fill="#4ade80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">build123d / OCP</text>
+  <!-- Capability boxes -->
+  <rect x="264" y="108" width="155" height="50" fill="#14532d" rx="6" stroke="#22c55e" stroke-width="1"/>
+  <text x="342" y="130" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">CAD Generation</text>
+  <text x="342" y="148" text-anchor="middle" fill="#4ade80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">build123d / OCP</text>
 
-  <rect x="360" y="95" width="120" height="42" fill="#7c2d12" rx="6" stroke="#f97316" stroke-width="1"/>
-  <text x="420" y="114" text-anchor="middle" fill="#fdba74" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">FEA Solver</text>
-  <text x="420" y="128" text-anchor="middle" fill="#fb923c" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">CalculiX</text>
+  <rect x="432" y="108" width="155" height="50" fill="#7c2d12" rx="6" stroke="#f97316" stroke-width="1"/>
+  <text x="510" y="130" text-anchor="middle" fill="#fdba74" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Structural FEA</text>
+  <text x="510" y="148" text-anchor="middle" fill="#fb923c" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">CalculiX</text>
 
-  <rect x="490" y="95" width="120" height="42" fill="#3b0764" rx="6" stroke="#a855f7" stroke-width="1"/>
-  <text x="550" y="114" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">Topology Opt</text>
-  <text x="550" y="128" text-anchor="middle" fill="#c084fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">SIMP 2D/3D</text>
+  <rect x="600" y="108" width="155" height="50" fill="#3b0764" rx="6" stroke="#a855f7" stroke-width="1"/>
+  <text x="678" y="130" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Topology Optimization</text>
+  <text x="678" y="148" text-anchor="middle" fill="#c084fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">SIMP 2D / 3D</text>
 
-  <rect x="230" y="155" width="120" height="42" fill="#1e3a5f" rx="6" stroke="#38bdf8" stroke-width="1"/>
-  <text x="290" y="174" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">Mesh → CAD</text>
-  <text x="290" y="188" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">B-Rep / STEP</text>
+  <rect x="264" y="172" width="155" height="50" fill="#1e3a5f" rx="6" stroke="#38bdf8" stroke-width="1"/>
+  <text x="342" y="194" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Rebuild CAD from Mesh</text>
+  <text x="342" y="212" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">B-Rep / STEP</text>
 
-  <rect x="360" y="155" width="120" height="42" fill="#064e3b" rx="6" stroke="#2dd4bf" stroke-width="1"/>
-  <text x="420" y="174" text-anchor="middle" fill="#5eead4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">Assembly CAE</text>
-  <text x="420" y="188" text-anchor="middle" fill="#2dd4bf" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">proxy model</text>
+  <rect x="432" y="172" width="155" height="50" fill="#064e3b" rx="6" stroke="#2dd4bf" stroke-width="1"/>
+  <text x="510" y="194" text-anchor="middle" fill="#5eead4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Assembly Analysis</text>
+  <text x="510" y="212" text-anchor="middle" fill="#2dd4bf" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">Simplified proxy model</text>
 
-  <rect x="490" y="155" width="120" height="42" fill="#3f1d38" rx="6" stroke="#f472b6" stroke-width="1"/>
-  <text x="550" y="174" text-anchor="middle" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">Design Study</text>
-  <text x="550" y="188" text-anchor="middle" fill="#f9a8d4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">validate → accept</text>
+  <rect x="600" y="172" width="155" height="50" fill="#3f1d38" rx="6" stroke="#f472b6" stroke-width="1"/>
+  <text x="678" y="194" text-anchor="middle" fill="#fbcfe8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Design Study</text>
+  <text x="678" y="212" text-anchor="middle" fill="#f9a8d4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">Compare → Adopt</text>
 
   <!-- Verification / Registry row -->
-  <rect x="230" y="215" width="185" height="36" fill="#312e81" rx="6" stroke="#6366f1" stroke-width="1"/>
-  <text x="322" y="228" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9" font-weight="500">Verification</text>
-  <text x="322" y="242" text-anchor="middle" fill="#a5b4fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">shape_ir_patch + roundtrip</text>
+  <rect x="264" y="240" width="240" height="42" fill="#312e81" rx="6" stroke="#6366f1" stroke-width="1"/>
+  <text x="384" y="256" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">Verification &amp; Traceability</text>
+  <text x="384" y="273" text-anchor="middle" fill="#a5b4fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">shape patch + roundtrip checks</text>
 
-  <rect x="425" y="215" width="185" height="36" fill="#312e81" rx="6" stroke="#6366f1" stroke-width="1"/>
-  <text x="517" y="228" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9" font-weight="500">Registry</text>
-  <text x="517" y="242" text-anchor="middle" fill="#a5b4fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">object_registry + manifest</text>
+  <rect x="520" y="240" width="235" height="42" fill="#312e81" rx="6" stroke="#6366f1" stroke-width="1"/>
+  <text x="638" y="256" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">Part / Object Registry</text>
+  <text x="638" y="273" text-anchor="middle" fill="#a5b4fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">semantic names + feature graph</text>
 
   <!-- Evidence layer -->
-  <rect x="230" y="265" width="380" height="36" fill="#1e3a5f" rx="6" stroke="#0ea5e9" stroke-width="1"/>
-  <text x="420" y="278" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9" font-weight="500">Evidence Layer</text>
-  <text x="420" y="292" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">computed_metrics + field_regions + cae_result_map</text>
+  <rect x="264" y="298" width="490" height="42" fill="#1e3a5f" rx="6" stroke="#0ea5e9" stroke-width="1"/>
+  <text x="509" y="315" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Evidence Layer</text>
+  <text x="509" y="332" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">computed metrics · field regions · simulation result map</text>
 
   <!-- Package Column -->
-  <rect x="660" y="50" width="280" height="270" fill="url(#packageGrad)" rx="10" stroke="#225522" stroke-width="1.5"/>
-  <text x="800" y="78" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600">.aieng Package</text>
+  <rect x="804" y="60" width="372" height="330" fill="url(#packageGrad)" rx="10" stroke="#225522" stroke-width="1.5"/>
+  <text x="990" y="90" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600">.aieng Package</text>
 
-  <rect x="680" y="95" width="120" height="26" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
-  <text x="740" y="112" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">geometry/shape_ir.json</text>
+  <rect x="824" y="108" width="155" height="30" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
+  <text x="902" y="127" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">geometry/shape_ir.json</text>
 
-  <rect x="810" y="95" width="120" height="26" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
-  <text x="870" y="112" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">topology_map.json</text>
+  <rect x="1001" y="108" width="155" height="30" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
+  <text x="1079" y="127" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">topology_map.json</text>
 
-  <rect x="680" y="135" width="120" height="26" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
-  <text x="740" y="152" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">feature_graph.json</text>
+  <rect x="824" y="150" width="155" height="30" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
+  <text x="902" y="169" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">feature_graph.json</text>
 
-  <rect x="810" y="135" width="120" height="26" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
-  <text x="870" y="152" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">computed_metrics.json</text>
+  <rect x="1001" y="150" width="155" height="30" fill="#14532d" rx="5" stroke="#22c55e" stroke-width="1"/>
+  <text x="1079" y="169" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">computed_metrics.json</text>
 
-  <rect x="680" y="175" width="120" height="26" fill="#1e3a5f" rx="5" stroke="#0ea5e9" stroke-width="1"/>
-  <text x="740" y="192" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">simulation/*.json</text>
+  <rect x="824" y="192" width="155" height="30" fill="#1e3a5f" rx="5" stroke="#0ea5e9" stroke-width="1"/>
+  <text x="902" y="211" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">simulation/*.json</text>
 
-  <rect x="810" y="175" width="120" height="26" fill="#1e3a5f" rx="5" stroke="#0ea5e9" stroke-width="1"/>
-  <text x="870" y="192" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">results/*.json</text>
+  <rect x="1001" y="192" width="155" height="30" fill="#1e3a5f" rx="5" stroke="#0ea5e9" stroke-width="1"/>
+  <text x="1079" y="211" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">results/*.json</text>
 
-  <rect x="680" y="215" width="120" height="26" fill="#312e81" rx="5" stroke="#6366f1" stroke-width="1"/>
-  <text x="740" y="232" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">audit_log.jsonl</text>
+  <rect x="824" y="234" width="155" height="30" fill="#312e81" rx="5" stroke="#6366f1" stroke-width="1"/>
+  <text x="902" y="253" text-anchor="middle" fill="#c7d2fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">audit_log.jsonl</text>
 
-  <rect x="810" y="215" width="120" height="26" fill="#3b0764" rx="5" stroke="#a855f7" stroke-width="1"/>
-  <text x="870" y="232" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="500">diagnostics/*.json</text>
+  <rect x="1001" y="234" width="155" height="30" fill="#3b0764" rx="5" stroke="#a855f7" stroke-width="1"/>
+  <text x="1079" y="253" text-anchor="middle" fill="#d8b4fe" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">diagnostics/*.json</text>
 
-  <rect x="680" y="255" width="250" height="40" fill="#0d1117" rx="5" stroke="#334155" stroke-width="1"/>
-  <text x="805" y="272" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9" font-style="italic">Self-describing engineering context</text>
-  <text x="805" y="286" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9" font-style="italic">Evidence + provenance + freshness</text>
+  <rect x="824" y="282" width="332" height="48" fill="#0d1117" rx="5" stroke="#334155" stroke-width="1"/>
+  <text x="990" y="303" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic">Self-describing engineering context</text>
+  <text x="990" y="320" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic">Evidence + provenance + freshness</text>
 
   <!-- Arrows -->
-  <line x1="180" y1="153" x2="210" y2="153" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <line x1="630" y1="153" x2="660" y2="153" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="214" y1="149" x2="244" y2="149" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="774" y1="149" x2="804" y2="149" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
 
-  <!-- MCP label -->
-  <text x="195" y="145" text-anchor="middle" fill="#64748b" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="9">MCP</text>
+  <text x="229" y="140" text-anchor="middle" fill="#64748b" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10">MCP</text>
 </svg>

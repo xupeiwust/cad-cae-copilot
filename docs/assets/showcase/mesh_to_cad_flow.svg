@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 180" width="900" height="180">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="900" height="180" fill="#0d1117" rx="10"/>
+  <text x="450" y="30" text-anchor="middle" fill="#e6edf3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600">Rebuild CAD from Mesh → Export STEP</text>
+
+  <rect x="30" y="55" width="100" height="50" fill="#1e3a5f" rx="6" stroke="#38bdf8" stroke-width="1"/>
+  <text x="80" y="84" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Input Mesh</text>
+  <line x1="130" y1="80" x2="160" y2="80" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <rect x="165" y="55" width="120" height="50" fill="#1e3a5f" rx="6" stroke="#38bdf8" stroke-width="1"/>
+  <text x="225" y="78" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Segment Regions</text>
+  <text x="225" y="94" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">plane / cylinder</text>
+  <line x1="285" y1="80" x2="315" y2="80" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <rect x="320" y="55" width="120" height="50" fill="#1e3a5f" rx="6" stroke="#38bdf8" stroke-width="1"/>
+  <text x="380" y="78" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Fit Surfaces</text>
+  <text x="380" y="94" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">analytic surfaces</text>
+  <line x1="440" y1="80" x2="470" y2="80" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <rect x="475" y="55" width="120" height="50" fill="#1e3a5f" rx="6" stroke="#38bdf8" stroke-width="1"/>
+  <text x="535" y="78" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Generate Faces</text>
+  <text x="535" y="94" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">OCC validation</text>
+  <line x1="595" y1="80" x2="625" y2="80" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <rect x="630" y="55" width="100" height="50" fill="#1e3a5f" rx="6" stroke="#38bdf8" stroke-width="1"/>
+  <text x="680" y="78" text-anchor="middle" fill="#7dd3fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Sew Shell</text>
+  <text x="680" y="94" text-anchor="middle" fill="#38bdf8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">closed / partial</text>
+  <line x1="730" y1="80" x2="760" y2="80" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <rect x="765" y="55" width="100" height="50" fill="#14532d" rx="6" stroke="#22c55e" stroke-width="1"/>
+  <text x="815" y="84" text-anchor="middle" fill="#86efac" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Export STEP</text>
+
+  <text x="450" y="140" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">Boundary: STEP only when shell closes; mesh-derived / lossy; freeform/NURBS future work</text>
+  <text x="450" y="158" text-anchor="middle" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11">Artifacts: reconstructed.step · stitching_plan.json · roundtrip_verification.json</text>
+</svg>

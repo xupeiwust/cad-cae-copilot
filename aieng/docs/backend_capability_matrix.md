@@ -82,6 +82,7 @@ the reference workbench. When in doubt, treat this file as the authoritative
 | Design-study problem/candidate validation | `stable` | `analysis/design_study_problem.json`, `patches/design_candidates/<candidate_id>.json`, `diagnostics/design_study_problem_diagnostics.json`, `diagnostics/design_study_candidate_validation.json` | No | Not applicable | Contract + validation only; no search, execution, compile, CAE, or baseline mutation |
 | Candidate execution into derived workspace | `stable` | `analysis/design_study_iterations.json`, `diagnostics/design_study_report.json`, `candidates/<candidate_id>/patch.json`, `candidates/<candidate_id>/geometry/shape_ir.json`, `candidates/<candidate_id>/provenance/candidate.json` | No package-level STEP | candidate-only | Explicit single-shot derived workspace; baseline geometry is never overwritten or promoted |
 | Candidate-local evidence evaluation | `stable` | `candidates/<candidate_id>/analysis/evaluation.json`, `candidates/<candidate_id>/diagnostics/evaluation_report.json` | No | Not applicable | Reads only candidate-local static/neutral/proxy evidence; no solver run, no geometry recompile, proxy assembly evidence is lower-confidence |
+| Candidate proposal hints | `stable` | `analysis/design_study_candidate_hints.json`, `diagnostics/design_study_candidate_hints_report.json` | No | Not applicable | Advisory variable-scoped hints only; no patch generation, optimizer/search, execution, CAE, ranking, acceptance, or geometry mutation |
 | Candidate ranking and scoring | `stable` | `analysis/design_study_candidate_ranking.json`, `diagnostics/design_study_scoring_report.json` | No | Not applicable | Advisory ranking only; missing metrics remain `needs_more_evaluation`, no optimizer/search |
 | Candidate acceptance as derived artifact | `stable` | `analysis/design_study_acceptance.json`, `diagnostics/design_study_acceptance_report.json`, `accepted/<candidate_id>/geometry/shape_ir.json` | No package-level STEP | derived-only | Explicit gated copy to `accepted/`; production approval and baseline promotion are not claimed |
 
@@ -110,6 +111,7 @@ The current snapshot is grounded in focused suites that cover the slices above:
 - `aieng/tests/test_assembly_topopt.py`
 - `aieng-ui/backend/tests/test_assembly_topopt_demo.py`
 - `aieng/tests/test_design_study_evaluation.py`
+- `aieng/tests/test_design_study_hints.py`
 - `aieng/tests/test_design_study_ranking.py`
 - `aieng-ui/backend/tests/test_api.py -k assembly_topology_optimization_run_endpoint_is_explicit_and_part_scoped`
 

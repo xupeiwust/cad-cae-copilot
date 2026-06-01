@@ -36,6 +36,10 @@ from aieng.converters.design_study_ranking import (
     DESIGN_STUDY_CANDIDATE_RANKING_PATH,
     DESIGN_STUDY_SCORING_REPORT_PATH,
 )
+from aieng.converters.design_study_hints import (
+    DESIGN_STUDY_CANDIDATE_HINTS_PATH,
+    DESIGN_STUDY_CANDIDATE_HINTS_REPORT_PATH,
+)
 from design_study_demo_fixture import (
     ALL_STUDY_ARTIFACTS,
     BASELINE_SHAPE_IR_PATH,
@@ -200,6 +204,23 @@ def test_canonical_demo_package_full_flow(tmp_path: Path) -> None:
     # best_candidate_id is candidate_good (feasible + improves objective)
     assert ranking["best_candidate_id"] == "candidate_good"
     assert ranking["safe_to_accept"] is True
+
+    # PR5: candidate proposal hints are explicit, advisory, and candidate-local-evidence based.
+    resp = client.post(f"/api/projects/{project_id}/design-study/hints", json={"max_hints": 10})
+    assert resp.status_code == 200, f"hints failed: {resp.text}"
+    hints_body = resp.json()
+    assert hints_body["baseline_modified"] is False
+    assert hints_body["candidate_patches_created"] is False
+    assert hints_body["candidates_executed"] is False
+    assert hints_body["hint_count"] > 0
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        assert DESIGN_STUDY_CANDIDATE_HINTS_PATH in names
+        assert DESIGN_STUDY_CANDIDATE_HINTS_REPORT_PATH in names
+    hints_doc = _read_pkg(pkg, DESIGN_STUDY_CANDIDATE_HINTS_PATH)
+    assert any(h["type"] == "protect_parameter" and h["variable_id"] == "bolt_dia" for h in hints_doc["hints"])
+    assert any(h["type"] == "adjust_parameter" and h["suggested_direction"] == "increase" for h in hints_doc["hints"])
+    assert any(h["type"] == "rerun_evaluation" for h in hints_doc["hints"])
 
     # Verify baseline still untouched
     assert _baseline_unchanged(pkg, baseline)

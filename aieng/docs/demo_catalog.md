@@ -15,7 +15,7 @@ For a higher-level showcase with demo talking points and visual guidance, see [`
 | Single-part topology optimization | Structural optimization | `aieng/tests/test_topology_optimization.py` | `pytest aieng/tests/test_topology_optimization.py -q` | `analysis/topology_optimization.json`, `geometry/shape_ir.json`, `diagnostics/topology_optimization_problem_derivation.json` | Compliance reduces, volume fraction met, contract fields present | Stable (2D) / Experimental (3D) | 2D plane-stress; 3D SIMP is reference-only |
 | Mesh-to-CAD B-Rep reconstruction | Mesh → analytic CAD | `aieng/tests/test_mesh_brep_*.py` | `pytest aieng/tests/test_mesh_brep_solidification.py -q` | `geometry/reconstructed.step`, `diagnostics/mesh_brep_sewing.json`, `graph/mesh_brep_stitching_plan.json` | Closed shell → valid solid → STEP export when possible | Stable | Mesh-derived/lossy; not production CAD; freeform/NURBS future work |
 | Assembly-aware topology optimization | Multi-part assembly optimization | `aieng-ui/backend/tests/test_assembly_topopt_demo.py` | `pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q` | `analysis/assembly_topology_optimization.json`, `parts/bracket/geometry/optimized_shape_ir.json`, `diagnostics/assembly_post_optimization_verification.json` | Derived part artifact written, frozen parts untouched, verification passed | Stable | Proxy connections only; no real contact; no bolt preload; one design part only |
-| Agent-guided parameter design study | Parameter exploration + evaluation + ranking + acceptance | `aieng-ui/backend/tests/test_design_study_demo.py` | `pytest aieng-ui/backend/tests/test_design_study_demo.py -q` | `candidates/candidate_good/analysis/evaluation.json`, `analysis/design_study_candidate_ranking.json`, `analysis/design_study_acceptance.json`, `accepted/candidate_good/geometry/shape_ir.json` | Best candidate evaluated, ranked, accepted into derived workspace; baseline untouched | Stable | Candidate-local static/neutral evidence only; no autonomous optimization; no baseline overwrite |
+| Agent-guided parameter design study | Parameter exploration + evaluation + hints + ranking + acceptance | `aieng-ui/backend/tests/test_design_study_demo.py` | `pytest aieng-ui/backend/tests/test_design_study_demo.py -q` | `candidates/candidate_good/analysis/evaluation.json`, `analysis/design_study_candidate_hints.json`, `analysis/design_study_candidate_ranking.json`, `analysis/design_study_acceptance.json`, `accepted/candidate_good/geometry/shape_ir.json` | Best candidate evaluated, hints generated, ranked, accepted into derived workspace; baseline untouched | Stable | Candidate-local static/neutral evidence only; no autonomous optimization; no baseline overwrite |
 
 ---
 
@@ -143,7 +143,7 @@ pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
 ## 4. Agent-Guided Parameter Design Study Demo
 
-**Purpose:** Validate the full PR1–PR5 design-study pipeline: problem contract → candidate validation → execution → candidate-local evaluation → ranking → explicit acceptance.
+**Purpose:** Validate the full PR1–PR6 design-study pipeline: problem contract → candidate validation → execution → candidate-local evaluation → advisory candidate hints → ranking → explicit acceptance.
 
 **Test file:** `aieng-ui/backend/tests/test_design_study_demo.py` (4 tests)
 
@@ -162,6 +162,8 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - `candidates/<candidate_id>/geometry/shape_ir.json` — derived Shape IR (valid candidates)
 - `candidates/<candidate_id>/analysis/evaluation.json` — normalized candidate-local evaluation with static/neutral metrics
 - `candidates/<candidate_id>/diagnostics/evaluation_report.json` — evaluation missingness/constraint diagnostics
+- `analysis/design_study_candidate_hints.json` — advisory next-candidate parameter hints
+- `diagnostics/design_study_candidate_hints_report.json` — hint diagnostics and evidence coverage
 - `analysis/design_study_iterations.json` — execution history
 - `diagnostics/design_study_report.json` — aggregated report
 - `analysis/design_study_candidate_ranking.json` — ranked candidates
@@ -177,7 +179,7 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
   - `candidate_bad_bounds` → rejected (out of bounds)
   - `candidate_protected` → rejected (tries to change protected `bolt_dia`)
   - `candidate_good`, `candidate_unknown`, `candidate_infeasible` → patch applied
-  - Inject static evaluations → explicit candidate-local evaluation endpoint → rank
+  - Inject static evaluations → explicit candidate-local evaluation endpoint → rank → explicit hints
   - `candidate_good` → feasible, score > 0, **best_candidate_id**
   - `candidate_infeasible` → infeasible (stress 250 > limit 200)
   - `candidate_unknown` → unknown (no volume metric)
@@ -196,6 +198,7 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - **No baseline overwrite** — accepted candidate is a derived artifact only
 - **No production approval** claimed
 - Ranking is advisory; `safe_to_accept` is conservative
+- Candidate hints are advisory; they never create patches, execute candidates, or mutate geometry
 - Missing metrics produce `needs_more_evaluation`, not overconfident acceptance
 
 ---
@@ -214,7 +217,7 @@ pytest aieng/tests/test_mesh_brep_solidification.py -q
 # Assembly-aware topology optimization
 pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
-# Agent-guided parameter design study (PR1–PR5)
+# Agent-guided parameter design study (PR1–PR6)
 pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 ```
 
@@ -236,6 +239,7 @@ pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_stud
 | Mesh-to-CAD reconstruction | Freeform/NURBS fitting is future work | Plane/cylinder/sphere/cone/torus dominant |
 | Design study | No autonomous optimization or Pareto search | Explicit single-shot execution only |
 | Design study | Candidate evaluation reads existing static/neutral/proxy artifacts only | No solver/recompile/promotion during evaluation |
+| Design study | Candidate hints are advisory only | No patch generation, execution, CAE, ranking, acceptance, or geometry mutation |
 
 ---
 

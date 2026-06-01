@@ -203,12 +203,13 @@
       "capability_area": "design_study",
       "maturity": "stable",
       "showcase_ready": true,
-      "why_impressive": "An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, evaluates candidate-local static/neutral evidence, ranks by objective and constraints, and allows explicit acceptance of the best safe candidate ? all without ever modifying baseline geometry.",
+      "why_impressive": "An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, evaluates candidate-local static/neutral evidence, generates advisory evidence-linked next-candidate hints, ranks by objective and constraints, and allows explicit acceptance of the best safe candidate ? all without ever modifying baseline geometry.",
       "what_it_demonstrates": [
         "Design study problem contract with variables, bounds, constraints, objective",
         "Candidate patch validation (bounds, protected variables, assembly scope)",
         "Explicit candidate execution into derived workspace",
         "Candidate-local evaluation from static/solver-neutral evidence",
+        "Advisory candidate hints with evidence links and protected-variable safeguards",
         "Feasibility classification (feasible/infeasible/unknown/failed)",
         "Conservative deterministic scoring by objective",
         "Best-candidate selection with safe_to_accept gating",
@@ -229,6 +230,8 @@
         "candidates/candidate_good/geometry/shape_ir.json",
         "candidates/candidate_good/analysis/evaluation.json",
         "candidates/candidate_good/diagnostics/evaluation_report.json",
+        "analysis/design_study_candidate_hints.json",
+        "diagnostics/design_study_candidate_hints_report.json",
         "analysis/design_study_iterations.json",
         "analysis/design_study_candidate_ranking.json",
         "diagnostics/design_study_scoring_report.json",
@@ -244,6 +247,7 @@
       ],
       "honesty_boundary": [
         "Candidate evaluation reads existing static/solver-neutral evidence only; no solver or recompile is run",
+        "Candidate hints are advisory only; no patches are generated automatically",
         "No autonomous optimization — candidates explicitly proposed and executed one at a time",
         "No baseline overwrite — accepted candidate is derived artifact only",
         "No production approval claimed",
@@ -259,6 +263,7 @@
       "talking_points": [
         "Show validation: protected bolt_dia rejected, out-of-bounds rejected",
         "Show execution: each candidate gets its own isolated workspace",
+        "Show hints: protected variables are avoided; infeasible stress evidence drives conservative increase hints",
         "Show ranking: feasible good candidate scores highest, infeasible flagged",
         "Show acceptance: explicit, gated, baseline untouched",
         "Show the accepted Shape IR: derived, traceable, with full provenance"

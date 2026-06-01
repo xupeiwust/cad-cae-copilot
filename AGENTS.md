@@ -794,6 +794,19 @@ safety factor across load cases; and marks proxy assembly evidence lower confide
 honesty. It never runs a solver, never recompiles geometry, never mutates baseline artifacts,
 and never promotes a candidate.
 
+Candidate proposal hints can be **explicitly generated** (PR6) via
+`POST /api/projects/{id}/design-study/hints`. This reads the design-study variables,
+candidate evaluations/ranking/scoring diagnostics, optional CAE/topopt maps, and assembly
+recommendations, then writes `analysis/design_study_candidate_hints.json` plus
+`diagnostics/design_study_candidate_hints_report.json`. Hints are structured and
+machine-readable (`adjust_parameter`, `protect_parameter`, `rerun_evaluation`,
+`request_user_input`, `stop_no_safe_hint`) with `variable_id`, direction, magnitude,
+priority, confidence, evidence links, and safety notes. The hint layer is advisory only:
+it never creates candidate patches, never runs optimization/search, never executes
+candidates, never runs CAE, never ranks or accepts candidates, and never mutates geometry
+or baseline artifacts. Low-confidence/proxy evidence leads to conservative hints and
+explicit `contact_physics_modeled:false` / `bolt_preload_modeled:false` honesty notes.
+
 **Executed candidates can be ranked** (PR3) via `POST /api/projects/{id}/design-study/rank`.
 This reads the iteration history and per-candidate evaluation artifacts (building/refreshed from
 candidate-local evidence when safe), classifies each candidate
@@ -827,6 +840,8 @@ the full PR1–PR5 pipeline end-to-end using deterministic static/neutral metric
   - `candidate_unknown` — valid but no metrics → `unknown`
   - `candidate_infeasible` — valid but stress violation → `infeasible`
 - Full-flow test: validate → execute all 5 → inject static evaluations → rank → accept best.
+- Hints path: explicit hint generation produces protected-variable, stress/safety, and
+  rerun-evaluation hints without creating patches or modifying baseline geometry.
 - Unsafe-data test: only bad candidates → ranking says no viable candidate → acceptance blocked.
 - Missing-ranking test: acceptance without prior ranking → `needs_user_input`.
 

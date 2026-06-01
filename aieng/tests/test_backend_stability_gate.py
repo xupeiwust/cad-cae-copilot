@@ -57,6 +57,8 @@ KEY_ARTIFACT_NAMES = [
     "analysis/design_study_problem.json",
     "candidates/candidate_good/analysis/evaluation.json",
     "candidates/candidate_good/diagnostics/evaluation_report.json",
+    "analysis/design_study_candidate_hints.json",
+    "diagnostics/design_study_candidate_hints_report.json",
     "analysis/design_study_candidate_ranking.json",
     "analysis/design_study_acceptance.json",
     "accepted/candidate_good/geometry/shape_ir.json",

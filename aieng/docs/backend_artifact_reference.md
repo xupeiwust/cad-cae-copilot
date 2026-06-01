@@ -127,6 +127,8 @@ reconstruction or assembly stage succeeded.
 | `candidates/<candidate_id>/provenance/candidate.json` | candidate execution | Provenance for patch application and baseline reference | Provenance only |
 | `candidates/<candidate_id>/analysis/evaluation.json` | candidate evaluation | Normalized candidate metrics, units/source paths, confidence, and constraint evidence | Reads local evidence only; no solver/recompile/promotion |
 | `candidates/<candidate_id>/diagnostics/evaluation_report.json` | candidate evaluation | Missingness and constraint-evaluation diagnostics | Diagnostic only |
+| `analysis/design_study_candidate_hints.json` | candidate hint generation | Advisory variable-scoped parameter hints with evidence links, direction/magnitude, priority, confidence, and safety notes | Does not create candidate patches or mutate geometry |
+| `diagnostics/design_study_candidate_hints_report.json` | candidate hint generation | Input evidence presence/missingness, rules triggered, hint counts, confidence distribution, warnings/errors | Diagnostic only |
 | `analysis/design_study_candidate_ranking.json` | candidate ranking | Advisory feasibility/score/order for executed candidates | Ranking only; no search or auto-accept |
 | `diagnostics/design_study_scoring_report.json` | candidate ranking | Ranking diagnostics, missing metrics, confidence distribution | Diagnostic only |
 | `analysis/design_study_acceptance.json` | explicit acceptance | Records an accepted/rejected derived candidate decision | Does not promote into baseline geometry |
@@ -145,3 +147,6 @@ reconstruction or assembly stage succeeded.
   mutate geometry, or certify safety/manufacturability.
 - Design-study evaluation/ranking is advisory and candidate-local. It never runs
   a solver, recompiles geometry, searches candidates, or promotes a baseline.
+- Design-study hints are advisory decision support. They never create candidate
+  patches, execute candidates, run optimization/CAE, rank/accept candidates, or
+  mutate baseline geometry.

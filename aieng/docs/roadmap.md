@@ -249,6 +249,42 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 48: Design study candidate proposal hints v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). Adds an advisory hint layer that helps a human
+or agent decide what parameter change to propose next from existing design-study
+variables and evidence. This is **not an optimizer**: it never creates candidate
+patches, never runs random/grid/Bayesian/Pareto/search, never executes
+candidates, never runs CAE, never ranks/accepts candidates, and never mutates
+geometry or baseline artifacts.
+
+- New module `aieng/src/aieng/converters/design_study_hints.py`.
+- **`build_design_study_candidate_hints(package_path, max_hints=10)`** reads
+  `analysis/design_study_problem.json`, candidate iterations/evaluations,
+  ranking/scoring diagnostics, optional acceptance, assembly recommendations /
+  next actions / result maps, CAE result maps, topology optimization results, and
+  assembly post-optimization verification when present.
+- Writes `analysis/design_study_candidate_hints.json` and
+  `diagnostics/design_study_candidate_hints_report.json`.
+- Hints are structured and machine-readable: `adjust_parameter`,
+  `protect_parameter`, `rerun_evaluation`, `request_user_input`, and
+  `stop_no_safe_hint`; each carries `variable_id`, semantic role, suggested
+  direction/magnitude, priority, confidence, evidence links, and safety notes.
+- Variable safety analysis protects `safe_to_modify:false` and protected/interface
+  variables, warns near bounds, and respects `selected_part_id` scope for
+  adjustment hints.
+- Conservative explainable rules cover mass/volume opportunities, stress/safety
+  violations, deflection/stiffness, assembly interface preservation, ranking
+  feedback, prior-candidate tradeoffs, and proxy/low-confidence evidence.
+- Deterministic prioritization orders critical safety issues first, then protected
+  / interface issues, evaluation needs, and mass/volume opportunities; hint count
+  is capped.
+- Integration: `POST /api/projects/{id}/design-study/hints`.
+- Tests: focused design-study hints tests plus canonical design-study demo endpoint
+  coverage and stability docs. No UI source files.
+- **Out of scope (future):** automatic candidate generation, optimizer/search,
+  candidate execution/evaluation, CAE setup/solver, and baseline promotion.
+
 ## Phase 47: Design study candidate evaluation from solver-neutral evidence v0 — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent). PR5 after Phases 45–46. Adds explicit,

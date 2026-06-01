@@ -153,13 +153,14 @@ pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
 ## 4. Agent-guided parameter design study
 
-**Why it is impressive:** An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, evaluates candidate-local static/neutral evidence, ranks by objective and constraints, and allows explicit acceptance of the best safe candidate — all without ever modifying baseline geometry.
+**Why it is impressive:** An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, evaluates candidate-local static/neutral evidence, generates advisory evidence-linked next-candidate hints, ranks by objective and constraints, and allows explicit acceptance of the best safe candidate — all without ever modifying baseline geometry.
 
 **What it demonstrates:**
 - Design study problem contract with variables, bounds, constraints, objective
 - Candidate patch validation (bounds, protected variables, assembly scope)
 - Explicit candidate execution into derived workspace
 - Candidate-local evaluation from static/solver-neutral evidence
+- Advisory candidate hints with evidence links and protected-variable safeguards
 - Feasibility classification (`feasible` / `infeasible` / `unknown` / `failed`)
 - Conservative deterministic scoring by objective
 - Best-candidate selection with `safe_to_accept` gating
@@ -178,6 +179,8 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - `candidates/candidate_good/geometry/shape_ir.json` — derived geometry
 - `candidates/candidate_good/analysis/evaluation.json` — normalized evaluation metrics
 - `candidates/candidate_good/diagnostics/evaluation_report.json` — evaluation diagnostics
+- `analysis/design_study_candidate_hints.json` — advisory next-candidate hints
+- `diagnostics/design_study_candidate_hints_report.json` — hint diagnostics
 - `analysis/design_study_iterations.json` — execution history
 - `analysis/design_study_candidate_ranking.json` — ranked candidates
 - `diagnostics/design_study_scoring_report.json` — scoring diagnostics
@@ -188,12 +191,14 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 **What to show in a demo:**
 - Validation: protected `bolt_dia` rejected, out-of-bounds rejected
 - Execution: each candidate gets its own isolated workspace
+- Hints: protected variables are avoided; infeasible stress evidence drives conservative increase hints
 - Ranking: feasible good candidate scores highest, infeasible flagged
 - Acceptance: explicit, gated, baseline untouched
 - The accepted Shape IR: derived, traceable, with full provenance
 
 **Honesty boundary:**
 - Candidate evaluation reads existing static/solver-neutral evidence only; no solver or recompile is run
+- Candidate hints are advisory only; no patches are generated automatically
 - No autonomous optimization — candidates explicitly proposed and executed one at a time
 - No baseline overwrite — accepted candidate is derived artifact only
 - No production approval claimed

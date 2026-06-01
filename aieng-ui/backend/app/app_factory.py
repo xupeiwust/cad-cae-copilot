@@ -1308,6 +1308,32 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail=".aieng package not found")
         return {"project_id": project_id, **rank_design_study_candidates(package_path)}
 
+    @app.post("/api/projects/{project_id}/design-study/hints")
+    def build_design_study_candidate_hints_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Build advisory candidate proposal hints from existing design-study evidence.
+
+        Explicit backend-only decision support. Writes
+        ``analysis/design_study_candidate_hints.json`` and
+        ``diagnostics/design_study_candidate_hints_report.json``. It does NOT
+        generate candidate patches, execute candidates, run CAE, rank/accept
+        candidates, mutate geometry, or overwrite baseline artifacts.
+        """
+        from aieng.converters.design_study_hints import build_design_study_candidate_hints
+        from .project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **build_design_study_candidate_hints(package_path, max_hints=int(data.get("max_hints", 10))),
+        }
+
     @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/accept")
     def accept_design_study_candidate_endpoint(
         project_id: str,

@@ -105,6 +105,22 @@ This file is intentionally not a claim that every workspace-wide test suite is g
 Broader backend/API/runtime suites remain outside this snapshot and can be sensitive
 to current working directory, optional dependencies, or unrelated in-progress areas.
 
+## Backend stability gate
+
+A lightweight smoke-test gate keeps this matrix, the demo catalog, and the showcase gallery in sync:
+
+```bash
+pytest aieng/tests/test_backend_stability_gate.py -q
+```
+
+It checks:
+- Canonical demo/test files exist on disk
+- Key artifact names are still referenced in docs
+- Honesty boundary language has not been accidentally removed
+- The showcase gallery JSON and markdown stay aligned
+
+This is a consistency gate, not a production certification suite.
+
 ## Related Documentation
 
 - [`demo_catalog.md`](demo_catalog.md) — Canonical backend demos with run commands, expected artifacts, and honesty boundaries for each capability area.

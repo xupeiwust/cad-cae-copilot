@@ -238,6 +238,29 @@ pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_stud
 
 ---
 
+## Backend stability gate
+
+A lightweight smoke-test gate validates that canonical demos, key artifacts, and honesty boundaries remain consistent. It does **not** run heavy subprocess tests; it checks file existence, doc alignment, and honesty-boundary coverage.
+
+**What it checks:**
+- Canonical demo/test files exist (`test_topology_optimization.py`, `test_mesh_brep_solidification.py`, `test_assembly_topopt_demo.py`, `test_design_study_demo.py`, `test_showcase_gallery_docs.py`)
+- Key artifact names are referenced in docs
+- Honesty boundary text is present in canonical docs
+- Showcase gallery JSON and markdown stay aligned
+
+**How to run:**
+```bash
+pytest aieng/tests/test_backend_stability_gate.py -q
+```
+
+**Why it exists:**
+Long-term reliability depends on docs, tests, and artifact contracts staying in sync. The gate catches renames, deletions, and drift before they confuse users or downstream tooling.
+
+**What it is not:**
+This is a consistency smoke test, not a full production certification suite. It does not replace the focused demo tests above, nor does it validate runtime correctness.
+
+---
+
 ## Related Documentation
 
 - [`showcase_gallery.md`](showcase_gallery.md) — Showcase with demo talking points and visual guidance

@@ -233,6 +233,19 @@ pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_stud
 
 ---
 
+## Backend stability gate
+
+Keep the gallery manifest and docs consistent with a lightweight smoke test:
+
+```bash
+pytest aieng/tests/test_backend_stability_gate.py -q
+pytest aieng/tests/test_showcase_gallery_docs.py -q
+```
+
+These gates check that canonical demo files exist, artifact names remain referenced, and honesty-boundary language is still present. They do not replace the focused demo tests above, and they do not claim production certification.
+
+---
+
 ## Related documentation
 
 - [`demo_catalog.md`](demo_catalog.md) — Backend demo catalog with artifact paths and maturity

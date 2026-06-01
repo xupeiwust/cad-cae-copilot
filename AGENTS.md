@@ -822,6 +822,13 @@ auto-promotion to baseline, and design-history branching.
 - [`aieng/docs/demo_catalog.md`](aieng/docs/demo_catalog.md) — canonical demos and regression flows
 - [`aieng/docs/showcase_gallery.md`](aieng/docs/showcase_gallery.md) — showcase with demo talking points
 - [`aieng/docs/showcase_gallery.json`](aieng/docs/showcase_gallery.json) — machine-readable gallery manifest
+- [`aieng/docs/backend_capability_matrix.md`](aieng/docs/backend_capability_matrix.md) — capability status snapshot
+
+A lightweight backend stability gate checks that canonical demos, artifact names, and honesty boundaries stay in sync:
+```bash
+pytest aieng/tests/test_backend_stability_gate.py -q
+```
+This is a consistency smoke test, not a production certification suite.
 
 ### Assembly IR v0 (optional, multi-part)
 

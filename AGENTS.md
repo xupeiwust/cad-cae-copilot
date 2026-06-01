@@ -818,6 +818,10 @@ the full PR1–PR4 pipeline end-to-end using deterministic static metrics (no ex
 Future work: optimizer/search loop, multi-objective Pareto ranking, candidate CAE evaluation,
 auto-promotion to baseline, and design-history branching.
 
+**Related docs:** [`aieng/docs/demo_catalog.md`](aieng/docs/demo_catalog.md) — canonical demos and regression
+flows for all backend capability areas (topology optimization, mesh-to-CAD reconstruction,
+assembly-aware topopt, design study).
+
 ### Assembly IR v0 (optional, multi-part)
 
 A package MAY carry `assembly/assembly_ir.json` — a backend representation of a **multi-part

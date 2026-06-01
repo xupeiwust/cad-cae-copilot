@@ -2252,3 +2252,8 @@ This is a file conversion quality gate. The LLM consuming a `.aieng` package mus
 - **Not implemented:** actual CAD modification, mesh generation, solver execution, post-processing, optimization, manufacturing check, or geometry modification. This phase only records externally executed steps.
 - **Boundary:** `.aieng` does not execute external tools. `record-trace` records what the caller reports.
 - **Success criteria:** `aieng record-trace` creates and appends `provenance/tool_trace.json`, validator checks claim_policy flags and cross-references, summary mentions trace entries and tools involved, all tests pass.
+
+
+## Related Documentation
+
+- [`demo_catalog.md`](demo_catalog.md) — Canonical backend demos and regression flows with run commands, expected artifacts, and honesty boundaries for each capability area.

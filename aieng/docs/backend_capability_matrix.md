@@ -104,3 +104,7 @@ The current snapshot is grounded in focused suites that cover the slices above:
 This file is intentionally not a claim that every workspace-wide test suite is green.
 Broader backend/API/runtime suites remain outside this snapshot and can be sensitive
 to current working directory, optional dependencies, or unrelated in-progress areas.
+
+## Related Documentation
+
+- [`demo_catalog.md`](demo_catalog.md) — Canonical backend demos with run commands, expected artifacts, and honesty boundaries for each capability area.

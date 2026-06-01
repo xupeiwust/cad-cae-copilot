@@ -197,6 +197,42 @@ What this phase explicitly does **not** introduce:
 
 Future converters (NX, SolidWorks, CATIA, Onshape, Abaqus deck parsers, etc.) should follow the same contract in their own modules or external repositories. They are out of scope for Phase 20.
 
+## Phase 41: Assembly-aware topology optimization setup v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent / new optimizer). Builds on Assembly IR v0,
+interface geometry validation, Assembly CAE v0, and the existing single-part
+topology-optimization contract. It derives a topology-optimization setup for
+one selected `design_part` while preserving the assembly context as evidence.
+
+- New converter: `aieng.converters.assembly_topopt`.
+- Outputs:
+  - `analysis/assembly_topopt_problem.json` — selected part, candidate parts,
+    grid/frame, proxy-derived supports/loads, preserve regions, result guidance,
+    diagnostics, limitations, and provenance.
+  - `diagnostics/assembly_topopt_derivation.json` — compact derivation summary,
+    blocking diagnostics, warnings, and limitation/provenance block.
+  - `analysis/topology_optimization_problem.json` — emitted only when a selected
+    design part has safe, explicit supports and loads; consumable by the existing
+    `run_topology_optimization` path. No optimizer is run by package derivation.
+- Design-part selection is conservative: reference/fixture/fastener/load-source
+  and frozen parts are excluded; multiple optimizable parts require explicit
+  selection instead of guessing.
+- Interface constraints: mounting/support/bolt/weld/contact interfaces connected
+  to the selected part become preserve regions with cell masks and
+  `preserve_min_density`. Invalid connection geometry is not preserved; unresolved
+  interfaces are reported as warnings.
+- Assembly result map guidance: stress-like mapped regions become
+  preserve/reinforce guidance, displacement/deflection regions become stiffness
+  guidance, and low-confidence/unmapped regions are recorded but not enforced.
+- Honesty boundaries: connections remain simplified proxies; there is no
+  nonlinear contact, friction, bolt preload, real preload transfer, or
+  simultaneous multi-part optimization. Outputs keep `production_ready:false`.
+- Tests: selected-part derivation, preserve regions for mounting/bolt/load
+  interfaces, stress/deflection guidance, low-confidence non-enforcement,
+  frozen/reference part rejection, multiple design-part ambiguity, missing
+  supports/loads blocking standard problem emission, optimizer compatibility, and
+  package writer/no-assembly gating. No UI files.
+
 ## Phase 40: Assembly CAE v0 simplified proxy execution — COMPLETE (2026-06-01)
 
 Backend-only (no UI / NL-agent). Builds on Assembly IR v0 and interface geometry

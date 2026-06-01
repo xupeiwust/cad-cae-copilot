@@ -887,11 +887,26 @@ def process_assembly_cae_package(package_path: str | Path) -> dict[str, Any]:
         )
     )
     _replace_members(package_path, members)
+    topopt_result: dict[str, Any] = {}
+    try:
+        from aieng.converters.assembly_topopt import write_assembly_topopt_problem
+
+        topopt_result = write_assembly_topopt_problem(package_path)
+    except Exception as exc:  # noqa: BLE001 - assembly topopt setup is best-effort
+        topopt_result = {"error": f"{type(exc).__name__}: {exc}"}
+    if topopt_result.get("assembly_present"):
+        members_artifacts = set(members.keys()) | set(topopt_result.get("artifacts") or [])
+    else:
+        members_artifacts = set(members.keys())
     return {
         "assembly_present": True,
         "assembly_cae_model_status": model_diag.get("status"),
         "solver_deck_status": deck_diag.get("status"),
         "solver_execution_status": exec_diag.get("status"),
         "assembly_result_mapping_status": mapping_diag.get("status"),
-        "artifacts": sorted(members.keys()),
+        "assembly_topopt_status": topopt_result.get("status"),
+        "assembly_topopt_standard_problem_emitted": topopt_result.get("standard_problem_emitted"),
+        "assembly_topopt_diagnostics": topopt_result.get("diagnostics"),
+        "assembly_topopt_warnings": topopt_result.get("warnings"),
+        "artifacts": sorted(members_artifacts),
     }

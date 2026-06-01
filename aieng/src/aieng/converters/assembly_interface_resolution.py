@@ -543,5 +543,7 @@ def resolve_and_validate_assembly_geometry(package_path: str | Path) -> dict[str
         "solver_deck_status": cae_result.get("solver_deck_status"),
         "solver_execution_status": cae_result.get("solver_execution_status"),
         "assembly_result_mapping_status": cae_result.get("assembly_result_mapping_status"),
+        "assembly_topopt_status": cae_result.get("assembly_topopt_status"),
+        "assembly_topopt_standard_problem_emitted": cae_result.get("assembly_topopt_standard_problem_emitted"),
         "artifacts": sorted(members.keys()),
     }

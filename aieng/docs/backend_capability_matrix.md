@@ -108,3 +108,5 @@ to current working directory, optional dependencies, or unrelated in-progress ar
 ## Related Documentation
 
 - [`demo_catalog.md`](demo_catalog.md) — Canonical backend demos with run commands, expected artifacts, and honesty boundaries for each capability area.
+- [`showcase_gallery.md`](showcase_gallery.md) — Showcase gallery with demo talking points and visual guidance.
+- [`showcase_gallery.json`](showcase_gallery.json) — Machine-readable gallery manifest.

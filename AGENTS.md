@@ -818,9 +818,10 @@ the full PR1–PR4 pipeline end-to-end using deterministic static metrics (no ex
 Future work: optimizer/search loop, multi-objective Pareto ranking, candidate CAE evaluation,
 auto-promotion to baseline, and design-history branching.
 
-**Related docs:** [`aieng/docs/demo_catalog.md`](aieng/docs/demo_catalog.md) — canonical demos and regression
-flows for all backend capability areas (topology optimization, mesh-to-CAD reconstruction,
-assembly-aware topopt, design study).
+**Related docs:**
+- [`aieng/docs/demo_catalog.md`](aieng/docs/demo_catalog.md) — canonical demos and regression flows
+- [`aieng/docs/showcase_gallery.md`](aieng/docs/showcase_gallery.md) — showcase with demo talking points
+- [`aieng/docs/showcase_gallery.json`](aieng/docs/showcase_gallery.json) — machine-readable gallery manifest
 
 ### Assembly IR v0 (optional, multi-part)
 

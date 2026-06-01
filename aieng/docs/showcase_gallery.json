@@ -1,0 +1,276 @@
+{
+  "format": "aieng.showcase_gallery.v0",
+  "format_version": "0.1.0",
+  "schema_version": "0.1",
+  "description": "Reproducible showcase entries for AI-CAD/CAE backend capabilities",
+  "entries": [
+    {
+      "id": "single_part_topopt_bracket",
+      "title": "Single-part topology optimization",
+      "capability_area": "topology_optimization",
+      "maturity": "experimental_reference",
+      "showcase_ready": true,
+      "why_impressive": "Derives a topology optimization problem from CAE setup, runs SIMP compliance minimization, and writes back optimized geometry as editable Shape IR — all without external solvers for 2D, with structured-voxel experimental support for 3D.",
+      "what_it_demonstrates": [
+        "Deriving topopt problem from supports/loads/design-space",
+        "2D SIMP with density field and compliance history",
+        "Experimental 3D structured-voxel SIMP",
+        "Shape IR writeback as extruded_region, density_voxels, or smooth_mesh_proxy",
+        "Deterministic contract with limitations and provenance"
+      ],
+      "fixture_paths": [
+        "aieng/tests/test_topology_optimization.py"
+      ],
+      "run_commands": [
+        "pytest aieng/tests/test_topology_optimization.py -q"
+      ],
+      "expected_artifacts": [
+        "analysis/topology_optimization.json",
+        "analysis/topology_optimization_problem.json",
+        "diagnostics/topology_optimization_problem_derivation.json",
+        "geometry/shape_ir.json"
+      ],
+      "visual_artifacts": [
+        "geometry/shape_ir.json (viewable after build123d compile)",
+        "analysis/topology_optimization.json#density_grid"
+      ],
+      "exportable_artifacts": [
+        "geometry/shape_ir.json (compiles to STEP/STL/GLB)"
+      ],
+      "honesty_boundary": [
+        "2D SIMP is plane-stress; out-of-plane loads dropped with warnings",
+        "3D SIMP is experimental/structured-voxel, not production-certified",
+        "smooth_mesh_proxy is preview-only, not production CAD",
+        "Single material, linear elastic only",
+        "No manufacturing constraint modeling"
+      ],
+      "limitations": [
+        "Coarse grids for speed; fine grids need more memory",
+        "3D writeback produces watertight mesh proxies, not analytic B-Rep",
+        "No stress-constrained topopt (compliance minimization only)"
+      ],
+      "talking_points": [
+        "Show the density field evolution — white=material, black=void",
+        "Highlight that writeback preserves design-space frame",
+        "Point out limitations block: this is reference, not certified CAE",
+        "Show 2x2 vs 3x execution time comparison"
+      ],
+      "related_docs": [
+        "docs/demo_catalog.md",
+        "docs/backend_capability_matrix.md",
+        "AGENTS.md"
+      ]
+    },
+    {
+      "id": "mesh_to_cad_step_reconstruction",
+      "title": "Mesh-to-CAD B-Rep STEP reconstruction",
+      "capability_area": "mesh_reconstruction",
+      "maturity": "experimental_reference",
+      "showcase_ready": true,
+      "why_impressive": "Takes a mesh (e.g. from topology optimization or scanned data), segments it into regions, fits analytic surfaces (plane, cylinder, sphere, cone, torus), generates OCC faces, stitches edges, sews into a closed shell, and exports a valid STEP file — with honest fallback when the shell is not closed.",
+      "what_it_demonstrates": [
+        "Mesh region segmentation",
+        "Analytic surface fitting (plane/cylinder dominant)",
+        "OCC face generation and validation",
+        "Edge matching and stitching plan",
+        "OCC sewing into closed shell",
+        "STEP export only when solid validates",
+        "Roundtrip verification (re-import STEP and check)",
+        "Honest cleanup of stale artifacts on re-run"
+      ],
+      "fixture_paths": [
+        "aieng/tests/test_mesh_brep_reconstruction.py",
+        "aieng/tests/test_mesh_brep_face_generation.py",
+        "aieng/tests/test_mesh_brep_stitching.py",
+        "aieng/tests/test_mesh_brep_solidification.py"
+      ],
+      "run_commands": [
+        "pytest aieng/tests/test_mesh_brep_solidification.py -q"
+      ],
+      "expected_artifacts": [
+        "graph/mesh_region_graph.json",
+        "graph/mesh_surface_fit.json",
+        "diagnostics/mesh_reconstruction_readiness.json",
+        "geometry/partial_brep_surfaces.json",
+        "geometry/partial_brep_faces.json",
+        "graph/mesh_brep_stitching_plan.json",
+        "diagnostics/mesh_brep_sewing.json",
+        "diagnostics/mesh_brep_roundtrip_verification.json"
+      ],
+      "visual_artifacts": [
+        "geometry/reconstructed.step (when valid closed solid)"
+      ],
+      "exportable_artifacts": [
+        "geometry/reconstructed.step (only when shell closes and validates)"
+      ],
+      "honesty_boundary": [
+        "Mesh-derived and lossy; not original design history",
+        "Analytic-first: plane, cylinder, sphere, cone, torus dominant",
+        "Freeform/NURBS fitting is future work",
+        "geometry/reconstructed.step never overwrites source STEP",
+        "Partial shells do NOT produce STEP; reason recorded in diagnostics"
+      ],
+      "limitations": [
+        "Requires clean, watertight-ish input mesh",
+        "Small regions or noisy boundaries may be skipped",
+        "Roundtrip verification can fail on complex geometry; STEP kept but marked unverified",
+        "Not a replacement for native CAD history"
+      ],
+      "talking_points": [
+        "Show the region graph: how the mesh is segmented",
+        "Show fitted surfaces: this is a real cylinder, that is a real plane",
+        "Show the stitching plan: matched edges vs gaps",
+        "Emphasize: STEP only appears when shell actually closes — no fake exports",
+        "Show roundtrip diagnostics: re-imported and checked"
+      ],
+      "related_docs": [
+        "docs/demo_catalog.md",
+        "docs/backend_artifact_reference.md",
+        "docs/backend_capability_matrix.md"
+      ]
+    },
+    {
+      "id": "assembly_aware_topopt_bracket",
+      "title": "Assembly-aware topology optimization",
+      "capability_area": "assembly_topology_optimization",
+      "maturity": "experimental_reference",
+      "showcase_ready": true,
+      "why_impressive": "Represents a multi-part assembly with parts, interfaces, and connections; resolves interface geometry; builds a simplified proxy CAE model; derives a topology optimization problem for one selected design part while preserving mounting/load interfaces; runs SIMP; writes back an optimized Shape IR for the selected part only.",
+      "what_it_demonstrates": [
+        "Assembly IR with parts, interfaces, and connections",
+        "Interface resolution (bbox, centroid, normal, area)",
+        "Connection geometry validation",
+        "Solver-neutral assembly CAE proxy model",
+        "Assembly-aware topopt problem derivation",
+        "Preserve masks for mounting/load interfaces during optimization",
+        "Selected-part Shape IR writeback",
+        "Post-optimization verification and design recommendations"
+      ],
+      "fixture_paths": [
+        "aieng-ui/backend/tests/fixtures/assembly_topopt_demo/",
+        "aieng-ui/backend/tests/test_assembly_topopt_demo.py"
+      ],
+      "run_commands": [
+        "pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q"
+      ],
+      "expected_artifacts": [
+        "assembly/assembly_ir.json",
+        "assembly/part_registry.json",
+        "assembly/connection_graph.json",
+        "assembly/interface_resolution.json",
+        "simulation/assembly_cae_model.json",
+        "analysis/assembly_topopt_problem.json",
+        "analysis/assembly_topology_optimization.json",
+        "parts/bracket/geometry/optimized_shape_ir.json",
+        "diagnostics/assembly_post_optimization_verification.json",
+        "analysis/assembly_design_recommendations.json",
+        "analysis/assembly_next_actions.json"
+      ],
+      "visual_artifacts": [
+        "parts/bracket/geometry/optimized_shape_ir.json (compiles to STEP/GLB)"
+      ],
+      "exportable_artifacts": [
+        "parts/bracket/geometry/optimized_shape_ir.json"
+      ],
+      "honesty_boundary": [
+        "Connections are proxies only: rigid_tie, bonded, bolted_proxy, welded_proxy, contact_proxy, spring_proxy",
+        "No real nonlinear contact physics — no friction, no real contact forces",
+        "No bolt preload modeled",
+        "Optimizes one selected design part only; simultaneous multi-part optimization is future work",
+        "production_ready: False, contact_physics_modeled: False, bolt_preload_modeled: False"
+      ],
+      "limitations": [
+        "Proxy CAE model is simplified; full nonlinear FEA is future work",
+        "Assembly meshing and per-part mesh coupling are best-effort",
+        "Design recommendations are rule-based, not from real solver feedback"
+      ],
+      "talking_points": [
+        "Show assembly IR: 3 parts, 2 connections, 4 interfaces",
+        "Show interface resolution: real geometry extracted from topology",
+        "Show preserve regions: mounting holes and load faces stay intact",
+        "Show that frozen parts (wall, load_jig) are untouched",
+        "Show design recommendations: actionable but advisory"
+      ],
+      "related_docs": [
+        "docs/demo_catalog.md",
+        "docs/backend_capability_matrix.md",
+        "AGENTS.md"
+      ]
+    },
+    {
+      "id": "agent_guided_design_study_bracket",
+      "title": "Agent-guided parameter design study",
+      "capability_area": "design_study",
+      "maturity": "stable",
+      "showcase_ready": true,
+      "why_impressive": "An agent proposes parameter changes to a design; the backend validates each proposal against safety rules (bounds, protected variables), executes valid candidates into isolated derived workspaces, ranks them by objective and constraints using deterministic metrics, and allows explicit acceptance of the best safe candidate — all without ever modifying baseline geometry.",
+      "what_it_demonstrates": [
+        "Design study problem contract with variables, bounds, constraints, objective",
+        "Candidate patch validation (bounds, protected variables, assembly scope)",
+        "Explicit candidate execution into derived workspace",
+        "Static metric injection for deterministic evaluation",
+        "Feasibility classification (feasible/infeasible/unknown/failed)",
+        "Conservative deterministic scoring by objective",
+        "Best-candidate selection with safe_to_accept gating",
+        "Explicit acceptance into accepted/ workspace",
+        "Baseline geometry preserved throughout"
+      ],
+      "fixture_paths": [
+        "aieng-ui/backend/tests/fixtures/design_study_demo/",
+        "aieng-ui/backend/tests/test_design_study_demo.py"
+      ],
+      "run_commands": [
+        "pytest aieng-ui/backend/tests/test_design_study_demo.py -q"
+      ],
+      "expected_artifacts": [
+        "analysis/design_study_problem.json",
+        "diagnostics/design_study_candidate_validation.json",
+        "patches/design_candidates/candidate_good.json",
+        "candidates/candidate_good/geometry/shape_ir.json",
+        "candidates/candidate_good/analysis/evaluation.json",
+        "analysis/design_study_iterations.json",
+        "analysis/design_study_candidate_ranking.json",
+        "diagnostics/design_study_scoring_report.json",
+        "analysis/design_study_acceptance.json",
+        "accepted/candidate_good/geometry/shape_ir.json",
+        "accepted/candidate_good/provenance/acceptance.json"
+      ],
+      "visual_artifacts": [
+        "accepted/candidate_good/geometry/shape_ir.json (compiles to STEP/GLB)"
+      ],
+      "exportable_artifacts": [
+        "accepted/candidate_good/geometry/shape_ir.json"
+      ],
+      "honesty_boundary": [
+        "Static metrics only in demo; real CAE evaluation is future work",
+        "No autonomous optimization — candidates explicitly proposed and executed one at a time",
+        "No baseline overwrite — accepted candidate is derived artifact only",
+        "No production approval claimed",
+        "Ranking is advisory; safe_to_accept is conservative",
+        "Missing metrics produce needs_more_evaluation, not overconfident acceptance"
+      ],
+      "limitations": [
+        "Only single-objective deterministic scoring (not Pareto)",
+        "No search/grid/random exploration loop",
+        "No automatic promotion to baseline",
+        "Real CAE evaluation would require external solver integration"
+      ],
+      "talking_points": [
+        "Show validation: protected bolt_dia rejected, out-of-bounds rejected",
+        "Show execution: each candidate gets its own isolated workspace",
+        "Show ranking: feasible good candidate scores highest, infeasible flagged",
+        "Show acceptance: explicit, gated, baseline untouched",
+        "Show the accepted Shape IR: derived, traceable, with full provenance"
+      ],
+      "related_docs": [
+        "docs/demo_catalog.md",
+        "AGENTS.md"
+      ]
+    }
+  ],
+  "provenance": {
+    "created_by": "aieng.showcase_gallery",
+    "created_at": "2026-06-01",
+    "baseline_modified": false
+  }
+}

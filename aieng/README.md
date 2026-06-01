@@ -267,6 +267,7 @@ and the per-run reports under
 - [`docs/backend_capability_matrix.md`](docs/backend_capability_matrix.md) — Current reference backend CAD/CAE/topopt/reconstruction/assembly status snapshot
 - [`docs/backend_artifact_reference.md`](docs/backend_artifact_reference.md) — Current artifact/path reference for geometry, CAE, topopt, reconstruction, and assembly outputs
 - [`docs/demo_catalog.md`](docs/demo_catalog.md) — Canonical backend demos and regression flows (topology optimization, mesh-to-CAD reconstruction, assembly-aware topopt, agent-guided design study)
+- [`docs/showcase_gallery.md`](docs/showcase_gallery.md) — Showcase gallery with demo talking points and visual guidance
 - `src/aieng/converters/shape_ir.py` — Shape IR converter for topology-first/organic modeling sources (`.shape.json` / `.shape_ir.json`); the workbench runtime can execute its generated build123d `geometry/source.py` into STEP/STL/GLB.
 - [`docs/agi_handoff_walkthrough.md`](docs/agi_handoff_walkthrough.md) — End-to-end AGI handoff example
 - [`docs/development_log.md`](docs/development_log.md) — Phase-by-phase development history

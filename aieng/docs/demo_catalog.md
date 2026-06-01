@@ -4,6 +4,8 @@ Canonical backend demos and regression flows for the AI-CAD/CAE workbench.
 
 These are deterministic, backend-only tests that validate platform capabilities without requiring external solvers, UI interaction, or random generation. Each demo exercises a complete workflow end-to-end and records its honesty boundaries explicitly.
 
+For a higher-level showcase with demo talking points and visual guidance, see [`showcase_gallery.md`](showcase_gallery.md).
+
 ---
 
 ## Demo Matrix
@@ -238,6 +240,8 @@ pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_stud
 
 ## Related Documentation
 
+- [`showcase_gallery.md`](showcase_gallery.md) — Showcase with demo talking points and visual guidance
+- [`showcase_gallery.json`](showcase_gallery.json) — Machine-readable gallery manifest
 - [`backend_capability_matrix.md`](backend_capability_matrix.md) — Capability status matrix
 - [`backend_artifact_reference.md`](backend_artifact_reference.md) — Complete artifact path reference
 - [`roadmap.md`](roadmap.md) — Phase-by-phase development roadmap

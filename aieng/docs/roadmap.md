@@ -203,8 +203,10 @@ Backend-only (no UI / NL-agent / new optimizer). Connects Phase 41 setup to the
 existing topology-optimization execution/writeback path for one selected assembly
 `design_part`.
 
-- New explicit helper: `run_assembly_topology_optimization(package_path, ...)`.
-  It is not called automatically by assembly processing.
+- New explicit helper: `run_assembly_topology_optimization(package_path, ...)`,
+  exposed as `opt.run_assembly_topology_optimization` and
+  `POST /api/projects/{project_id}/assembly/topology-optimization/run`. It is not
+  called automatically by assembly processing.
 - Execution reads `analysis/assembly_topopt_problem.json` and
   `analysis/topology_optimization_problem.json`, validates one selected optimizable
   part, rejects reference/frozen/fixture/fastener/load-source parts, and returns

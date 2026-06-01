@@ -788,8 +788,10 @@ Assembly-aware topology optimization v0 is **explicit execution only**:
 setup writes `analysis/assembly_topopt_problem.json`,
 `diagnostics/assembly_topopt_derivation.json`, and, when supports+loads are safe,
 `analysis/topology_optimization_problem.json`. A separate explicit backend helper
-`run_assembly_topology_optimization(package_path, ...)` consumes those artifacts,
-calls the existing single-part SIMP optimizer, and writes:
+`run_assembly_topology_optimization(package_path, ...)` — exposed through
+`opt.run_assembly_topology_optimization` and
+`POST /api/projects/{project_id}/assembly/topology-optimization/run` — consumes
+those artifacts, calls the existing single-part SIMP optimizer, and writes:
 - `analysis/assembly_topology_optimization.json`
 - `diagnostics/assembly_topopt_execution.json`
 - `parts/<selected_part_id>/analysis/topology_optimization.json`

@@ -201,6 +201,42 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "density_voxels node and recompile. Run opt.run_topology_optimization first."
         ),
     },
+    "opt.run_assembly_topology_optimization": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "optimizer": {
+                "type": "string",
+                "description": "Optimizer backend. Defaults to simp_2d or simp_3d from the derived problem dimension.",
+            },
+            "writeback": {
+                "type": "boolean",
+                "description": "Write a selected-part derived optimized Shape IR artifact when safe (default true).",
+            },
+            "method": {
+                "type": "string",
+                "enum": ["contour", "voxels", "surface", "smooth_mesh", "marching_cubes"],
+                "description": "Selected-part writeback geometry method. Defaults to contour for 2D and smooth_mesh for 3D.",
+            },
+            "representation": {
+                "type": "string",
+                "description": "Selected-part derived Shape IR representation. Defaults to brep_build123d for 2D and manifold_mesh for 3D.",
+            },
+            "boundary": {
+                "type": "string",
+                "enum": ["spline", "polygon"],
+                "description": "2D contour boundary style for selected-part writeback (default spline).",
+            },
+        },
+        "additionalProperties": True,
+        "description": (
+            "Explicitly run assembly-aware topology optimization for one selected design part. "
+            "Consumes analysis/assembly_topopt_problem.json and analysis/topology_optimization_problem.json, "
+            "calls the existing optimizer, writes assembly diagnostics/provenance, and creates selected-part "
+            "derived artifacts without overwriting package-level geometry or reference parts."
+        ),
+    },
     "cae.map_results": {
         "type": "object",
         "required": ["project_id"],

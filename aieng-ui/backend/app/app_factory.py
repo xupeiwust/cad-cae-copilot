@@ -1160,6 +1160,17 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         p = payload or {}
         return _tool_opt_writeback_to_shape_ir({"project_id": project_id, **p}, {})
 
+    @app.post("/api/projects/{project_id}/assembly/topology-optimization/run")
+    def run_assembly_topology_optimization_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Explicitly run assembly-aware topopt for one selected design part.
+        Body: {optimizer?, writeback?, method?, representation?, boundary?}.
+        Does not run as part of /assembly/process."""
+        p = payload or {}
+        return _tool_opt_run_assembly_topology_optimization({"project_id": project_id, **p}, {})
+
     @app.post("/api/projects/{project_id}/assembly/process")
     def process_assembly_endpoint(
         project_id: str,
@@ -5246,6 +5257,49 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "Run opt.run_topology_optimization first."
         ),
         input_schema=_schema("opt.writeback_to_shape_ir"),
+    )
+
+    def _tool_opt_run_assembly_topology_optimization(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Explicit assembly-aware topopt execution for one selected design part.
+        Uses the assembly topopt setup artifacts and writes selected-part derived
+        artifacts only; no package-level geometry overwrite."""
+        from aieng.converters.assembly_topopt import run_assembly_topology_optimization
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = run_assembly_topology_optimization(
+                pkg,
+                optimizer=(str(inp["optimizer"]) if inp.get("optimizer") else None),
+                writeback=bool(inp.get("writeback", True)),
+                method=(str(inp["method"]) if inp.get("method") else None),
+                representation=(str(inp["representation"]) if inp.get("representation") else None),
+                boundary=str(inp.get("boundary") or "spline"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "assembly_topopt_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {
+            "status": result.get("status"),
+            "tool": "opt.run_assembly_topology_optimization",
+            "assembly_topology_optimization": result,
+        }
+
+    _rt.register_tool(
+        "opt.run_assembly_topology_optimization",
+        _tool_opt_run_assembly_topology_optimization,
+        description=(
+            "Explicitly run assembly-aware topology optimization for one selected design "
+            "part. Consumes assembly_topopt_problem + topology_optimization_problem, calls "
+            "the existing optimizer, writes assembly diagnostics/provenance and selected-part "
+            "derived artifacts, and never overwrites reference/frozen parts or package-level geometry."
+        ),
+        input_schema=_schema("opt.run_assembly_topology_optimization"),
     )
 
     _rt.register_tool(

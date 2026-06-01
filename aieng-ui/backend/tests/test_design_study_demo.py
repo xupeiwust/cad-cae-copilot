@@ -44,6 +44,7 @@ from design_study_demo_fixture import (
     ALL_STUDY_ARTIFACTS,
     BASELINE_SHAPE_IR_PATH,
     expected_accepted_artifacts,
+    expected_cae_evaluation_artifacts,
     expected_candidate_artifacts,
     inject_static_evaluation,
     load_demo_inputs,
@@ -122,24 +123,50 @@ def test_canonical_demo_package_full_flow(tmp_path: Path) -> None:
         assert run_body["baseline_modified"] is False
         assert run_body["candidate_id"] == cid
 
-    # Inject static evaluation metrics for deterministic ranking
+    # Inject deterministic static metrics into candidate workspaces.
+    # candidate_unknown receives NO metrics → will test insufficient_data path.
     inject_static_evaluation(pkg, "candidate_good")
-    inject_static_evaluation(pkg, "candidate_unknown")
     inject_static_evaluation(pkg, "candidate_infeasible")
 
-    # Explicit candidate-local evaluation endpoint: backend-only post-process,
-    # no solver/recompile/baseline mutation.
+    # ── Explicit candidate-local CAE evaluation request (normalize_existing) ─────
+    # candidate_good: static metrics present → evaluation complete
     resp = client.post(
-        f"/api/projects/{project_id}/design-study/candidates/candidate_good/evaluate",
-        json={},
+        f"/api/projects/{project_id}/design-study/candidates/candidate_good/cae-evaluate",
+        json={"mode": "normalize_existing", "allow_solver_execution": False,
+              "allow_ranking_refresh": False, "requested_by": "test"},
     )
-    assert resp.status_code == 200, f"evaluate failed: {resp.text}"
-    eval_body = resp.json()
-    assert eval_body["baseline_modified"] is False
-    assert eval_body["candidate_id"] == "candidate_good"
-    assert "candidates/candidate_good/diagnostics/evaluation_report.json" in eval_body["artifacts"]
+    assert resp.status_code == 200, f"cae-evaluate good failed: {resp.text}"
+    cae_body = resp.json()
+    assert cae_body["baseline_modified"] is False
+    assert cae_body["candidate_id"] == "candidate_good"
+    assert cae_body["solver_status"] == "skipped"
+    assert cae_body["normalization_status"] == "ok"
+    assert cae_body["evaluation_status"] == "complete"
 
-    # Verify baseline still untouched after all executions
+    # candidate_infeasible: static metrics present but stress violation
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/candidates/candidate_infeasible/cae-evaluate",
+        json={"mode": "normalize_existing", "allow_solver_execution": False,
+              "allow_ranking_refresh": False, "requested_by": "test"},
+    )
+    assert resp.status_code == 200, f"cae-evaluate infeasible failed: {resp.text}"
+    cae_body = resp.json()
+    assert cae_body["baseline_modified"] is False
+    assert cae_body["evaluation_status"] == "complete"
+
+    # candidate_unknown: no metrics → insufficient_data
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/candidates/candidate_unknown/cae-evaluate",
+        json={"mode": "normalize_existing", "allow_solver_execution": False,
+              "allow_ranking_refresh": False, "requested_by": "test"},
+    )
+    assert resp.status_code == 200, f"cae-evaluate unknown failed: {resp.text}"
+    cae_body = resp.json()
+    assert cae_body["baseline_modified"] is False
+    assert cae_body["normalization_status"] == "insufficient_data"
+    assert cae_body["evaluation_status"] == "insufficient_data"
+
+    # Verify baseline still untouched after all executions + evaluations
     assert _baseline_unchanged(pkg, baseline)
 
     # Verify iteration artifacts
@@ -163,7 +190,7 @@ def test_canonical_demo_package_full_flow(tmp_path: Path) -> None:
     # candidate_infeasible → patch_applied
     assert by_id["candidate_infeasible"]["execution_status"] == "patch_applied"
 
-    # Verify derived workspaces exist for valid candidates
+    # Verify derived workspaces exist for valid candidates (execution artifacts)
     with zipfile.ZipFile(pkg) as zf:
         names = set(zf.namelist())
         for cid in ("candidate_good", "candidate_unknown", "candidate_infeasible"):
@@ -172,6 +199,40 @@ def test_canonical_demo_package_full_flow(tmp_path: Path) -> None:
         # Rejected candidates have no workspace
         for cid in ("candidate_bad_bounds", "candidate_protected"):
             assert not any(n.startswith(f"candidates/{cid}/") for n in names)
+
+    # Verify CAE evaluation artifacts for evaluated candidates
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        for cid in ("candidate_good", "candidate_infeasible", "candidate_unknown"):
+            for art in expected_cae_evaluation_artifacts(cid):
+                assert art in names, f"missing cae artifact: {art}"
+
+    # Verify evaluation.json was produced through the CAE request path
+    good_eval = _read_pkg(pkg, "candidates/candidate_good/analysis/evaluation.json")
+    assert good_eval["feasibility"] == "feasible"
+    assert good_eval["evaluation_status"] == "complete"
+    assert good_eval["baseline_modified"] is False
+    assert good_eval["honesty"]["solver_executed"] is False
+    # Source artifact paths should include static_metrics.json
+    assert any("static_metrics.json" in p for p in good_eval.get("source_artifact_paths", []))
+
+    infeasible_eval = _read_pkg(pkg, "candidates/candidate_infeasible/analysis/evaluation.json")
+    assert infeasible_eval["feasibility"] == "infeasible"
+    assert infeasible_eval["evaluation_status"] == "complete"
+
+    unknown_eval = _read_pkg(pkg, "candidates/candidate_unknown/analysis/evaluation.json")
+    assert unknown_eval["evaluation_status"] == "insufficient_data"
+    assert unknown_eval["feasibility"] == "unknown"
+
+    # Verify no package-level baseline analysis/computed_metrics.json was written
+    with zipfile.ZipFile(pkg) as zf:
+        names = zf.namelist()
+        assert "analysis/computed_metrics.json" not in names
+        assert "results/computed_metrics.json" not in names
+
+    # Verify baseline setup.yaml is still present and unchanged
+    with zipfile.ZipFile(pkg) as zf:
+        assert "simulation/setup.yaml" in zf.namelist()
 
     # ── PR3: rank ────────────────────────────────────────────────────────────
     resp = client.post(f"/api/projects/{project_id}/design-study/rank", json={})
@@ -403,7 +464,11 @@ def test_hints_after_acceptance_are_conservative(tmp_path: Path) -> None:
         )
         assert resp.status_code == 200
     inject_static_evaluation(pkg, "candidate_good")
-    client.post(f"/api/projects/{project_id}/design-study/candidates/candidate_good/evaluate", json={})
+    client.post(
+        f"/api/projects/{project_id}/design-study/candidates/candidate_good/cae-evaluate",
+        json={"mode": "normalize_existing", "allow_solver_execution": False,
+              "allow_ranking_refresh": False, "requested_by": "test"},
+    )
     client.post(f"/api/projects/{project_id}/design-study/rank", json={})
     client.post(
         f"/api/projects/{project_id}/design-study/candidates/candidate_good/accept",
@@ -423,3 +488,66 @@ def test_hints_after_acceptance_are_conservative(tmp_path: Path) -> None:
     ), "No aggressive high-priority adjust hints after acceptance"
     assert hints_doc["baseline_modified"] is False
     assert hints_doc.get("candidate_patches_created") is not True
+
+
+# ── Part E: endpoint regression for /cae-evaluate ─────────────────────────────
+
+def test_cae_evaluate_endpoint_normalize_existing(tmp_path: Path) -> None:
+    """POST /cae-evaluate with normalize_existing consumes static metrics and
+    produces candidate-local evaluation artifacts without running a solver.
+    """
+    client, project_id, pkg, data = _make_project_with_demo_package(tmp_path)
+    baseline = data["baseline_shape_ir"]
+
+    # Execute and inject static metrics
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/candidates/candidate_good/run",
+        json={"compile": False},
+    )
+    assert resp.status_code == 200
+    inject_static_evaluation(pkg, "candidate_good")
+
+    # Call the CAE evaluation endpoint
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/candidates/candidate_good/cae-evaluate",
+        json={
+            "mode": "normalize_existing",
+            "allow_solver_execution": False,
+            "allow_ranking_refresh": False,
+            "requested_by": "test",
+        },
+    )
+    assert resp.status_code == 200, f"cae-evaluate failed: {resp.text}"
+    body = resp.json()
+
+    # Response assertions
+    assert body["project_id"] == project_id
+    assert body["status"] == "ok"
+    assert body["candidate_id"] == "candidate_good"
+    assert body["mode"] == "normalize_existing"
+    assert body["solver_status"] == "skipped"
+    assert body["ranking_refresh_status"] == "skipped"
+    assert body["baseline_modified"] is False
+
+    # Artifact assertions
+    with zipfile.ZipFile(pkg) as zf:
+        names = set(zf.namelist())
+        assert "candidates/candidate_good/analysis/cae_evaluation_request.json" in names
+        assert "candidates/candidate_good/diagnostics/cae_evaluation_request.json" in names
+        assert "candidates/candidate_good/simulation/setup.yaml" in names
+        assert "candidates/candidate_good/analysis/evaluation.json" in names
+        assert "candidates/candidate_good/diagnostics/evaluation_report.json" in names
+
+    # evaluation.json assertions
+    ev = _read_pkg(pkg, "candidates/candidate_good/analysis/evaluation.json")
+    assert ev["feasibility"] == "feasible"
+    assert ev["evaluation_status"] == "complete"
+    assert ev["baseline_modified"] is False
+    assert ev["honesty"]["solver_executed"] is False
+    assert any("static_metrics.json" in p for p in ev.get("source_artifact_paths", []))
+
+    # Baseline unchanged, no package-level computed_metrics written
+    assert _baseline_unchanged(pkg, baseline)
+    with zipfile.ZipFile(pkg) as zf:
+        assert "analysis/computed_metrics.json" not in zf.namelist()
+        assert "results/computed_metrics.json" not in zf.namelist()

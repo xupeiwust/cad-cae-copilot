@@ -66,6 +66,8 @@ def load_demo_inputs() -> dict[str, Any]:
 BASELINE_SHAPE_IR_PATH = "geometry/shape_ir.json"
 DESIGN_STUDY_PROBLEM_PATH = "analysis/design_study_problem.json"
 DESIGN_CANDIDATES_DIR = "patches/design_candidates/"
+BASELINE_SETUP_PATH = "simulation/setup.yaml"
+BASELINE_SETUP_CONTENT = "mesh:\n  size: 2.0\n"
 
 PR1_ARTIFACTS = {
     "diagnostics/design_study_problem_diagnostics.json",
@@ -97,7 +99,18 @@ def expected_candidate_artifacts(candidate_id: str) -> set[str]:
         f"{prefix}patch.json",
         f"{prefix}geometry/shape_ir.json",
         f"{prefix}provenance/candidate.json",
+    }
+
+
+def expected_cae_evaluation_artifacts(candidate_id: str) -> set[str]:
+    """Artifacts expected under a candidate workspace after CAE evaluation."""
+    prefix = f"candidates/{candidate_id}/"
+    return {
         f"{prefix}analysis/evaluation.json",
+        f"{prefix}diagnostics/evaluation_report.json",
+        f"{prefix}analysis/cae_evaluation_request.json",
+        f"{prefix}diagnostics/cae_evaluation_request.json",
+        f"{prefix}simulation/setup.yaml",
     }
 
 
@@ -125,31 +138,25 @@ def write_demo_package(package_path: Path) -> dict[str, Any]:
         zf.writestr("manifest.json", json.dumps({"format": "aieng.package", "version": "0.1.0"}))
         zf.writestr(BASELINE_SHAPE_IR_PATH, json.dumps(data["baseline_shape_ir"]))
         zf.writestr(DESIGN_STUDY_PROBLEM_PATH, json.dumps(data["problem"]))
+        zf.writestr(BASELINE_SETUP_PATH, BASELINE_SETUP_CONTENT)
         for cid, cand in data["candidates"].items():
             zf.writestr(f"{DESIGN_CANDIDATES_DIR}{cid}.json", json.dumps(cand))
     return data
 
 
 def inject_static_evaluation(package_path: Path, candidate_id: str) -> None:
-    """Inject static evaluation metrics into a candidate workspace.
+    """Inject deterministic static metrics into a candidate workspace.
 
-    Writes ``candidates/<cid>/analysis/evaluation.json`` with pre-computed
-    metrics so ranking can proceed without a real recompiler/CAE run.
+    Writes ``candidates/<cid>/analysis/static_metrics.json`` with pre-computed
+    flat metrics.  The explicit candidate CAE evaluation request endpoint
+    (``normalize_existing`` mode) consumes these to produce
+    ``candidates/<cid>/analysis/evaluation.json``.
+
+    Static metrics are deterministic demo evidence; no external solver is run.
     """
     metrics = CANDIDATE_STATIC_METRICS.get(candidate_id, {})
-    evaluation = {
-        "format": "aieng.design_study_candidate_evaluation",
-        "format_version": "0.1.0",
-        "evaluation_status": "complete" if metrics else "partial",
-        "compile_status": "compile_succeeded",
-        "metrics": metrics,
-        "errors": [],
-        "warnings": [],
-        "reason": "static evaluation for demo fixture",
-        "baseline_modified": False,
-    }
     _append_to_package(package_path, {
-        f"candidates/{candidate_id}/analysis/evaluation.json": json.dumps(evaluation).encode(),
+        f"candidates/{candidate_id}/analysis/static_metrics.json": json.dumps(metrics).encode(),
     })
 
 

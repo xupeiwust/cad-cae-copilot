@@ -178,6 +178,10 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - `diagnostics/design_study_candidate_validation.json` — validation results
 - `patches/design_candidates/candidate_good.json` — proposed patch
 - `candidates/candidate_good/geometry/shape_ir.json` — derived geometry
+- `candidates/candidate_good/analysis/static_metrics.json` — deterministic demo evidence (no solver)
+- `candidates/candidate_good/analysis/cae_evaluation_request.json` — explicit CAE evaluation request
+- `candidates/candidate_good/diagnostics/cae_evaluation_request.json` — CAE evaluation diagnostics
+- `candidates/candidate_good/simulation/setup.yaml` — candidate-local CAE setup derived from baseline
 - `candidates/candidate_good/analysis/evaluation.json` — normalized evaluation metrics
 - `candidates/candidate_good/diagnostics/evaluation_report.json` — evaluation diagnostics
 - `analysis/design_study_candidate_hints.json` — advisory next-candidate hints

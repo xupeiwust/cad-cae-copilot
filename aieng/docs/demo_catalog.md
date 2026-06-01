@@ -145,7 +145,7 @@ pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
 **Purpose:** Validate the full PR1–PR6 design-study pipeline: problem contract → candidate validation → execution → candidate-local evaluation → advisory candidate hints → ranking → explicit acceptance.
 
-**Test file:** `aieng-ui/backend/tests/test_design_study_demo.py` (4 tests)
+**Test file:** `aieng-ui/backend/tests/test_design_study_demo.py` (6 tests)
 
 **Fixture:** `aieng-ui/backend/tests/fixtures/design_study_demo/`
 
@@ -160,7 +160,11 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - `diagnostics/design_study_candidate_validation.json` — per-candidate validation
 - `patches/design_candidates/<candidate_id>.json` — 5 candidate patches
 - `candidates/<candidate_id>/geometry/shape_ir.json` — derived Shape IR (valid candidates)
-- `candidates/<candidate_id>/analysis/evaluation.json` — normalized candidate-local evaluation with static/neutral metrics
+- `candidates/<candidate_id>/analysis/static_metrics.json` — deterministic demo evidence (no solver)
+- `candidates/<candidate_id>/analysis/cae_evaluation_request.json` — explicit CAE evaluation request
+- `candidates/<candidate_id>/diagnostics/cae_evaluation_request.json` — CAE evaluation diagnostics
+- `candidates/<candidate_id>/simulation/setup.yaml` — candidate-local CAE setup derived from baseline
+- `candidates/<candidate_id>/analysis/evaluation.json` — normalized candidate-local evaluation
 - `candidates/<candidate_id>/diagnostics/evaluation_report.json` — evaluation missingness/constraint diagnostics
 - `analysis/design_study_candidate_hints.json` — advisory next-candidate parameter hints
 - `diagnostics/design_study_candidate_hints_report.json` — hint diagnostics and evidence coverage
@@ -179,11 +183,12 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
   - `candidate_bad_bounds` → rejected (out of bounds)
   - `candidate_protected` → rejected (tries to change protected `bolt_dia`)
   - `candidate_good`, `candidate_unknown`, `candidate_infeasible` → patch applied
-  - Inject static evaluations → explicit candidate-local evaluation endpoint → rank → explicit hints
+  - Inject deterministic static metrics into candidate workspaces
+  - Explicit candidate-local CAE evaluation request (`normalize_existing` mode) for all valid candidates
   - `candidate_good` → feasible, score > 0, **best_candidate_id**
   - `candidate_infeasible` → infeasible (stress 250 > limit 200)
-  - `candidate_unknown` → unknown (no volume metric)
-  - Accept `candidate_good` → `accepted: True`, `promotion_mode: derived_only`
+  - `candidate_unknown` → insufficient_data / unknown (no metrics)
+  - Rank → explicit hints → accept `candidate_good` → `accepted: True`, `promotion_mode: derived_only`
   - Baseline Shape IR **never modified**
 - `test_unsafe_data_rejects_acceptance`
   - Only bad candidates executed → no viable candidate → acceptance blocked
@@ -191,6 +196,10 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
   - Non-best candidate requires `override_unsafe`; unknown always rejected
 - `test_missing_ranking_blocks_acceptance`
   - Acceptance without prior ranking → `needs_user_input`
+- `test_hints_after_acceptance_are_conservative`
+  - After acceptance, hints become stop-style / conservative
+- `test_cae_evaluate_endpoint_normalize_existing`
+  - `/cae-evaluate` endpoint produces candidate-local artifacts, skips solver, leaves baseline untouched
 
 **Honesty boundaries:**
 - Uses **static/solver-neutral candidate-local metrics only** — no external solver is executed
@@ -200,6 +209,7 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - Ranking is advisory; `safe_to_accept` is conservative
 - Candidate hints are advisory; they never create patches, execute candidates, or mutate geometry
 - Missing metrics produce `needs_more_evaluation`, not overconfident acceptance
+- Candidate CAE evaluation request is explicit and candidate-local; solver execution is disabled by default
 
 ---
 

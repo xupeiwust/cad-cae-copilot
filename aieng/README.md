@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)]()
-[![Tests](https://img.shields.io/badge/tests-1468%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-focused%20suites%20tracked-yellow.svg)]()
 
 > **Better CAD agents start with better engineering context.**
 >
@@ -105,6 +105,7 @@ For system-wide architecture, see [`../docs/system_architecture.md`](../docs/sys
 - **MCP server** — `aieng serve` exposes agent-callable tools over stdio or SSE
 - **FRD parsing** — Pure-Python CalculiX result parser (DISP, S fields; no VTK dependency)
 - **Converter framework** - ingestion adapters that bring CAD/CAE artifacts into `.aieng`; conversion is plumbing, not the semantic source of truth
+- **Reference backend capability snapshot** - see [`docs/backend_capability_matrix.md`](docs/backend_capability_matrix.md) and [`docs/backend_artifact_reference.md`](docs/backend_artifact_reference.md) for the current workspace-level CAD/CAE/topopt/reconstruction/assembly status and artifact paths
 
 ## Benchmarks
 
@@ -263,6 +264,8 @@ and the per-run reports under
 - [`docs/core_position.md`](docs/core_position.md) — Core positioning and product boundary
 - [`docs/cad_cae_conversion_contract.md`](docs/cad_cae_conversion_contract.md) — CAD/CAE converter contract
 - [`docs/geometry_backend_contract.md`](docs/geometry_backend_contract.md) — Geometry backend interface
+- [`docs/backend_capability_matrix.md`](docs/backend_capability_matrix.md) — Current reference backend CAD/CAE/topopt/reconstruction/assembly status snapshot
+- [`docs/backend_artifact_reference.md`](docs/backend_artifact_reference.md) — Current artifact/path reference for geometry, CAE, topopt, reconstruction, and assembly outputs
 - `src/aieng/converters/shape_ir.py` — Shape IR converter for topology-first/organic modeling sources (`.shape.json` / `.shape_ir.json`); the workbench runtime can execute its generated build123d `geometry/source.py` into STEP/STL/GLB.
 - [`docs/agi_handoff_walkthrough.md`](docs/agi_handoff_walkthrough.md) — End-to-end AGI handoff example
 - [`docs/development_log.md`](docs/development_log.md) — Phase-by-phase development history

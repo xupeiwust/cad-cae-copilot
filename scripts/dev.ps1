@@ -31,4 +31,8 @@ Write-Host "[scripts/dev.ps1] Using Python: $python"
 Write-Host "[scripts/dev.ps1] Starting backend + frontend..."
 
 Set-Location $RepoRoot
-& $python $DevPy
+if ($python -eq "py -3") {
+    & py -3 $DevPy
+} else {
+    & $python $DevPy
+}

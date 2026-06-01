@@ -66,6 +66,7 @@ reconstruction or assembly stage succeeded.
 | `diagnostics/mesh_surface_fitting.json` | analytic fit stage | Fit quality / failures / skipped regions | Diagnostic only |
 | `graph/mesh_freeform_surface_fit.json` | freeform fit stage v0 | Approximate BSpline-like surface evidence for freeform mesh regions | Evidence-only; not B-Rep, not STEP, not CAD-editable |
 | `diagnostics/mesh_freeform_surface_fitting.json` | freeform fit stage v0 | Freeform fitting diagnostics: counts, skipped reasons, confidence distribution | Diagnostic only |
+| `diagnostics/mesh_freeform_reconstruction_readiness.json` | freeform readiness stage v0 | Quality/readiness scoring and recommended next actions per freeform surface | Advisory/readiness-only; does not generate B-Rep faces or export STEP |
 | `diagnostics/mesh_reconstruction_readiness.json` | readiness analysis | Honest readiness classification for future reconstruction | Does not reconstruct geometry |
 | `graph/mesh_reconstruction_plan.json` | readiness analysis | Per-region readiness/recommended-next-action plan | Planning evidence only |
 | `graph/mesh_brep_reconstruction_plan.json` | partial B-Rep planning | Conservative reconstruction plan for analytic regions | Planning evidence only |

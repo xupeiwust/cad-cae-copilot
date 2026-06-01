@@ -61,11 +61,13 @@ pytest aieng/tests/test_topology_optimization.py -q
 - `aieng/tests/test_mesh_brep_stitching.py` (8 tests)
 - `aieng/tests/test_mesh_brep_solidification.py` (11 tests)
 - `aieng/tests/test_mesh_freeform_surface_fitting.py` (15 tests)
+- `aieng/tests/test_mesh_freeform_surface_readiness.py` (20 tests)
 
 **Run:**
 ```bash
 pytest aieng/tests/test_mesh_brep_solidification.py -q
 pytest aieng/tests/test_mesh_freeform_surface_fitting.py -q
+pytest aieng/tests/test_mesh_freeform_surface_readiness.py -q
 ```
 
 **Expected artifacts:**
@@ -73,6 +75,7 @@ pytest aieng/tests/test_mesh_freeform_surface_fitting.py -q
 - `graph/mesh_surface_fit.json` — fitted plane/cylinder surface parameters
 - `graph/mesh_freeform_surface_fit.json` — approximate BSpline-like freeform surface evidence
 - `diagnostics/mesh_freeform_surface_fitting.json` — freeform fitting diagnostics
+- `diagnostics/mesh_freeform_reconstruction_readiness.json` — freeform readiness/quality scoring and next actions
 - `diagnostics/mesh_reconstruction_readiness.json` — readiness gates
 - `geometry/partial_brep_surfaces.json` — analytic surface candidates
 - `geometry/partial_brep_faces.json` — validated OCC face candidates
@@ -85,6 +88,8 @@ pytest aieng/tests/test_mesh_freeform_surface_fitting.py -q
 - Cube produces 6 face candidates, 12 matched edge pairs, closed shell
 - Cylinder produces cylinder face candidate
 - Freeform patches (saddle, sphere-like) produce BSpline surface evidence with control net and error metrics
+- Freeform readiness scoring classifies surfaces as ready/partial/not_ready with quality scores
+- Poor/high-error/missing-boundary fits are explicitly not_ready with recommended next actions
 - Freeform evidence does NOT generate B-Rep faces or trigger STEP export
 - Missing/degenerate faces are skipped honestly (no false STEP)
 - Only closed OCC-valid solids write STEP; partial shells do not
@@ -94,6 +99,7 @@ pytest aieng/tests/test_mesh_freeform_surface_fitting.py -q
 - Reconstruction is mesh-derived and lossy; not original design history
 - Dominant surface classes: plane, cylinder, sphere, cone, torus
 - Freeform/BSpline fitting is evidence-only v0; NOT B-Rep faces, NOT STEP, NOT CAD-editable
+- Freeform readiness scoring is advisory/readiness-only; does NOT generate B-Rep faces or export STEP
 - `geometry/reconstructed.step` never overwrites the source STEP
 - Failed reconstruction removes stale artifacts and restores mesh topology
 

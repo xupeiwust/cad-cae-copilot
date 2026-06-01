@@ -17,6 +17,7 @@ from aieng.converters.mesh_region_segmentation import MESH_REGION_GRAPH_PATH
 from aieng.converters.mesh_surface_fitting import MESH_SURFACE_FIT_PATH
 from aieng.converters.mesh_reconstruction_readiness import MESH_RECONSTRUCTION_READINESS_PATH
 from aieng.converters.mesh_freeform_surface_fitting import FREEFORM_SURFACE_FIT_PATH
+from aieng.converters.mesh_freeform_surface_readiness import FREEFORM_READINESS_PATH
 
 MESH_BREP_PLAN_PATH = "graph/mesh_brep_reconstruction_plan.json"
 PARTIAL_BREP_SURFACES_PATH = "geometry/partial_brep_surfaces.json"
@@ -109,11 +110,13 @@ def plan_partial_brep(
     surface_fit: dict[str, Any] | None,
     readiness: dict[str, Any] | None,
     freeform_fit: dict[str, Any] | None = None,
+    freeform_readiness: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Plan partial B-Rep reconstruction from accepted fits. Returns
     ``(plan, surfaces, diagnostics)``. Pure. Produces FACE CANDIDATES only — no shell,
     no solid, no STEP. Gated out (no candidates + warning) when readiness says the mesh
-    needs cleanup or is insufficient. Freeform fits are included as evidence-only entries."""
+    needs cleanup or is insufficient. Freeform fits are included as evidence-only entries
+    optionally annotated with readiness quality scores."""
     prov_src = (surface_fit or {}).get("provenance") or (region_graph or {}).get("provenance") or {}
     provenance = {
         "source_mesh_artifact": prov_src.get("source_mesh_artifact"),
@@ -123,6 +126,7 @@ def plan_partial_brep(
         "region_graph": MESH_REGION_GRAPH_PATH,
         "surface_fit": MESH_SURFACE_FIT_PATH,
         "freeform_surface_fit": FREEFORM_SURFACE_FIT_PATH,
+        "freeform_readiness": FREEFORM_READINESS_PATH,
         "readiness": MESH_RECONSTRUCTION_READINESS_PATH,
         "representation_kind": "mesh",
         "geometry_kind": "mesh",
@@ -161,6 +165,11 @@ def plan_partial_brep(
         freeform_by_region = {
             str(s.get("source_region_id")): s for s in (freeform_fit.get("surfaces") or [])}
 
+    readiness_by_surface: dict[str, dict[str, Any]] = {}
+    if isinstance(freeform_readiness, dict):
+        readiness_by_surface = {
+            str(s.get("source_region_id")): s for s in (freeform_readiness.get("surfaces") or [])}
+
     if not gated:
         fitted_by_region: dict[str, dict[str, Any]] = {
             str(s.get("source_region_id")): s for s in (surface_fit.get("surfaces") or [])}
@@ -176,11 +185,18 @@ def plan_partial_brep(
                 if ff is not None and ff.get("status") == "fitted":
                     skipped.append({"region_id": rid, "surface_class_candidate": cls,
                                     "reason": "freeform_brep_not_implemented"})
-                    plan_rows.append({"region_id": rid, "eligible": False,
-                                      "face_candidate_id": None,
-                                      "reconstruction_status": "evidence_only",
-                                      "source_freeform_surface_id": ff.get("surface_id"),
-                                      "reason": "freeform_brep_not_implemented"})
+                    row: dict[str, Any] = {"region_id": rid, "eligible": False,
+                                           "face_candidate_id": None,
+                                           "reconstruction_status": "evidence_only",
+                                           "source_freeform_surface_id": ff.get("surface_id"),
+                                           "reason": "freeform_brep_not_implemented"}
+                    # Optional readiness annotation (low-risk advisory)
+                    fr = readiness_by_surface.get(rid)
+                    if fr:
+                        row["freeform_readiness"] = fr.get("readiness")
+                        row["freeform_quality_score"] = fr.get("quality_score")
+                        row["freeform_recommended_next_action"] = fr.get("recommended_next_action")
+                    plan_rows.append(row)
                     continue
                 reason = ("freeform region (no analytic fit)" if cls == "freeform_candidate"
                           else "noisy/small region" if cls == "noisy_small_region"
@@ -281,12 +297,13 @@ def build_partial_brep_plan(package_path: str | Path) -> tuple[dict[str, Any], d
             region_graph = _read_json(zf, MESH_REGION_GRAPH_PATH, names)
             surface_fit = _read_json(zf, MESH_SURFACE_FIT_PATH, names)
             freeform_fit = _read_json(zf, FREEFORM_SURFACE_FIT_PATH, names)
+            freeform_readiness = _read_json(zf, FREEFORM_READINESS_PATH, names)
             readiness = _read_json(zf, MESH_RECONSTRUCTION_READINESS_PATH, names)
     except FileNotFoundError:
         return plan_partial_brep(None, None, None)
     except Exception:  # noqa: BLE001
         return plan_partial_brep(None, None, None)
-    return plan_partial_brep(region_graph, surface_fit, readiness, freeform_fit)
+    return plan_partial_brep(region_graph, surface_fit, readiness, freeform_fit, freeform_readiness)
 
 
 def write_partial_brep_plan(package_path: str | Path) -> dict[str, Any]:

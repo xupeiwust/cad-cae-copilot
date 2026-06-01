@@ -2761,6 +2761,10 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 from aieng.converters.mesh_freeform_surface_fitting import write_freeform_surface_fit
                 ff = write_freeform_surface_fit(package_path)
                 summary["mesh_freeform_fit_count"] = len(ff.get("surfaces") or [])
+                # Freeform readiness scoring v0 (advisory; does NOT generate B-Rep faces/STEP).
+                from aieng.converters.mesh_freeform_surface_readiness import write_freeform_readiness
+                fr = write_freeform_readiness(package_path)
+                summary["mesh_freeform_readiness"] = fr.get("status")
                 from aieng.converters.mesh_reconstruction_readiness import write_mesh_reconstruction_readiness
                 rr = write_mesh_reconstruction_readiness(package_path)
                 summary["reconstruction_next_action"] = (rr.get("readiness") or {}).get("recommended_next_action")

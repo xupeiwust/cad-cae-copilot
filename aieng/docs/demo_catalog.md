@@ -62,12 +62,14 @@ pytest aieng/tests/test_topology_optimization.py -q
 - `aieng/tests/test_mesh_brep_solidification.py` (11 tests)
 - `aieng/tests/test_mesh_freeform_surface_fitting.py` (15 tests)
 - `aieng/tests/test_mesh_freeform_surface_readiness.py` (20 tests)
+- `aieng/tests/test_mesh_freeform_brep_faces.py` (9 tests)
 
 **Run:**
 ```bash
 pytest aieng/tests/test_mesh_brep_solidification.py -q
 pytest aieng/tests/test_mesh_freeform_surface_fitting.py -q
 pytest aieng/tests/test_mesh_freeform_surface_readiness.py -q
+pytest aieng/tests/test_mesh_freeform_brep_faces.py -q
 ```
 
 **Expected artifacts:**
@@ -76,6 +78,8 @@ pytest aieng/tests/test_mesh_freeform_surface_readiness.py -q
 - `graph/mesh_freeform_surface_fit.json` — approximate BSpline-like freeform surface evidence
 - `diagnostics/mesh_freeform_surface_fitting.json` — freeform fitting diagnostics
 - `diagnostics/mesh_freeform_reconstruction_readiness.json` — freeform readiness/quality scoring and next actions
+- `geometry/partial_freeform_brep_faces.json` — validated OCC BSpline face candidates from ready freeform surfaces
+- `diagnostics/freeform_brep_face_generation.json` — face generation diagnostics
 - `diagnostics/mesh_reconstruction_readiness.json` — readiness gates
 - `geometry/partial_brep_surfaces.json` — analytic surface candidates
 - `geometry/partial_brep_faces.json` — validated OCC face candidates
@@ -90,7 +94,10 @@ pytest aieng/tests/test_mesh_freeform_surface_readiness.py -q
 - Freeform patches (saddle, sphere-like) produce BSpline surface evidence with control net and error metrics
 - Freeform readiness scoring classifies surfaces as ready/partial/not_ready with quality scores
 - Poor/high-error/missing-boundary fits are explicitly not_ready with recommended next actions
-- Freeform evidence does NOT generate B-Rep faces or trigger STEP export
+- Ready freeform surfaces produce validated OCC BSpline face candidates when OCP is available
+- Generated freeform face candidates remain candidate-only: not stitched, not a shell, not STEP-exported
+- OCP-unavailable environments skip honestly with clear diagnostics
+- Freeform evidence does NOT trigger analytic STEP export or interfere with plane/cylinder reconstruction
 - Missing/degenerate faces are skipped honestly (no false STEP)
 - Only closed OCC-valid solids write STEP; partial shells do not
 - Roundtrip verification checks STEP re-imports correctly
@@ -100,6 +107,7 @@ pytest aieng/tests/test_mesh_freeform_surface_readiness.py -q
 - Dominant surface classes: plane, cylinder, sphere, cone, torus
 - Freeform/BSpline fitting is evidence-only v0; NOT B-Rep faces, NOT STEP, NOT CAD-editable
 - Freeform readiness scoring is advisory/readiness-only; does NOT generate B-Rep faces or export STEP
+- Freeform face candidates are candidate-only; NOT stitched, NOT a solid, NOT STEP-exported
 - `geometry/reconstructed.step` never overwrites the source STEP
 - Failed reconstruction removes stale artifacts and restores mesh topology
 

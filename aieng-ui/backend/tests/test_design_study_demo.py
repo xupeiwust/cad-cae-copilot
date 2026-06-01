@@ -388,3 +388,38 @@ def test_missing_ranking_blocks_acceptance(tmp_path: Path) -> None:
     assert body["accepted"] is False
     assert body["status"] == "needs_user_input"
     assert any("ranking" in r.lower() for r in body["reasons"])
+
+
+def test_hints_after_acceptance_are_conservative(tmp_path: Path) -> None:
+    """After acceptance, hints should become conservative (stop/next-stage),
+    not suggest aggressive parameter changes."""
+    client, project_id, pkg, data = _make_project_with_demo_package(tmp_path)
+
+    # Execute, evaluate, rank, accept good candidate
+    for cid in ("candidate_good",):
+        resp = client.post(
+            f"/api/projects/{project_id}/design-study/candidates/{cid}/run",
+            json={"compile": False},
+        )
+        assert resp.status_code == 200
+    inject_static_evaluation(pkg, "candidate_good")
+    client.post(f"/api/projects/{project_id}/design-study/candidates/candidate_good/evaluate", json={})
+    client.post(f"/api/projects/{project_id}/design-study/rank", json={})
+    client.post(
+        f"/api/projects/{project_id}/design-study/candidates/candidate_good/accept",
+        json={"accepted_by": "agent", "reasoning": "best candidate"},
+    )
+
+    # Now run hints again — should be conservative
+    resp = client.post(f"/api/projects/{project_id}/design-study/hints", json={"max_hints": 10})
+    assert resp.status_code == 200
+    hints_doc = _read_pkg(pkg, DESIGN_STUDY_CANDIDATE_HINTS_PATH)
+    assert any(h["type"] == "stop_no_safe_hint" for h in hints_doc["hints"]), (
+        "Expected stop hint after acceptance"
+    )
+    assert not any(
+        h["type"] == "adjust_parameter" and h["priority"] == "high"
+        for h in hints_doc["hints"]
+    ), "No aggressive high-priority adjust hints after acceptance"
+    assert hints_doc["baseline_modified"] is False
+    assert hints_doc.get("candidate_patches_created") is not True

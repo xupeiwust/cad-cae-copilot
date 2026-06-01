@@ -561,6 +561,20 @@ def test_rank_package_not_found():
     assert res["status"] == "failed"
 
 
+def test_ranking_missing_metrics_never_recommends_accept(tmp_path: Path):
+    """Missing metrics must not produce an accept_candidate recommendation."""
+    iters = [
+        _iteration("c1", "evaluation_complete", metrics={}),
+    ]
+    pkg = _write_pkg(tmp_path, problem=_problem(baseline_metrics={"mass_kg": 1.0}), iterations=iters)
+    res = rank_design_study_candidates(pkg)
+    ranking = _read(pkg, DESIGN_STUDY_CANDIDATE_RANKING_PATH)
+    c = ranking["candidates"][0]
+    assert c["feasibility"] == "unknown"
+    assert c["recommendation"] != "accept_candidate"
+    assert c["confidence"] == "low"
+
+
 # ── determinism ───────────────────────────────────────────────────────────────
 
 def test_rank_is_deterministic(tmp_path: Path):

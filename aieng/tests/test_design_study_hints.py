@@ -165,6 +165,86 @@ def test_low_confidence_proxy_evidence_lowers_confidence_and_adds_review_hint(tm
     assert any("bolt_preload_model" in " ".join(h["safety_notes"]) for h in hints)
 
 
+def test_ranking_no_safe_best_produces_no_accept_hint(tmp_path: Path):
+    """When ranking says no safe best candidate, hints must not suggest accept/adopt."""
+    pkg = _write_pkg(tmp_path, problem=_problem(), extra_members={
+        DESIGN_STUDY_CANDIDATE_RANKING_PATH: {
+            "format": "aieng.design_study.candidate_ranking.v0",
+            "status": "ranked",
+            "best_candidate_id": None,
+            "safe_to_accept": False,
+            "candidates": [
+                {"candidate_id": "c_bad", "feasibility": "failed", "score": -1.0,
+                 "confidence": "low", "recommendation": "reject_candidate",
+                 "constraint_violations": ["stress violation"]},
+            ],
+        },
+    })
+    build_design_study_candidate_hints(pkg)
+    hints = _read(pkg, DESIGN_STUDY_CANDIDATE_HINTS_PATH)["hints"]
+    # Critical invariant: no hint may suggest accepting or adopting a candidate
+    # when the ranking says there is no safe best.
+    assert not any(h["type"] in ("accept_candidate", "adopt_candidate") for h in hints)
+
+
+def test_accepted_candidate_produces_stop_hint(tmp_path: Path):
+    """When acceptance status is accepted, hints should produce stop/next-stage style hints,
+    not aggressive parameter changes."""
+    pkg = _write_pkg(tmp_path, problem=_problem(), extra_members={
+        "analysis/design_study_acceptance.json": {
+            "status": "accepted", "accepted_candidate_id": "c1",
+            "baseline_modified": False, "promotion_mode": "derived_only",
+        },
+        "candidates/c1/analysis/evaluation.json": _evaluation(stress_ok=True, defl_ok=True),
+    })
+    build_design_study_candidate_hints(pkg)
+    hints = _read(pkg, DESIGN_STUDY_CANDIDATE_HINTS_PATH)["hints"]
+    stop_hints = [h for h in hints if h["type"] == "stop_no_safe_hint"]
+    assert stop_hints, "Expected a stop/next-stage hint when candidate is already accepted"
+    assert not any(h["type"] == "adjust_parameter" and h["priority"] == "high"
+                   for h in hints), "No aggressive high-priority adjust hints when accepted"
+
+
+def test_deflection_violation_suggests_stiffness_increase(tmp_path: Path):
+    """If ranking rejects due to deflection, hints should suggest stiffness-related variables."""
+    pkg = _write_pkg(tmp_path, problem=_problem(), extra_members={
+        "candidates/c1/analysis/evaluation.json": _evaluation(defl_ok=False, stress_ok=True),
+        DESIGN_STUDY_CANDIDATE_RANKING_PATH: {
+            "format": "aieng.design_study.candidate_ranking.v0",
+            "status": "ranked",
+            "best_candidate_id": None,
+            "safe_to_accept": False,
+            "candidates": [
+                {"candidate_id": "c1", "feasibility": "infeasible", "score": -0.5,
+                 "confidence": "low", "recommendation": "reject_candidate",
+                 "constraint_violations": ["deflection 7.0 > limit 5.0"]},
+            ],
+        },
+    })
+    build_design_study_candidate_hints(pkg)
+    hints = _read(pkg, DESIGN_STUDY_CANDIDATE_HINTS_PATH)["hints"]
+    stiffness_hints = [h for h in hints if h["type"] == "adjust_parameter"
+                       and "deflection" in h.get("reason", "").lower()]
+    assert stiffness_hints, "Expected stiffness-related hints for deflection violation"
+    for h in stiffness_hints:
+        assert h["suggested_direction"] == "increase"
+
+
+def test_protected_variable_only_protect_hints(tmp_path: Path):
+    """If a variable is protected, hints must only produce protect/avoid hints,
+    never adjust_parameter suggestions targeting it."""
+    pkg = _write_pkg(tmp_path, problem=_problem(), extra_members={
+        "candidates/c1/analysis/evaluation.json": _evaluation(stress_ok=True, defl_ok=True),
+    })
+    build_design_study_candidate_hints(pkg)
+    hints = _read(pkg, DESIGN_STUDY_CANDIDATE_HINTS_PATH)["hints"]
+    bolt_adjust = [h for h in hints if h["type"] == "adjust_parameter" and h.get("variable_id") == "bolt_dia"]
+    assert not bolt_adjust, "Protected bolt_dia must not receive adjust_parameter hints"
+    bolt_protect = [h for h in hints if h["type"] == "protect_parameter" and h.get("variable_id") == "bolt_dia"]
+    assert bolt_protect, "Protected bolt_dia must receive protect_parameter hints"
+    assert all(h.get("do_not_modify") is True for h in bolt_protect)
+
+
 def test_hint_count_limited_deterministically(tmp_path: Path):
     problem = _problem(variables=[
         {"id": f"wall_{i}", "path": f"parts/0/params/WALL_{i}", "type": "continuous",

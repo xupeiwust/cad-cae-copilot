@@ -29,6 +29,12 @@ CANONICAL_DEMO_FILES = [
     _BACKEND_TESTS / "test_assembly_topopt_demo.py",
     _BACKEND_TESTS / "test_design_study_demo.py",
     _AIENG_ROOT / "tests" / "test_showcase_gallery_docs.py",
+    _AIENG_ROOT / "tests" / "test_design_study.py",
+    _AIENG_ROOT / "tests" / "test_design_study_execution.py",
+    _AIENG_ROOT / "tests" / "test_design_study_ranking.py",
+    _AIENG_ROOT / "tests" / "test_design_study_acceptance.py",
+    _AIENG_ROOT / "tests" / "test_design_study_evaluation.py",
+    _AIENG_ROOT / "tests" / "test_design_study_hints.py",
 ]
 
 # Canonical docs the gate checks for existence.
@@ -54,13 +60,21 @@ KEY_ARTIFACT_NAMES = [
     "analysis/assembly_topology_optimization.json",
     "diagnostics/assembly_post_optimization_verification.json",
     "analysis/assembly_design_recommendations.json",
+    # Design study PR1–PR6 artifacts
     "analysis/design_study_problem.json",
+    "diagnostics/design_study_problem_diagnostics.json",
+    "patches/design_candidates/",
+    "diagnostics/design_study_candidate_validation.json",
     "candidates/candidate_good/analysis/evaluation.json",
     "candidates/candidate_good/diagnostics/evaluation_report.json",
+    "analysis/design_study_iterations.json",
+    "diagnostics/design_study_report.json",
     "analysis/design_study_candidate_hints.json",
     "diagnostics/design_study_candidate_hints_report.json",
     "analysis/design_study_candidate_ranking.json",
+    "diagnostics/design_study_scoring_report.json",
     "analysis/design_study_acceptance.json",
+    "diagnostics/design_study_acceptance_report.json",
     "accepted/candidate_good/geometry/shape_ir.json",
 ]
 

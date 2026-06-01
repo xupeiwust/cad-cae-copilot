@@ -174,6 +174,7 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 
 **Expected artifacts:**
 - `analysis/design_study_problem.json` — problem definition
+- `diagnostics/design_study_problem_diagnostics.json` — problem validation
 - `diagnostics/design_study_candidate_validation.json` — validation results
 - `patches/design_candidates/candidate_good.json` — proposed patch
 - `candidates/candidate_good/geometry/shape_ir.json` — derived geometry
@@ -182,9 +183,11 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 - `analysis/design_study_candidate_hints.json` — advisory next-candidate hints
 - `diagnostics/design_study_candidate_hints_report.json` — hint diagnostics
 - `analysis/design_study_iterations.json` — execution history
+- `diagnostics/design_study_report.json` — aggregated report
 - `analysis/design_study_candidate_ranking.json` — ranked candidates
 - `diagnostics/design_study_scoring_report.json` — scoring diagnostics
 - `analysis/design_study_acceptance.json` — acceptance record
+- `diagnostics/design_study_acceptance_report.json` — acceptance diagnostics
 - `accepted/candidate_good/geometry/shape_ir.json` — accepted geometry
 - `accepted/candidate_good/provenance/acceptance.json` — acceptance provenance
 

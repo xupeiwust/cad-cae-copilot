@@ -57,8 +57,22 @@ def error(msg: str) -> None:
     print(f"[dev] ERROR: {msg}", file=sys.stderr, flush=True)
 
 
-def has_command(name: str) -> bool:
-    return shutil.which(name) is not None
+def find_npm() -> str | None:
+    """Find the npm executable. On Windows, prefer npm.cmd for subprocess compatibility."""
+    if platform.system() == "Windows":
+        # Windows: npm is usually npm.cmd; subprocess with a list arg may not resolve
+        # the .cmd wrapper unless we pass shell=True or use the full path.
+        npm_cmd = shutil.which("npm.cmd")
+        if npm_cmd:
+            return npm_cmd
+        npm_exe = shutil.which("npm")
+        if npm_exe:
+            return npm_exe
+    else:
+        npm_exe = shutil.which("npm")
+        if npm_exe:
+            return npm_exe
+    return None
 
 
 def find_python() -> str | None:
@@ -69,11 +83,11 @@ def find_python() -> str | None:
         return env_py
 
     # 2. Try 'python' (common on Windows and venvs)
-    if has_command("python"):
+    if shutil.which("python"):
         return "python"
 
     # 3. Try 'python3' (common on macOS/Linux)
-    if has_command("python3"):
+    if shutil.which("python3"):
         return "python3"
 
     # 4. Try the known conda env path on Windows
@@ -107,8 +121,8 @@ def check_backend_env(python: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def preflight() -> str:
-    """Run all startup checks and return the Python executable path."""
+def preflight() -> tuple[str, str]:
+    """Run all startup checks and return (Python executable path, npm executable path)."""
     errors: list[str] = []
 
     if not BACKEND_DIR.is_dir():
@@ -134,14 +148,17 @@ def preflight() -> str:
             f"  cd {BACKEND_DIR} && pip install -e ."
         )
 
-    if not has_command("npm"):
-        errors.append("npm not found in PATH. Install Node.js (v20+ recommended).")
+    npm = find_npm()
+    if not npm:
+        errors.append(
+            "npm was not found. Install Node.js LTS and reopen your terminal."
+        )
 
     if errors:
         error("Preflight failed — cannot start:\n" + "\n".join(f"  - {e}" for e in errors))
         sys.exit(1)
 
-    return python  # type: ignore[return-value]
+    return python, npm  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -198,24 +215,25 @@ def start_backend(python: str) -> subprocess.Popen[str]:
     return proc
 
 
-def start_frontend() -> subprocess.Popen[str]:
+def start_frontend(npm: str) -> subprocess.Popen[str]:
     # Ensure node_modules exists
     node_modules = FRONTEND_DIR / "node_modules"
     if not node_modules.is_dir():
         log("Installing frontend dependencies (npm install)...")
         install_result = subprocess.run(
-            ["npm", "install"],
+            [npm, "install"],
             cwd=FRONTEND_DIR,
             stdout=sys.stdout,
             stderr=sys.stderr,
         )
         if install_result.returncode != 0:
             error("npm install failed.")
+            cleanup()
             sys.exit(1)
 
     # Vite does not accept a --port flag via 'npm run dev' easily unless we pass
     # it through the CLI or VITE_* env vars. We use -- --port for npm scripts.
-    cmd = ["npm", "run", "dev", "--", "--port", str(FRONTEND_PORT)]
+    cmd = [npm, "run", "dev", "--", "--port", str(FRONTEND_PORT)]
     log(f"Starting frontend: {' '.join(cmd)}")
     kwargs: dict[str, object] = {
         "cwd": FRONTEND_DIR,
@@ -235,8 +253,9 @@ def start_frontend() -> subprocess.Popen[str]:
 
 def main() -> None:
     log(f"Repo root: {REPO_ROOT}")
-    python = preflight()
+    python, npm = preflight()
     log(f"Using Python: {python}")
+    log(f"Using npm:    {npm}")
 
     # Register signal handlers
     signal.signal(signal.SIGINT, cleanup)
@@ -249,7 +268,7 @@ def main() -> None:
     # Brief pause so backend logs start before frontend floods the terminal
     time.sleep(0.5)
 
-    frontend_proc = start_frontend()
+    frontend_proc = start_frontend(npm)
     _procs.append(frontend_proc)
 
     print()

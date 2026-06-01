@@ -42,13 +42,6 @@ def _resolve_claude_exe(command: str) -> str | None:
     return path
 
 
-# Track which deterministic sessions have already been created by this adapter.
-# Key = effective_session_id (UUID string).  Value = True.
-# Used to decide between --session-id (first call) and --resume (subsequent calls).
-# A module-level dict survives across per-request engine/adapter rebuilds.
-_session_created_flags: dict[str, bool] = {}
-
-
 def _run_claude_step(cmd: list[str], prompt: str, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update({
@@ -220,15 +213,14 @@ class ClaudeCodeAdapter:
                 duration_ms=_elapsed_ms(start),
             )
         # Session-aware invocation:
-        #   First call for a session uses --session-id to create it.
-        #   Subsequent calls use --resume <session_id> to reconnect to the
-        #   same session instead of --continue (which resumes the *most recent*
-        #   session and could leak into a user's interactive CLI session).
-        #   A module-level dict tracks which sessions have already been created
-        #   so the adapter survives per-request rebuilds.
+        #   step_index==0 (engine-level, cross-run) → --session-id creates a new session.
+        #   step_index>0  → --resume reconnects to the same session.
+        #   Using --resume with an explicit session_id avoids --continue which would
+        #   resume the *most recent* session and could leak into a user's interactive
+        #   CLI session.  If --session-id fails with "already in use" (e.g. after a
+        #   backend restart) we fall back to --resume automatically.
         effective_session_id = self._claude_session_id(session_id)
-        has_existing_session = _session_created_flags.get(effective_session_id, False)
-        use_resume = has_existing_session or step_index > 0
+        use_resume = step_index > 0
         if on_progress is not None:
             on_progress(progress_event(
                 self.adapter_id,
@@ -295,15 +287,12 @@ class ClaudeCodeAdapter:
                 diagnostic=str(exc),
                 duration_ms=_elapsed_ms(start),
             )
-        # If the CLI reports the session is already locked, mark it as created
-        # and retry with --resume (handles backend restarts where the module
-        # dict was cleared but the session still exists on disk).
+        # Fallback: if the session already exists (e.g. backend restart), retry with --resume.
         if result.returncode != 0 and "already in use" in (result.stderr or ""):
             logger.warning(
                 "claude session '%s' already in use; retrying with --resume.",
                 effective_session_id,
             )
-            _session_created_flags[effective_session_id] = True
             cmd = _build_cmd("--resume")
             try:
                 result = _run_claude_step(cmd, prompt, timeout_seconds)
@@ -325,9 +314,6 @@ class ClaudeCodeAdapter:
                     diagnostic=str(exc),
                     duration_ms=_elapsed_ms(start),
                 )
-        # Mark the session as created on success so future calls use --resume.
-        if result.returncode == 0:
-            _session_created_flags[effective_session_id] = True
         if result.returncode != 0:
             diag = (
                 f"Claude Code exited with code {result.returncode}.\n"

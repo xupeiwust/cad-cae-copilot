@@ -2048,6 +2048,31 @@ def _publish_preview_to_viewer(
         except Exception:
             pass
         _save_project(settings, project)
+        # Notify the live UI that a new preview is available.  This matches the
+        # publish step in /api/agent/invoke-tool so that Autopilot-driven builds
+        # (which bypass that endpoint and call runtime.invoke_tool directly) still
+        # trigger the viewer refresh.
+        try:
+            from . import agent_activity
+
+            preview_url = f"/api/projects/{project_id}/cad-preview"
+            agent_activity.publish({
+                "type": "project_changed",
+                "project_id": project_id,
+                "source": "cad_generation.preview_published",
+                "status": "ok",
+                "preview_url": preview_url,
+                "preview_format": fmt,
+            })
+            agent_activity.publish({
+                "type": "viewer_asset_changed",
+                "project_id": project_id,
+                "source": "cad_generation.preview_published",
+                "preview_url": preview_url,
+                "preview_format": fmt,
+            })
+        except Exception:
+            pass
     except Exception:
         pass
 

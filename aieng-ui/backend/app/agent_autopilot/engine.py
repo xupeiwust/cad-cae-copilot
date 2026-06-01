@@ -25,6 +25,21 @@ from .schema import (
 from .store import AutopilotStore
 
 
+# Cross-run session step counter.  Key = "{session_id}:{adapter_id}".
+# Value = next step index for that session+adapter pair.
+# This lets adapters (e.g. Claude Code CLI with --session-id/--resume) know
+# whether they are creating a fresh session or reconnecting to an existing one
+# even when a new AutopilotRunState is started for the same chat session.
+_SESSION_STEP_COUNTERS: dict[str, int] = {}
+
+
+def _session_step_index(session_id: str | None, adapter_id: str) -> int:
+    key = f"{session_id or '_none_'}:{adapter_id}"
+    idx = _SESSION_STEP_COUNTERS.get(key, 0)
+    _SESSION_STEP_COUNTERS[key] = idx + 1
+    return idx
+
+
 DEFAULT_PLAN_STEPS = [
     ("observe_context", "Observe context", "observe"),
     ("select_skill_or_tool", "Select skill/tool", "skill"),
@@ -695,7 +710,7 @@ class AutopilotEngine:
                 timeout_seconds=DEFAULT_STEP_TIMEOUT_SECONDS,
                 on_progress=_on_adapter_progress,
                 session_id=state.session_id,
-                step_index=len(state.steps),
+                step_index=_session_step_index(state.session_id, state.adapter_id),
             )
 
             invoke_done.set()

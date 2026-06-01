@@ -54,6 +54,7 @@ the reference workbench. When in doubt, treat this file as the authoritative
 | Capability | Status | Primary artifacts | STEP output | CAD editability | Current boundary |
 | --- | --- | --- | --- | --- | --- |
 | Mesh region segmentation + analytic candidate detection | `stable` | `graph/mesh_region_graph.json`, `diagnostics/mesh_region_segmentation.json` | No | Not applicable | Diagnostic analysis of mesh evidence only |
+| Mesh segmentation quality + re-segmentation hints v0 | `diagnostic-only` | `diagnostics/mesh_segmentation_quality.json`, `analysis/mesh_resegmentation_hints.json` | No | Not applicable | Assesses fragmentation/undersegmentation/fit-coverage/boundary quality; advisory-only, does not rerun segmentation or modify geometry |
 | Plane/cylinder fitting over segmented mesh regions | `stable` | `graph/mesh_surface_fit.json`, `diagnostics/mesh_surface_fitting.json` | No | Not applicable | Fit evidence is not CAD; freeform/noisy areas remain explicit |
 | Freeform/BSpline surface fitting evidence v0 | `experimental` | `graph/mesh_freeform_surface_fit.json`, `diagnostics/mesh_freeform_surface_fitting.json` | No | Not applicable | Approximate BSpline-like fits for freeform regions; evidence-only, not B-Rep faces, not STEP, not CAD-editable |
 | Freeform surface readiness/quality scoring v0 | `diagnostic-only` | `diagnostics/mesh_freeform_reconstruction_readiness.json` | No | Not applicable | Advisory readiness assessment per freeform surface; does NOT generate B-Rep faces or export STEP |

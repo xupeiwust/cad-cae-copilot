@@ -62,6 +62,8 @@ reconstruction or assembly stage succeeded.
 | --- | --- | --- | --- |
 | `graph/mesh_region_graph.json` | mesh region segmentation | Region graph over a mesh/smooth-mesh body | Diagnostic mesh evidence |
 | `diagnostics/mesh_region_segmentation.json` | mesh region segmentation | Segmentation diagnostics and degraded paths | Diagnostic only |
+| `diagnostics/mesh_segmentation_quality.json` | segmentation quality v0 | Quality assessment of mesh region segmentation: fragmentation, undersegmentation, fit coverage, boundary quality | Advisory-only; does not rerun segmentation or modify geometry |
+| `analysis/mesh_resegmentation_hints.json` | re-segmentation hints v0 | Conservative re-segmentation strategy recommendations based on quality findings | Advisory-only; does not automatically rerun segmentation |
 | `graph/mesh_surface_fit.json` | analytic fit stage | Best-fit plane/cylinder evidence over segmented regions | Fit evidence, not CAD |
 | `diagnostics/mesh_surface_fitting.json` | analytic fit stage | Fit quality / failures / skipped regions | Diagnostic only |
 | `graph/mesh_freeform_surface_fit.json` | freeform fit stage v0 | Approximate BSpline-like surface evidence for freeform mesh regions | Evidence-only; not B-Rep, not STEP, not CAD-editable |

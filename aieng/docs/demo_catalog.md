@@ -63,6 +63,8 @@ pytest aieng/tests/test_topology_optimization.py -q
 - `aieng/tests/test_mesh_freeform_surface_fitting.py` (15 tests)
 - `aieng/tests/test_mesh_freeform_surface_readiness.py` (20 tests)
 - `aieng/tests/test_mesh_freeform_brep_faces.py` (9 tests)
+- `aieng/tests/test_mesh_to_cad_reconstruction_status.py` (23 tests)
+- `aieng/tests/test_mesh_segmentation_quality.py` (10 tests)
 
 **Run:**
 ```bash
@@ -72,6 +74,7 @@ pytest aieng/tests/test_mesh_freeform_surface_readiness.py -q
 pytest aieng/tests/test_mesh_freeform_brep_faces.py -q
 pytest aieng/tests/test_freeform_face_trimming_readiness.py -q
 pytest aieng/tests/test_mesh_to_cad_reconstruction_status.py -q
+pytest aieng/tests/test_mesh_segmentation_quality.py -q
 ```
 
 **Expected artifacts:**
@@ -84,6 +87,8 @@ pytest aieng/tests/test_mesh_to_cad_reconstruction_status.py -q
 - `diagnostics/freeform_brep_face_generation.json` — face generation diagnostics
 - `diagnostics/freeform_face_trimming_readiness.json` — boundary/adjacency readiness for future trimming
 - `diagnostics/mesh_to_cad_reconstruction_status.json` — aggregated reconstruction status, STEP availability, blockers, next action
+- `diagnostics/mesh_segmentation_quality.json` — segmentation quality assessment (fragmentation, undersegmentation, fit coverage, boundary quality)
+- `analysis/mesh_resegmentation_hints.json` — conservative re-segmentation strategy recommendations
 - `diagnostics/mesh_reconstruction_readiness.json` — readiness gates
 - `geometry/partial_brep_surfaces.json` — analytic surface candidates
 - `geometry/partial_brep_faces.json` — validated OCC face candidates
@@ -102,6 +107,7 @@ pytest aieng/tests/test_mesh_to_cad_reconstruction_status.py -q
 - Generated freeform face candidates remain candidate-only: not stitched, not a shell, not STEP-exported
 - Trimming readiness assesses boundary and adjacency for future trimming; does not generate trimmed faces
 - Reconstruction status aggregator summarizes all pipeline diagnostics into one report; does not create geometry or export STEP
+- Segmentation quality assesses fragmentation/undersegmentation/fit-coverage/boundary quality; advisory-only, does not rerun segmentation
 - OCP-unavailable environments skip honestly with clear diagnostics
 - Freeform evidence does NOT trigger analytic STEP export or interfere with plane/cylinder reconstruction
 - Missing/degenerate faces are skipped honestly (no false STEP)
@@ -116,6 +122,7 @@ pytest aieng/tests/test_mesh_to_cad_reconstruction_status.py -q
 - Freeform face candidates are candidate-only; NOT stitched, NOT a solid, NOT STEP-exported
 - Freeform trimming readiness is diagnostic-only; does NOT generate trimmed faces, stitch, or export STEP
 - Reconstruction status aggregator is diagnostic-only summary; does NOT create geometry, stitch, sew, or export STEP
+- Segmentation quality and re-segmentation hints are advisory-only; do NOT rerun segmentation or modify geometry
 - `geometry/reconstructed.step` never overwrites the source STEP
 - Failed reconstruction removes stale artifacts and restores mesh topology
 

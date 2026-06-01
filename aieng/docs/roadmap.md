@@ -29,8 +29,8 @@ Completed/currently present in the reference backend:
 - Conservative mesh reconstruction ladder: mesh region graph, analytic surface
   fits, freeform/BSpline surface fitting evidence, freeform readiness scoring,
   freeform B-Rep face candidate generation, freeform trimming readiness diagnostics,
-  reconstruction status aggregation, stitching/sewing diagnostics, and
-  validated-only `geometry/reconstructed.step`
+  reconstruction status aggregation, segmentation quality assessment, re-segmentation
+  hints, stitching/sewing diagnostics, and validated-only `geometry/reconstructed.step`
 - Assembly IR processing, simplified proxy assembly CAE artifacts, explicit
   selected-part assembly-aware topology optimization, post-optimization
   verification, and advisory recommendation/next-action artifacts
@@ -733,6 +733,39 @@ existing behavior.
   unchanged. No UI files.
 - **Out of scope (future):** automatic action execution, auto-promotion to STEP,
   freeform stitching, mixed analytic/freeform sewing.
+
+## Phase 37d: Mesh segmentation quality + re-segmentation hints v0 — COMPLETE (2026-06-01)
+
+Backend-only (no UI / NL-agent). Quality/stability milestone that assesses whether
+mesh region segmentation is good enough for downstream CAD reconstruction and
+recommends conservative re-segmentation strategies. Advisory-only — does NOT rerun
+segmentation, does NOT modify geometry, does NOT trigger reconstruction.
+
+- `assess_segmentation_quality(region_graph, surface_fit, freeform_fit, ...)`:
+  - Fragmentation score: detects too many tiny/noisy regions (oversegmentation).
+  - Undersegmentation score: detects large regions likely mixing multiple surfaces.
+  - Fit coverage score: measures how much mesh area has acceptable plane/cylinder/freeform fits.
+  - Boundary quality score: uses trimming readiness and reconstruction blockers.
+  - Overall quality score weighted combination of the four.
+- Per-region findings: `tiny_fragment`, `noisy_region`, `large_mixed_surface`,
+  `unfit_region`, `boundary_problem`, `high_fit_error`, `good`.
+- Re-segmentation hints (advisory, deterministic, capped in count):
+  - `merge_tiny_regions` / `raise_normal_angle_threshold` for fragmentation.
+  - `split_high_curvature_region` / `try_curvature_aware_segmentation` for undersegmentation.
+  - `decrease_normal_angle_threshold` for low fit coverage.
+  - `keep_current_segmentation` when reconstruction already produced verified STEP.
+  - `manual_review` / `insufficient_data` for missing inputs.
+- Outputs: `diagnostics/mesh_segmentation_quality.json` +
+  `analysis/mesh_resegmentation_hints.json`.
+- Integration: `recompile_shape_ir_package` auto-runs after reconstruction status
+  aggregator; missing artifacts degrade gracefully.
+- Tests: missing region graph → insufficient_data; clean cube → good/keep;
+  many tiny regions → fragmentation + merge hints; large freeform → undersegmentation +
+  split/curvature hints; step_exported → keep_current; boundary blocker → curvature hint;
+  freeform readiness improve_segmentation → matching hint; deterministic + limited hints;
+  integration writes artifacts; analytic STEP path unchanged. No UI files.
+- **Out of scope (future):** automatic re-segmentation execution, curvature-aware
+  segmentation algorithm, mesh geometry modification.
 
 ## Phase 36: Closed shell → valid solid → STEP export — COMPLETE (2026-05-31)
 

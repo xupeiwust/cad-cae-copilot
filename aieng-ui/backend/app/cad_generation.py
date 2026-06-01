@@ -2800,6 +2800,12 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
                 rs = write_mesh_to_cad_reconstruction_status(package_path)
                 summary["mesh_to_cad_status"] = rs.get("status")
                 summary["mesh_to_cad_next_action"] = rs.get("recommended_next_action")
+                # Mesh region SEGMENTATION QUALITY + re-segmentation hints v0 (advisory only).
+                from aieng.converters.mesh_segmentation_quality import write_segmentation_quality
+                sq, sh = write_segmentation_quality(package_path)
+                summary["mesh_segmentation_quality"] = sq.get("status")
+                summary["mesh_segmentation_quality_score"] = (sq.get("summary") or {}).get("overall_quality_score")
+                summary["mesh_resegmentation_next_action"] = sh.get("recommended_next_action")
             except Exception:  # noqa: BLE001 - mesh analysis is best-effort
                 pass
         else:

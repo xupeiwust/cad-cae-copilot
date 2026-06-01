@@ -1,0 +1,8 @@
+{
+  "format": "aieng.design_candidate_patch",
+  "candidate_id": "candidate_bad_bounds",
+  "reasoning": "Extreme wall thickness",
+  "variable_changes": [
+    {"variable_id": "wall_t", "new_value": 99.0}
+  ]
+}

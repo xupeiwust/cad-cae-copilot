@@ -1,0 +1,8 @@
+{
+  "format": "aieng.design_candidate_patch",
+  "candidate_id": "candidate_unknown",
+  "reasoning": "Increase fillet radius for smoother transitions",
+  "variable_changes": [
+    {"variable_id": "fillet_r", "new_value": 4.0}
+  ]
+}

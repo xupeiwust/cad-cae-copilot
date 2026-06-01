@@ -1,0 +1,16 @@
+{
+  "representation": "brep_build123d",
+  "parts": [
+    {
+      "id": "bracket",
+      "type": "box",
+      "params": {
+        "WALL_THICKNESS": 3.0,
+        "RIB_THICKNESS": 5.0,
+        "FILLET_RADIUS": 2.0,
+        "HOLE_RADIUS": 6.0,
+        "BOLT_DIA": 8.0
+      }
+    }
+  ]
+}

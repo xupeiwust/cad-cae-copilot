@@ -802,6 +802,19 @@ evaluation, and acceptance provenance) and writes `analysis/design_study_accepta
 - **Baseline geometry is never overwritten.** The accepted candidate is a derived design artifact
   only; production approval is **not** claimed.
 
+**Canonical demo + regression** (`aieng-ui/backend/tests/test_design_study_demo.py`) exercises
+the full PR1–PR4 pipeline end-to-end using deterministic static metrics (no external solver):
+- Fixture: `aieng-ui/backend/tests/fixtures/design_study_demo/` — bracket-like baseline Shape IR,
+  4 variables (wall_thickness, rib_thickness, fillet_radius, bolt_dia), 5 candidates:
+  - `candidate_good` — valid, improves volume, within constraints
+  - `candidate_bad_bounds` — rejected (out of bounds)
+  - `candidate_protected` — rejected (protected variable)
+  - `candidate_unknown` — valid but no metrics → `unknown`
+  - `candidate_infeasible` — valid but stress violation → `infeasible`
+- Full-flow test: validate → execute all 5 → inject static evaluations → rank → accept best.
+- Unsafe-data test: only bad candidates → ranking says no viable candidate → acceptance blocked.
+- Missing-ranking test: acceptance without prior ranking → `needs_user_input`.
+
 Future work: optimizer/search loop, multi-objective Pareto ranking, candidate CAE evaluation,
 auto-promotion to baseline, and design-history branching.
 

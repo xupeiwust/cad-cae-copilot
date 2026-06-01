@@ -1,0 +1,58 @@
+{
+  "format": "aieng.design_study_problem",
+  "schema_version": "0.1",
+  "id": "demo_bracket_001",
+  "variables": [
+    {
+      "id": "wall_t",
+      "path": "parts/0/params/WALL_THICKNESS",
+      "type": "continuous",
+      "current_value": 3.0,
+      "min_value": 2.0,
+      "max_value": 8.0,
+      "unit": "mm",
+      "safe_to_modify": true,
+      "semantic_role": "wall_thickness"
+    },
+    {
+      "id": "rib_t",
+      "path": "parts/0/params/RIB_THICKNESS",
+      "type": "continuous",
+      "current_value": 5.0,
+      "min_value": 3.0,
+      "max_value": 10.0,
+      "unit": "mm",
+      "safe_to_modify": true,
+      "semantic_role": "rib"
+    },
+    {
+      "id": "fillet_r",
+      "path": "parts/0/params/FILLET_RADIUS",
+      "type": "continuous",
+      "current_value": 2.0,
+      "min_value": 1.0,
+      "max_value": 6.0,
+      "unit": "mm",
+      "safe_to_modify": true,
+      "semantic_role": "fillet"
+    },
+    {
+      "id": "bolt_dia",
+      "path": "parts/0/params/BOLT_DIA",
+      "type": "discrete",
+      "current_value": 8,
+      "allowed_values": [6, 8, 10, 12],
+      "unit": "mm",
+      "safe_to_modify": false,
+      "semantic_role": "bolt_hole"
+    }
+  ],
+  "constraints": [
+    {"id": "c_stress", "type": "max_stress", "limit": 200.0, "unit": "MPa"},
+    {"id": "c_deflection", "type": "max_deflection", "limit": 5.0, "unit": "mm"},
+    {"id": "c_interface", "type": "preserve_interface", "preserved": true}
+  ],
+  "objective": {"sense": "minimize", "metric": "volume"},
+  "baseline_metrics": {"volume_mm3": 1000.0, "mass_kg": 2.7, "max_stress": 150.0, "max_deflection": 3.0},
+  "settings": {"max_variables_per_candidate": 2, "require_reasoning": true}
+}

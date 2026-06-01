@@ -281,6 +281,25 @@ A generic end-to-end post-processing smoke test (`test_postprocessing_smoke_metr
 
 A vertical CAE workflow benchmark (`test_vertical_cae_workflow_end_to_end`) demonstrates the full agent-run lifecycle through the runtime REST API: preflight → approval-gated external solver execution (mocked ccx) → FRD scalar extraction → computed metrics write-back → result summary refresh, with honest limitations enforced (`converged=null`, explicit warnings, no physical correctness claim). See [`../docs/aieng-agent-workflow.md`](../docs/aieng-agent-workflow.md) for the reusable agent workflow pattern, and [`../docs/demo-vertical-cae-workflow.md`](../docs/demo-vertical-cae-workflow.md) for a step-by-step walkthrough with agent prompt.
 
+Assembly-aware topopt benchmark/demo:
+
+```bash
+cd backend
+python -m pytest -q tests/test_assembly_topopt_demo.py
+python -m pytest -q ../aieng/tests/test_assembly_topopt.py
+```
+
+The canonical package seed lives in `tests/fixtures/assembly_topopt_demo/`. The
+backend demo test proves the proxy-based loop end to end on a deterministic
+assembly: `/assembly/process` writes assembly validation/registry/CAE proxy
+artifacts, `write_assembly_topopt_problem(...)` emits the selected-part setup,
+and `/assembly/topology-optimization/run` writes selected-part derived artifacts
+only. It also pins the unsafe-data path where no safe
+`analysis/topology_optimization_problem.json` is emitted, execution returns
+`needs_user_input`, and no package-level geometry or frozen/reference parts are
+overwritten. This remains a proxy model: `contact_physics_modeled:false` and
+`bolt_preload_modeled:false` are required outputs, not optional claims.
+
 If you have CalculiX installed, you can run a real-environment smoke test: [`docs/quickstart-real-ccx.md`](docs/quickstart-real-ccx.md).
 For historical notes on the older FreeCAD/Gmsh real-binary path, see [`docs/walkthrough-real-cae-pipeline.md`](docs/walkthrough-real-cae-pipeline.md).
 

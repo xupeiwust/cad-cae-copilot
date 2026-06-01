@@ -804,6 +804,15 @@ are known; unmapped preserve regions are warned, never silently ignored. Writeba
 creates a selected-part derived artifact and does **not** overwrite package-level
 geometry or reference parts.
 
+Canonical backend regression/demo fixture: `aieng-ui/backend/tests/fixtures/assembly_topopt_demo/`
+plus `aieng-ui/backend/tests/test_assembly_topopt_demo.py`. It exercises the full
+backend-only loop on a deterministic proxy-based assembly:
+`/assembly/process` → `write_assembly_topopt_problem(...)` →
+`/assembly/topology-optimization/run`, and also pins the unsafe-data
+`needs_user_input` path where no standard problem is emitted and no geometry is
+overwritten. Run it with:
+`pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q`
+
 All outputs keep `production_ready:false`, `contact_physics_modeled:false`, and
 `bolt_preload_modeled:false`. Future work: real nonlinear contact modeling, bolt preload,
 assembly meshing improvements, and simultaneous multi-part topology/size optimization.

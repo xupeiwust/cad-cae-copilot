@@ -226,13 +226,18 @@ existing topology-optimization execution/writeback path for one selected assembl
 - Outputs: `analysis/assembly_topology_optimization.json`,
   `diagnostics/assembly_topopt_execution.json`, selected-part result/writeback
   artifacts, and manifest provenance.
+- Canonical regression/demo package: a deterministic backend-only fixture now
+  lives under `aieng-ui/backend/tests/fixtures/assembly_topopt_demo/`, with
+  `aieng-ui/backend/tests/test_assembly_topopt_demo.py` covering
+  `/assembly/process` → setup derivation → explicit execution/writeback and the
+  unsafe-data `needs_user_input` path where no geometry is overwritten.
 - Honesty boundaries: one selected part only; no nonlinear contact/friction, no bolt
   preload, no new optimizer, no simultaneous multi-part optimization, and
   `production_ready:false`.
 - Tests: explicit optimizer run, missing standard problem diagnostics, selected-part
   provenance, reference-part non-modification, preserve-mask diagnostics,
-  assembly-result guidance preservation, safe writeback target failure, and
-  single-part topopt regression.
+  assembly-result guidance preservation, safe writeback target failure,
+  canonical backend demo/regression coverage, and single-part topopt regression.
 
 ## Phase 41: Assembly-aware topology optimization setup v0 — COMPLETE (2026-06-01)
 

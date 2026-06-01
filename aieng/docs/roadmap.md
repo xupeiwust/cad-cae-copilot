@@ -8,6 +8,58 @@ Execution boundary: `.aieng` describes, references, configures, and records. Ext
 
 ---
 
+## Current Backend Snapshot (2026-06-01)
+
+This roadmap now tracks two things at once:
+
+- what the `aieng` core format and shared converters can honestly express
+- what the reference backend/runtime in this workspace currently implements on top
+  of those shared converters
+
+Completed/currently present in the reference backend:
+
+- Shape IR-driven build123d B-Rep generation with `geometry/generated.step`,
+  `geometry/topology_map.json`, `graph/feature_graph.json`,
+  `diagnostics/shape_ir_verification.json`, and `registry/object_registry.json`
+- Solver-neutral CAE result normalization and result mapping via
+  `analysis/computed_metrics.json`, `analysis/field_regions.json`, and
+  `analysis/cae_result_map.json`
+- Single-part topology optimization with 2D SIMP, result-guidance fields, and
+  writeback paths for `extruded_region`, `density_contour`, and `density_voxels`
+- Conservative mesh reconstruction ladder: mesh region graph, analytic surface
+  fits, readiness analysis, candidate face generation, stitching/sewing
+  diagnostics, and validated-only `geometry/reconstructed.step`
+- Assembly IR processing, simplified proxy assembly CAE artifacts, explicit
+  selected-part assembly-aware topology optimization, post-optimization
+  verification, and advisory recommendation/next-action artifacts
+
+Still intentionally bounded or experimental:
+
+- 3D SIMP and `smooth_mesh_proxy` writeback remain reference-grade/experimental,
+  not production-ready CAD
+- Mesh reconstruction remains analytic-first and conservative; plane/cylinder
+  fits, candidate faces, and stitching plans are evidence toward reconstruction,
+  not CAD by themselves
+- `geometry/reconstructed.step` is mesh-derived/lossy, only written for validated
+  closed OCC solids, and is not production CAD certification
+- Assembly CAE and assembly-aware topology optimization remain simplified proxy
+  workflows: no nonlinear contact, no friction model, no bolt preload, and no
+  simultaneous multi-part optimization claim
+- Recommendation artifacts are advisory only; they do not automatically rerun
+  optimization or mutate geometry
+
+Not currently claimed:
+
+- production manufacturing signoff or certification
+- general freeform mesh -> production NURBS/B-Rep reconstruction
+- automatic recommendation execution
+- real contact/preload-driven assembly optimization
+
+For the detailed capability table and artifact/path inventory, see
+`docs/backend_capability_matrix.md` and `docs/backend_artifact_reference.md`.
+
+---
+
 ## Phase 30 — Automated LLM Engineering-Usefulness Benchmark — COMPLETE (2026-05-17)
 
 **Scope:** `aieng` benchmarks

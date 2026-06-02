@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useRef, type KeyboardEvent } from "react";
 import { ArrowUp, SlidersHorizontal, Square } from "lucide-react";
 
 import type { PickedFace } from "../../appTypes";
 import type { ApprovalMode, AutopilotRunState, ChatConnection } from "../../types";
+import { AutoResizeTextarea } from "./AutoResizeTextarea";
+import { usePointerAutocomplete } from "./usePointerAutocomplete";
 
 type AgentInputBoxProps = {
   chatConnections: ChatConnection[];
@@ -39,75 +41,48 @@ export function AgentInputBox({
   sendUnified,
   cancelAutopilot,
 }: AgentInputBoxProps) {
-  const [acOpen, setAcOpen] = useState(false);
-  const [acQuery, setAcQuery] = useState("");
-  const [acIndex, setAcIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const acCursorRef = useRef<{ start: number; end: number } | null>(null);
+  const autocomplete = usePointerAutocomplete(recentPickedFaces);
 
   const selectedConn = chatConnections.find((c) => c.id === selectedChatConnectionId);
   const connStatus = selectedConn?.status ?? "blocked";
   const statusText = connStatus === "ready" ? "Ready" : connStatus === "blocked" ? "Unavailable" : connStatus.replace(/_/g, " ");
   const inputDisabled = selectedConnectionBlocked || (selectedChatConnectionId === "llm-api" && !llmReady);
-  const acMatches = useMemo(
-    () =>
-      recentPickedFaces.filter(
-        (f) =>
-          f.pointer.toLowerCase().includes(acQuery.toLowerCase()) ||
-          f.label.toLowerCase().includes(acQuery.toLowerCase()),
-      ),
-    [acQuery, recentPickedFaces],
-  );
 
-  useEffect(() => {
+  function applySuggestion(face?: PickedFace) {
     const el = textareaRef.current;
     if (!el) return;
-    if (!message) el.style.height = "auto";
-  }, [message]);
-
-  function closeAutocomplete() {
-    setAcOpen(false);
-    setAcQuery("");
-    acCursorRef.current = null;
-  }
-
-  function insertAutocomplete(face: PickedFace) {
-    if (!textareaRef.current || !acCursorRef.current) return;
-    const { start } = acCursorRef.current;
-    const before = message.slice(0, start - 1);
-    const after = message.slice(textareaRef.current.selectionStart);
-    const replacement = `${before}${face.pointer} ${after}`;
-    setMessage(replacement);
-    closeAutocomplete();
+    const result = autocomplete.accept(message, el.selectionStart, face);
+    if (!result) return;
+    setMessage(result.text);
     setTimeout(() => {
       if (textareaRef.current) {
-        const pos = (before + face.pointer + " ").length;
-        textareaRef.current.selectionStart = pos;
-        textareaRef.current.selectionEnd = pos;
+        textareaRef.current.selectionStart = result.cursor;
+        textareaRef.current.selectionEnd = result.cursor;
         textareaRef.current.focus();
       }
     }, 0);
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (acOpen) {
+    if (autocomplete.open) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        if (acMatches.length) setAcIndex((i) => (i + 1) % acMatches.length);
+        autocomplete.moveSelection(1);
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        if (acMatches.length) setAcIndex((i) => (i - 1 + acMatches.length) % acMatches.length);
+        autocomplete.moveSelection(-1);
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        if (acMatches[acIndex]) insertAutocomplete(acMatches[acIndex]);
+        applySuggestion();
         return;
       }
       if (e.key === "Escape") {
-        closeAutocomplete();
+        autocomplete.close();
         return;
       }
     }
@@ -120,18 +95,7 @@ export function AgentInputBox({
   function handleInput(value: string) {
     setMessage(value);
     const el = textareaRef.current;
-    if (!el) return;
-    const cursor = el.selectionStart;
-    const textBefore = value.slice(0, cursor);
-    const atIdx = textBefore.lastIndexOf("@");
-    if (atIdx !== -1 && !textBefore.slice(atIdx + 1).includes(" ") && recentPickedFaces.length) {
-      acCursorRef.current = { start: atIdx + 1, end: atIdx + 1 };
-      setAcQuery(textBefore.slice(atIdx + 1));
-      setAcIndex(0);
-      setAcOpen(true);
-    } else {
-      closeAutocomplete();
-    }
+    autocomplete.onInput(value, el ? el.selectionStart : value.length);
   }
 
   return (
@@ -165,14 +129,10 @@ export function AgentInputBox({
               {recentPickedFaces.length > 2 ? <span>+{recentPickedFaces.length - 2}</span> : null}
             </div>
           ) : null}
-          <textarea
+          <AutoResizeTextarea
             ref={textareaRef}
             value={message}
-            onChange={(e) => {
-              handleInput(e.target.value);
-              e.target.style.height = "auto";
-              e.target.style.height = `${e.target.scrollHeight}px`;
-            }}
+            onChange={(e) => handleInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
               selectedConnectionBlocked
@@ -183,14 +143,14 @@ export function AgentInputBox({
             }
             disabled={inputDisabled}
           />
-          {acOpen && acMatches.length > 0 ? (
+          {autocomplete.open && autocomplete.matches.length > 0 ? (
             <div className="chat-autocomplete">
-              {acMatches.map((f, i) => (
+              {autocomplete.matches.map((f, i) => (
                 <button
                   key={f.pointer}
                   type="button"
-                  className={i === acIndex ? "chat-autocomplete-item active" : "chat-autocomplete-item"}
-                  onClick={() => insertAutocomplete(f)}
+                  className={i === autocomplete.index ? "chat-autocomplete-item active" : "chat-autocomplete-item"}
+                  onClick={() => applySuggestion(f)}
                 >
                   <span className="chat-autocomplete-badge">{f.surface_type}</span>
                   <code>{f.pointer}</code>

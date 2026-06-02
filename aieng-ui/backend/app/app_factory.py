@@ -695,6 +695,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
+            approval_mode=_session_approval_mode(current.session_id),
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -750,6 +751,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
+            approval_mode=_session_approval_mode(current.session_id),
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -792,6 +794,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
+            approval_mode=_session_approval_mode(current.session_id),
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,

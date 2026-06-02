@@ -25,19 +25,45 @@ from .schema import (
 from .store import AutopilotStore
 
 
-# Cross-run session step counter.  Key = "{session_id}:{adapter_id}".
-# Value = next step index for that session+adapter pair.
-# This lets adapters (e.g. Claude Code CLI with --session-id/--resume) know
-# whether they are creating a fresh session or reconnecting to an existing one
-# even when a new AutopilotRunState is started for the same chat session.
+# Per-run adapter step counter.  Key = "{session_id}:{adapter_id}".
+# Value = next step index for the in-flight run on that session+adapter.
+# step_index==0 tells an adapter (e.g. Claude Code CLI) the first call of a run
+# should open the session (--session-id); >0 means reconnect (--resume).  The
+# counter is cleared when the run reaches a terminal state (see _checkpoint) so a
+# later run on the same chat session starts a fresh sequence rather than
+# inheriting the previous run's index.  Cross-run conversational continuity is
+# preserved by the adapter itself (the CLI session id is derived from the chat
+# session id, and Claude Code falls back to --resume if --session-id is "already
+# in use").  Access is guarded by _STEP_COUNTER_LOCK because the step loop runs
+# on background worker threads.
+_TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
+_STEP_COUNTER_LOCK = threading.Lock()
 _SESSION_STEP_COUNTERS: dict[str, int] = {}
 
 
+def _step_counter_key(session_id: str | None, adapter_id: str) -> str:
+    return f"{session_id or '_none_'}:{adapter_id}"
+
+
 def _session_step_index(session_id: str | None, adapter_id: str) -> int:
-    key = f"{session_id or '_none_'}:{adapter_id}"
-    idx = _SESSION_STEP_COUNTERS.get(key, 0)
-    _SESSION_STEP_COUNTERS[key] = idx + 1
-    return idx
+    key = _step_counter_key(session_id, adapter_id)
+    with _STEP_COUNTER_LOCK:
+        idx = _SESSION_STEP_COUNTERS.get(key, 0)
+        _SESSION_STEP_COUNTERS[key] = idx + 1
+        return idx
+
+
+def _clear_step_counter(session_id: str | None, adapter_id: str) -> None:
+    with _STEP_COUNTER_LOCK:
+        _SESSION_STEP_COUNTERS.pop(_step_counter_key(session_id, adapter_id), None)
+
+
+def clear_session_step_counters(session_id: str | None) -> None:
+    """Drop every adapter step counter for a chat session (e.g. on session delete)."""
+    prefix = f"{session_id or '_none_'}:"
+    with _STEP_COUNTER_LOCK:
+        for key in [key for key in _SESSION_STEP_COUNTERS if key.startswith(prefix)]:
+            _SESSION_STEP_COUNTERS.pop(key, None)
 
 
 DEFAULT_PLAN_STEPS = [
@@ -399,6 +425,13 @@ class AutopilotEngine:
     def _checkpoint(self, state: AutopilotRunState) -> None:
         state.updated_at = now_iso()
         self.store.save(state)
+        # A run that reached a terminal state no longer needs its step counter;
+        # dropping it here (the unified write-through path) bounds memory and lets
+        # the next run on this chat session start a fresh adapter step sequence.
+        # Non-terminal states (running/awaiting_approval/blocked/chatting) keep the
+        # counter so a resumed run continues its index correctly.
+        if state.status in _TERMINAL_RUN_STATUSES:
+            _clear_step_counter(state.session_id, state.adapter_id)
         self._publish_state(state)
 
     def _publish_state(self, state: AutopilotRunState) -> None:
@@ -1560,6 +1593,6 @@ class AutopilotEngine:
         state.observations.append(_observation("user_message", "Autopilot run cancelled."))
         self._finish_plan(state, "cancelled", "Autopilot run cancelled.")
         self._emit_event(state, "run_cancelled", status="cancelled", content="Autopilot run cancelled.")
-        self.store.save(state)
-        self._publish_state(state)
+        # Route through _checkpoint so the terminal (cancelled) step counter is cleared.
+        self._checkpoint(state)
         return state

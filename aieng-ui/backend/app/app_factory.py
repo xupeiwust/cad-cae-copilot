@@ -2907,6 +2907,11 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if session is None or session.get("project_id") != project_id:
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
         cancelled_runs = _cancel_session_autopilot_runs(project_id, session_id)
+        # Drop any in-memory adapter step counters for this session (cancel_run
+        # clears active runs; this also sweeps any non-active leftovers).
+        from .agent_autopilot.engine import clear_session_step_counters
+
+        clear_session_step_counters(session_id)
         if not db.delete_chat_session(db_path, project_id, session_id):
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
         _publish_live_event({

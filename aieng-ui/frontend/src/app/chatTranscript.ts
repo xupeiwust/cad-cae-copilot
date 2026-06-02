@@ -271,7 +271,7 @@ export function chatHistoryToTranscriptItems(
     items.push(...legacyArtifactsToTranscriptItems(entry));
   }
 
-  for (const event of agentEvents) {
+  for (const [index, event] of agentEvents.entries()) {
     const runId = event.run_id ?? stringValue(objectValue(event.payload).run_id);
     const status = event.type === "run_cancelled"
       ? "cancelled"
@@ -280,7 +280,7 @@ export function chatHistoryToTranscriptItems(
       runStatusById.set(runId, status);
     }
     if (event.type !== "agent_plan_created" && event.type !== "agent_plan_step_updated") {
-      items.push(...agentEventToTranscriptItems(event));
+      items.push(...agentEventToTranscriptItems(event, index));
     }
   }
   items.push(...planEventsToTranscriptItems(agentEvents));
@@ -311,9 +311,9 @@ export function persistedMessageToTranscriptItems(message: PersistedChatMessage)
   }];
 }
 
-export function agentEventToTranscriptItems(event: AgentTranscriptEvent): ChatTranscriptItem[] {
+export function agentEventToTranscriptItems(event: AgentTranscriptEvent, occurrenceIndex?: number): ChatTranscriptItem[] {
   const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
-  const eventId = event.event_id || stringValue(payload.event_id) || `${event.type}:${event.run_id ?? ""}:${event.ts ?? event.created_at ?? ""}`;
+  const eventId = event.event_id || stringValue(payload.event_id) || syntheticEventKey(event, occurrenceIndex);
   const createdAt = safeDate(event.created_at || (typeof event.ts === "number" ? new Date(event.ts * 1000).toISOString() : undefined));
   const base = {
     id: `event-${eventId}`,
@@ -921,21 +921,58 @@ function comparableActivityKey(item: ChatTranscriptItem): string | null {
 
 function dedupeAndSort(items: ChatTranscriptItem[]): ChatTranscriptItem[] {
   const seen = new Set<string>();
-  return items
-    .filter((item) => {
-      if (seen.has(item.sourceId)) return false;
-      seen.add(item.sourceId);
-      return true;
-    })
-    .sort((a, b) => {
-      const time = Date.parse(a.createdAt) - Date.parse(b.createdAt);
-      return time || a.sourceId.localeCompare(b.sourceId);
-    });
+  const deduped = items.filter((item) => {
+    if (seen.has(item.sourceId)) return false;
+    seen.add(item.sourceId);
+    return true;
+  });
+  // Stable sort by timestamp, breaking ties on the original (arrival/causal)
+  // index — never sourceId lexicographic order, which would reorder
+  // same-millisecond tool_started/tool_completed/approval/artifact rows out of
+  // causal sequence. Missing/invalid timestamps sort as 0 (deterministic).
+  return deduped
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (toSortableTime(a.item.createdAt) - toSortableTime(b.item.createdAt)) || (a.index - b.index))
+    .map(({ item }) => item);
 }
+
+function toSortableTime(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+// Deterministic fallback for missing/invalid timestamps. Must NOT be the current
+// time: a fresh `new Date()` per projection makes such rows jump on every
+// re-render. Epoch keeps them ordered by arrival index instead (see dedupeAndSort).
+const EPOCH_ISO = "1970-01-01T00:00:00.000Z";
 
 function safeDate(value?: string | null): string {
   if (value && Number.isFinite(Date.parse(value))) return value;
-  return new Date().toISOString();
+  return EPOCH_ISO;
+}
+
+// Build a stable sourceId for an event with no authoritative event_id. Includes
+// as many stable discriminators as available plus the arrival index, so distinct
+// events that share type/run/timestamp do NOT collapse to one sourceId (which
+// dedupeAndSort would drop, silently losing events). Deterministic — no Date.now
+// or randomness — so repeated projections of the same input are identical.
+function syntheticEventKey(event: AgentTranscriptEvent, occurrenceIndex?: number): string {
+  const payload = objectValue(event.payload);
+  const discriminator =
+    stringValue(payload.tool_call_id) ||
+    stringValue(payload.call_id) ||
+    stringValue(payload.tool_name) ||
+    stringValue(payload.tool) ||
+    stringValue(payload.approval_id) ||
+    stringValue(objectValue(payload.approval).id) ||
+    stringValue(payload.artifact_path) ||
+    stringValue(payload.message) ||
+    stringValue(payload.summary) ||
+    stringValue(event.content) ||
+    "";
+  const ts = event.ts ?? event.created_at ?? "";
+  const idx = occurrenceIndex ?? -1;
+  return `${event.type}:${event.run_id ?? ""}:${ts}:${discriminator}:${idx}`;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

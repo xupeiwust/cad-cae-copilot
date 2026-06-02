@@ -119,6 +119,8 @@ export function AppChrome({ app }: AppChromeProps) {
               selectedConnectionBlocked={app.selectedConnectionBlocked}
               selectedId={app.selectedId}
               activeSessionId={app.activeSessionId}
+              engineeringContext={app.engineeringContext}
+              onContextSummaryChange={app.updateActiveSessionContextSummary}
               chatBusy={app.chatBusy}
               cadGenerating={app.cadGenerating}
               cadGenerationProgress={app.cadGenerationProgress}

@@ -856,16 +856,20 @@ function dedupeAgentMessagesByText(items: ChatTranscriptItem[]): ChatTranscriptI
 function dedupeSnapshotRowsCoveredByEvents(items: ChatTranscriptItem[]): ChatTranscriptItem[] {
   const eventKeys = new Set<string>();
   for (const item of items) {
-    if (!item.sourceId.startsWith("event:")) continue;
+    if (!isEventBackedSource(item.sourceId)) continue;
     const key = comparableActivityKey(item);
     if (key) eventKeys.add(key);
   }
   if (!eventKeys.size) return items;
   return items.filter((item) => {
-    if (item.sourceId.startsWith("event:")) return true;
+    if (isEventBackedSource(item.sourceId)) return true;
     const key = comparableActivityKey(item);
     return !key || !eventKeys.has(key);
   });
+}
+
+function isEventBackedSource(sourceId: string): boolean {
+  return sourceId.startsWith("event:") || sourceId.startsWith("event-plan:");
 }
 
 function comparableActivityKey(item: ChatTranscriptItem): string | null {

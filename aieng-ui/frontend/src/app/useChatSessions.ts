@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type ChatSession } from "../api";
+import { api, type ChatSession, type ContextSummary } from "../api";
 import type { ApprovalMode, AutopilotRunState } from "../types";
+import { applyContextSummaryToSessions } from "./chatSessionState";
 
 type UseChatSessionsArgs = {
   selectedId: string | null;
@@ -135,6 +136,10 @@ export function useChatSessions({ selectedId }: UseChatSessionsArgs) {
     }
   }
 
+  function updateActiveSessionContextSummary(contextSummary: ContextSummary | null, updatedAt?: string | null) {
+    setChatSessions((current) => applyContextSummaryToSessions(current, activeSessionId, contextSummary, updatedAt));
+  }
+
   return {
     chatSessions,
     activeSessionId,
@@ -148,5 +153,6 @@ export function useChatSessions({ selectedId }: UseChatSessionsArgs) {
     handleLiveChatSessionDelete,
     renameActiveSessionForPrompt,
     updateActiveSessionApprovalMode,
+    updateActiveSessionContextSummary,
   };
 }

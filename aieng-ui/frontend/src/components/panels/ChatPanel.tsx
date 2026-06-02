@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "../../app/chatTranscript";
 import type { StreamingState } from "../../app/useChatTranscript";
+import type { ContextSummary } from "../../api";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
 import type { ApprovalMode, AutopilotAgentMode, AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
+import type { EngineeringContextSource } from "../../app/engineeringContextSource";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
 import { ContextSummaryPanel } from "../agent/ContextSummaryPanel";
 import { AgentInputBox } from "../chat/AgentInputBox";
@@ -193,6 +195,8 @@ type ChatPanelProps = {
   selectedConnectionBlocked: boolean;
   selectedId: string | null;
   activeSessionId: string | null;
+  engineeringContext?: EngineeringContextSource | null;
+  onContextSummaryChange?(summary: ContextSummary | null, updatedAt?: string | null): void;
   chatBusy: boolean;
   cadGenerating: boolean;
   cadGenerationProgress: CadGenerationProgress | null;
@@ -232,6 +236,8 @@ export function ChatPanel({
   selectedConnectionBlocked,
   selectedId,
   activeSessionId,
+  engineeringContext,
+  onContextSummaryChange,
   chatBusy,
   cadGenerating,
   cadGenerationProgress,
@@ -318,7 +324,12 @@ export function ChatPanel({
 
   return (
     <section className="chat-pane-body">
-      <ContextSummaryPanel projectId={selectedId} sessionId={activeSessionId} />
+      <ContextSummaryPanel
+        projectId={selectedId}
+        sessionId={activeSessionId}
+        engineeringContext={engineeringContext}
+        onSummaryChange={onContextSummaryChange}
+      />
 
       <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>} onScroll={markScrollPosition} data-i18n-skip>
         {transcriptItems.length ? (

@@ -502,6 +502,18 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 pass
         return agent_context_snapshot
 
+    def _session_approval_mode(session_id: str | None) -> str:
+        if not session_id:
+            return "balanced"
+        try:
+            from . import db
+
+            session = db.get_chat_session(db_path, session_id)
+            mode = session.get("approval_mode") if session else None
+            return mode if mode in {"balanced", "strict", "manual"} else "balanced"
+        except Exception:
+            return "balanced"
+
     def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
         from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
 
@@ -512,6 +524,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             agent_context=_agent_context_with_session_summary(request.project_id, request.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
+            approval_mode=_session_approval_mode(request.session_id),
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,

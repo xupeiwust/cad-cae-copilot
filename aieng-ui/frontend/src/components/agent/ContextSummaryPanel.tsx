@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 
 import { api, type ContextSummary } from "../../api";
+import { engineeringContextSourceLines, type EngineeringContextSource } from "../../app/engineeringContextSource";
 import { PointerText } from "../PointerText";
 
 type ContextSummaryPanelProps = {
   projectId: string | null;
   sessionId: string | null;
+  engineeringContext?: EngineeringContextSource | null;
+  onSummaryChange?(summary: ContextSummary | null, updatedAt?: string | null): void;
 };
 
-export function ContextSummaryPanel({ projectId, sessionId }: ContextSummaryPanelProps) {
+export function ContextSummaryPanel({ projectId, sessionId, engineeringContext, onSummaryChange }: ContextSummaryPanelProps) {
   const [summary, setSummary] = useState<ContextSummary | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -24,7 +27,10 @@ export function ContextSummaryPanel({ projectId, sessionId }: ContextSummaryPane
     setBusy(true);
     api.getChatSessionContextSummary(projectId, sessionId)
       .then((response) => {
-        if (!cancelled) setSummary(response.context_summary ?? null);
+        if (!cancelled) {
+          setSummary(response.context_summary ?? null);
+          onSummaryChange?.(response.context_summary ?? null, response.context_summary_updated_at);
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -47,6 +53,7 @@ export function ContextSummaryPanel({ projectId, sessionId }: ContextSummaryPane
     try {
       const response = await api.refreshChatSessionContextSummary(projectId, sessionId);
       setSummary(response.context_summary ?? null);
+      onSummaryChange?.(response.context_summary ?? null, response.context_summary_updated_at);
       setExpanded(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -105,6 +112,7 @@ export function ContextSummaryPanel({ projectId, sessionId }: ContextSummaryPane
               <SummaryBlock label="Risks" values={summary.risks} empty="None" tone="risk" />
               <SummaryBlock label="Decisions" values={summary.important_decisions} empty="None" />
               <SummaryBlock label="Files" values={summary.relevant_files} empty="None" code />
+              <EngineeringContextBlock context={engineeringContext} />
             </div>
           ) : null}
         </>
@@ -121,6 +129,21 @@ export function ContextSummaryPanel({ projectId, sessionId }: ContextSummaryPane
         </div>
       )}
     </section>
+  );
+}
+
+function EngineeringContextBlock({ context }: { context?: EngineeringContextSource | null }) {
+  if (!context) return null;
+  const sources = engineeringContextSourceLines(context);
+  return (
+    <div className="context-summary-engineering">
+      <span className="context-summary-label">Sources</span>
+      <ul>
+        {sources.map((source) => (
+          <li key={source}><PointerText text={source} /></li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

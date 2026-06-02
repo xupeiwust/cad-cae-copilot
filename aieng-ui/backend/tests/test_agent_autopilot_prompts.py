@@ -62,6 +62,25 @@ def test_local_and_llm_paths_share_compact_tool_catalog() -> None:
     assert local_layer["available_workbench_tools"] == llm_layer["available_workbench_tools"]
 
 
+def test_system_layer_documents_simulation_workflow_template() -> None:
+    layer = build_system_layer([
+        {"name": "cae.prepare_solver_run", "description": "preflight", "input_schema": {"type": "object"}},
+        {"name": "cae.generate_solver_input", "description": "deck", "input_schema": {"type": "object"}},
+        {"name": "cae.run_solver", "description": "solver", "requires_approval": True, "input_schema": {"type": "object"}},
+        {"name": "cae.extract_solver_results", "description": "metrics", "input_schema": {"type": "object"}},
+        {"name": "cae.extract_field_regions", "description": "regions", "input_schema": {"type": "object"}},
+        {"name": "postprocess.refresh_cae_summary", "description": "summary", "input_schema": {"type": "object"}},
+    ])
+    rules = "\n".join(layer["operating_rules"])
+    tool_names = [tool["name"] for tool in layer["available_workbench_tools"]]
+
+    assert "Simulation workflow template" in rules
+    assert "cae.generate_solver_input" in rules
+    assert "cae.extract_solver_results" in rules
+    assert tool_names.index("cae.prepare_solver_run") < tool_names.index("cae.generate_solver_input")
+    assert tool_names.index("cae.generate_solver_input") < tool_names.index("cae.run_solver")
+
+
 def test_action_prompt_compacts_large_agent_context_observation() -> None:
     prompt = build_action_prompt(
         objective="Explain this model",

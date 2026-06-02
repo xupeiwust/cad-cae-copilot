@@ -25,6 +25,7 @@ import type {
   RuntimeConfigSnapshot,
   SolverFieldDescriptor,
 } from "../types";
+import type { EngineeringContextSource } from "./engineeringContextSource";
 import { useAgentActivityStream } from "./useAgentActivityStream";
 import { useAgentRuns } from "./useAgentRuns";
 import { mergeLocalAgentCapabilities } from "./workbenchHelpers";
@@ -82,6 +83,7 @@ export function useWorkbenchApp() {
     handleLiveChatSessionDelete,
     renameActiveSessionForPrompt,
     updateActiveSessionApprovalMode,
+    updateActiveSessionContextSummary,
   } = useChatSessions({ selectedId });
   const {
     chatHistory,
@@ -254,6 +256,7 @@ export function useWorkbenchApp() {
   } = useAgentActivityStream({
     selectedId,
     activeSessionId,
+    activeRunId: activeSession?.active_run_id,
     agentBusy,
     cadGenerationProgress,
     refreshProjects,
@@ -558,6 +561,42 @@ export function useWorkbenchApp() {
     [caeFields, hasCaeResultArtifacts],
   );
   const activeFieldDescriptor = hasCaeResultArtifacts ? fieldDescriptor : null;
+  const engineeringContext = useMemo<EngineeringContextSource>(() => ({
+    projectId: selectedId,
+    projectName: selectedProject?.name ?? null,
+    selectedFaces: pickedFaces.map((face) => ({
+      pointer: face.pointer,
+      label: face.label,
+      surface_type: face.surface_type,
+    })),
+    highlightedFaceCount: highlightedFaceIds.size,
+    viewerAsset: effectiveViewerUrl
+      ? { url: effectiveViewerUrl, format: effectiveViewerFormat }
+      : selectedProject?.web_asset
+        ? { url: selectedProject.web_asset, format: selectedProject.web_asset_format ?? null }
+        : null,
+    shapeIrObjectCount: shapeIrObjects.length,
+    shapeIrVerificationStatus: shapeIrVerification?.status ?? null,
+    cae: {
+      hasContext: hasCaeContext,
+      hasResults: hasCaeResultArtifacts,
+      availableFields: renderableCaeFields,
+      activeField: activeFieldDescriptor?.field_name ?? null,
+    },
+  }), [
+    activeFieldDescriptor,
+    effectiveViewerFormat,
+    effectiveViewerUrl,
+    hasCaeContext,
+    hasCaeResultArtifacts,
+    highlightedFaceIds,
+    pickedFaces,
+    renderableCaeFields,
+    selectedId,
+    selectedProject,
+    shapeIrObjects,
+    shapeIrVerification,
+  ]);
 
   useEffect(() => {
     if (!renderableCaeFields.length) return;
@@ -680,6 +719,7 @@ export function useWorkbenchApp() {
     clearHighlightedFaces,
     shapeIrObjects,
     shapeIrVerification,
+    engineeringContext,
     selectedShapeIrNodeId,
     selectShapeIrNode,
     chatConnections,
@@ -694,6 +734,7 @@ export function useWorkbenchApp() {
         : "balanced"
     ) as ApprovalMode,
     setActiveSessionApprovalMode,
+    updateActiveSessionContextSummary,
     selectedConnectionBlocked,
     chatBusy,
     cadGenerating,

@@ -418,6 +418,49 @@ def test_compact_cad_build_error_keeps_repair_context() -> None:
     assert data["failing_input"]["project_id"] == "p1"
     assert data["failing_input"]["code_chars"] == len(code)
     assert data["source_snippet"] == code
+    assert "Repair the failing build123d source" in data["repair_instruction"]
+
+    full = json.loads(mgr.build_full_prompt("repair cad", project_id="p1"))
+    assert full["repair_directive"]["type"] == "cad_build_repair"
+    assert full["repair_directive"]["top_traceback_line"] == "NameError: name 'missing_height' is not defined"
+    assert full["repair_directive"]["failing_input"]["mode"] == "replace"
+    assert "Do not restart from an unrelated design" in full["repair_directive"]["instruction"]
+
+
+def test_resume_prompt_surfaces_latest_cad_repair_directive() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": []})
+    latest = _obs(
+        "tool_error",
+        "Tool cad.execute_build123d failed",
+        {
+            "tool_name": "cad.execute_build123d",
+            "error_class": "cad_build_error",
+            "recoverable": True,
+            "input": {
+                "project_id": "p1",
+                "mode": "append",
+                "model_kind": "mechanical",
+                "code": "from build123d import *\nresult = Box(WIDTH, 20, 10)",
+            },
+            "error": (
+                "Traceback (most recent call last):\n"
+                "  File \"geometry/source.py\", line 2, in <module>\n"
+                "NameError: name 'WIDTH' is not defined"
+            ),
+        },
+    )
+
+    prompt = json.loads(mgr.build_resume_prompt(
+        "repair failed CAD",
+        project_id="p1",
+        latest_observation=latest,
+    ))
+    directive = prompt["resume_summary"]["repair_directive"]
+
+    assert directive["type"] == "cad_build_repair"
+    assert directive["exception_type"] == "NameError"
+    assert directive["failing_input"]["mode"] == "append"
+    assert "WIDTH" in directive["source_snippet"]
 
 
 # -- Edge cases --

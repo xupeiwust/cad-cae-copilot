@@ -136,7 +136,7 @@ export function runToTranscriptItems(
     items.push(...observationToTranscriptItems(run, obs, index));
   }
 
-  if (run.plan) {
+  if (run.plan && isWorthShowingPlan(run.plan)) {
     items.push(planToTranscriptItem(run.plan, {
       runId: run.run_id,
       sessionId: run.session_id ?? null,
@@ -512,7 +512,9 @@ function planEventsToTranscriptItems(events: AgentTranscriptEvent[]): Transcript
     });
   }
 
-  return [...plans.values()].map(({ plan, event, createdAt }) => planToTranscriptItem(plan, {
+  return [...plans.values()]
+    .filter(({ plan }) => isWorthShowingPlan(plan))
+    .map(({ plan, event, createdAt }) => planToTranscriptItem(plan, {
     id: `event-plan-${event.run_id || "run"}-${plan.id}`,
     sourceId: `event-plan:${event.run_id || ""}:${plan.id}`,
     runId: event.run_id ?? null,
@@ -535,6 +537,15 @@ function planToTranscriptItem(
     steps: plan.steps,
     currentStepId: plan.current_step_id,
   };
+}
+
+function isWorthShowingPlan(plan: AutopilotAgentPlan): boolean {
+  // Skip trivial single-step plans (usually just a chat reply or simple action).
+  // Plans with 2+ steps represent a real multi-step workflow worth surfacing.
+  if (plan.steps.length <= 1) return false;
+  // Also skip plans where every step is just summarize/chat — no real work.
+  if (plan.steps.every((step) => step.kind === "summarize")) return false;
+  return true;
 }
 
 function planKey(event: AgentTranscriptEvent, planId: string): string {

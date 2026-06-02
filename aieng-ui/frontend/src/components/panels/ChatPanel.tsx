@@ -416,49 +416,6 @@ export function ChatPanel({
           </div>
         )}
 
-        {lastRuntimeRun?.status === "awaiting_approval" ? (
-          <div className="approval-line runtime-approval-line">
-            <div className="approval-line-main">
-              <span className="approval-line-badge">runtime</span>
-              <strong>Review pending runtime step</strong>
-              <span>
-                {typeof lastRuntimeRun.pending_step_index === "number"
-                  ? lastRuntimeRun.plan[lastRuntimeRun.pending_step_index]?.description
-                  : "Approve or reject the pending runtime action."}
-              </span>
-            </div>
-            <div className="approval-line-actions">
-              <button type="button" disabled={chatBusy} onClick={() => void approveRun()}>
-                <ActionIcon name="approve" />
-                Approve
-              </button>
-              <button type="button" className="ghost-button" disabled={chatBusy} onClick={() => void rejectRun()}>
-                <ActionIcon name="reject" />
-                Reject
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {simulationPending ? (
-          <div className="approval-line chat-sim-approval">
-            <div className="approval-line-main">
-              <span className="approval-line-badge">solver</span>
-              <strong>Run Gmsh mesh + CalculiX solver on this geometry?</strong>
-            </div>
-            <div className="approval-line-actions">
-              <button disabled={chatBusy} onClick={approveSimulation}>
-                <ActionIcon name="approve" />
-                Run Simulation
-              </button>
-              <button disabled={chatBusy} className="ghost-button" onClick={rejectSimulation}>
-                <ActionIcon name="reject" />
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : null}
-
         {activityLine ? (
           <AgentActivityLine
             title={activityLine.title}
@@ -474,6 +431,53 @@ export function ChatPanel({
           </button>
         ) : null}
       </div>
+
+      {(lastRuntimeRun?.status === "awaiting_approval" || simulationPending) ? (
+        <div className="chat-approval-dock">
+          {lastRuntimeRun?.status === "awaiting_approval" ? (
+            <div className="approval-line runtime-approval-line">
+              <div className="approval-line-main">
+                <span className="approval-line-badge">runtime</span>
+                <strong>Review pending runtime step</strong>
+                <span>
+                  {typeof lastRuntimeRun.pending_step_index === "number"
+                    ? lastRuntimeRun.plan[lastRuntimeRun.pending_step_index]?.description
+                    : "Approve or reject the pending runtime action."}
+                </span>
+              </div>
+              <div className="approval-line-actions">
+                <button type="button" disabled={chatBusy} onClick={() => void approveRun()}>
+                  <ActionIcon name="approve" />
+                  Approve
+                </button>
+                <button type="button" className="ghost-button" disabled={chatBusy} onClick={() => void rejectRun()}>
+                  <ActionIcon name="reject" />
+                  Reject
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {simulationPending ? (
+            <div className="approval-line chat-sim-approval">
+              <div className="approval-line-main">
+                <span className="approval-line-badge">solver</span>
+                <strong>Run Gmsh mesh + CalculiX solver on this geometry?</strong>
+              </div>
+              <div className="approval-line-actions">
+                <button disabled={chatBusy} onClick={approveSimulation}>
+                  <ActionIcon name="approve" />
+                  Run Simulation
+                </button>
+                <button disabled={chatBusy} className="ghost-button" onClick={rejectSimulation}>
+                  <ActionIcon name="reject" />
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {activeAutopilotRun?.status === "chatting" ? (
         <div className="chat-quick-actions">

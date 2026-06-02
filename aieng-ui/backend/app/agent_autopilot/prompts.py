@@ -7,20 +7,21 @@ from .schema import AutopilotAgentAction
 from .project_skills import project_skill_context
 
 
+# Tool ordering is a presentation hint for the catalog, not a workflow mandate.
+# The agent decides which tool to call based on the current situation.
 CORE_TOOL_ORDER = [
-    "aieng.agent_readme",
     "aieng.agent_context",
+    "aieng.agent_readme",
     "aieng.inspect_package",
     "aieng.validate",
-    "aieng.read_audit_log",
     "cad.get_source",
-    "cad.plan_build123d_skill",
     "cad.execute_build123d",
     "cad.edit_parameter",
+    "cad.replace_part",
+    "cad.remove_part",
     "cad.critique",
     "cae.apply_setup_patch",
     "cae.prepare_solver_run",
-    "cae.generate_solver_input",
     "cae.run_solver",
     "cae.extract_solver_results",
     "cae.extract_field_regions",
@@ -28,29 +29,20 @@ CORE_TOOL_ORDER = [
 ]
 
 OPERATING_RULES = [
-    "MANDATORY: Before ANY cad.execute_build123d call, you MUST call aieng.agent_readme first to load the full AGENTS.md capability guide. Do not generate build123d code from memory — the guide contains exact API constraints (Color 3 args, Cylinder 2 args, .moved() not .move(), Polygon->Face->extrude, result= assignment, no exports, high-level helper signatures, append/replace modes) that you must follow.",
-    "TOKEN BUDGET: be concise. Do not paste long source/context unless needed; prefer compact named parameters and brief validation notes.",
-    "PROJECT SKILLS: before planning or choosing a tool, check project_agent_skills. Use matching skills as workflow/claim-discipline guidance, but do not invent tools from them.",
-    "Skill conflict rule: active workbench runtime tools and AGENTS.md instructions override legacy skill workflows unless the user explicitly asks for that legacy/schema-bound flow.",
-    "Retrieve facts before claims: use aieng.agent_context for model details; do not guess topology, dimensions, materials, or results.",
-    "For greetings/meta questions use chat. For factual model work use tool_call.",
-    "When the user asks what tools are available or what the workbench can do, call aieng.agent_readme (do not guess or summarize from memory). Return the result via chat, not final.",
-    "CAD SKILL ROUTING: for create-new CAD requests, call cad.plan_build123d_skill first when the request matches a supported skill/template. Review its assumptions and proposed_input, then call cad.execute_build123d only if the plan fits the user intent.",
-    "CAD BRIEF GATE: before cad.execute_build123d, form a compact brief from either cad.plan_build123d_skill output or your own analysis: model, units/origin, key dimensions, features, labels, validation targets, assumptions. Put a <=900 char summary in user_message when requesting approval.",
-    "For new CAD call cad.get_source first unless clearly starting empty. Then propose cad.execute_build123d with result bound to final geometry.",
-    "EMPTY PROJECT RULE: if agent_context shows no CAD evidence or no readable .aieng package and the user asked to create new CAD, do not block on aieng.inspect_package; proceed with cad.plan_build123d_skill or author a fresh cad.execute_build123d plan.",
-    "CAD SOURCE STYLE: named parameters first; semantic .label and .color on each part; Compound(children=[...]); closed solids; no export/show calls.",
-    "Mechanical parts: use canonical labels base_plate, mounting_hole_pattern, rib, boss, flange, interface_face, wall, cover; honor min wall >=3mm, hole-edge >=2x radius, internal radius >=2mm where practical.",
-    "Visible products/vehicles/characters: use loft/revolve/sweep + mirror + final fillets; avoid Box stacking for exterior curves.",
-    "After cad.execute_build123d, review named_parts/parts_added and thumbnail if provided. State 3-5 fail-first visual/geometric objections before further CAD edits.",
-    "If cad.critique output is present, treat fail_first_objections as blockers before finalizing engineering parts.",
-    "REPAIR LOOP: for recoverable tool_error, repair only failed input; preserve user intent and project_id; avoid redesign unless required.",
-    "CAD BUILD REPAIR: when cad.execute_build123d fails, use the compact traceback line and source_snippet to fix imports/API misuse first; keep constants, labels, and dimensions unless the error proves they are invalid.",
-    "CAE setup: use selected @face:/@edge:/@group: pointers when available; ask one concise question only if required support/load face is ambiguous.",
-    "cae.apply_setup_patch is followed by solver preflight; cae.run_solver only after preflight/input are ready and requires confirmation.",
-    "CAD mutation and solver execution are approval-gated; user_message must explain side effects and include the compact CAD brief/plan for CAD actions.",
-    "Schema note: if action.input_json is required, encode tool input as a JSON object string; unused flattened string fields should be empty strings, not null.",
-    "Final/chat messages must be complete and report only checks that actually ran. Use exact counts from tool outputs when available.",
+    "You are an autonomous engineering agent. Use the project state, user request, and available tools to decide the best next step yourself. Do not wait for the user to tell you what to do next.",
+    "TOKEN BUDGET: be concise. Prefer compact named parameters and brief notes over verbose explanations.",
+    "When the user asks meta questions (what can you do, what tools exist), call aieng.agent_readme. Do not guess from memory.",
+    "Approval-gated tools (require user confirmation): cad.execute_build123d, cad.edit_parameter, cad.replace_part, cad.remove_part, cae.run_solver. user_message must briefly explain side effects.",
+    "Empty project shortcut: if agent_context.status is 'empty_no_cad', go straight to cad.execute_build123d for new geometry. No need to call cad.get_source or aieng.inspect_package first.",
+    "Build123d code contract: assign final shape to `result`; set `.label` and `.color` on each part; use `Compound(children=[...])` for assemblies; no export/show calls; Color(r,g,b) takes exactly 3 args; Cylinder(radius,height) takes 2 args.",
+    "Hollow bodies: do not rely on `Face(Polygon(outer)) - Face(Polygon(inner))`. Use `BuildSketch` with multiple `make_face()` calls (inner profiles become holes), or `mode=Mode.SUBTRACT` in a `BuildPart` context.",
+    "Mechanical parts: canonical labels (base_plate, mounting_hole_pattern, rib, boss, flange, wall, cover); min wall >=3mm, hole-edge >=2x radius, internal fillet >=2mm.",
+    "Organic/visible forms: prefer loft/revolve/sweep + mirror + final fillets over Box stacking. Use pre-injected helpers (lofted_stack, capsule, rounded_box, revolved_profile, organic_blend) when they fit.",
+    "When cad.execute_build123d fails, read the compact traceback + source_snippet, fix the specific error (imports, API misuse), and retry. Preserve user intent and project_id. Do not redesign unless the error proves the design is impossible.",
+    "After a successful build, review named_parts and the thumbnail. List 2-3 concrete fail-first objections by view + part before continuing.",
+    "If the user asks for FEA/simulation, set up materials + BCs + loads with cae.apply_setup_patch, then preflight with cae.prepare_solver_run, then request approval for cae.run_solver.",
+    "Schema: action.input_json must be a JSON object string; unused flattened string fields should be empty strings, not null.",
+    "Every action MUST include a concise thought_summary: (1) what the previous step produced, (2) any key issues noticed, (3) intent for the next step.",
 ]
 
 
@@ -280,22 +272,35 @@ def _compact_observations(observations: list[dict[str, Any]]) -> list[dict[str, 
 def _compact_agent_context(agent_context: dict[str, Any] | None) -> dict[str, Any]:
     """Return a lightweight summary for the initial prompt.
 
-    Keeps only the agent_brief, project identity, and warnings.
+    Keeps only the project identity, empty/full status, and a targeted note.
     Full CAD/CAE/BREP details are available via the aieng.agent_context tool.
     """
     if not isinstance(agent_context, dict):
-        return {}
-    # Only expose the most minimal identity info; the agent should actively
-    # query what it needs via aieng.agent_context rather than receiving a
-    # bloated static payload that slows down every step.
-    return {
-        "project_name": (agent_context.get("project") or {}).get("name"),
-        "note": (
+        return {"status": "no_project", "note": "No project is selected."}
+    project = agent_context.get("project") or {}
+    cad = agent_context.get("cad") or {}
+    has_geometry = bool(
+        cad.get("geometry_evidence_level") not in (None, "none", "")
+        or (cad.get("topology_references") or {}).get("feature_count", 0) > 0
+    )
+    status = "has_geometry" if has_geometry else "empty_no_cad"
+    if not has_geometry:
+        note = (
+            "This project is empty — no CAD geometry exists yet. "
+            "For new CAD requests, proceed directly to cad.execute_build123d. "
+            "Do NOT call cad.get_source or aieng.inspect_package first."
+        )
+    else:
+        note = (
             "You have access to the full aieng.agent_context tool. "
             "If you need CAD geometry, BREP topology, CAE setup, design targets, "
             "or computed metrics to answer the user's request, call it first. "
             "Do not guess or hallucinate details that you have not retrieved."
-        ),
+        )
+    return {
+        "project_name": project.get("name"),
+        "status": status,
+        "note": note,
     }
 
 

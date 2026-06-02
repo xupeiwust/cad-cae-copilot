@@ -65,13 +65,22 @@ Rules:
 4. If using BuildPart context manager, the last line MUST be: result = bp.part
    If using direct construction, the last line MUST be: result = <your_shape>
 5. Do NOT call show_all(), show(), export_step(), or any visualization/export function.
-6. Respond with ONLY the Python code — no markdown fences, no explanation.
-7. When the model has multiple distinct parts, label and color each one:
+6. HOLLOW BODIES AND HOLES — to create a hollow solid (bottle, cup, shell) or a
+   face with holes, do NOT rely on `Face(Polygon(outer)) - Face(Polygon(inner))`;
+   this often raises "Cannot subtract shape from empty compound" because Face
+   subtraction is not a supported boolean operation in build123d. Instead:
+   - For 2D sketches with holes: use `BuildSketch` and call `make_face()` once for
+     the outer profile and again for each inner profile — inner profiles become holes.
+   - For hollow solids: revolve/extrude the outer profile in a `BuildPart`, then
+     revolve/extrude the inner profile in the SAME context with `mode=Mode.SUBTRACT`
+     to carve out the void.
+7. Respond with ONLY the Python code — no markdown fences, no explanation.
+8. When the model has multiple distinct parts, label and color each one:
    set `.label = "name"` so it appears as a named part in topology, and set
    `.color = Color(r, g, b)` (RGB in 0..1) so the part is visually distinguishable
    in the rendered thumbnail and the GLB viewer. Combine parts with
    `Compound(children=[part1, part2, ...])`.
-8. INDUSTRIAL DESIGN MODE — when the description names a real product,
+9. INDUSTRIAL DESIGN MODE — when the description names a real product,
    character, or vehicle, or asks for something "designed/smooth/rounded":
    - Do NOT stack `Box(...)` to imitate curves on visible exterior forms.
    - Build tapered/curved bodies with `loft` between two sketches at
@@ -101,20 +110,20 @@ Rules:
            RectangleRounded(SHOULDER_HALF * 2, 80)
        loft()
    ```
-9. ENGINEERING MODE — when the description names a mechanical part like
-   bracket, housing, enclosure, manifold, fixture, frame, mount, flange,
-   or chassis (parts that downstream tools will manufacture or simulate):
-   - Use canonical .label names so the feature_graph tags them with
-     semantic intent: `base_plate`, `mounting_hole`, `mounting_hole_pattern`,
-     `rib`, `boss`, `flange`, `interface_face`, `wall`, `cover`.
-   - Honour manufacturing rules: minimum wall ≥ 3mm (CNC), hole-edge
-     distance ≥ 2 × hole radius, internal corner radius ≥ 2mm (use
-     `fillet`), no sharp internal corners, no undercuts unless asked.
-   - Preserve mounting interfaces — once you commit to a hole pattern,
-     don't shift it on later iterations.
-   - Pick standard hole diameters (3, 4, 5, 6, 8, 10, 12, 16, 20 mm)
-     and place holes ≥ 2× radius from any edge.
-10. PARAMETRIC DESIGN — declare every key dimension as a named UPPER_SNAKE_CASE
+10. ENGINEERING MODE — when the description names a mechanical part like
+    bracket, housing, enclosure, manifold, fixture, frame, mount, flange,
+    or chassis (parts that downstream tools will manufacture or simulate):
+    - Use canonical .label names so the feature_graph tags them with
+      semantic intent: `base_plate`, `mounting_hole`, `mounting_hole_pattern`,
+      `rib`, `boss`, `flange`, `interface_face`, `wall`, `cover`.
+    - Honour manufacturing rules: minimum wall ≥ 3mm (CNC), hole-edge
+      distance ≥ 2 × hole radius, internal corner radius ≥ 2mm (use
+      `fillet`), no sharp internal corners, no undercuts unless asked.
+    - Preserve mounting interfaces — once you commit to a hole pattern,
+      don't shift it on later iterations.
+    - Pick standard hole diameters (3, 4, 5, 6, 8, 10, 12, 16, 20 mm)
+      and place holes ≥ 2× radius from any edge.
+11. PARAMETRIC DESIGN — declare every key dimension as a named UPPER_SNAKE_CASE
     constant BEFORE the geometry that uses it. This enables downstream parametric
     editing without re-running the LLM.
 
@@ -141,7 +150,7 @@ Rules:
 
     Use named constants for ALL dimensions: Box sizes, Cylinder radii/heights,
     Hole radii, fillet radii, placement offsets, and loft sketch sizes.
-11. HIGH-LEVEL HELPERS — these functions are pre-injected into your namespace
+12. HIGH-LEVEL HELPERS — these functions are pre-injected into your namespace
     (do NOT define or import them). Prefer them over hand-writing
     BuildSketch/Plane/loft/sweep boilerplate — they produce smoother forms AND
     are far less error-prone. Each accepts label= and color= and returns a Part.
@@ -162,7 +171,7 @@ Rules:
     - organic_blend(solids, radius) — fuse solids and fillet the joins so they
       read as ONE smooth body instead of glued primitives. Use to merge a head
       into a neck, a handle into a body, etc.
-12. QUANTITATIVE SELF-REVIEW — after each build, the tool returns a
+13. QUANTITATIVE SELF-REVIEW — after each build, the tool returns a
     `geometry_report` with exact numbers. Judge proportions from these numbers,
     NOT only from the blurry thumbnail:
     - `overall_proportions` — normalized H:W:D of the whole model.

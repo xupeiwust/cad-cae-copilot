@@ -6,6 +6,9 @@
 // distinct events that share type/run/timestamp).
 
 import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "./chatTranscript";
+import { test } from "vitest";
+
+test("transcript ordering", () => {
 
 const T = "2026-05-30T00:00:00.000Z";
 
@@ -81,3 +84,4 @@ function expectDeepEqual(actual: unknown, expected: unknown, label: string) {
     throw new Error(`${label}: expected ${expectedJson}, got ${actualJson}`);
   }
 }
+});

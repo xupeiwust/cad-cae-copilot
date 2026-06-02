@@ -1,4 +1,7 @@
 import { isTerminalAutopilotRun, nextStatusAfterStreamError, shouldPollActivityFallback } from "./agentActivityFallback";
+import { test } from "vitest";
+
+test("agent activity fallback", () => {
 
 expectEqual(nextStatusAfterStreamError("live"), "reconnecting", "live error status");
 expectEqual(nextStatusAfterStreamError("polling"), "polling", "polling error status");
@@ -48,3 +51,4 @@ function expectEqual(actual: unknown, expected: unknown, label: string) {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
 }
+});

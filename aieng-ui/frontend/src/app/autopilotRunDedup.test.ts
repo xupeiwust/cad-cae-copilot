@@ -11,6 +11,9 @@ import type { ChatHistoryItem } from "../appTypes";
 import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "./chatTranscript";
 import { upsertAutopilotChatItem, upsertPersistedChatMessage } from "./chatStateUtils";
 import { transcriptMappingFixtures } from "./chatTranscriptFixtures";
+import { test } from "vitest";
+
+test("autopilot run dedup", () => {
 
 const runA = transcriptMappingFixtures.completed; // run_id "fixture-completed", final "Geometry is ready."
 const runFailed = transcriptMappingFixtures.failed; // run_id "fixture-failed", error "cad.execute_build123d failed"
@@ -117,3 +120,4 @@ function expectEqual(actual: unknown, expected: unknown, label = "value") {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
 }
+});

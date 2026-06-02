@@ -6,6 +6,9 @@
 // tool failures close the streaming bubble; approval/ask_user/chatting do not.
 
 import { isStreamingClosingEvent, isTerminalAutopilotStatus, type AgentTranscriptEvent } from "./chatTranscript";
+import { test } from "vitest";
+
+test("streaming lifecycle helpers", () => {
 
 function event(type: string, extra: Partial<AgentTranscriptEvent> = {}): AgentTranscriptEvent {
   return { type, run_id: "run-1", ...extra };
@@ -57,3 +60,4 @@ function expectEqual(actual: unknown, expected: unknown, label = "value") {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
 }
+});

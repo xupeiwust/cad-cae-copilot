@@ -1,6 +1,9 @@
 import type { ChatHistoryItem } from "../appTypes";
 import type { AutopilotAgentPlan, AutopilotRunState } from "../types";
 import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "./chatTranscript";
+import { test } from "vitest";
+
+test("chat transcript replay", () => {
 
 const createdAt = "2026-06-02T00:00:00.000Z";
 
@@ -144,3 +147,4 @@ function expectDeepEqual(actual: unknown, expected: unknown, label: string) {
     throw new Error(`${label}: expected ${expectedJson}, got ${actualJson}`);
   }
 }
+});

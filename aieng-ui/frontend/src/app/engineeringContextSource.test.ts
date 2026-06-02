@@ -1,4 +1,7 @@
 import { engineeringContextSourceLines, type EngineeringContextSource } from "./engineeringContextSource";
+import { test } from "vitest";
+
+test("engineering context source lines", () => {
 
 function assertDeepEqual(actual: unknown, expected: unknown) {
   const actualJson = JSON.stringify(actual);
@@ -59,3 +62,4 @@ assertDeepEqual(engineeringContextSourceLines({
   "CAE: setup context available",
   "Selected faces: none",
 ]);
+});

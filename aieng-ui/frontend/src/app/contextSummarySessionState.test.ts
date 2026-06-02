@@ -1,5 +1,8 @@
 import type { ChatSession, ContextSummary } from "../api";
 import { applyContextSummaryToSessions } from "./chatSessionState";
+import { test } from "vitest";
+
+test("context summary session state", () => {
 
 const summary: ContextSummary = {
   schema_version: 1,
@@ -56,3 +59,4 @@ function expectEqual(actual: unknown, expected: unknown, label: string) {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
 }
+});

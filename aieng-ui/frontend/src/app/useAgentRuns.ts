@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { ChatHistoryItem, Notice, SelectedGeometryContext } from "../appTypes";
 import { createChatId, isLlmConfigReady, runtimeStatusLabel } from "../appUtils";
 import { isTerminalAutopilotStatus } from "./chatTranscript";
+import { upsertAutopilotChatItem } from "./chatStateUtils";
 import type {
   AgentPlan,
   ChatConnection,
@@ -236,18 +237,10 @@ export function useAgentRuns({
           { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
         ]);
       }
-      setChatHistory((current) => [
-        ...current,
-        {
-          id: createChatId(),
-          role: "assistant",
-          body: summarizeAutopilotRun(result),
-          createdAt: new Date().toISOString(),
-          mode: "runtime",
-          autopilotRun: result,
-          errors: result.errors,
-        },
-      ]);
+      // Canonical run-keyed upsert (id `run-${run_id}`) so the optimistic item,
+      // the SSE autopilot_update, and any reload collapse to a single entry for
+      // this run instead of racing into duplicate rows with mismatched ids.
+      setChatHistory((current) => upsertAutopilotChatItem(current, result));
       if (isTerminalAutopilotStatus(result.status)) {
         setAgentBusy(false);
         setNotice({
@@ -278,16 +271,9 @@ export function useAgentRuns({
             ? await api.followUpAutopilot(runId, userMessage || "", apiKey || undefined)
             : await api.continueAutopilot(runId, action === "approve", userMessage || null, apiKey || undefined);
       onAutopilotRunUpdate?.(result);
-      setChatHistory((current) => current.map((entry) => (
-        entry.autopilotRun?.run_id === runId
-          ? {
-              ...entry,
-              body: summarizeAutopilotRun(result),
-              autopilotRun: result,
-              errors: result.errors,
-            }
-          : entry
-      )));
+      // Same canonical run-keyed upsert as the create path: update in place by
+      // run_id (or insert if the row was lost), never fork a second entry.
+      setChatHistory((current) => upsertAutopilotChatItem(current, result));
       if (isTerminalAutopilotStatus(result.status)) {
         setAgentBusy(false);
         setNotice({

@@ -164,6 +164,64 @@ Claude Code should enumerate the registered tools. A second smoke test:
 
 This should fire `aieng.inspect_package` and return the semantic summary.
 
+### Local agent health/preflight diagnostics
+
+The FastAPI backend exposes local-agent readiness separately from MCP tool
+listing:
+
+```powershell
+curl http://127.0.0.1:8000/api/local-agents/capabilities
+curl http://127.0.0.1:8000/api/local-agents/preflight
+curl "http://127.0.0.1:8000/api/local-agents/preflight?adapter=claude-code"
+```
+
+`/api/local-agents/capabilities` is the backward-compatible selector summary.
+`/api/local-agents/preflight` is the maintainer/debug contract. Each adapter
+entry includes `available`, normalized `status` (`ready`, `missing_binary`,
+`auth_error`, `timeout`, `session_not_found`, `unsupported_flag`,
+`unknown_error`), feature flags, an `actionable_fix`, and safe diagnostics
+(resolved executable path, cwd, platform, PATH summary, and environment variable
+names). Diagnostics may list `ANTHROPIC_*`, `CLAUDE_*`, `OPENAI_*`, or
+`CODEX_*` variable **names**, but must not expose token/key values.
+
+Claude Code-specific notes:
+
+- The adapter does **not** pass `--bare` by default. `--bare` can make an
+  otherwise-authenticated Windows Claude Code CLI report `Not logged in`; only
+  opt in with `AIENG_CLAUDE_CODE_BARE=1` for explicit diagnostics.
+- Plain CLI preflight mirrors the manual command
+  `claude -p "Say hello" --output-format json`. Its timeout defaults to 20s and
+  can be overridden with `AIENG_CLAUDE_PREFLIGHT_TIMEOUT_SECONDS`.
+- Runs created without a chat `session_id` derive a stable run-based Claude
+  session id, so step 0 and approval/continue/resume steps address the same CLI
+  conversation.
+- `session_not_found` means the CLI could not resume the requested conversation;
+  inspect adapter diagnostics or start a fresh run.
+
+### Autopilot stale-run recovery semantics
+
+`GET /api/agent/autopilot/runs/{run_id}` returns the persisted run plus:
+
+- `stale`
+- `recovery_state`: `active`, `needs_resume`, `waiting`, or `terminal`
+- `stale_reason` when applicable
+
+A persisted `status="running"` run becomes `stale=true` /
+`recovery_state="needs_resume"` only when the backend has no live worker for it
+and `updated_at` is older than the conservative stale threshold. The backend
+does not rewrite it to `failed`. `awaiting_approval`, `blocked`, and `chatting`
+are waiting states; `completed`, `failed`, and `cancelled` are terminal.
+
+Stale running runs can be cleaned up safely with:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/agent/autopilot/runs/<run_id>/cancel
+```
+
+The cancel path persists `status="cancelled"`, emits one public
+`run_cancelled` terminal event, and repeated cancel calls on terminal runs are
+no-ops.
+
 ## CAD modelling without an API key (agent writes the code)
 
 The backend's built-in text-to-CAD flow (`/generate-cad-stream`) calls Claude

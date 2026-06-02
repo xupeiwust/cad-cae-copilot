@@ -30,6 +30,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     app = FastAPI(title="aieng-platform")
     app.state.settings = active_settings
     app.state.db_path = db_path
+    import threading
+
+    active_autopilot_workers: set[str] = set()
+    active_autopilot_workers_lock = threading.Lock()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -223,10 +227,25 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "available": [item for item in adapters if item.get("status") == "available"],
         }
 
+    @app.get("/api/local-agents/preflight")
+    def get_local_agent_preflight(adapter: str | None = None) -> dict[str, Any]:
+        from .agent_autopilot.local_agent_preflight import local_agent_preflight
+
+        return local_agent_preflight(adapter=adapter)
+
     def _autopilot_store():
         from .agent_autopilot.store import AutopilotStore
 
         return AutopilotStore(active_settings.data_root / "agent_autopilot" / "runs")
+
+    def _live_autopilot_run_ids() -> set[str]:
+        with active_autopilot_workers_lock:
+            return set(active_autopilot_workers)
+
+    def _autopilot_run_response(state: Any) -> dict[str, Any]:
+        from .agent_autopilot.run_recovery import enrich_run_response
+
+        return enrich_run_response(state, live_run_ids=_live_autopilot_run_ids())
 
     def _publish_live_event(event: dict[str, Any]) -> None:
         if event.get("type") in {
@@ -396,16 +415,28 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except Exception:
             pass
 
-    def _start_autopilot_worker(target: Callable[[], None]) -> None:
-        import threading
+    def _start_autopilot_worker(target: Callable[[], None], *, run_id: str | None = None) -> None:
+        if run_id:
+            with active_autopilot_workers_lock:
+                active_autopilot_workers.add(run_id)
 
-        thread = threading.Thread(target=target, name="aieng-autopilot-worker", daemon=True)
+        def _wrapped() -> None:
+            try:
+                target()
+            finally:
+                if run_id:
+                    with active_autopilot_workers_lock:
+                        active_autopilot_workers.discard(run_id)
+
+        thread = threading.Thread(target=_wrapped, name="aieng-autopilot-worker", daemon=True)
         thread.start()
 
     def _mark_autopilot_failed(store: Any, run_id: str, exc: Exception) -> None:
         try:
             loaded = store.load(run_id)
         except Exception:
+            return
+        if getattr(loaded, "status", None) in {"completed", "failed", "cancelled"}:
             return
         loaded.status = "failed"
         loaded.errors.append(str(exc))
@@ -622,14 +653,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             except Exception as exc:
                 _mark_autopilot_failed(store, state.run_id, exc)
 
-        _start_autopilot_worker(_run_in_background)
-        return state.model_dump()
+        _start_autopilot_worker(_run_in_background, run_id=state.run_id)
+        return _autopilot_run_response(state)
 
     @app.get("/api/agent/autopilot/runs/{run_id}")
     def get_agent_autopilot_run(run_id: str) -> dict[str, Any]:
         store = _autopilot_store()
         try:
-            return store.load(run_id).model_dump()
+            return _autopilot_run_response(store.load(run_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -672,7 +703,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         if current.status in ("completed", "failed", "cancelled"):
-            return current.model_dump()
+            return _autopilot_run_response(current)
         if current.status == "awaiting_approval":
             _publish_agent_event({
                 "event_id": f"{run_id}-approval-received-{uuid.uuid4().hex[:8]}",
@@ -716,8 +747,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             except Exception as exc:
                 _mark_autopilot_failed(store, run_id, exc)
 
-        _start_autopilot_worker(_run_continue_in_background)
-        return current.model_dump()
+        _start_autopilot_worker(_run_continue_in_background, run_id=run_id)
+        return _autopilot_run_response(current)
 
     @app.post("/api/agent/autopilot/runs/{run_id}/reply")
     def reply_agent_autopilot_run(
@@ -736,7 +767,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if current.status in ("completed", "failed", "cancelled"):
-            return current.model_dump()
+            return _autopilot_run_response(current)
         current.status = "running"
         current.updated_at = now_iso()
         store.save(current)
@@ -767,8 +798,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             except Exception as exc:
                 _mark_autopilot_failed(store, run_id, exc)
 
-        _start_autopilot_worker(_run_reply_in_background)
-        return current.model_dump()
+        _start_autopilot_worker(_run_reply_in_background, run_id=run_id)
+        return _autopilot_run_response(current)
 
     @app.post("/api/agent/autopilot/runs/{run_id}/follow-up")
     def follow_up_agent_autopilot_run(
@@ -805,7 +836,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         )
         try:
             state = engine.follow_up_run(run_id, message)
-            return state.model_dump()
+            return _autopilot_run_response(state)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -821,7 +852,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 "run_id": state.run_id,
                 "status": state.status,
             })
-            return state.model_dump()
+            return _autopilot_run_response(state)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:

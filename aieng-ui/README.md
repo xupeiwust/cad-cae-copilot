@@ -86,6 +86,51 @@ conflated. Key tools listed below; full registry available via `GET /api/runtime
 
 External agents (Claude Code, Codex, custom MCP clients) can access all runtime tools via `python -m app.mcp_server` from the backend. See [`backend/MCP_SETUP.md`](backend/MCP_SETUP.md).
 
+## Local agent reliability and diagnostics
+
+Local Agent Autopilot run reads (`GET /api/agent/autopilot/runs/{run_id}`) include
+backward-compatible recovery metadata:
+
+- `stale: boolean`
+- `recovery_state: "active" | "needs_resume" | "waiting" | "terminal"`
+- `stale_reason` when a persisted `status="running"` run has no live backend
+  worker and has exceeded the conservative stale threshold.
+
+`awaiting_approval`, `blocked`, and `chatting` are **waiting** states, not stale
+failures. `completed`, `failed`, and `cancelled` are terminal. The backend does
+not silently rewrite stale running runs to failed; clients may show a recovery
+message and can safely call `POST /api/agent/autopilot/runs/{run_id}/cancel` to
+clean up a stale run even after a backend restart. A cancel request emits one
+public `run_cancelled` terminal event and terminal runs are no-ops on repeat
+cancel.
+
+Local CLI readiness is available at:
+
+- `GET /api/local-agents/capabilities` — legacy/backward-compatible capability
+  summary for UI selectors.
+- `GET /api/local-agents/preflight`
+- `GET /api/local-agents/preflight?adapter=claude-code`
+
+The preflight endpoint classifies adapters as `ready`, `missing_binary`,
+`auth_error`, `timeout`, `session_not_found`, `unsupported_flag`, or
+`unknown_error`, includes feature flags (`json_output`, `schema_output`,
+`session_resume`, `tool_disable`, `non_interactive`), and returns safe diagnostics
+such as resolved executable path, cwd, platform, PATH summary, and environment
+variable **names**. It must not return token/API-key values.
+
+Claude Code adapter notes:
+
+- `--bare` is not used by default because Claude Code 2.1.x on Windows can then
+  skip normal auth/keychain state and report `Not logged in`; set
+  `AIENG_CLAUDE_CODE_BARE=1` only for explicit diagnostics.
+- Plain CLI preflight runs `claude -p "Say hello" --output-format json` with a
+  default timeout of 20 seconds; override with
+  `AIENG_CLAUDE_PREFLIGHT_TIMEOUT_SECONDS`.
+- Autopilot runs without a chat `session_id` derive a stable run-based Claude
+  session id, so approval/continue steps reuse the same CLI conversation.
+- `session_not_found` means the CLI could not resume the requested conversation;
+  start a fresh run or inspect adapter diagnostics.
+
 ## Evidence review API
 
 Read-only endpoints for human review of artifacts inside a project's `.aieng`
@@ -269,6 +314,19 @@ python -m pytest tests/test_api.py::test_cae_generate_mesh_real_freecad_integrat
 ```
 
 CI is defined in [`.github/workflows/demo-health.yml`](.github/workflows/demo-health.yml). It runs a smoke-check gate on push and pull request, plus full backend tests and frontend build. Real CalculiX and legacy FreeCAD-adapter checks are optional local gates and are expected to skip cleanly when binaries are unavailable.
+
+Focused reliability gates used during local-agent/backend work:
+
+```bash
+cd backend
+python -m pytest tests -q -k "claude or adapter or autopilot"
+python -m pytest tests/test_agent_reliability_diagnostics.py -q
+python -m pytest tests/test_cad_generation.py -q -k "label or named_parts or append_preserves or single_labeled"
+```
+
+Full backend pytest may still expose unrelated environment-dependent failures;
+isolate failures before treating them as regressions in local-agent reliability
+work.
 
 ## Tests
 

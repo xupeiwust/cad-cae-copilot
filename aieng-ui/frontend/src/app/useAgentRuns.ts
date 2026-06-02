@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { api } from "../api";
 import type { ChatHistoryItem, Notice, SelectedGeometryContext } from "../appTypes";
 import { createChatId, isLlmConfigReady, runtimeStatusLabel } from "../appUtils";
+import { isTerminalAutopilotStatus } from "./chatTranscript";
 import type {
   AgentPlan,
   ChatConnection,
@@ -247,7 +248,7 @@ export function useAgentRuns({
           errors: result.errors,
         },
       ]);
-      if (result.status !== "running") {
+      if (isTerminalAutopilotStatus(result.status)) {
         setAgentBusy(false);
         setNotice({
           tone: result.status === "completed" ? "success" : result.status === "awaiting_approval" ? "info" : "error",
@@ -287,7 +288,7 @@ export function useAgentRuns({
             }
           : entry
       )));
-      if (result.status !== "running") {
+      if (isTerminalAutopilotStatus(result.status)) {
         setAgentBusy(false);
         setNotice({
           tone: result.status === "completed" ? "success" : result.status === "cancelled" ? "info" : "error",

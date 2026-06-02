@@ -60,6 +60,7 @@ export function useWorkbenchApp() {
   const [artifactViewerData, setArtifactViewerData] = useState<ArtifactResponse | null>(null);
   const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
+  const llmReadyRef = useRef(false);
   const {
     chatSessions,
     activeSessionId,
@@ -100,6 +101,7 @@ export function useWorkbenchApp() {
     llmReady,
     localAgentConfig,
     apiKey,
+    apiKeyHydrated,
     runtimeReady,
     runtimeProvider,
     setRuntimeNotice,
@@ -114,6 +116,7 @@ export function useWorkbenchApp() {
     applyLlmProviderPreset,
     restoreDefaultLlmConfig,
   } = runtimeSettings;
+  llmReadyRef.current = llmReady;
 
   const {
     cadPreviewUrl,
@@ -136,6 +139,7 @@ export function useWorkbenchApp() {
   } = useEngineeringActions({
     selectedId,
     apiKey,
+    llmConfig,
     refreshProjects,
     setBusy,
     setChatHistory: setPersistentChatHistory,
@@ -223,6 +227,7 @@ export function useWorkbenchApp() {
     selectedChatConnection,
     localAgentConfig,
     llmConfig,
+    apiKey,
     agentPayloadGeometry,
     appendRunToChatHistory,
     runBusyTask,
@@ -299,6 +304,7 @@ export function useWorkbenchApp() {
       setChatConnections(mergeLocalAgentCapabilities(
         nextConnections.length ? nextConnections : DEFAULT_CHAT_CONNECTIONS,
         localAgents.adapters,
+        llmReadyRef.current,
       ));
       const list = await api.listProjects();
       if (cancelled) return;
@@ -323,6 +329,10 @@ export function useWorkbenchApp() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    setChatConnections((current) => mergeLocalAgentCapabilities(current, undefined, llmReady));
+  }, [llmReady]);
 
   useEffect(() => {
     resetProjectDerivedState();
@@ -679,6 +689,7 @@ export function useWorkbenchApp() {
     llmConfig,
     llmReady,
     apiKey,
+    apiKeyHydrated,
     updateApiKey,
     updateRuntimeDraft,
     updateLlmConfig,

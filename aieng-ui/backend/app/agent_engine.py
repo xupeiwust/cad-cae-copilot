@@ -554,7 +554,7 @@ def test_llm_provider(
     """
     provider_name = str(llm_config.get("provider") or "openai-compatible")
     model = str(llm_config.get("model") or "configured-model")
-    base_url = llm_config.get("base_url")
+    base_url = llm_config.get("base_url") or None
 
     # Step 1: Check API key presence
     src = settings.aieng_root / "src"
@@ -572,6 +572,8 @@ def test_llm_provider(
         )
         resolved_key = config.resolved_api_key()
         if not resolved_key:
+            env_name = config.resolved_api_key_env()
+            source = f"environment variable {env_name!r}" if env_name else "a provider API key"
             return {
                 "config_ready": False,
                 "connection_verified": False,
@@ -579,7 +581,7 @@ def test_llm_provider(
                 "model": model,
                 "base_url": base_url,
                 "api_key_present": False,
-                "error_message": "API key not provided and no environment variable set",
+                "error_message": f"API key not provided and {source} is not set",
             }
     finally:
         _remove_path(candidate, injected)

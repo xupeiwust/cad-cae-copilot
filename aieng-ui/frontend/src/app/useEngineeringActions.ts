@@ -2,6 +2,7 @@ import { useState, type Dispatch, type SetStateAction } from "react";
 
 import { api } from "../api";
 import type { CadGenerationProgress, ChatHistoryItem } from "../appTypes";
+import type { LLMConfig } from "../types";
 import {
   applyCadProgressEvent,
   createChatId,
@@ -14,6 +15,7 @@ type CadGenResult = { code: string; face_count: number; feature_count: number };
 type UseEngineeringActionsArgs = {
   selectedId: string | null;
   apiKey: string;
+  llmConfig: LLMConfig;
   refreshProjects(nextSelectedId?: string | null): Promise<void>;
   setBusy: Dispatch<SetStateAction<boolean>>;
   setChatHistory: Dispatch<SetStateAction<ChatHistoryItem[]>>;
@@ -22,6 +24,7 @@ type UseEngineeringActionsArgs = {
 export function useEngineeringActions({
   selectedId,
   apiKey,
+  llmConfig,
   refreshProjects,
   setBusy,
   setChatHistory,
@@ -63,6 +66,7 @@ export function useEngineeringActions({
       const payload: Record<string, unknown> = {
         task_description: prompt,
         write_files: true,
+        llm_config: llmConfig,
       };
       if (options.materialHint) payload.material_hint = options.materialHint;
       if (options.meshHint) payload.mesh_hint = options.meshHint;
@@ -124,7 +128,7 @@ export function useEngineeringActions({
     try {
       const keyPayload = apiKey ? { api_key: apiKey } : {};
       if (intent === "generate") {
-        const response = await api.generateCadStream(selectedId, { description: prompt, hints: {}, write_files: true, ...keyPayload });
+        const response = await api.generateCadStream(selectedId, { description: prompt, hints: {}, write_files: true, llm_config: llmConfig, ...keyPayload });
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -173,7 +177,7 @@ export function useEngineeringActions({
           },
         ]);
       } else {
-        const result = await api.refineCad(selectedId, { feedback: prompt, write_files: true, ...keyPayload });
+        const result = await api.refineCad(selectedId, { feedback: prompt, write_files: true, llm_config: llmConfig, ...keyPayload });
         const topo = result.topology_summary as { face_count: number; feature_count: number };
         setCadPreviewUrl(result.preview_url as string);
         setCadPreviewFormat(result.preview_format as string);

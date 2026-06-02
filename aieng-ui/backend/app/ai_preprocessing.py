@@ -348,16 +348,12 @@ def call_claude_for_fea_setup(
     brep_digest: str | None = None,
     api_key: str | None = None,
     model: str | None = None,
+    settings: Any | None = None,
+    llm_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Call Claude to generate a structured FEA setup. Returns the parsed JSON."""
-    import anthropic
-
-    resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not resolved_key:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY not set — cannot call Claude for AI preprocessing",
-        )
+    """Call the configured LLM to generate a structured FEA setup."""
+    if settings is None:
+        raise HTTPException(status_code=503, detail="LLM settings are required for AI preprocessing")
 
     ensure_aieng_on_path()
     try:
@@ -375,25 +371,28 @@ def call_claude_for_fea_setup(
         brep_digest=brep_digest,
     )
 
-    resolved_model = model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-    resolved_base_url = os.environ.get("ANTHROPIC_BASE_URL")
-    client = anthropic.Anthropic(
-        api_key=resolved_key,
-        **({"base_url": resolved_base_url} if resolved_base_url else {}),
-    )
-    response = client.messages.create(
-        model=resolved_model,
-        max_tokens=2048,
-        system=[
-            {
-                "type": "text",
-                "text": _SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    raw_text = response.content[0].text if response.content else ""
+    from . import agent_engine
+
+    config = dict(llm_config or {})
+    if not config:
+        config = {
+            "provider": "anthropic",
+            "model": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+            "base_url": os.environ.get("ANTHROPIC_BASE_URL") or None,
+        }
+    if model:
+        config["model"] = model
+    if api_key:
+        config["api_key"] = api_key
+    provider = agent_engine._build_provider(settings, config)
+    try:
+        raw_text = provider.generate(
+            system_prompt=_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            json_mode=True,
+        )
+    except TypeError:
+        raw_text = provider.generate(system_prompt=_SYSTEM_PROMPT, user_prompt=user_prompt)
     return _coerce_json(raw_text)
 
 
@@ -561,6 +560,7 @@ def run_ai_preprocessing(
     mesh_hint = str(payload.get("mesh_hint") or "").strip() or None
     write_files = bool(payload.get("write_files", True))
     api_key = payload.get("api_key")
+    llm_config = payload.get("llm_config") if isinstance(payload.get("llm_config"), dict) else None
 
     project = get_project(settings, project_id)
     package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
@@ -584,6 +584,8 @@ def run_ai_preprocessing(
         mesh_hint=mesh_hint,
         brep_digest=brep_digest,
         api_key=api_key,
+        settings=settings,
+        llm_config=llm_config,
     )
 
     # Validate and normalize before converting — catches bad face IDs, unknown

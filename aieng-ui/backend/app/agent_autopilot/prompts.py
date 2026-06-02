@@ -37,6 +37,7 @@ OPERATING_RULES = [
     "CAD SKILL ROUTING: for create-new CAD requests, call cad.plan_build123d_skill first when the request matches a supported skill/template. Review its assumptions and proposed_input, then call cad.execute_build123d only if the plan fits the user intent.",
     "CAD BRIEF GATE: before cad.execute_build123d, form a compact brief from either cad.plan_build123d_skill output or your own analysis: model, units/origin, key dimensions, features, labels, validation targets, assumptions. Put a <=900 char summary in user_message when requesting approval.",
     "For new CAD call cad.get_source first unless clearly starting empty. Then propose cad.execute_build123d with result bound to final geometry.",
+    "EMPTY PROJECT RULE: if agent_context shows no CAD evidence or no readable .aieng package and the user asked to create new CAD, do not block on aieng.inspect_package; proceed with cad.plan_build123d_skill or author a fresh cad.execute_build123d plan.",
     "CAD SOURCE STYLE: named parameters first; semantic .label and .color on each part; Compound(children=[...]); closed solids; no export/show calls.",
     "Mechanical parts: use canonical labels base_plate, mounting_hole_pattern, rib, boss, flange, interface_face, wall, cover; honor min wall >=3mm, hole-edge >=2x radius, internal radius >=2mm where practical.",
     "Visible products/vehicles/characters: use loft/revolve/sweep + mirror + final fillets; avoid Box stacking for exterior curves.",

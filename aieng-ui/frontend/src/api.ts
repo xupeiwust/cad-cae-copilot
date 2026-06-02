@@ -122,6 +122,7 @@ export const api = {
     message: string;
     project_id?: string | null;
     llm_config?: LLMConfig;
+    api_key?: string;
     patch_json?: Record<string, unknown> | null;
     dry_run?: boolean;
     selected_geometry?: SelectedGeometryContext | null;
@@ -135,6 +136,7 @@ export const api = {
     message?: string;
     project_id?: string | null;
     llm_config?: LLMConfig;
+    api_key?: string;
     patch_json?: Record<string, unknown> | null;
     dry_run?: boolean;
     selected_geometry?: SelectedGeometryContext | null;
@@ -155,6 +157,7 @@ export const api = {
     adapter_id?: string;
     selected_geometry?: SelectedGeometryContext | null;
     llm_config?: LLMConfig;
+    api_key?: string;
     mode?: "assist" | "autopilot" | "full_agent";
     dry_run?: boolean;
   }) =>
@@ -164,25 +167,25 @@ export const api = {
       body: JSON.stringify(payload),
       timeoutMs: 300000,
     }),
-  continueAutopilot: (runId: string, approved: boolean, userMessage?: string | null) =>
+  continueAutopilot: (runId: string, approved: boolean, userMessage?: string | null, apiKey?: string) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/continue`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved, user_message: userMessage ?? undefined }),
+      body: JSON.stringify({ approved, user_message: userMessage ?? undefined, api_key: apiKey || undefined }),
       timeoutMs: 300000,
     }),
-  replyAutopilot: (runId: string, message: string) =>
+  replyAutopilot: (runId: string, message: string, apiKey?: string) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, api_key: apiKey || undefined }),
       timeoutMs: 300000,
     }),
-  followUpAutopilot: (runId: string, message: string) =>
+  followUpAutopilot: (runId: string, message: string, apiKey?: string) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/follow-up`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, api_key: apiKey || undefined }),
       timeoutMs: 300000,
     }),
   getAutopilotRun: (runId: string) =>
@@ -215,6 +218,7 @@ export const api = {
     condition?: string;
     dry_run?: boolean;
     llm_config: LLMConfig;
+    api_key?: string;
   }) =>
     request<BenchmarkRun>("/api/benchmarks/runs", {
       method: "POST",

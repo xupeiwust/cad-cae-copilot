@@ -98,12 +98,34 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         llm_config = agent_engine.sanitize_llm_config(data.get("llm_config"))
         if not llm_config:
             raise HTTPException(status_code=400, detail="llm_config is required")
-        api_key = data.get("api_key")
-        api_key = api_key if isinstance(api_key, str) and api_key else None
+        api_key = _resolve_api_key(data)
         verify = bool(data.get("verify_connection", False))
         return agent_engine.test_llm_provider(
             active_settings, llm_config, api_key=api_key, verify_connection=verify
         )
+
+    def _resolve_api_key(data: dict[str, Any] | None = None) -> str | None:
+        """Return API key from request payload, falling back to persisted settings."""
+        payload = data or {}
+        api_key = payload.get("api_key")
+        if isinstance(api_key, str) and api_key:
+            return api_key
+        try:
+            from . import db
+            record = db.get_setting_record(db_path, "api_key")
+            if record and isinstance(record.get("value"), str) and record["value"]:
+                return record["value"]
+        except Exception:
+            pass
+        return None
+
+    def _llm_config_from_payload(data: dict[str, Any] | None = None, *, include_api_key: bool = False) -> dict[str, Any]:
+        llm_config = agent_engine.sanitize_llm_config((data or {}).get("llm_config"))
+        if include_api_key:
+            api_key = _resolve_api_key(data)
+            if api_key:
+                llm_config = {**llm_config, "api_key": api_key}
+        return llm_config
 
     @app.get("/api/capabilities")
     def list_capabilities() -> list[dict[str, Any]]:
@@ -136,7 +158,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             project_summary=project_summary,
             runtime_tools=_rt.registered_tools_info(),
             capabilities=agent_workbench.list_capabilities(active_settings),
-            llm_config=agent_engine.sanitize_llm_config(data.get("llm_config")),
+            llm_config=_llm_config_from_payload(data, include_api_key=True),
             selected_geometry=selected_geometry,
             patch_json=patch_json,
             dry_run=bool(data.get("dry_run", False)),
@@ -171,7 +193,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             },
         }
         if isinstance(data.get("llm_config"), dict):
-            ctx["llm_config"] = agent_engine.sanitize_llm_config(data.get("llm_config"))
+            ctx["llm_config"] = _llm_config_from_payload(data)
         _rt.execute_run_with_plan(run, steps, ctx)
         if run.project_id:
             try:
@@ -443,8 +465,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         from .agent_autopilot.schema import AgentWorkingState, AutopilotObservation, AutopilotRunRequest, AutopilotRunState
 
         data = payload or {}
-        if isinstance(data.get("llm_config"), dict):
-            data = {**data, "llm_config": agent_engine.sanitize_llm_config(data.get("llm_config"))}
+        data = {**data, "llm_config": _llm_config_from_payload(data, include_api_key=True)}
         try:
             request = AutopilotRunRequest.model_validate(data)
         except Exception as exc:
@@ -463,7 +484,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             mode=request.mode,
             dry_run=request.dry_run,
             selected_geometry=request.selected_geometry,
-            llm_config=request.llm_config,
+            llm_config=agent_engine.sanitize_llm_config(request.llm_config),
             plan=create_default_agent_plan(request.message, plan_id=f"{run_id}-plan"),
             working_state=AgentWorkingState(objective=request.message, current_mode=request.mode),
         )
@@ -568,10 +589,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 "created_at": now_iso(),
             })
 
+        llm_config = dict(current.llm_config)
+        api_key = _resolve_api_key(data)
+        if api_key:
+            llm_config["api_key"] = api_key
         engine = AutopilotEngine(
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(current.llm_config),
+            adapters=_autopilot_adapters(llm_config),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
@@ -618,10 +643,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         store.save(current)
         _sync_autopilot_session(current)
         _publish_autopilot_state(current)
+        llm_config = dict(current.llm_config)
+        api_key = _resolve_api_key(data)
+        if api_key:
+            llm_config["api_key"] = api_key
         engine = AutopilotEngine(
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(current.llm_config),
+            adapters=_autopilot_adapters(llm_config),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
@@ -655,10 +684,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             current = store.load(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        llm_config = dict(current.llm_config)
+        api_key = (payload or {}).get("api_key")
+        if isinstance(api_key, str) and api_key:
+            llm_config["api_key"] = api_key
         engine = AutopilotEngine(
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(current.llm_config),
+            adapters=_autopilot_adapters(llm_config),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
@@ -1472,8 +1505,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         """
         from . import ai_preprocessing
 
+        data = payload or {}
+        resolved_key = _resolve_api_key(data)
+        if resolved_key:
+            data = {**data, "api_key": resolved_key}
+        if isinstance(data.get("llm_config"), dict):
+            data = {**data, "llm_config": agent_engine.sanitize_llm_config(data.get("llm_config"))}
         return ai_preprocessing.run_ai_preprocessing(
-            active_settings, project_id, payload or {}
+            active_settings, project_id, data
         )
 
     @app.post("/api/projects/{project_id}/run-simulation")
@@ -1629,7 +1668,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             project_id=project_id,
             message=message,
             history=list(p.get("history") or []),
-            api_key=p.get("api_key"),
+            api_key=_resolve_api_key(p),
         )
         reply = result.get("reply", "")
         if reply:
@@ -1696,8 +1735,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         """
         from . import cad_generation
 
+        data = payload or {}
+        resolved_key = _resolve_api_key(data)
+        if resolved_key:
+            data = {**data, "api_key": resolved_key}
+        if isinstance(data.get("llm_config"), dict):
+            data = {**data, "llm_config": agent_engine.sanitize_llm_config(data.get("llm_config"))}
         result = cad_generation.run_cad_generation(
-            active_settings, project_id, payload or {}
+            active_settings, project_id, data
         )
         _publish_project_live_change(project_id=project_id, source="generate-cad", result=result)
         return result
@@ -1716,9 +1761,16 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         from fastapi.responses import StreamingResponse
         from . import cad_generation
 
+        data = payload or {}
+        resolved_key = _resolve_api_key(data)
+        if resolved_key:
+            data = {**data, "api_key": resolved_key}
+        if isinstance(data.get("llm_config"), dict):
+            data = {**data, "llm_config": agent_engine.sanitize_llm_config(data.get("llm_config"))}
+
         def generate():
             yield from cad_generation.run_cad_generation_stream(
-                active_settings, project_id, payload or {}
+                active_settings, project_id, data
             )
 
         return StreamingResponse(
@@ -1919,8 +1971,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         """
         from . import cad_generation
 
+        data = payload or {}
+        resolved_key = _resolve_api_key(data)
+        if resolved_key:
+            data = {**data, "api_key": resolved_key}
+        if isinstance(data.get("llm_config"), dict):
+            data = {**data, "llm_config": agent_engine.sanitize_llm_config(data.get("llm_config"))}
         result = cad_generation.refine_cad_generation(
-            active_settings, project_id, payload or {}
+            active_settings, project_id, data
         )
         _publish_project_live_change(project_id=project_id, source="refine-cad", result=result)
         return result
@@ -2693,7 +2751,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     def list_settings() -> dict[str, Any]:
         from . import db
 
-        return db.get_all_settings(db_path)
+        all_settings = db.get_all_settings(db_path)
+        all_settings.pop("api_key", None)
+        return all_settings
 
     @app.get("/api/settings/{key}")
     def get_setting_endpoint(key: str) -> dict[str, Any]:

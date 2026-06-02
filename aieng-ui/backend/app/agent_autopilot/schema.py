@@ -178,8 +178,9 @@ class AutopilotRunRequest(StrictModel):
     mode: Literal["assist", "autopilot", "full_agent"] = "autopilot"
     selected_geometry: dict[str, Any] = Field(default_factory=dict)
     llm_config: dict[str, Any] = Field(default_factory=dict)
+    api_key: str | None = Field(default=None, exclude=True, repr=False)
     dry_run: bool = True
-    max_steps: int = Field(default=10, ge=1, le=20)
+    max_steps: int = Field(default=30, ge=1, le=30)
     fake_actions: list[dict[str, Any]] | None = None
 
 

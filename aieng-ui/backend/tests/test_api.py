@@ -10150,6 +10150,29 @@ def test_agent_autopilot_run_dry_run(tmp_path: Path) -> None:
     assert get_resp.json()["run_id"] == data["run_id"]
 
 
+def test_agent_autopilot_run_accepts_top_level_api_key_without_persisting_it(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "inspect the active project",
+            "adapter_id": "fake",
+            "dry_run": True,
+            "llm_config": {"provider": "anthropic", "model": "kimi-for-coding"},
+            "api_key": "sk-test",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = _wait_for_autopilot_status(client, resp.json()["run_id"], {"completed"})
+    assert data["status"] == "completed"
+    assert data["llm_config"]["provider"] == "anthropic"
+    assert data["llm_config"]["model"] == "kimi-for-coding"
+    assert "api_key" not in data["llm_config"]
+
+
 def test_autopilot_plan_events_are_persisted(tmp_path: Path) -> None:
     settings = _make_runtime_settings(tmp_path)
     project = save_project(settings, default_project("plan-events"))

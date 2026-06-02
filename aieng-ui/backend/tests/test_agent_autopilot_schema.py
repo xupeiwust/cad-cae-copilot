@@ -45,6 +45,20 @@ def test_autopilot_request_accepts_llm_config() -> None:
     assert request.llm_config["model"] == "demo"
 
 
+def test_autopilot_request_accepts_transient_top_level_api_key() -> None:
+    request = AutopilotRunRequest.model_validate(
+        {
+            "message": "explain the model",
+            "adapter_id": "llm-api",
+            "llm_config": {"provider": "anthropic", "model": "kimi-for-coding"},
+            "api_key": "sk-test",
+        }
+    )
+
+    assert request.api_key == "sk-test"
+    assert "api_key" not in request.model_dump()
+
+
 def test_agent_plan_accepts_empty_defaults() -> None:
     plan = AgentPlan()
 

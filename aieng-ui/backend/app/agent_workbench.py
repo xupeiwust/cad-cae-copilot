@@ -492,6 +492,7 @@ def run_benchmark_from_payload(settings: Any, payload: dict[str, Any]) -> dict[s
     llm_config = payload.get("llm_config") if isinstance(payload.get("llm_config"), dict) else {}
     if "api_key" in llm_config:
         llm_config = {k: v for k, v in llm_config.items() if k != "api_key"}
+    api_key = payload.get("api_key") if isinstance(payload.get("api_key"), str) and payload.get("api_key") else None
     dry_run = bool(payload.get("dry_run", True))
     condition = str(payload.get("condition") or "both")
     events = [_event("benchmark_started", {"scenario_id": scenario_id, "dry_run": dry_run})]
@@ -509,6 +510,7 @@ def run_benchmark_from_payload(settings: Any, payload: dict[str, Any]) -> dict[s
         provider_config = ProviderConfig(
             provider=str(llm_config.get("provider") or "openai-compatible"),
             model=str(llm_config.get("model") or "configured-model"),
+            api_key=api_key,
             api_key_env=llm_config.get("api_key_env") or None,
             base_url=llm_config.get("base_url") or None,
             input_price_per_million_tokens=llm_config.get("input_price_per_million_tokens"),

@@ -242,7 +242,7 @@ def test_incremental_prompt_without_new_observation() -> None:
     assert "instruction" in payload
 
 
-def test_resume_prompt_includes_compact_state_not_working_tail() -> None:
+def test_resume_prompt_includes_compact_state_and_working_memory() -> None:
     mgr = ContextMemoryManager(system_content={"tools": [{"name": "cad.execute_build123d"}]})
     mgr.add_observations([
         _obs("user_message", "make a flange"),
@@ -251,6 +251,9 @@ def test_resume_prompt_includes_compact_state_not_working_tail() -> None:
 
     prompt = mgr.build_resume_prompt(
         objective="make a flange",
+        project_id="proj_001",
+        selected_geometry={"faces": ["f1"]},
+        agent_context={"project_name": "Empty project"},
         working_state={
             "objective": "make a flange",
             "accepted_assumptions": ["Defaulted thickness to 6mm."],
@@ -264,7 +267,10 @@ def test_resume_prompt_includes_compact_state_not_working_tail() -> None:
     assert payload["resume_summary"]["working_state"]["accepted_assumptions"] == ["Defaulted thickness to 6mm."]
     assert payload["resume_summary"]["current_plan_step"]["id"] == "execute_tool"
     assert payload["resume_summary"]["latest_observation"]["kind"] == "user_message"
-    assert "working_memory" not in payload
+    assert payload["active_project_id"] == "proj_001"
+    assert payload["selected_geometry"] == {"faces": ["f1"]}
+    assert payload["agent_context"] == {"project_name": "Empty project"}
+    assert len(payload["working_memory"]) == 2
     assert payload["system_context"]["tools"][0]["name"] == "cad.execute_build123d"
 
 

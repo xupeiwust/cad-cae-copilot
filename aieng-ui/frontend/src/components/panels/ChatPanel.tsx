@@ -191,6 +191,7 @@ type ChatPanelProps = {
   chatBusy: boolean;
   cadGenerating: boolean;
   cadGenerationProgress: CadGenerationProgress | null;
+  llmReady: boolean;
   chatHistory: ChatHistoryItem[];
   agentEvents: AgentTranscriptEvent[];
   chatLogRef: RefObject<HTMLDivElement | null>;
@@ -223,6 +224,7 @@ export function ChatPanel({
   chatBusy,
   cadGenerating,
   cadGenerationProgress,
+  llmReady,
   chatHistory,
   agentEvents,
   chatLogRef,
@@ -526,8 +528,14 @@ export function ChatPanel({
               e.target.style.height = `${e.target.scrollHeight}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder={selectedConnectionBlocked ? "Select a project to start..." : "Check the current project status and generate a reviewable engineering execution plan."}
-            disabled={selectedConnectionBlocked}
+            placeholder={
+              selectedConnectionBlocked
+                ? "Select a project to start..."
+                : selectedChatConnectionId === "llm-api" && !llmReady
+                  ? "LLM provider configuration loading..."
+                  : "Check the current project status and generate a reviewable engineering execution plan."
+            }
+            disabled={selectedConnectionBlocked || (selectedChatConnectionId === "llm-api" && !llmReady)}
           />
           {acOpen && acMatches.length > 0 ? (
             <div className="chat-autocomplete">
@@ -559,7 +567,7 @@ export function ChatPanel({
             <button
               type="button"
               className="chat-action-button chat-action-button-send"
-              disabled={selectedConnectionBlocked || !message.trim()}
+              disabled={selectedConnectionBlocked || (selectedChatConnectionId === "llm-api" && !llmReady) || !message.trim()}
               onClick={() => void sendUnified()}
               title="Send"
             >

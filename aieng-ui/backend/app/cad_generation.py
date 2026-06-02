@@ -1660,23 +1660,65 @@ def _enrich_feature_graph_with_source_params(
     return feature_graph
 
 
-# ── Claude API call ────────────────────────────────────────────────────────────
+# ── LLM API calls ──────────────────────────────────────────────────────────────
+
+def _merge_llm_config(
+    llm_config: dict[str, Any] | None,
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    config = dict(llm_config or {})
+    if not config:
+        config = {
+            "provider": "anthropic",
+            "model": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+            "base_url": os.environ.get("ANTHROPIC_BASE_URL") or None,
+        }
+    if model:
+        config["model"] = model
+    if api_key:
+        config["api_key"] = api_key
+    return config
+
+
+def _generate_llm_text(
+    settings: Any,
+    *,
+    llm_config: dict[str, Any] | None,
+    system_prompt: str,
+    user_prompt: str,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> str:
+    from . import agent_engine
+
+    provider = agent_engine._build_provider(
+        settings,
+        _merge_llm_config(llm_config, api_key=api_key, model=model),
+    )
+    try:
+        return provider.generate(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            json_mode=False,
+        )
+    except TypeError:
+        # Test doubles and older local providers may not expose json_mode yet.
+        return provider.generate(system_prompt=system_prompt, user_prompt=user_prompt)
+
 
 def call_claude_for_build123d_code(
     description: str,
     hints: dict[str, Any] | None = None,
     api_key: str | None = None,
     model: str | None = None,
+    settings: Any | None = None,
+    llm_config: dict[str, Any] | None = None,
 ) -> str:
-    """Call Claude to generate build123d Python code. Returns the code string."""
-    import anthropic
-
-    resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not resolved_key:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY not set — cannot call Claude for CAD generation",
-        )
+    """Call the configured LLM to generate build123d Python code."""
+    if settings is None:
+        raise HTTPException(status_code=503, detail="LLM settings are required for CAD generation")
 
     ensure_aieng_on_path()
     from aieng.modeling.text_to_cad import (
@@ -1696,23 +1738,14 @@ def call_claude_for_build123d_code(
 
     user_prompt = build_build123d_user_prompt(description, hint_obj)
 
-    resolved_model = model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-    resolved_base_url = os.environ.get("ANTHROPIC_BASE_URL")
-    client = anthropic.Anthropic(
-        api_key=resolved_key,
-        **({"base_url": resolved_base_url} if resolved_base_url else {}),
+    raw = _generate_llm_text(
+        settings,
+        llm_config=llm_config,
+        system_prompt=BUILD123D_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        api_key=api_key,
+        model=model,
     )
-    response = client.messages.create(
-        model=resolved_model,
-        max_tokens=2048,
-        system=[{
-            "type": "text",
-            "text": BUILD123D_SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
-        }],
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    raw = response.content[0].text if response.content else ""
     return _coerce_code(raw)
 
 
@@ -2943,6 +2976,7 @@ class Build123dBackend:
         timeout: int = 60,
         max_retries: int = 2,
         api_key: str | None = None,
+        llm_config: dict[str, Any] | None = None,
     ) -> Any:
         """Non-streaming text-to-CAD with internal LLM-fix retry loop.
 
@@ -2957,6 +2991,8 @@ class Build123dBackend:
             description=description,
             hints=hints,
             api_key=api_key,
+            settings=self._settings,
+            llm_config=llm_config,
         )
 
         warnings: list[str] = []
@@ -3007,6 +3043,8 @@ class Build123dBackend:
                             f"boolean operation order, and edge selection validity."
                         ),
                         api_key=api_key,
+                        settings=self._settings,
+                        llm_config=llm_config,
                     )
                 else:
                     break
@@ -3047,6 +3085,7 @@ def run_cad_generation(
     write_files = bool(payload.get("write_files", True))
     timeout = int(payload.get("timeout", 60))
     api_key = payload.get("api_key")
+    llm_config = payload.get("llm_config") if isinstance(payload.get("llm_config"), dict) else None
 
     project = get_project(settings, project_id)
 
@@ -3057,7 +3096,13 @@ def run_cad_generation(
             detail="build123d is not installed — cannot generate CAD geometry",
         )
 
-    result = backend.generate(description, hints=hints, timeout=timeout, api_key=api_key)
+    result = backend.generate(
+        description,
+        hints=hints,
+        timeout=timeout,
+        api_key=api_key,
+        llm_config=llm_config,
+    )
 
     if result.error:
         raise HTTPException(status_code=422, detail=f"CAD generation failed: {result.error}")
@@ -3409,6 +3454,7 @@ def run_cad_generation_stream(
     timeout = int(payload.get("timeout", 60))
     max_retries = int(payload.get("max_retries", 2))
     api_key = payload.get("api_key")
+    llm_config = payload.get("llm_config") if isinstance(payload.get("llm_config"), dict) else None
 
     try:
         project = get_project(settings, project_id)
@@ -3428,7 +3474,11 @@ def run_cad_generation_stream(
     yield _sse({"step": "planning", "message": "AI is analyzing the design description…"})
     try:
         generated_code = call_claude_for_build123d_code(
-            description=description, hints=hints, api_key=api_key,
+            description=description,
+            hints=hints,
+            api_key=api_key,
+            settings=settings,
+            llm_config=llm_config,
         )
     except HTTPException as exc:
         yield _sse({"step": "error", "message": str(exc.detail)})
@@ -3512,6 +3562,8 @@ def run_cad_generation_stream(
                             "selection validity."
                         ),
                         api_key=api_key,
+                        settings=settings,
+                        llm_config=llm_config,
                     )
                     yield _sse({
                         "step": "coding",
@@ -3612,39 +3664,26 @@ def call_claude_for_build123d_refinement(
     feedback: str,
     api_key: str | None = None,
     model: str | None = None,
+    settings: Any | None = None,
+    llm_config: dict[str, Any] | None = None,
 ) -> str:
-    """Call Claude to refine existing build123d code based on engineer feedback."""
-    import anthropic
-
-    resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not resolved_key:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY not set — cannot call Claude for CAD refinement",
-        )
+    """Call the configured LLM to refine existing build123d code."""
+    if settings is None:
+        raise HTTPException(status_code=503, detail="LLM settings are required for CAD refinement")
 
     ensure_aieng_on_path()
     from aieng.modeling.text_to_cad import BUILD123D_SYSTEM_PROMPT, build_build123d_refine_prompt
 
     user_prompt = build_build123d_refine_prompt(existing_code, feedback)
 
-    resolved_model = model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-    resolved_base_url = os.environ.get("ANTHROPIC_BASE_URL")
-    client = anthropic.Anthropic(
-        api_key=resolved_key,
-        **({"base_url": resolved_base_url} if resolved_base_url else {}),
+    raw = _generate_llm_text(
+        settings,
+        llm_config=llm_config,
+        system_prompt=BUILD123D_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        api_key=api_key,
+        model=model,
     )
-    response = client.messages.create(
-        model=resolved_model,
-        max_tokens=2048,
-        system=[{
-            "type": "text",
-            "text": BUILD123D_SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
-        }],
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    raw = response.content[0].text if response.content else ""
     return _coerce_code(raw)
 
 
@@ -3667,6 +3706,7 @@ def refine_cad_generation(
     write_files = bool(payload.get("write_files", True))
     timeout = int(payload.get("timeout", 60))
     api_key = payload.get("api_key")
+    llm_config = payload.get("llm_config") if isinstance(payload.get("llm_config"), dict) else None
 
     project = get_project(settings, project_id)
     package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
@@ -3692,7 +3732,13 @@ def refine_cad_generation(
     if not backend.can_generate():
         raise HTTPException(status_code=503, detail="build123d is not installed")
 
-    refined_code = call_claude_for_build123d_refinement(existing_code, feedback, api_key=api_key)
+    refined_code = call_claude_for_build123d_refinement(
+        existing_code,
+        feedback,
+        api_key=api_key,
+        settings=settings,
+        llm_config=llm_config,
+    )
 
     try:
         step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(refined_code, timeout=timeout)

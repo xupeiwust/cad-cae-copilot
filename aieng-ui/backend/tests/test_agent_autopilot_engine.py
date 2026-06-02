@@ -504,7 +504,7 @@ def test_engine_persists_approved_skill_assumptions_in_next_prompt(tmp_path: Pat
     assert resumed.working_state.accepted_assumptions == ["Defaulted thickness to 6mm."]
     assert len(adapter.prompts) == 3
     assert '"resume_summary"' in adapter.prompts[2]
-    assert '"working_memory"' not in adapter.prompts[2]
+    assert '"working_memory"' in adapter.prompts[2]
     assert '"accepted_assumptions":["Defaulted thickness to 6mm."]' in adapter.prompts[2]
 
 
@@ -817,9 +817,12 @@ def test_local_and_llm_adapters_follow_equivalent_skill_policy_path(tmp_path: Pa
             self.adapter_id = adapter_id
             self.label = adapter_id
             self.calls = 0
+            self.prompts: list[str] = []
+            self.supports_session_continuation = adapter_id == "local-fake"
 
         def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
             self.calls += 1
+            self.prompts.append(prompt)
             action = (
                 {
                     "action": {
@@ -845,10 +848,11 @@ def test_local_and_llm_adapters_follow_equivalent_skill_policy_path(tmp_path: Pa
 
     def run(adapter_id: str):
         calls: list[tuple[str, dict]] = []
+        adapter = ScriptedAdapter(adapter_id)
         engine = AutopilotEngine(
             store=AutopilotStore(tmp_path / adapter_id / "runs"),
             runtime_tools=RUNTIME_TOOLS,
-            adapters={adapter_id: ScriptedAdapter(adapter_id)},
+            adapters={adapter_id: adapter},
             tool_executor=lambda name, inp: calls.append((name, inp)) or {
                 "status": "ready",
                 "skill_name": "cad.plan_build123d_skill",
@@ -864,10 +868,10 @@ def test_local_and_llm_adapters_follow_equivalent_skill_policy_path(tmp_path: Pa
                 dry_run=False,
             )
         )
-        return state, calls, engine
+        return state, calls, adapter
 
-    local_state, local_calls, _local_engine = run("local-fake")
-    llm_state, llm_calls, _llm_engine = run("llm-api")
+    local_state, local_calls, local_adapter = run("local-fake")
+    llm_state, llm_calls, llm_adapter = run("llm-api")
 
     assert local_state.status == llm_state.status == "awaiting_approval"
     assert local_calls == llm_calls == [
@@ -880,6 +884,11 @@ def test_local_and_llm_adapters_follow_equivalent_skill_policy_path(tmp_path: Pa
     assert local_state.pending_approval is not None
     assert llm_state.pending_approval is not None
     assert local_state.pending_approval.tool_name == llm_state.pending_approval.tool_name == "cad.execute_build123d"
+    assert len(local_adapter.prompts) == len(llm_adapter.prompts) == 2
+    assert '"resume_summary"' in local_adapter.prompts[1]
+    assert '"resume_summary"' in llm_adapter.prompts[1]
+    assert '"working_memory"' in local_adapter.prompts[1]
+    assert '"working_memory"' in llm_adapter.prompts[1]
 
 
 def test_engine_bootstraps_project_context_before_real_adapter_step(tmp_path: Path) -> None:

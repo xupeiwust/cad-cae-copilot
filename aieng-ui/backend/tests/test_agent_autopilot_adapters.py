@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from app.agent_autopilot.adapters import COMMON_PROGRESS_PHASES, parse_action_json
 from app.agent_autopilot.claude_code_adapter import ClaudeCodeAdapter
 from app.agent_autopilot.codex_cli_adapter import CodexCliAdapter
@@ -41,6 +43,13 @@ def test_parse_action_json_reads_claude_structured_output_wrapper() -> None:
     )
     assert action.action.type == "final"
     assert action.action.message == "ok"
+
+
+def test_parse_action_json_rejects_empty_terminal_message_with_clear_error() -> None:
+    with pytest.raises(ValueError, match="terminal action final requires a non-empty message"):
+        parse_action_json(
+            '{"thought_summary":"x","action":{"type":"final","message":""},"done":true}'
+        )
 
 
 def test_claude_probe_reports_available_when_required_flags_exist(monkeypatch) -> None:

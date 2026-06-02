@@ -1,8 +1,7 @@
 import { useState } from "react";
 
 import { api } from "../../api";
-import { DEFAULT_LLM_CONFIG, LLM_PROVIDER_SUGGESTIONS } from "../../appConstants";
-import { getLlmProviderLabel } from "../../appUtils";
+import { DEFAULT_LLM_CONFIG, LLM_CONFIG_TEMPLATES, LLM_PROVIDER_SUGGESTIONS } from "../../appConstants";
 import type { LLMConfig } from "../../types";
 import { ActionIcon } from "../common";
 
@@ -34,6 +33,11 @@ export function LlmProviderSettings({
   const keyMasked = apiKey
     ? `${apiKey.slice(0, 10)}${"•".repeat(Math.min(8, apiKey.length - 10))}…`
     : "";
+  const selectedTemplate = LLM_CONFIG_TEMPLATES.find((template) => (
+    llmConfig.provider === template.provider &&
+    llmConfig.model === template.model &&
+    (llmConfig.base_url ?? "") === template.base_url
+  ));
 
   async function handleTestConfig() {
     setTestStatus("testing_config");
@@ -102,17 +106,22 @@ export function LlmProviderSettings({
         </div>
       </div>
 
-      <div className="llm-preset-row">
-        {LLM_PROVIDER_SUGGESTIONS.map((provider) => (
-          <button
-            key={provider}
-            type="button"
-            className={llmConfig.provider === provider ? "ghost-button llm-preset active" : "ghost-button llm-preset"}
-            onClick={() => onPreset(provider)}
+      <div className="llm-template-panel">
+        <label className="form-field llm-template-select">
+          <span>Template</span>
+          <select
+            value={selectedTemplate?.id ?? ""}
+            onChange={(event) => {
+              if (event.target.value) onPreset(event.target.value);
+            }}
           >
-            {getLlmProviderLabel(provider)}
-          </button>
-        ))}
+            {LLM_CONFIG_TEMPLATES.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.label} - {template.detail}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="runtime-config-grid llm-config-grid">
@@ -162,7 +171,7 @@ export function LlmProviderSettings({
           </div>
           {apiKey ? (
             <p className="api-key-hint api-key-hint-ok">
-              Key set: <code>{keyMasked}</code> — stored locally, encrypted.
+              Key set: <code>{keyMasked}</code> — stored in app database and locally.
             </p>
           ) : (
             <p className="api-key-hint">

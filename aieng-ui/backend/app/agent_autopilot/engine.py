@@ -214,7 +214,7 @@ class AutopilotEngine:
             mode=request.mode,
             dry_run=request.dry_run,
             selected_geometry=request.selected_geometry,
-            llm_config=request.llm_config,
+            llm_config={str(k): v for k, v in request.llm_config.items() if k != "api_key"},
             plan=self._new_plan(request, run_id=resolved_run_id),
             working_state=AgentWorkingState(objective=request.message, current_mode=request.mode),
         )
@@ -578,22 +578,15 @@ class AutopilotEngine:
             new_obs = state.observations[self.memory.seen_count :]
             self.memory.add_observations([obs.model_dump() for obs in new_obs])
 
-            # Choose prompt strategy based on adapter capabilities.
-            # Session-aware adapters (e.g. Claude CLI with --continue) can
-            # receive incremental prompts after the first step because the
-            # system context is retained in the adapter's session state.
-            supports_session = getattr(
-                adapter, "supports_session_continuation", False
-            )
-            if supports_session and len(state.steps) > 0:
-                prompt = self.memory.build_incremental_prompt(
-                    objective=state.message,
-                    new_observation=new_obs[-1] if new_obs else None,
-                )
-                prompt_kind = "incremental"
-            elif len(state.steps) > 0:
+            # Adapters differ only in transport/invocation mechanics. The
+            # autopilot core always emits the same context model so Local Agent
+            # and LLM API runs follow identical reasoning state transitions.
+            if len(state.steps) > 0:
                 prompt = self.memory.build_resume_prompt(
                     objective=state.message,
+                    project_id=state.project_id,
+                    selected_geometry=state.selected_geometry,
+                    agent_context=self.agent_context,
                     working_state=state.working_state.model_dump(),
                     current_plan_step=self._current_plan_step_payload(state),
                     latest_observation=new_obs[-1] if new_obs else None,
@@ -1352,7 +1345,7 @@ class AutopilotEngine:
         run_id: str,
         *,
         approved: bool,
-        max_steps: int = 10,
+        max_steps: int = 30,
         user_message: str | None = None,
     ) -> AutopilotRunState:
         state = self.store.load(run_id)
@@ -1460,7 +1453,7 @@ class AutopilotEngine:
         self._publish_state(state)
         return state
 
-    def reply_to_run(self, run_id: str, message: str, *, max_steps: int = 10) -> AutopilotRunState:
+    def reply_to_run(self, run_id: str, message: str, *, max_steps: int = 30) -> AutopilotRunState:
         state = self.store.load(run_id)
         if state.status in {"completed", "failed", "cancelled"}:
             return state

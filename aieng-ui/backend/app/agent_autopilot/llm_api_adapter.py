@@ -23,17 +23,34 @@ class LlmApiAdapter:
     adapter_id: str = "llm-api"
     label: str = "LLM API"
 
+    def _request_action(
+        self,
+        provider: Any,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        timeout_seconds: int,
+    ) -> str:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                provider.generate,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+            return future.result(timeout=timeout_seconds)
+
     def probe(self, timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS) -> LocalAgentCapability:
         model = str(self.llm_config.get("model") or "configured-model")
         provider = str(self.llm_config.get("provider") or "openai-compatible")
         api_key_env = str(self.llm_config.get("api_key_env") or "")
+        api_key_present = bool(self.llm_config.get("api_key") or api_key_env)
         diagnostic = f"Uses configured {provider} provider and model {model}."
-        if not api_key_env:
-            diagnostic = "No API key environment variable is configured."
+        if not api_key_present:
+            diagnostic = "No API key is configured for this request or via environment variable."
         return LocalAgentCapability(
             adapter_id=self.adapter_id,
             label=self.label,
-            status="available" if api_key_env or self.llm_config.get("base_url") else "blocked",
+            status="available" if api_key_present else "blocked",
             command="provider-api",
             command_path=None,
             version=model,
@@ -84,27 +101,25 @@ class LlmApiAdapter:
                     "LLM API prompt prepared.",
                     step_index=step_index,
                 ))
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                if on_progress is not None:
-                    on_progress(progress_event(
-                        self.adapter_id,
-                        "request_sent",
-                        "LLM API request sent.",
-                        step_index=step_index,
-                    ))
-                future = pool.submit(
-                    provider.generate,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-                if on_progress is not None:
-                    on_progress(progress_event(
-                        self.adapter_id,
-                        "waiting_for_model",
-                        "Waiting for LLM API response.",
-                        step_index=step_index,
-                    ))
-                raw = future.result(timeout=timeout_seconds)
+            if on_progress is not None:
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "request_sent",
+                    "LLM API request sent.",
+                    step_index=step_index,
+                ))
+                on_progress(progress_event(
+                    self.adapter_id,
+                    "waiting_for_model",
+                    "Waiting for LLM API response.",
+                    step_index=step_index,
+                ))
+            raw = self._request_action(
+                provider,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_seconds=timeout_seconds,
+            )
             if on_progress is not None:
                 on_progress(progress_event(
                     self.adapter_id,
@@ -112,7 +127,56 @@ class LlmApiAdapter:
                     "LLM API returned output; validating structured action.",
                     step_index=step_index,
                 ))
-            action = parse_action_json(raw)
+            try:
+                action = parse_action_json(raw)
+            except Exception as exc:
+                if on_progress is not None:
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "request_sent",
+                        "LLM API returned malformed structured output; requesting one corrected JSON retry.",
+                        step_index=step_index,
+                    ))
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "waiting_for_model",
+                        "Waiting for corrected LLM API response.",
+                        step_index=step_index,
+                    ))
+                repair_prompt = json.dumps(
+                    {
+                        "autopilot_prompt": prompt,
+                        "response_schema": action_schema,
+                        "repair_contract": (
+                            "Your previous output failed schema validation. "
+                            "Return exactly one corrected JSON object that matches response_schema. "
+                            "Preserve the original intent, but do not leave final/chat/pause/ask_user text fields empty."
+                        ),
+                        "validation_error": f"{type(exc).__name__}: {exc}",
+                        "previous_output": raw,
+                    },
+                    ensure_ascii=False,
+                )
+                repaired_raw = self._request_action(
+                    provider,
+                    system_prompt=system_prompt,
+                    user_prompt=repair_prompt,
+                    timeout_seconds=timeout_seconds,
+                )
+                if on_progress is not None:
+                    on_progress(progress_event(
+                        self.adapter_id,
+                        "parsing_output",
+                        "LLM API returned corrected output; validating structured action.",
+                        step_index=step_index,
+                    ))
+                try:
+                    action = parse_action_json(repaired_raw)
+                    raw = repaired_raw
+                except Exception as repair_exc:
+                    raise ValueError(
+                        f"invalid structured action after one correction attempt: {repair_exc}"
+                    ) from repair_exc
             if on_progress is not None:
                 on_progress(progress_event(
                     self.adapter_id,

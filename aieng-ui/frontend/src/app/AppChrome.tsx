@@ -117,6 +117,7 @@ export function AppChrome({ app }: AppChromeProps) {
               chatBusy={app.chatBusy}
               cadGenerating={app.cadGenerating}
               cadGenerationProgress={app.cadGenerationProgress}
+              llmReady={app.llmReady}
               chatHistory={app.chatHistory}
               agentEvents={app.agentEvents}
               streamingState={app.streamingState}

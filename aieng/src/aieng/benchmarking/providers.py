@@ -7,7 +7,7 @@ from typing import Optional, Protocol
 
 
 class LLMProvider(Protocol):
-    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+    def generate(self, *, system_prompt: str, user_prompt: str, json_mode: bool = True) -> str:
         ...
 
 
@@ -28,16 +28,21 @@ class ProviderConfig:
     def resolved_api_key(self) -> Optional[str]:
         if self.api_key:
             return self.api_key
-        env_name = self.api_key_env or _default_api_key_env(self.provider)
+        env_name = self.resolved_api_key_env()
         return os.getenv(env_name) if env_name else None
+
+    def resolved_api_key_env(self) -> Optional[str]:
+        return self.api_key_env or _default_api_key_env(self.provider)
 
 
 def _default_api_key_env(provider: str) -> Optional[str]:
     normalized = provider.strip().lower()
     if normalized == "anthropic":
         return "ANTHROPIC_API_KEY"
-    if normalized == "openai-compatible":
+    if normalized in {"openai", "openai-compatible"}:
         return "OPENAI_API_KEY"
+    if normalized == "azure-openai":
+        return "AZURE_OPENAI_API_KEY"
     return None
 
 
@@ -107,7 +112,7 @@ class AnthropicProvider:
     max_output_tokens: int = 8192
     temperature: float = 0.0
 
-    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+    def generate(self, *, system_prompt: str, user_prompt: str, json_mode: bool = True) -> str:
         response = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_output_tokens,
@@ -127,7 +132,7 @@ class OpenAICompatibleProvider:
     top_p: float = 1.0
     seed: Optional[int] = None
 
-    def generate(self, *, system_prompt: str, user_prompt: str) -> str:
+    def generate(self, *, system_prompt: str, user_prompt: str, json_mode: bool = True) -> str:
         request_kwargs = _openai_request_kwargs(
             model=self.model,
             system_prompt=system_prompt,
@@ -137,6 +142,9 @@ class OpenAICompatibleProvider:
             top_p=self.top_p,
             seed=self.seed,
         )
+        if not json_mode:
+            response = self.client.chat.completions.create(**request_kwargs)
+            return _extract_text_from_openai_response(response)
         try:
             response = self.client.chat.completions.create(
                 **request_kwargs,
@@ -157,7 +165,10 @@ def build_provider(config: ProviderConfig) -> LLMProvider:
 
     if provider_name == "anthropic":
         anthropic = importlib.import_module("anthropic")
-        client = anthropic.Anthropic(api_key=api_key)
+        client_kwargs = {"api_key": api_key}
+        if config.base_url:
+            client_kwargs["base_url"] = config.base_url
+        client = anthropic.Anthropic(**client_kwargs)
         return AnthropicProvider(
             client=client,
             model=config.model,
@@ -165,11 +176,32 @@ def build_provider(config: ProviderConfig) -> LLMProvider:
             temperature=config.temperature,
         )
 
-    if provider_name == "openai-compatible":
-        if not config.base_url:
+    if provider_name in {"openai", "openai-compatible"}:
+        if provider_name == "openai-compatible" and not config.base_url:
             raise ValueError("openai-compatible provider requires base_url")
         openai = importlib.import_module("openai")
-        client = openai.OpenAI(api_key=api_key, base_url=config.base_url)
+        client_kwargs = {"api_key": api_key}
+        if config.base_url:
+            client_kwargs["base_url"] = config.base_url
+        client = openai.OpenAI(**client_kwargs)
+        return OpenAICompatibleProvider(
+            client=client,
+            model=config.model,
+            max_output_tokens=config.max_output_tokens,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            seed=config.seed,
+        )
+
+    if provider_name == "azure-openai":
+        if not config.base_url:
+            raise ValueError("azure-openai provider requires base_url")
+        openai = importlib.import_module("openai")
+        client = openai.AzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=config.base_url,
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+        )
         return OpenAICompatibleProvider(
             client=client,
             model=config.model,

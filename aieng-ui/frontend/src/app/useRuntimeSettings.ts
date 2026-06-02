@@ -1,10 +1,11 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import { api } from "../api";
 import {
   DEFAULT_LLM_CONFIG,
   DEFAULT_LOCAL_AGENT_CONFIG,
   LLM_CONFIG_STORAGE_KEY,
+  LLM_CONFIG_TEMPLATES,
   LOCAL_AGENT_CONFIG_STORAGE_KEY,
 } from "../appConstants";
 import type { Notice } from "../appTypes";
@@ -21,10 +22,11 @@ import type {
   RuntimeConfig,
   RuntimeConfigSnapshot,
 } from "../types";
-import { useEncryptedLocalStorage } from "../hooks/useEncryptedLocalStorage";
 
 const LLM_CONFIG_KEY = "llm_config";
 const LOCAL_AGENT_CONFIG_KEY = "local_agent_config";
+const API_KEY_BACKEND_KEY = "api_key";
+const API_KEY_LOCALSTORAGE_KEY = "aieng_api_key";
 
 type UseRuntimeSettingsArgs = {
   setSummary: Dispatch<SetStateAction<ProjectSummary | null>>;
@@ -37,11 +39,63 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [llmConfig, setLlmConfigState] = useState<LLMConfig>(DEFAULT_LLM_CONFIG);
   const [localAgentConfig, setLocalAgentConfigState] = useState<LocalAgentConfig>(DEFAULT_LOCAL_AGENT_CONFIG);
-  const [apiKey, setApiKey] = useEncryptedLocalStorage(
-    "aieng_api_key",
-    "",
-    { shouldRemove: (value) => !value },
-  );
+  const [apiKey, setApiKeyState] = useState<string>("");
+  const [apiKeyHydrated, setApiKeyHydrated] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      let key = "";
+      try {
+        const record = await api.getSetting(API_KEY_BACKEND_KEY);
+        if (record?.value && typeof record.value === "string") {
+          key = record.value;
+        }
+      } catch {
+        // Backend unavailable or no key stored.
+      }
+      if (!key) {
+        try {
+          const raw = window.localStorage.getItem(API_KEY_LOCALSTORAGE_KEY);
+          if (raw) {
+            const { decryptText } = await import("../app/encrypt");
+            key = await decryptText(raw);
+            if (key) {
+              void api.updateSetting(API_KEY_BACKEND_KEY, key).catch(() => {});
+            }
+          }
+        } catch {
+          // Corrupt or missing localStorage entry.
+        }
+      }
+      if (!cancelled) {
+        setApiKeyState(key);
+        setApiKeyHydrated(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const setApiKey = useCallback((next: string) => {
+    setApiKeyState(next);
+    if (next) {
+      void api.updateSetting(API_KEY_BACKEND_KEY, next).catch(() => {});
+    } else {
+      void api.deleteSetting(API_KEY_BACKEND_KEY).catch(() => {});
+    }
+    void (async () => {
+      try {
+        if (!next) {
+          window.localStorage.removeItem(API_KEY_LOCALSTORAGE_KEY);
+        } else {
+          const { encryptText } = await import("../app/encrypt");
+          window.localStorage.setItem(API_KEY_LOCALSTORAGE_KEY, await encryptText(next));
+        }
+      } catch {
+        // Storage may be unavailable in private mode.
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +152,10 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
 
   const runtimeReady = runtime?.probe.ready ?? false;
   const runtimeProvider = getProviderLabel(runtime?.config.provider);
-  const llmReady = isLlmConfigReady(llmConfig);
+  const llmReady = isLlmConfigReady({
+    ...llmConfig,
+    api_key: apiKey || llmConfig.api_key || null,
+  });
 
   function applyRuntimeSnapshot(snapshot: RuntimeConfigSnapshot) {
     setRuntime(snapshot);
@@ -158,11 +215,16 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
 
   function applyLlmProviderPreset(provider: string) {
     setLlmConfig((current) => {
-      const next = { ...current, provider };
-      if (provider === "anthropic") {
-        next.base_url = "";
+      const template = LLM_CONFIG_TEMPLATES.find((item) => item.id === provider);
+      if (template) {
+        return {
+          ...current,
+          provider: template.provider,
+          model: template.model,
+          base_url: template.base_url,
+        };
       }
-      return next;
+      return { ...current, provider };
     });
   }
 
@@ -179,6 +241,7 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
     llmReady,
     localAgentConfig,
     apiKey,
+    apiKeyHydrated,
     runtimeReady,
     runtimeProvider,
     setRuntimeNotice,

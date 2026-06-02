@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 
 import { api } from "../api";
 import type { ChatHistoryItem, Notice, SelectedGeometryContext } from "../appTypes";
-import { createChatId, runtimeStatusLabel } from "../appUtils";
+import { createChatId, isLlmConfigReady, runtimeStatusLabel } from "../appUtils";
 import type {
   AgentPlan,
   ChatConnection,
@@ -25,6 +25,7 @@ type UseAgentRunsArgs = {
   selectedChatConnection: ChatConnection;
   localAgentConfig: LocalAgentConfig;
   llmConfig: LLMConfig;
+  apiKey: string;
   agentPayloadGeometry(): SelectedGeometryContext | undefined;
   appendRunToChatHistory(run: RuntimeRun): void;
   runBusyTask(task: () => Promise<void>): Promise<void>;
@@ -41,6 +42,7 @@ export function useAgentRuns({
   selectedChatConnection,
   localAgentConfig,
   llmConfig,
+  apiKey,
   agentPayloadGeometry,
   appendRunToChatHistory,
   runBusyTask,
@@ -53,6 +55,7 @@ export function useAgentRuns({
   const [agentBusy, setAgentBusy] = useState(false);
   const [lastRuntimeRun, setLastRuntimeRun] = useState<RuntimeRun | null>(null);
   const autopilotPollTimerRef = useRef<number | null>(null);
+  const llmReady = isLlmConfigReady({ ...llmConfig, api_key: apiKey || llmConfig.api_key || null });
 
   useEffect(() => () => stopAutopilotPoll(), []);
 
@@ -90,6 +93,7 @@ export function useAgentRuns({
         project_id: selectedId ?? null,
         selected_geometry: agentPayloadGeometry(),
         llm_config: llmConfig,
+        api_key: apiKey || undefined,
         dry_run: false,
       });
       setAgentPlan(plan);
@@ -139,6 +143,7 @@ export function useAgentRuns({
         project_id: selectedId ?? agentPlan?.project_id ?? null,
         selected_geometry: agentPayloadGeometry(),
         llm_config: llmConfig,
+        api_key: apiKey || undefined,
         plan: agentPlan ?? undefined,
       });
       setAgentPlan(result.agent);
@@ -163,7 +168,7 @@ export function useAgentRuns({
 
   async function probeLocalAgents() {
     const result = await api.listLocalAgentCapabilities().catch(() => ({ adapters: [] as LocalAgentCapability[], available: [] as LocalAgentCapability[] }));
-    setChatConnections((current) => mergeLocalAgentCapabilities(current, result.adapters));
+    setChatConnections((current) => mergeLocalAgentCapabilities(current, result.adapters, llmReady));
     return result;
   }
 
@@ -219,7 +224,7 @@ export function useAgentRuns({
         session_id: activeSessionId ?? undefined,
         selected_geometry: agentPayloadGeometry(),
         adapter_id: adapterId,
-        ...(isLlmApi ? { llm_config: llmConfig } : {}),
+        ...(isLlmApi ? { llm_config: llmConfig, api_key: apiKey || undefined } : {}),
         mode: "autopilot",
         dry_run: false,
       });
@@ -267,10 +272,10 @@ export function useAgentRuns({
       const result = action === "cancel"
         ? await api.cancelAutopilot(runId)
         : action === "reply"
-          ? await api.replyAutopilot(runId, userMessage || "")
+          ? await api.replyAutopilot(runId, userMessage || "", apiKey || undefined)
           : action === "follow-up"
-            ? await api.followUpAutopilot(runId, userMessage || "")
-            : await api.continueAutopilot(runId, action === "approve", userMessage || null);
+            ? await api.followUpAutopilot(runId, userMessage || "", apiKey || undefined)
+            : await api.continueAutopilot(runId, action === "approve", userMessage || null, apiKey || undefined);
       onAutopilotRunUpdate?.(result);
       setChatHistory((current) => current.map((entry) => (
         entry.autopilotRun?.run_id === runId

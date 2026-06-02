@@ -1,4 +1,5 @@
-const KEY_DATA = new TextEncoder().encode("aieng-ui-local-enc-key-v1-32b");
+// AES raw keys must be 16/24/32 bytes. Keep this string at 32 ASCII bytes.
+const KEY_DATA = new TextEncoder().encode("aieng-ui-local-enc-key-v1-32b!!");
 
 async function getAesKey(): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", KEY_DATA, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);

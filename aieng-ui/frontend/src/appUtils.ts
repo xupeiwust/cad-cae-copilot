@@ -67,12 +67,14 @@ export function normalizeLlmConfig(raw: unknown): LLMConfig {
     model: typeof data.model === "string" && data.model.trim() ? data.model : base.model,
     base_url: typeof data.base_url === "string" ? data.base_url : base.base_url,
     api_key: typeof data.api_key === "string" && data.api_key ? data.api_key : base.api_key,
+    api_key_env: typeof data.api_key_env === "string" && data.api_key_env ? data.api_key_env : base.api_key_env,
     temperature: typeof data.temperature === "number" && Number.isFinite(data.temperature) ? data.temperature : base.temperature,
     top_p: typeof data.top_p === "number" && Number.isFinite(data.top_p) ? data.top_p : base.top_p,
     max_output_tokens:
       typeof data.max_output_tokens === "number" && Number.isFinite(data.max_output_tokens)
         ? data.max_output_tokens
         : base.max_output_tokens,
+    seed: typeof data.seed === "number" && Number.isFinite(data.seed) ? data.seed : base.seed,
     input_price_per_million_tokens:
       typeof data.input_price_per_million_tokens === "number" && Number.isFinite(data.input_price_per_million_tokens)
         ? data.input_price_per_million_tokens
@@ -85,7 +87,11 @@ export function normalizeLlmConfig(raw: unknown): LLMConfig {
 }
 
 export function isLlmConfigReady(config: LLMConfig) {
-  return Boolean(config.provider.trim() && config.model.trim() && (config.api_key?.trim() || config.base_url?.trim()));
+  return Boolean(
+    config.provider.trim() &&
+    config.model.trim() &&
+    (config.api_key?.trim() || config.api_key_env?.trim() || config.base_url?.trim()),
+  );
 }
 
 export function getRuntimeDetail(snapshot: RuntimeConfigSnapshot | null) {

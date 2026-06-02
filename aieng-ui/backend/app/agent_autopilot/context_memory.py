@@ -222,6 +222,9 @@ class ContextMemoryManager:
         self,
         objective: str,
         *,
+        project_id: str | None = None,
+        selected_geometry: dict[str, Any] | None = None,
+        agent_context: dict[str, Any] | None = None,
         working_state: dict[str, Any] | None = None,
         current_plan_step: dict[str, Any] | None = None,
         latest_observation: AutopilotObservation | dict[str, Any] | None = None,
@@ -238,7 +241,14 @@ class ContextMemoryManager:
                 "current_plan_step": current_plan_step,
                 "pending_approval": pending_approval,
             },
+            "working_memory": self._build_working_layer_payload(),
         }
+        if project_id is not None:
+            payload["active_project_id"] = project_id
+        if selected_geometry:
+            payload["selected_geometry"] = selected_geometry
+        if agent_context:
+            payload["agent_context"] = agent_context
         if latest_observation is not None:
             payload["resume_summary"]["latest_observation"] = self._compact_single_observation(latest_observation)
 

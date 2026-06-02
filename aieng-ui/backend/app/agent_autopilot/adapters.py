@@ -134,13 +134,25 @@ def parse_action_json(text: str) -> AutopilotAgentAction:
                 "input": action_input,
             }
         elif action_type == "ask_user":
-            payload["action"] = {"type": "ask_user", "question": action.get("question") or ""}
+            question = str(action.get("question") or "").strip()
+            if not question:
+                raise ValueError("terminal action ask_user requires a non-empty question")
+            payload["action"] = {"type": "ask_user", "question": question}
         elif action_type == "final":
-            payload["action"] = {"type": "final", "message": action.get("message") or ""}
+            message = str(action.get("message") or "").strip()
+            if not message:
+                raise ValueError("terminal action final requires a non-empty message")
+            payload["action"] = {"type": "final", "message": message}
         elif action_type == "pause":
-            payload["action"] = {"type": "pause", "reason": action.get("reason") or ""}
+            reason = str(action.get("reason") or "").strip()
+            if not reason:
+                raise ValueError("terminal action pause requires a non-empty reason")
+            payload["action"] = {"type": "pause", "reason": reason}
         elif action_type == "chat":
-            payload["action"] = {"type": "chat", "message": action.get("message") or ""}
+            message = str(action.get("message") or "").strip()
+            if not message:
+                raise ValueError("terminal action chat requires a non-empty message")
+            payload["action"] = {"type": "chat", "message": message}
     return AutopilotAgentAction.model_validate(payload)
 
 

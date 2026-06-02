@@ -12,20 +12,29 @@ export type EngineeringChatIntent =
 export function mergeLocalAgentCapabilities(
   connections: ChatConnection[],
   capabilities: ChatConnection["adapters"] | undefined,
+  llmReady = false,
 ): ChatConnection[] {
-  if (!capabilities) return connections;
-  const available = capabilities.filter((item) => item.status === "available");
+  const adapters = capabilities ?? [];
+  const available = adapters.filter((item) => item.status === "available");
   return connections.map((connection) => (
     connection.id === "local-agent"
       ? {
           ...connection,
           status: available.length ? "ready" : "blocked",
-          adapters: capabilities,
+          adapters,
           detail: available.length
             ? `Available adapters: ${available.map((item) => item.label).join(", ")}.`
-            : capabilities[0]?.diagnostic || connection.detail,
+            : adapters[0]?.diagnostic || connection.detail,
         }
-      : connection
+      : connection.id === "llm-api"
+        ? {
+            ...connection,
+            status: llmReady ? "ready" : "configurable",
+            detail: llmReady
+              ? "Model provider is configured and ready for planning through the local approval-gated runtime."
+              : connection.detail,
+          }
+        : connection
   ));
 }
 

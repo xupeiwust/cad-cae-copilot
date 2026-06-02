@@ -33,6 +33,17 @@ def _make_project(settings: Settings, name: str) -> str:
     return project["id"]
 
 
+def _load_topology_map(settings: Settings, project_id: str) -> dict:
+    # execute_build123d_code returns a compact topology_summary and writes the
+    # full topology_map to the package; read it from there.
+    from app.main import project_dir
+    from app.project_io import get_project
+    project = get_project(settings, project_id)
+    pkg_path = project_dir(settings, project_id) / project["aieng_file"]
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        return json.loads(zf.read("geometry/topology_map.json"))
+
+
 # ── sample topology ───────────────────────────────────────────────────────────
 
 _SAMPLE_TOPOLOGY: dict = {
@@ -357,6 +368,53 @@ def test_execute_build123d_preserves_labels_with_positional_compound_list(tmp_pa
     assert out["named_parts"] == ["base_plate", "dome_head"]
     named = [f for f in out["feature_graph"]["features"] if f["type"] == "named_part"]
     assert sorted(f["name"] for f in named) == ["base_plate", "dome_head"]
+
+
+def test_execute_build123d_preserves_parent_assembly_and_child_labels(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "named-parent-compound")
+    code = (
+        "from build123d import *\n"
+        "body = Box(40, 30, 10); body.label = 'drone_body'\n"
+        "arm_l = Box(50, 5, 5).moved(Location((-45, 0, 0))); arm_l.label = 'arm_L'\n"
+        "arm_r = Box(50, 5, 5).moved(Location((45, 0, 0))); arm_r.label = 'arm_R'\n"
+        "result = Compound(children=[body, arm_l, arm_r])\n"
+        "result.label = 'drone_assembly'\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+    assert out["named_parts"] == ["drone_assembly", "drone_body", "arm_L", "arm_R"]
+
+    topo = _load_topology_map(settings, pid)
+    solids = [e for e in topo["entities"] if e.get("type") == "solid"]
+    assert [s.get("name") for s in solids] == ["drone_assembly", "drone_body", "arm_L", "arm_R"]
+    assert solids[0].get("assembly") is True
+    assert not any(e.get("type") == "face" and e.get("body_id") == solids[0]["id"] for e in topo["entities"])
+    named = [f for f in out["feature_graph"]["features"] if f["type"] == "named_part"]
+    assert [f["name"] for f in named] == ["drone_assembly", "drone_body", "arm_L", "arm_R"]
+
+
+def test_execute_build123d_single_labeled_body_regression(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "single-label")
+    code = (
+        "from build123d import *\n"
+        "result = Box(10, 10, 10)\n"
+        "result.label = 'single_body'\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+    assert out["named_parts"] == ["single_body"]
+    topo = _load_topology_map(settings, pid)
+    solids = [e for e in topo["entities"] if e.get("type") == "solid"]
+    assert [s.get("name") for s in solids] == ["single_body"]
+    assert solids[0].get("assembly") is not True
 
 
 def test_execute_build123d_append_preserves_prior_parts(tmp_path: Path) -> None:

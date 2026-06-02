@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from app.agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
+from app.agent_autopilot.engine import (
+    GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
+    AutopilotEngine,
+    create_default_agent_plan,
+)
 from app.agent_autopilot.schema import AdapterInvocationResult, AutopilotAgentAction, AutopilotRunRequest
 from app.agent_autopilot.store import AutopilotStore
 
@@ -38,6 +42,156 @@ def test_engine_completes_on_final_action(tmp_path: Path) -> None:
     assert state.plan.status == "completed"
     assert state.plan.steps[0].status == "completed"
     assert state.plan.steps[-1].status == "completed"
+
+
+def test_mutation_intent_guard_rejects_chinese_create_final_and_reselects_tool(tmp_path: Path) -> None:
+    state = _engine(tmp_path).start(
+        AutopilotRunRequest(
+            message="创建一个无人机模型",
+            project_id="p1",
+            max_steps=2,
+            fake_actions=[
+                {"action": {"type": "final", "message": "Done without CAD."}, "done": True},
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    }
+                },
+            ],
+        )
+    )
+
+    assert state.status == "awaiting_approval"
+    assert state.pending_approval is not None
+    assert state.pending_approval.tool_name == "cad.execute_build123d"
+    assert [step.action.action.type for step in state.steps] == ["tool_call"]
+    guard_obs = [obs for obs in state.observations if obs.summary == GEOMETRY_MUTATION_REPAIR_INSTRUCTION]
+    assert guard_obs
+    assert guard_obs[-1].data["intent"] == "create_geometry"
+
+
+def test_mutation_intent_guard_rejects_english_modify_final_and_allows_ask_user(tmp_path: Path) -> None:
+    state = _engine(tmp_path).start(
+        AutopilotRunRequest(
+            message="Make it look more futuristic",
+            project_id="p1",
+            max_steps=2,
+            fake_actions=[
+                {"action": {"type": "final", "message": "Already done."}, "done": True},
+                {"action": {"type": "ask_user", "question": "Which part should I change?"}},
+            ],
+        )
+    )
+
+    assert state.status == "blocked"
+    assert [step.action.action.type for step in state.steps] == ["ask_user"]
+    ask_obs = next(obs for obs in state.observations if obs.kind == "ask_user")
+    assert ask_obs.data["question"] == "Which part should I change?"
+    guard_obs = [obs for obs in state.observations if obs.summary == GEOMETRY_MUTATION_REPAIR_INSTRUCTION]
+    assert guard_obs[-1].data["intent"] == "modify_geometry"
+
+
+def test_mutation_intent_guard_does_not_count_critique_as_mutation(tmp_path: Path) -> None:
+    calls: list[tuple[str, dict]] = []
+    runtime_tools = RUNTIME_TOOLS + [
+        {"name": "cad.critique", "description": "critique", "input_schema": {"type": "object"}},
+    ]
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=runtime_tools,
+        tool_executor=lambda name, inp: calls.append((name, inp)) or {"status": "ok"},
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="add rotor guards to the drone",
+            project_id="p1",
+            dry_run=False,
+            max_steps=3,
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cad.critique", "input": {"project_id": "p1"}}},
+                {"action": {"type": "final", "message": "Critique only."}, "done": True},
+                {"action": {"type": "ask_user", "question": "Should I proceed with a CAD edit?"}},
+            ],
+        )
+    )
+
+    assert state.status == "blocked"
+    assert calls == [("cad.critique", {"project_id": "p1"})]
+    assert [step.action.action.type for step in state.steps] == ["tool_call", "ask_user"]
+    assert any(obs.summary == GEOMETRY_MUTATION_REPAIR_INSTRUCTION for obs in state.observations)
+    assert state.final_message is None
+
+
+def test_mutation_intent_guard_allows_readonly_explanation_final(tmp_path: Path) -> None:
+    state = _engine(tmp_path).start(
+        AutopilotRunRequest(
+            message="解释当前模型有什么部件",
+            project_id="p1",
+            fake_actions=[
+                {"action": {"type": "final", "message": "当前模型包含机身和支架。"}, "done": True},
+            ],
+        )
+    )
+
+    assert state.status == "completed"
+    assert state.final_message == "当前模型包含机身和支架。"
+    assert not any(obs.summary == GEOMETRY_MUTATION_REPAIR_INSTRUCTION for obs in state.observations)
+
+
+def test_mutation_intent_guard_allows_final_after_cad_mutation(tmp_path: Path) -> None:
+    class CadThenFinalAdapter:
+        adapter_id = "cad-final"
+        label = "CAD then Final"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            action = (
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    },
+                }
+                if self.calls == 1
+                else {"action": {"type": "final", "message": "Geometry updated."}, "done": True}
+            )
+            return AdapterInvocationResult(status="success", action=AutopilotAgentAction.model_validate(action))
+
+    calls: list[tuple[str, dict]] = []
+    adapter = CadThenFinalAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"cad-final": adapter},
+        tool_executor=lambda name, inp: calls.append((name, inp)) or {"named_parts": ["body"], "parts_added": ["body"]},
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="add a camera pod",
+            project_id="p1",
+            adapter_id="cad-final",
+            dry_run=False,
+        )
+    )
+    assert state.status == "awaiting_approval"
+
+    resumed = engine.continue_run(state.run_id, approved=True)
+
+    assert resumed.status == "completed"
+    assert resumed.final_message == "Geometry updated."
+    assert calls == [
+        ("aieng.agent_context", {"project_id": "p1"}),
+        ("cad.execute_build123d", {"project_id": "p1", "code": "result = None"}),
+    ]
+    assert not any(obs.summary == GEOMETRY_MUTATION_REPAIR_INSTRUCTION for obs in resumed.observations)
 
 
 def test_simulation_objective_uses_cae_plan_template() -> None:
@@ -515,12 +669,12 @@ def test_engine_updates_working_state_from_skill_plan(tmp_path: Path) -> None:
                         "input": {"project_id": "p1", "message": "建模一个40mm的法兰盘"},
                     }
                 },
-                {"action": {"type": "final", "message": "Planned."}, "done": True},
+                {"action": {"type": "ask_user", "question": "Proceed to CAD execution?"}},
             ],
         )
     )
 
-    assert state.status == "completed"
+    assert state.status == "blocked"
     assert state.working_state.objective == "建模一个40mm的法兰盘"
     assert state.working_state.current_mode == "autopilot"
     assert state.working_state.last_successful_tool == "cad.plan_build123d_skill"
@@ -1307,3 +1461,134 @@ def test_cancel_marker_stops_before_next_adapter_step(tmp_path: Path) -> None:
 
     engine._step_loop(state, FinalAdapter(), 1)  # exercise the cooperative check directly
     assert state.status == "cancelled"
+
+
+def test_cancel_run_emits_single_cancel_event_when_worker_also_sees_marker(tmp_path: Path) -> None:
+    events: list[dict] = []
+    store = AutopilotStore(tmp_path / "runs")
+    engine = AutopilotEngine(store=store, runtime_tools=RUNTIME_TOOLS, on_event=events.append)
+    state = engine.start(
+        AutopilotRunRequest(
+            message="wait",
+            project_id="p1",
+            fake_actions=[{"action": {"type": "pause", "reason": "waiting"}}],
+        )
+    )
+
+    cancelled = engine.cancel_run(state.run_id)
+    assert cancelled.status == "cancelled"
+    assert [event["type"] for event in events].count("run_cancelled") == 1
+
+    # Simulate an already-running worker reaching its cooperative cancel check
+    # after the API endpoint has persisted cancellation.
+    in_flight = state
+    assert engine._cancel_if_requested(in_flight) is True
+    assert in_flight.status == "cancelled"
+    assert [event["type"] for event in events].count("run_cancelled") == 1
+
+
+def test_adapter_failure_does_not_emit_run_cancelled(tmp_path: Path) -> None:
+    class FailingAdapter:
+        adapter_id = "failing"
+        label = "Failing"
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            return AdapterInvocationResult(status="error", diagnostic="adapter exploded")
+
+    events: list[dict] = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"failing": FailingAdapter()},
+        on_event=events.append,
+    )
+
+    state = engine.start(AutopilotRunRequest(message="hello", project_id="p1", adapter_id="failing"))
+
+    assert state.status == "failed"
+    assert any(event["type"] == "tool_failed" for event in events)
+    assert not any(event["type"] == "run_cancelled" for event in events)
+
+
+def test_no_chat_session_run_uses_stable_adapter_session_id_across_steps(tmp_path: Path) -> None:
+    class CapturingAdapter:
+        adapter_id = "capture"
+        label = "Capture"
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.session_ids: list[str | None] = []
+            self.step_indices: list[int] = []
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            self.session_ids.append(kwargs.get("session_id"))
+            self.step_indices.append(kwargs.get("step_index"))
+            action = (
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "aieng.agent_context",
+                        "input": {"project_id": "p1"},
+                    }
+                }
+                if self.calls == 1
+                else {"action": {"type": "final", "message": "Observed."}, "done": True}
+            )
+            return AdapterInvocationResult(status="success", action=AutopilotAgentAction.model_validate(action))
+
+    adapter = CapturingAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"capture": adapter},
+        tool_executor=lambda _name, _inp: {"ok": True},
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="inspect the model",
+            project_id="p1",
+            adapter_id="capture",
+            dry_run=False,
+        )
+    )
+
+    assert state.status == "completed"
+    assert adapter.session_ids == [f"run:{state.run_id}", f"run:{state.run_id}"]
+    assert adapter.step_indices == [0, 1]
+
+
+def test_chat_session_adapter_session_id_unchanged(tmp_path: Path) -> None:
+    class CapturingAdapter:
+        adapter_id = "capture"
+        label = "Capture"
+
+        def __init__(self) -> None:
+            self.session_ids: list[str | None] = []
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.session_ids.append(kwargs.get("session_id"))
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate({"action": {"type": "final", "message": "Done."}, "done": True}),
+            )
+
+    adapter = CapturingAdapter()
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"capture": adapter},
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="explain the model",
+            project_id="p1",
+            session_id="chat-session-123",
+            adapter_id="capture",
+        )
+    )
+
+    assert state.status == "completed"
+    assert adapter.session_ids == ["chat-session-123"]

@@ -286,10 +286,12 @@ export function chatHistoryToTranscriptItems(
   items.push(...planEventsToTranscriptItems(agentEvents));
 
   return dedupeAndSort(
-    collapseProgressRows(
-      normalizeTerminalRunRows(
-        dedupeSnapshotRowsCoveredByEvents(items),
-        runStatusById,
+    collapseDuplicateStatusRows(
+      collapseProgressRows(
+        normalizeTerminalRunRows(
+          dedupeSnapshotRowsCoveredByEvents(items),
+          runStatusById,
+        ),
       ),
     ),
   );
@@ -578,12 +580,20 @@ function planToTranscriptItem(
   plan: AutopilotAgentPlan,
   base: Omit<TranscriptAgentPlanLine, "kind" | "status" | "objective" | "steps" | "currentStepId">,
 ): TranscriptAgentPlanLine {
+  const status = normalizeStatus(plan.status);
+  // Once the run is done, steps that were never reached (e.g. await_approval /
+  // repair on a run that needed neither) stay "pending" forever and read as
+  // unfinished work. Show them as "skipped" — display-only, terminal plans only;
+  // active (running/blocked) plans keep their live pending steps untouched.
+  const steps = status === "done"
+    ? plan.steps.map((step) => (step.status === "pending" ? { ...step, status: "skipped" } : step))
+    : plan.steps;
   return {
     ...base,
     kind: "plan",
-    status: normalizeStatus(plan.status),
+    status,
     objective: plan.objective || "Agent plan",
-    steps: plan.steps,
+    steps,
     currentStepId: plan.current_step_id,
   };
 }
@@ -846,6 +856,27 @@ function collapseProgressRows(items: ChatTranscriptItem[]): ChatTranscriptItem[]
     const key = progressRowKey(item);
     return !key || latestByProgressKey.get(key) === item.sourceId;
   });
+}
+
+function collapseDuplicateStatusRows(items: ChatTranscriptItem[]): ChatTranscriptItem[] {
+  const latestByStatusKey = new Map<string, string>();
+  for (const item of items) {
+    const key = duplicateStatusRowKey(item);
+    if (!key) continue;
+    latestByStatusKey.set(key, item.sourceId);
+  }
+  if (!latestByStatusKey.size) return items;
+  return items.filter((item) => {
+    const key = duplicateStatusRowKey(item);
+    return !key || latestByStatusKey.get(key) === item.sourceId;
+  });
+}
+
+function duplicateStatusRowKey(item: ChatTranscriptItem): string | null {
+  if (item.kind !== "status") return null;
+  const run = item.runId || "";
+  if (!run) return null;
+  return `${run}:status:${item.status}:${item.summary}`;
 }
 
 function progressRowKey(item: ChatTranscriptItem): string | null {

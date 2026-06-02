@@ -346,26 +346,31 @@ def _has_labeled_descendant(node):
     return False
 
 
-def _collect_parts(shape):
-    # Returns [(name_or_None, part_shape), ...]. A node carrying a build123d
-    # `.label` becomes a named part (we don't descend into it). An UNLABELED
-    # compound is split into its children only when a label exists somewhere below
-    # — this recovers names nested by append mode (previous_result is itself a
-    # Compound) while leaving unnamed unions (e.g. auto-wrapped ShapeLists) as a
-    # single body, preserving prior behavior.
+def _collect_parts(shape, include_assemblies=False):
+    # Returns [(name_or_None, part_shape, is_assembly), ...]. A labelled leaf is
+    # a named part. A labelled Compound that also has labelled descendants is an
+    # assembly label: include it when topology asks for assemblies, then keep
+    # descending so child labels remain referenceable. Mesh export leaves those
+    # parents out to avoid duplicate triangles/z-fighting in thumbnails.
     out = []
 
     def _walk(node):
         label = (getattr(node, "label", "") or "")
-        if label:
-            out.append((label, node))
-            return
         children = list(getattr(node, "children", None) or [])
-        if children and _has_labeled_descendant(node):
+        labeled_descendants = bool(children) and _has_labeled_descendant(node)
+        if label:
+            is_assembly = labeled_descendants
+            if include_assemblies or not is_assembly:
+                out.append((label, node, is_assembly))
+            if is_assembly:
+                for c in children:
+                    _walk(c)
+            return
+        if labeled_descendants:
             for c in children:
                 _walk(c)
             return
-        out.append((None, node))
+        out.append((None, node, False))
 
     _walk(shape)
     return out
@@ -374,16 +379,21 @@ def _collect_parts(shape):
 def _extract_topology(shape):
     entities = []
     face_counter = 0
-    for pi, (name, part) in enumerate(_collect_parts(shape)):
+    for pi, (name, part, is_assembly) in enumerate(_collect_parts(shape, include_assemblies=True)):
         body_id = f"body_{pi + 1:03d}"
         body = {"id": body_id, "type": "solid", "bounding_box": _bbox_list(part.bounding_box())}
         if name:
             body["name"] = name
+        if is_assembly:
+            body["assembly"] = True
         entities.append(body)
+        if is_assembly:
+            continue
         for face in part.faces():
             face_counter += 1
             entities.append(_face_entity(face, f"face_{face_counter:03d}", body_id))
     return {"format_version": "0.1", "entities": entities}
+
 
 
 out_step = Path(sys.argv[1])
@@ -439,7 +449,7 @@ def _aieng_extract_color(part):
         return None
 
 with _aieng_tempfile.TemporaryDirectory() as _aieng_td:
-    for _aieng_bi, (_aieng_pname, _aieng_ppart) in enumerate(_aieng_collected):
+    for _aieng_bi, (_aieng_pname, _aieng_ppart, _aieng_is_assembly) in enumerate(_aieng_collected):
         _aieng_body_id = f"body_{_aieng_bi + 1:03d}"
         _aieng_col = _aieng_extract_color(_aieng_ppart)
         _aieng_tris = 0

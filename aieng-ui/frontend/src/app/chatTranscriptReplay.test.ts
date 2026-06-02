@@ -148,3 +148,148 @@ function expectDeepEqual(actual: unknown, expected: unknown, label: string) {
   }
 }
 });
+
+test("chat transcript collapses duplicate phase/status rows and terminalizes completed progress", () => {
+  const events: AgentTranscriptEvent[] = [
+    {
+      event_id: "phase-1",
+      type: "agent_phase_changed",
+      run_id: "run-dup",
+      project_id: "project-dup",
+      session_id: "session-dup",
+      status: "running",
+      content: "Prepared full prompt for fake.",
+      payload: { phase: "prompt_prepared", progress_event: true },
+      created_at: "2026-06-02T00:00:01.000Z",
+    },
+    {
+      event_id: "phase-2",
+      type: "agent_phase_changed",
+      run_id: "run-dup",
+      project_id: "project-dup",
+      session_id: "session-dup",
+      status: "running",
+      content: "Prepared full prompt for fake.",
+      payload: { phase: "prompt_prepared", progress_event: true },
+      created_at: "2026-06-02T00:00:02.000Z",
+    },
+    {
+      event_id: "status-1",
+      type: "run_status_changed",
+      run_id: "run-dup",
+      project_id: "project-dup",
+      session_id: "session-dup",
+      status: "running",
+      content: "Invoking fake for the next action.",
+      payload: { adapter_id: "fake" },
+      created_at: "2026-06-02T00:00:03.000Z",
+    },
+    {
+      event_id: "status-2",
+      type: "run_status_changed",
+      run_id: "run-dup",
+      project_id: "project-dup",
+      session_id: "session-dup",
+      status: "running",
+      content: "Invoking fake for the next action.",
+      payload: { adapter_id: "fake" },
+      created_at: "2026-06-02T00:00:04.000Z",
+    },
+    {
+      event_id: "complete",
+      type: "run_status_changed",
+      run_id: "run-dup",
+      project_id: "project-dup",
+      session_id: "session-dup",
+      status: "completed",
+      content: "Autopilot run completed.",
+      payload: {},
+      created_at: "2026-06-02T00:00:05.000Z",
+    },
+  ];
+
+  const transcript = chatHistoryToTranscriptItems([], events);
+  const promptRows = transcript.filter(
+    (item) => item.kind === "status" && item.summary.includes("prompt prepared"),
+  );
+  const invokingRows = transcript.filter(
+    (item) => item.kind === "status" && item.summary === "Invoking fake for the next action.",
+  );
+  const activeRows = transcript.filter(
+    (item) =>
+      item.runId === "run-dup" &&
+      (item.kind === "status" || item.kind === "tool" || item.kind === "artifact") &&
+      item.status === "running",
+  );
+
+  expectLocalEqual(promptRows.length, 1, "duplicate phase rows");
+  expectLocalEqual(invokingRows.length, 1, "duplicate status rows");
+  expectLocalEqual(activeRows.length, 0, "completed run should not leave active progress rows");
+
+  function expectLocalEqual(actual: unknown, expected: unknown, label = "value") {
+    if (actual !== expected) {
+      throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+});
+
+test("completed run shows unreached pending plan steps as skipped, active run keeps pending", () => {
+  const at = "2026-06-02T00:00:00.000Z";
+  const makePlan = (status: string): AutopilotAgentPlan => ({
+    id: "plan-x",
+    objective: "Build something",
+    status,
+    current_step_id: "summarize_result",
+    created_at: at,
+    updated_at: at,
+    steps: [
+      { id: "execute_tool", title: "Execute", kind: "tool", status: "completed", tool_name: null, skill_name: null, summary: "done", evidence: {} },
+      { id: "await_approval", title: "Await", kind: "approval", status: "pending", tool_name: null, skill_name: null, summary: "", evidence: {} },
+    ],
+  });
+  const makeRun = (status: AutopilotRunState["status"], plan: AutopilotAgentPlan): AutopilotRunState => ({
+    run_id: `run-${status}`,
+    status,
+    message: "build",
+    project_id: "p",
+    session_id: "s",
+    adapter_id: "fake",
+    mode: "autopilot",
+    dry_run: true,
+    llm_config: {},
+    created_at: at,
+    updated_at: at,
+    observations: [],
+    steps: [],
+    pending_approval: null,
+    plan,
+    final_message: status === "completed" ? "Done." : null,
+    errors: [],
+    queued_user_messages: [],
+  });
+
+  const planStepStatuses = (run: AutopilotRunState): string => {
+    const history: ChatHistoryItem[] = [{ id: run.run_id, role: "assistant", body: "Run", createdAt: at, mode: "runtime", autopilotRun: run }];
+    const item = chatHistoryToTranscriptItems(history, []).find((i) => i.kind === "plan");
+    return item && item.kind === "plan" ? item.steps.map((s) => `${s.id}:${s.status}`).join(",") : "NO_PLAN";
+  };
+
+  // Completed run: the unreached await_approval step is shown as skipped.
+  check(
+    planStepStatuses(makeRun("completed", makePlan("completed"))),
+    "execute_tool:completed,await_approval:skipped",
+    "completed run marks pending step skipped",
+  );
+  // Active (running) run: the pending step is left as-is.
+  check(
+    planStepStatuses(makeRun("running", makePlan("running"))),
+    "execute_tool:completed,await_approval:pending",
+    "running run keeps pending step",
+  );
+
+  function check(actual: unknown, expected: unknown, label: string) {
+    if (actual !== expected) {
+      throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+});

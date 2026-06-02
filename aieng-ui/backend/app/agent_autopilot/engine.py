@@ -25,7 +25,7 @@ from .schema import (
 from .store import AutopilotStore
 
 
-# Per-run adapter step counter.  Key = "{session_id}:{adapter_id}".
+# Per-run adapter step counter.  Key = "{effective_adapter_session_id}:{adapter_id}".
 # Value = next step index for the in-flight run on that session+adapter.
 # step_index==0 tells an adapter (e.g. Claude Code CLI) the first call of a run
 # should open the session (--session-id); >0 means reconnect (--resume).  The
@@ -66,6 +66,18 @@ def clear_session_step_counters(session_id: str | None) -> None:
             _SESSION_STEP_COUNTERS.pop(key, None)
 
 
+def _effective_adapter_session_id(state: AutopilotRunState) -> str:
+    """Stable session id passed to session-aware local adapters.
+
+    UI chat sessions remain the stable key when present. Runs launched without a
+    chat session still need a stable adapter conversation across approval/follow-
+    up steps; use the run id instead of passing None, otherwise adapters such as
+    Claude Code generate a fresh UUID per invocation and `--resume` cannot find
+    step 0's conversation.
+    """
+    return state.session_id or f"run:{state.run_id}"
+
+
 DEFAULT_PLAN_STEPS = [
     ("observe_context", "Observe context", "observe"),
     ("select_skill_or_tool", "Select skill/tool", "skill"),
@@ -77,6 +89,49 @@ DEFAULT_PLAN_STEPS = [
     ("summarize_result", "Summarize", "summarize"),
 ]
 
+CAD_MUTATION_TOOLS = frozenset({
+    "cad.execute_build123d",
+    "cad.edit_parameter",
+    "cad.replace_part",
+    "cad.remove_part",
+    "cad.refine",
+    "aieng.apply_shape_ir_patch",
+    "aieng.convert",
+})
+
+GEOMETRY_MUTATION_REPAIR_INSTRUCTION = (
+    "The user requested a geometry change, but no CAD mutation tool has succeeded yet. "
+    "Select a CAD mutation tool or ask the user for clarification."
+)
+
+_GEOMETRY_CREATE_TERMS = (
+    "创建",
+    "生成",
+    "画",
+    "建模",
+    "create",
+    "generate",
+    "build",
+    "draw",
+)
+
+_GEOMETRY_MODIFY_TERMS = (
+    "修改",
+    "改成",
+    "加",
+    "删除",
+    "替换",
+    "变成",
+    "优化外形",
+    "modify",
+    "change",
+    "add",
+    "remove",
+    "replace",
+    "make it",
+    "turn into",
+)
+
 SIMULATION_PLAN_STEPS = [
     ("observe_context", "Inspect CAD/CAE context", "observe"),
     ("select_skill_or_tool", "Select simulation workflow", "skill"),
@@ -87,6 +142,49 @@ SIMULATION_PLAN_STEPS = [
     ("verify_result", "Preflight readiness or parse solver results", "verify"),
     ("summarize_result", "Summarize simulation evidence", "summarize"),
 ]
+
+
+def _geometry_mutation_intent(text: str) -> str | None:
+    lowered = text.lower()
+    if any(term in lowered for term in _GEOMETRY_MODIFY_TERMS):
+        return "modify_geometry"
+    if any(term in lowered for term in _GEOMETRY_CREATE_TERMS):
+        return "create_geometry"
+    return None
+
+
+def _latest_geometry_mutation_intent(state: AutopilotRunState) -> str | None:
+    messages = [state.message]
+    for obs in state.observations:
+        if obs.kind != "user_message":
+            continue
+        if obs.data.get("reply") or obs.data.get("queued") or obs.data.get("revision_request"):
+            messages.append(obs.summary)
+    for message in reversed(messages):
+        intent = _geometry_mutation_intent(str(message))
+        if intent:
+            return intent
+    return None
+
+
+def _is_successful_cad_mutation_observation(obs: AutopilotObservation) -> bool:
+    if obs.kind != "tool_result":
+        return False
+    data = obs.data if isinstance(obs.data, dict) else {}
+    if data.get("dry_run") is True:
+        return False
+    if data.get("tool_name") not in CAD_MUTATION_TOOLS:
+        return False
+    output = data.get("output")
+    if isinstance(output, dict):
+        status = str(output.get("status") or "").lower()
+        if status in {"error", "failed", "failure"} or output.get("error"):
+            return False
+    return True
+
+
+def _has_successful_cad_mutation(state: AutopilotRunState) -> bool:
+    return any(_is_successful_cad_mutation_observation(obs) for obs in state.observations)
 
 
 def _looks_like_simulation_objective(objective: str) -> bool:
@@ -431,7 +529,7 @@ class AutopilotEngine:
         # Non-terminal states (running/awaiting_approval/blocked/chatting) keep the
         # counter so a resumed run continues its index correctly.
         if state.status in _TERMINAL_RUN_STATUSES:
-            _clear_step_counter(state.session_id, state.adapter_id)
+            _clear_step_counter(_effective_adapter_session_id(state), state.adapter_id)
         self._publish_state(state)
 
     def _publish_state(self, state: AutopilotRunState) -> None:
@@ -533,6 +631,24 @@ class AutopilotEngine:
     def _cancel_if_requested(self, state: AutopilotRunState) -> bool:
         if not self.store.is_cancel_requested(state.run_id):
             return False
+        try:
+            persisted = self.store.load(state.run_id)
+        except Exception:
+            persisted = None
+        if persisted is not None and persisted.status == "cancelled":
+            # A user/API cancellation already emitted and persisted the terminal
+            # event. Mirror that state into this in-flight worker so its final
+            # save does not resurrect the run, but do not emit run_cancelled a
+            # second time.
+            state.status = persisted.status
+            state.pending_approval = persisted.pending_approval
+            state.observations = list(persisted.observations)
+            state.plan = persisted.plan
+            state.final_message = persisted.final_message
+            state.errors = list(persisted.errors)
+            state.updated_at = persisted.updated_at
+            self.store.clear_cancel(state.run_id)
+            return True
         state.status = "cancelled"
         state.pending_approval = None
         state.observations.append(_observation("user_message", "Autopilot run cancelled."))
@@ -768,8 +884,8 @@ class AutopilotEngine:
                 action_schema=AutopilotAgentAction.json_schema_for_adapter(),
                 timeout_seconds=DEFAULT_STEP_TIMEOUT_SECONDS,
                 on_progress=_on_adapter_progress,
-                session_id=state.session_id,
-                step_index=_session_step_index(state.session_id, state.adapter_id),
+                session_id=_effective_adapter_session_id(state),
+                step_index=_session_step_index(_effective_adapter_session_id(state), state.adapter_id),
             )
 
             invoke_done.set()
@@ -799,6 +915,52 @@ class AutopilotEngine:
                 self._emit_event(state, "tool_failed", status="failed", content=state.errors[-1], payload=result.model_dump())
                 return
             action = result.action
+            mutation_intent = _latest_geometry_mutation_intent(state)
+            if (
+                action.action.type == "final"
+                and mutation_intent
+                and not _has_successful_cad_mutation(state)
+            ):
+                state.observations.append(
+                    _observation(
+                        "tool_error",
+                        GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
+                        _classified_error_data(
+                            "missing_context",
+                            error=GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
+                            adapter_id=adapter.adapter_id,
+                            action_type="final",
+                            intent=mutation_intent,
+                            recoverable=True,
+                        ),
+                    )
+                )
+                self._record_working_blocker(
+                    state,
+                    GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
+                    next_action="Select cad.execute_build123d/cad.edit_parameter/cad.replace_part/cad.remove_part, or ask the user for clarification.",
+                )
+                self._set_plan_step(
+                    state,
+                    "repair_tool_input",
+                    "running",
+                    summary=GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
+                    evidence={"intent": mutation_intent, "rejected_action_type": "final"},
+                    current=True,
+                )
+                self._emit_event(
+                    state,
+                    "tool_failed",
+                    status="running",
+                    content=GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
+                    payload={
+                        "kind": "mutation_intent_guard",
+                        "intent": mutation_intent,
+                        "adapter_id": adapter.adapter_id,
+                    },
+                )
+                self._checkpoint(state)
+                continue
             step = AutopilotStep(index=len(state.steps), adapter_id=state.adapter_id, action=action)
             state.steps.append(step)
             state.updated_at = now_iso()
@@ -1586,6 +1748,9 @@ class AutopilotEngine:
 
     def cancel_run(self, run_id: str) -> AutopilotRunState:
         state = self.store.load(run_id)
+        if state.status in {"completed", "failed", "cancelled"}:
+            self.store.clear_cancel(run_id)
+            return state
         self.store.request_cancel(run_id)
         state.status = "cancelled"
         state.pending_approval = None

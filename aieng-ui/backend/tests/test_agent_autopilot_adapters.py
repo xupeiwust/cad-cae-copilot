@@ -1,8 +1,10 @@
 import json
+import os
 import subprocess
 
 import pytest
 
+import app.agent_autopilot.claude_code_adapter as claude_module
 from app.agent_autopilot.adapters import (
     COMMON_PROGRESS_PHASES,
     PROSE_RESULT_MESSAGE,
@@ -10,7 +12,14 @@ from app.agent_autopilot.adapters import (
     ProseResultError,
     parse_action_json,
 )
-from app.agent_autopilot.claude_code_adapter import ClaudeCodeAdapter
+from app.agent_autopilot.claude_code_adapter import (
+    DEFAULT_CLAUDE_PREFLIGHT_TIMEOUT_SECONDS,
+    ClaudeCodeAdapter,
+    _build_claude_env,
+    _claude_preflight_timeout_default,
+    _env_summary,
+    run_claude_preflight,
+)
 from app.agent_autopilot.codex_cli_adapter import CodexCliAdapter
 
 
@@ -238,6 +247,215 @@ def test_claude_invoke_reports_nonzero_exit(monkeypatch) -> None:
     assert "exited with code 2" in result.diagnostic
 
 
+def test_claude_failure_diagnostic_redacts_prompt_and_env_values(monkeypatch) -> None:
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret-token")
+    monkeypatch.setenv("CLAUDE_CODE_TOKEN", "another-secret-token")
+    monkeypatch.setenv("USERPROFILE", r"C:\Users\tester")
+    monkeypatch.setenv("APPDATA", r"C:\Users\tester\AppData\Roaming")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\tester\AppData\Local")
+    monkeypatch.setenv("HOME", r"C:\Users\tester")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+    long_prompt = "inspect " + ("x" * 140) + " super-secret-token"
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._run_claude_step",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["claude"], 1, stdout="", stderr="bad"),
+    )
+
+    result = ClaudeCodeAdapter().invoke(prompt=long_prompt, action_schema={"secret": "schema-secret"})
+
+    assert result.status == "error"
+    assert "--json-schema" in result.diagnostic
+    assert "<json_schema length=" in result.diagnostic
+    assert '"prompt_length"' in result.diagnostic
+    assert '"prompt_preview"' in result.diagnostic
+    assert "super-secret-token" not in result.diagnostic
+    assert "schema-secret" not in result.diagnostic
+    assert "ANTHROPIC_API_KEY" in result.diagnostic
+    assert "CLAUDE_CODE_TOKEN" in result.diagnostic
+    assert "another-secret-token" not in result.diagnostic
+    assert "USERPROFILE" in result.diagnostic
+    assert '"passed_session_id": true' in result.diagnostic
+    assert '"passed_json_schema": true' in result.diagnostic
+    assert '"passed_permission_flags": true' in result.diagnostic
+    assert '"adapter_id": "claude-code"' in result.diagnostic
+
+
+def test_claude_preflight_success(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+
+    def _fake_run(cmd, **kwargs):
+        assert cmd == ["claude", "-p", "Say hello", "--output-format", "json"]
+        assert kwargs["env"]["PYTHONUTF8"] == "1"
+        assert kwargs["cwd"] == str(tmp_path)
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({"type": "result", "is_error": False, "result": "hello"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(claude_module.subprocess, "run", _fake_run)
+    result = run_claude_preflight(command="claude", cwd=str(tmp_path))
+    assert result["ok"] is True
+    assert result["resolved_path"] == "claude"
+    assert result["version"]["output"].startswith("2.1.141")
+    assert result["stdout_parsed_result"]["is_error"] is False
+    assert result["rc"] == 0
+
+
+def test_claude_preflight_default_timeout_is_20(monkeypatch) -> None:
+    monkeypatch.delenv("AIENG_CLAUDE_PREFLIGHT_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+    captured: dict[str, int] = {}
+
+    def _fake_run(cmd, **kwargs):
+        captured["timeout"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({"type": "result", "is_error": False, "result": "Hello!"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(claude_module.subprocess, "run", _fake_run)
+    result = run_claude_preflight(command="claude")
+    assert DEFAULT_CLAUDE_PREFLIGHT_TIMEOUT_SECONDS == 20
+    assert _claude_preflight_timeout_default() == 20
+    assert captured["timeout"] == 20
+    assert result["ok"] is True
+
+
+def test_claude_preflight_timeout_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("AIENG_CLAUDE_PREFLIGHT_TIMEOUT_SECONDS", "9")
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+    captured: dict[str, int] = {}
+
+    def _fake_run(cmd, **kwargs):
+        captured["timeout"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({"type": "result", "is_error": False, "result": "Hello!"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(claude_module.subprocess, "run", _fake_run)
+    result = run_claude_preflight(command="claude")
+    assert _claude_preflight_timeout_default() == 9
+    assert captured["timeout"] == 9
+    assert result["ok"] is True
+
+
+def test_claude_preflight_timeout_reports_timeout_only(monkeypatch) -> None:
+    monkeypatch.setenv("AIENG_CLAUDE_PREFLIGHT_TIMEOUT_SECONDS", "8")
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+
+    def _fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"], output="", stderr="")
+
+    monkeypatch.setattr(claude_module.subprocess, "run", _fake_run)
+    result = run_claude_preflight(command="claude")
+    assert result["ok"] is False
+    assert result["error"] == "timeout after 8s"
+    assert "Not logged in" not in json.dumps(result)
+    assert "authenticated" not in json.dumps(result)
+    assert "auth failure" not in json.dumps(result).lower()
+
+
+def test_claude_preflight_not_logged_in(monkeypatch) -> None:
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+
+    def _fake_run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout=json.dumps({"type": "result", "is_error": True, "result": "Not logged in · Please run /login"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(claude_module.subprocess, "run", _fake_run)
+    result = run_claude_preflight(command="claude")
+    assert result["ok"] is False
+    assert result["rc"] == 1
+    assert result["stdout_parsed_result"]["is_error"] is True
+    assert "Not logged in" in result["stdout_parsed_result"]["result"]
+
+
+def test_claude_not_logged_in_with_successful_preflight_is_adapter_mismatch(monkeypatch) -> None:
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter.run_claude_preflight",
+        lambda **_kwargs: {"ok": True, "resolved_path": "claude", "rc": 0, "stdout_parsed_result": {"is_error": False}},
+    )
+    stdout = json.dumps({"type": "result", "is_error": True, "result": "Not logged in · Please run /login"})
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._run_claude_step",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["claude"], 1, stdout=stdout, stderr=""),
+    )
+
+    result = ClaudeCodeAdapter().invoke(prompt="p", action_schema={})
+
+    assert result.status == "error"
+    assert "authenticated for plain CLI calls" in result.diagnostic
+    assert "incompatible adapter flag or environment mismatch" in result.diagnostic
+    assert "Please run /login" not in result.diagnostic.splitlines()[0]
+    assert '"preflight"' in result.diagnostic
+
+
+def test_claude_resume_session_not_found_has_normalized_diagnostic(monkeypatch) -> None:
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._claude_version",
+        lambda *_args, **_kwargs: {"ok": True, "output": "2.1.141 (Claude Code)"},
+    )
+    stdout = "No conversation found with session ID: da0a3921-cc45-501e-ad5e-5629b0d95941"
+    monkeypatch.setattr(
+        "app.agent_autopilot.claude_code_adapter._run_claude_step",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["claude"], 1, stdout=stdout, stderr=""),
+    )
+
+    result = ClaudeCodeAdapter().invoke(
+        prompt="p",
+        action_schema={},
+        session_id="da0a3921-cc45-501e-ad5e-5629b0d95941",
+        step_index=1,
+    )
+
+    assert result.status == "error"
+    assert result.diagnostic.splitlines()[0].startswith("Claude Code could not resume the requested session")
+    assert "conversation/session mismatch" in result.diagnostic
+    assert '"passed_resume": true' in result.diagnostic
+    assert '"effective_claude_session_id": "da0a3921-cc45-501e-ad5e-5629b0d95941"' in result.diagnostic
+
+
 def test_claude_invoke_reports_timeout(monkeypatch) -> None:
     monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude")
 
@@ -310,6 +528,66 @@ def test_claude_invoke_unwraps_wrapper_action_string(monkeypatch) -> None:
     assert result.action is not None
     assert result.action.action.type == "final"
     assert result.action.action.message == "Done."
+
+
+def test_claude_argv_uses_expected_flags_and_no_bare_by_default(monkeypatch) -> None:
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude.exe")
+    captured: dict[str, list[str]] = {}
+
+    def _capture(cmd, _prompt, _timeout_seconds):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='{"action":{"type":"final","message":"ok"},"done":true}', stderr=""
+        )
+
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter._run_claude_step", _capture)
+    session_id = "da0a3921-cc45-501e-ad5e-5629b0d95941"
+    ClaudeCodeAdapter().invoke(prompt="p", action_schema={}, session_id=session_id, step_index=0)
+
+    cmd = captured["cmd"]
+    assert cmd[0] == "claude.exe"
+    assert "--bare" not in cmd
+    assert "--session-id" in cmd
+    assert session_id in cmd
+    assert "--output-format" in cmd
+    assert "--json-schema" in cmd
+    assert "--permission-mode" in cmd
+    assert "--tools" in cmd
+
+
+def test_claude_argv_can_opt_into_bare_for_diagnostics(monkeypatch) -> None:
+    monkeypatch.setenv("AIENG_CLAUDE_CODE_BARE", "1")
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter.resolve_command", lambda _cmd: "claude.exe")
+    captured: dict[str, list[str]] = {}
+
+    def _capture(cmd, _prompt, _timeout_seconds):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='{"action":{"type":"final","message":"ok"},"done":true}', stderr=""
+        )
+
+    monkeypatch.setattr("app.agent_autopilot.claude_code_adapter._run_claude_step", _capture)
+    ClaudeCodeAdapter().invoke(prompt="p", action_schema={})
+    assert captured["cmd"][:3] == ["claude.exe", "-p", "--bare"]
+
+
+def test_claude_env_preserves_windows_profile_and_path(monkeypatch) -> None:
+    monkeypatch.setenv("USERPROFILE", r"C:\Users\RL_Carla")
+    monkeypatch.setenv("APPDATA", r"C:\Users\RL_Carla\AppData\Roaming")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\RL_Carla\AppData\Local")
+    monkeypatch.setenv("HOME", r"C:\Users\RL_Carla")
+    claude_dir = r"C:\Users\RL_Carla\.local\bin"
+    monkeypatch.setenv("PATH", os.pathsep.join([claude_dir, r"C:\Windows\System32"]))
+    env = _build_claude_env()
+    summary = _env_summary(env, os.path.join(claude_dir, "claude.exe"))
+
+    assert env["USERPROFILE"] == r"C:\Users\RL_Carla"
+    assert env["APPDATA"].endswith(r"AppData\Roaming")
+    assert env["LOCALAPPDATA"].endswith(r"AppData\Local")
+    assert env["HOME"] == r"C:\Users\RL_Carla"
+    assert claude_dir in env["PATH"]
+    assert summary["claude_dir_in_PATH"] is True
+    assert summary["PATH_first_entries"][0] == claude_dir
 
 
 def test_claude_invoke_clamps_large_timeout_to_adapter_ceiling(monkeypatch) -> None:

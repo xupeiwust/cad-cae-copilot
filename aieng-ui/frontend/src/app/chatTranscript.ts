@@ -117,6 +117,29 @@ export type AgentTranscriptEvent = {
   [key: string]: unknown;
 };
 
+export function isTerminalAutopilotStatus(status: unknown): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+/**
+ * Whether a live agent event should close the in-flight streaming/progress
+ * bubble for its run. Fires on run cancellation, a terminal run-status change
+ * (completed/failed/cancelled), or a tool failure — the "Calling tool…" cursor
+ * is stale once a tool errors, and if the run continues the next
+ * tool_started/agent_message re-opens it. Deliberately does NOT fire for
+ * awaiting_approval / chatting / blocked so approval and ask_user cards stay
+ * put. The failure/cancel events themselves remain in the transcript regardless
+ * (callers only drop the transient streamingState, never the persisted event).
+ */
+export function isStreamingClosingEvent(event: AgentTranscriptEvent): boolean {
+  if (event.type === "run_cancelled" || event.type === "tool_failed") return true;
+  if (event.type === "run_status_changed") {
+    const status = event.status ?? stringValue(objectValue(event.payload).status);
+    return isTerminalAutopilotStatus(status);
+  }
+  return false;
+}
+
 export function runToTranscriptItems(
   run: AutopilotRunState,
   options: { includeUserMessage?: boolean } = {},

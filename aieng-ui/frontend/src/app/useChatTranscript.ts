@@ -4,6 +4,7 @@ import { api, type PersistedAgentEvent, type PersistedChatMessage } from "../api
 import type { ChatHistoryItem } from "../appTypes";
 import type { AutopilotRunState, RuntimeRun } from "../types";
 import type { AgentTranscriptEvent } from "./chatTranscript";
+import { isStreamingClosingEvent } from "./chatTranscript";
 import {
   chatItemExtra,
   getPersistedClientId,
@@ -111,6 +112,13 @@ export function useChatTranscript({
         });
       }
     }
+    // Close the transient streaming/progress bubble once this run reaches a
+    // terminal state (cancel/fail/complete) or a tool fails. Guarded by runId so
+    // a stale event never clears another run's bubble; the event itself is still
+    // appended below and rendered in the transcript.
+    if (runId && isStreamingClosingEvent(event)) {
+      setStreamingState((current) => (current && current.runId === runId ? null : current));
+    }
     setAgentEvents((current) => upsertAgentEvent(current, event));
   }, []);
 
@@ -130,6 +138,9 @@ export function useChatTranscript({
   }, [selectedId]);
 
   useEffect(() => {
+    // Drop any in-flight streaming bubble from the previous session before
+    // (re)loading; live events for the newly-active session will repopulate it.
+    setStreamingState(null);
     if (!selectedId || !activeSessionId) {
       persistedChatIdsRef.current = new Set();
       setChatHistory([]);

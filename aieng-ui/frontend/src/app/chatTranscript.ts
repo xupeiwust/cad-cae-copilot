@@ -7,7 +7,7 @@ export type TranscriptStatus = "pending" | "running" | "done" | "failed" | "bloc
 type TranscriptBase = {
   id: string;
   sourceId: string;
-  kind: "message" | "tool" | "approval" | "artifact" | "status" | "error" | "plan";
+  kind: "message" | "tool" | "approval" | "ask_user" | "artifact" | "status" | "error" | "plan";
   runId?: string | null;
   sessionId?: string | null;
   projectId?: string | null;
@@ -53,6 +53,12 @@ export type TranscriptApprovalLine = TranscriptBase & {
   skillPlanVerificationTargets?: string[];
 };
 
+export type TranscriptAskUserLine = TranscriptBase & {
+  kind: "ask_user";
+  status: "blocked";
+  question: string;
+};
+
 export type TranscriptArtifactLine = TranscriptBase & {
   kind: "artifact";
   status: TranscriptStatus;
@@ -82,6 +88,8 @@ export type TranscriptAgentPlanLine = TranscriptBase & {
   objective: string;
   steps: AutopilotAgentPlanStep[];
   currentStepId?: string | null;
+  errors?: string[];
+  currentBlockers?: string[];
 };
 
 export type ChatTranscriptItem =
@@ -89,6 +97,7 @@ export type ChatTranscriptItem =
   | TranscriptAgentMessage
   | TranscriptToolLine
   | TranscriptApprovalLine
+  | TranscriptAskUserLine
   | TranscriptArtifactLine
   | TranscriptStatusLine
   | TranscriptErrorLine
@@ -145,6 +154,8 @@ export function runToTranscriptItems(
       sourceId: `run:${run.run_id}:plan:${run.plan.id}`,
       id: `run-${run.run_id}-plan-${run.plan.id}`,
       detail: run.plan,
+      errors: run.errors,
+      currentBlockers: run.working_state?.current_blockers ?? [],
     }));
   }
 
@@ -344,6 +355,13 @@ export function agentEventToTranscriptItems(event: AgentTranscriptEvent): ChatTr
         skillPlanWarnings: stringArray(payload.skill_plan_warnings),
         skillPlanVerificationTargets: stringArray(payload.skill_plan_verification_targets),
       }];
+    case "ask_user_requested":
+      return [{
+        ...base,
+        kind: "ask_user",
+        status: "blocked",
+        question: event.content || stringValue(payload.question) || "The agent needs your input before continuing.",
+      }];
     case "agent_plan_created":
     case "agent_plan_step_updated":
       return planEventsToTranscriptItems([event]);
@@ -411,6 +429,14 @@ function observationToTranscriptItems(run: AutopilotRunState, obs: AutopilotObse
   }
   if (obs.kind === "approval_required") {
     return [approvalToTranscriptItem(run, obs.data, sourceId, obs)];
+  }
+  if (obs.kind === "ask_user") {
+    return [{
+      ...base,
+      kind: "ask_user",
+      status: "blocked",
+      question: stringValue(obs.data?.question) || obs.summary || "The agent needs your input before continuing.",
+    }];
   }
   if (obs.kind === "agent_thought") {
     return [{ ...base, kind: "message", role: "agent", text: obs.summary }];
@@ -830,16 +856,20 @@ function dedupeAgentMessagesByText(items: ChatTranscriptItem[]): ChatTranscriptI
 function dedupeSnapshotRowsCoveredByEvents(items: ChatTranscriptItem[]): ChatTranscriptItem[] {
   const eventKeys = new Set<string>();
   for (const item of items) {
-    if (!item.sourceId.startsWith("event:")) continue;
+    if (!isEventBackedSource(item.sourceId)) continue;
     const key = comparableActivityKey(item);
     if (key) eventKeys.add(key);
   }
   if (!eventKeys.size) return items;
   return items.filter((item) => {
-    if (item.sourceId.startsWith("event:")) return true;
+    if (isEventBackedSource(item.sourceId)) return true;
     const key = comparableActivityKey(item);
     return !key || !eventKeys.has(key);
   });
+}
+
+function isEventBackedSource(sourceId: string): boolean {
+  return sourceId.startsWith("event:") || sourceId.startsWith("event-plan:");
 }
 
 function comparableActivityKey(item: ChatTranscriptItem): string | null {

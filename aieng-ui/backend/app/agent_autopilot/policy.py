@@ -13,6 +13,7 @@ PermissionLevel = Literal[
     "explicit_confirm",
     "blocked",
 ]
+ApprovalMode = Literal["balanced", "strict", "manual"]
 
 
 class PolicyDecision(BaseModel):
@@ -97,6 +98,7 @@ def evaluate_tool_call(
     active_project_id: str | None,
     registered_tools: list[dict[str, Any]],
     mode: str = "autopilot",
+    approval_mode: ApprovalMode = "balanced",
 ) -> PolicyDecision:
     registry = {str(tool.get("name")) for tool in registered_tools if tool.get("name")}
     if tool_name not in registry:
@@ -134,6 +136,20 @@ def evaluate_tool_call(
             level=level,
             allowed=False,
             explanation="Assist mode can observe and preview only; execution is disabled.",
+        )
+    if approval_mode == "manual":
+        return PolicyDecision(
+            level=level,
+            allowed=True,
+            requires_approval=True,
+            explanation=f"Manual approval mode requires approval before running {tool_name}.",
+        )
+    if approval_mode == "strict" and level == "auto_write_safe":
+        return PolicyDecision(
+            level=level,
+            allowed=True,
+            requires_approval=True,
+            explanation=f"Strict approval mode requires approval before safe-write tool {tool_name}.",
         )
     if level in {"approval_mutation", "explicit_confirm"}:
         copy = "Requires explicit solver execution confirmation." if level == "explicit_confirm" else (

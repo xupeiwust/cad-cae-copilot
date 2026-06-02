@@ -10206,6 +10206,136 @@ def test_autopilot_plan_events_are_persisted(tmp_path: Path) -> None:
     assert any(event["payload"]["step"]["id"] == "summarize_result" for event in step_updates)
 
 
+def test_autopilot_plan_read_api_by_run_and_session(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("plan-read-api"))
+    client = TestClient(create_app(settings))
+
+    session_resp = client.post(f"/api/projects/{project['id']}/chat-sessions", json={"title": "Plan"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    empty_session_plan = client.get(f"/api/projects/{project['id']}/chat-sessions/{session_id}/agent-plan")
+    assert empty_session_plan.status_code == 200
+    assert empty_session_plan.json()["plan"] is None
+    assert empty_session_plan.json()["run_id"] is None
+
+    run_resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "inspect the active project",
+            "project_id": project["id"],
+            "session_id": session_id,
+            "adapter_id": "fake",
+            "fake_actions": [
+                {"action": {"type": "final", "message": "Dry run done."}, "done": True}
+            ],
+        },
+    )
+    assert run_resp.status_code == 200
+    run_id = run_resp.json()["run_id"]
+    _wait_for_autopilot_status(client, run_id, {"completed"})
+
+    run_plan = client.get(f"/api/agent/autopilot/runs/{run_id}/plan")
+    assert run_plan.status_code == 200
+    run_plan_data = run_plan.json()
+    assert run_plan_data["run_id"] == run_id
+    assert run_plan_data["session_id"] == session_id
+    assert run_plan_data["plan"]["objective"] == "inspect the active project"
+
+    session_plan = client.get(f"/api/projects/{project['id']}/chat-sessions/{session_id}/agent-plan")
+    assert session_plan.status_code == 200
+    session_plan_data = session_plan.json()
+    assert session_plan_data["run_id"] == run_id
+    assert session_plan_data["plan"]["id"] == run_plan_data["plan"]["id"]
+
+
+def test_autopilot_plan_replay_sources_match_after_refresh(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("plan-replay-refresh"))
+    client = TestClient(create_app(settings))
+
+    session_resp = client.post(f"/api/projects/{project['id']}/chat-sessions", json={"title": "Replay"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+
+    run_resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "inspect the active project",
+            "project_id": project["id"],
+            "session_id": session_id,
+            "adapter_id": "fake",
+            "fake_actions": [
+                {"action": {"type": "final", "message": "Dry run done."}, "done": True}
+            ],
+        },
+    )
+    assert run_resp.status_code == 200
+    run_id = run_resp.json()["run_id"]
+    _wait_for_autopilot_status(client, run_id, {"completed"})
+
+    run_plan_resp = client.get(f"/api/agent/autopilot/runs/{run_id}/plan")
+    assert run_plan_resp.status_code == 200
+    run_plan = run_plan_resp.json()["plan"]
+    assert run_plan["status"] == "completed"
+    assert run_plan["steps"]
+    assert any(step["status"] == "completed" for step in run_plan["steps"])
+
+    events_resp = client.get(f"/api/projects/{project['id']}/agent-events?session_id={session_id}")
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    plan_created = [event for event in events if event["type"] == "agent_plan_created" and event["run_id"] == run_id]
+    step_updates = [event for event in events if event["type"] == "agent_plan_step_updated" and event["run_id"] == run_id]
+    assert len(plan_created) == 1
+    assert step_updates
+    assert plan_created[0]["payload"]["plan"]["id"] == run_plan["id"]
+    updated_step_ids = {event["payload"]["step"]["id"] for event in step_updates}
+    assert {step["id"] for step in run_plan["steps"] if step["status"] == "completed"} <= updated_step_ids
+
+    messages_resp = client.get(f"/api/projects/{project['id']}/chat-messages?session_id={session_id}")
+    assert messages_resp.status_code == 200
+    assert messages_resp.json() == []
+
+
+def test_session_approval_mode_manual_requires_approval_for_autopilot_tool(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("approval-mode-manual"))
+    client = TestClient(create_app(settings))
+
+    session_resp = client.post(f"/api/projects/{project['id']}/chat-sessions", json={"title": "Manual"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+    patch_resp = client.patch(
+        f"/api/projects/{project['id']}/chat-sessions/{session_id}",
+        json={"approval_mode": "manual"},
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["approval_mode"] == "manual"
+
+    run_resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "read context",
+            "project_id": project["id"],
+            "session_id": session_id,
+            "adapter_id": "fake",
+            "fake_actions": [{
+                "action": {
+                    "type": "tool_call",
+                    "tool_name": "aieng.agent_context",
+                    "input": {"project_id": project["id"]},
+                },
+            }],
+        },
+    )
+    assert run_resp.status_code == 200
+    run = _wait_for_autopilot_status(client, run_resp.json()["run_id"], {"awaiting_approval"})
+    assert run["pending_approval"]["tool_name"] == "aieng.agent_context"
+    assert run["pending_approval"]["level"] == "auto_read"
+    assert "Manual approval mode" in run["pending_approval"]["explanation"]
+
+
 def test_agent_autopilot_continue_and_cancel(tmp_path: Path) -> None:
     settings = _make_runtime_settings(tmp_path)
     client = TestClient(create_app(settings))
@@ -10323,6 +10453,134 @@ def test_delete_project_removes_dir_and_chat(tmp_path: Path) -> None:
     assert client.get(f"/api/projects/{pid}").status_code == 404
     # deleting an unknown project 404s
     assert client.delete("/api/projects/nonexistent123456").status_code == 404
+
+
+def test_delete_project_removes_autopilot_runs(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("delete-runs"))
+    client = TestClient(create_app(settings))
+
+    run_resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "inspect before delete",
+            "project_id": project["id"],
+            "adapter_id": "fake",
+            "fake_actions": [
+                {"action": {"type": "final", "message": "Done."}, "done": True},
+            ],
+        },
+    )
+    assert run_resp.status_code == 200
+    run_id = run_resp.json()["run_id"]
+    _wait_for_autopilot_status(client, run_id, {"completed"})
+
+    delete_resp = client.delete(f"/api/projects/{project['id']}")
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["autopilot_runs_removed"] >= 1
+    assert client.get(f"/api/agent/autopilot/runs/{run_id}").status_code == 404
+
+
+def test_delete_chat_session_cancels_session_autopilot_runs(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("delete-session-run"))
+    client = TestClient(create_app(settings))
+
+    session_resp = client.post(f"/api/projects/{project['id']}/chat-sessions", json={"title": "run session"})
+    assert session_resp.status_code == 200
+    session_id = session_resp.json()["id"]
+    run_resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "need input",
+            "project_id": project["id"],
+            "session_id": session_id,
+            "adapter_id": "fake",
+            "fake_actions": [
+                {"action": {"type": "ask_user", "question": "Which material?"}},
+            ],
+        },
+    )
+    assert run_resp.status_code == 200
+    run_id = run_resp.json()["run_id"]
+    _wait_for_autopilot_status(client, run_id, {"blocked"})
+
+    delete_resp = client.delete(f"/api/projects/{project['id']}/chat-sessions/{session_id}")
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["cancelled_autopilot_runs"] == 1
+
+    run = client.get(f"/api/agent/autopilot/runs/{run_id}")
+    assert run.status_code == 200
+    assert run.json()["status"] == "cancelled"
+    assert client.get(f"/api/projects/{project['id']}/chat-messages?session_id={session_id}").status_code == 404
+
+
+def test_chat_session_context_summary_api_get_update_refresh(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("summary-api"))
+    client = TestClient(create_app(settings))
+    project_id = project["id"]
+    session = client.post(f"/api/projects/{project_id}/chat-sessions", json={"title": "Summary"}).json()
+    session_id = session["id"]
+
+    empty = client.get(f"/api/projects/{project_id}/chat-sessions/{session_id}/context-summary")
+    assert empty.status_code == 200
+    assert empty.json()["context_summary"] is None
+
+    summary = {
+        "schema_version": 1,
+        "session_id": session_id,
+        "project_id": project_id,
+        "goal": "Summarize this session",
+        "current_state": "Manual summary.",
+        "important_decisions": [],
+        "completed_steps": [],
+        "pending_steps": [],
+        "user_constraints": [],
+        "relevant_files": [],
+        "risks": [],
+        "next_action": "Continue.",
+        "updated_at": "2026-06-02T00:00:00+00:00",
+    }
+    put_resp = client.put(
+        f"/api/projects/{project_id}/chat-sessions/{session_id}/context-summary",
+        json={"context_summary": summary},
+    )
+    assert put_resp.status_code == 200
+    assert put_resp.json()["context_summary"]["goal"] == "Summarize this session"
+
+    mismatch = client.put(
+        f"/api/projects/{project_id}/chat-sessions/{session_id}/context-summary",
+        json={"context_summary": {**summary, "session_id": "other"}},
+    )
+    assert mismatch.status_code == 400
+
+    client.post(
+        f"/api/projects/{project_id}/chat-messages",
+        json={
+            "session_id": session_id,
+            "role": "user",
+            "content": "Please remember api_key=secret-token and sk-abc123456789 while planning.",
+        },
+    )
+    refresh = client.post(f"/api/projects/{project_id}/chat-sessions/{session_id}/context-summary/refresh")
+    assert refresh.status_code == 200
+    refreshed = refresh.json()["context_summary"]
+    assert refreshed["goal"].startswith("Please remember")
+    assert "secret-token" not in str(refreshed)
+    assert "sk-abc123456789" not in str(refreshed)
+    sessions_after_refresh = client.get(f"/api/projects/{project_id}/chat-sessions")
+    assert sessions_after_refresh.status_code == 200
+    refreshed_session = next(item for item in sessions_after_refresh.json() if item["id"] == session_id)
+    assert refreshed_session["context_summary"]["goal"] == refreshed["goal"]
+    assert refreshed_session["context_summary_updated_at"] == refreshed["updated_at"]
+
+    clear = client.put(
+        f"/api/projects/{project_id}/chat-sessions/{session_id}/context-summary",
+        json={"context_summary": None},
+    )
+    assert clear.status_code == 200
+    assert clear.json()["context_summary"] is None
 
 
 def _make_shape_ir_package(settings, pid: str, members: dict) -> None:

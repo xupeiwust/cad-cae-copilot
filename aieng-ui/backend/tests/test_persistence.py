@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 from fastapi.testclient import TestClient
 
@@ -88,14 +89,25 @@ def test_project_chat_sessions_scope_messages_and_track_active_run(tmp_path: Pat
     assert second.status_code == 200
     first_id = first.json()["id"]
     second_id = second.json()["id"]
+    assert first.json()["approval_mode"] == "balanced"
+    assert first.json()["context_summary"] is None
+    assert first.json()["context_summary_json"] is None
+    assert first.json()["context_summary_updated_at"] is None
 
     patch_response = client.patch(
         f"/api/projects/{project_id}/chat-sessions/{first_id}",
-        json={"active_run_id": "run-123", "status": "running"},
+        json={"active_run_id": "run-123", "status": "running", "approval_mode": "manual"},
     )
     assert patch_response.status_code == 200
     assert patch_response.json()["active_run_id"] == "run-123"
     assert patch_response.json()["status"] == "running"
+    assert patch_response.json()["approval_mode"] == "manual"
+
+    bad_approval_mode = client.patch(
+        f"/api/projects/{project_id}/chat-sessions/{first_id}",
+        json={"approval_mode": "reckless"},
+    )
+    assert bad_approval_mode.status_code == 400
 
     client.post(
         f"/api/projects/{project_id}/chat-messages",
@@ -114,6 +126,106 @@ def test_project_chat_sessions_scope_messages_and_track_active_run(tmp_path: Pat
 
     sessions = client.get(f"/api/projects/{project_id}/chat-sessions").json()
     assert {session["id"] for session in sessions} == {first_id, second_id}
+
+
+def test_chat_session_init_migrates_legacy_agent_session_fields(tmp_path: Path) -> None:
+    from app import db
+
+    db_path = tmp_path / "data" / "aieng.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE chat_sessions (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                active_run_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO chat_sessions (
+                id, project_id, title, status, active_run_id, created_at, updated_at
+            ) VALUES (
+                'legacy-session', 'project-1', 'Legacy', 'idle', NULL,
+                '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    db.init_db(db_path)
+    session = db.get_chat_session(db_path, "legacy-session")
+
+    assert session is not None
+    assert session["approval_mode"] == "balanced"
+    assert session["context_summary_json"] is None
+    assert session["context_summary"] is None
+    assert session["context_summary_updated_at"] is None
+
+
+def test_chat_session_context_summary_storage_round_trip_and_clear(tmp_path: Path) -> None:
+    from app import db
+
+    settings = _make_settings(tmp_path)
+    project = save_project(settings, default_project("summary storage"))
+    client = TestClient(create_app(settings))
+    project_id = project["id"]
+    session = client.post(f"/api/projects/{project_id}/chat-sessions", json={"title": "Summary"}).json()
+    summary = {
+        "schema_version": 1,
+        "session_id": session["id"],
+        "project_id": project_id,
+        "goal": "Keep context compact",
+        "current_state": "Storage is being tested.",
+        "important_decisions": ["Store summary in SQLite, not package artifacts."],
+        "updated_at": "2026-06-02T00:00:00+00:00",
+    }
+
+    updated = db.update_chat_session_context_summary(
+        settings.data_root / "aieng.db",
+        session["id"],
+        context_summary=summary,
+    )
+
+    assert updated is not None
+    assert updated["context_summary"] == summary
+    assert updated["context_summary_updated_at"] == summary["updated_at"]
+    assert isinstance(updated["context_summary_json"], str)
+
+    cleared = db.update_chat_session_context_summary(
+        settings.data_root / "aieng.db",
+        session["id"],
+        context_summary=None,
+    )
+    assert cleared is not None
+    assert cleared["context_summary"] is None
+    assert cleared["context_summary_json"] is None
+    assert cleared["context_summary_updated_at"] is None
+
+
+def test_chat_session_context_summary_rejects_non_json_values(tmp_path: Path) -> None:
+    from app import db
+
+    settings = _make_settings(tmp_path)
+    project = save_project(settings, default_project("summary invalid"))
+    client = TestClient(create_app(settings))
+    session = client.post(f"/api/projects/{project['id']}/chat-sessions", json={"title": "Summary"}).json()
+
+    try:
+        db.update_chat_session_context_summary(
+            settings.data_root / "aieng.db",
+            session["id"],
+            context_summary={"bad": {1, 2, 3}},
+        )
+    except ValueError as exc:
+        assert "JSON serializable" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for non-JSON context summary")
 
 
 def test_chat_session_and_message_changes_publish_sse_events(tmp_path: Path) -> None:

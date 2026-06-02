@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "../../app/chatTranscript";
 import type { StreamingState } from "../../app/useChatTranscript";
+import type { ContextSummary } from "../../api";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
-import type { AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
+import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
+import type { EngineeringContextSource } from "../../app/engineeringContextSource";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
+import { ContextSummaryPanel } from "../agent/ContextSummaryPanel";
+import { AgentInputBox } from "../chat/AgentInputBox";
 import { ChatTranscript } from "../chat/ChatTranscript";
 import { ActionIcon } from "../common";
 
@@ -186,8 +189,13 @@ function currentActivityLine({
 type ChatPanelProps = {
   chatConnections: ChatConnection[];
   selectedChatConnectionId: string;
+  approvalMode: ApprovalMode;
+  approvalModeDisabled: boolean;
   selectedConnectionBlocked: boolean;
   selectedId: string | null;
+  activeSessionId: string | null;
+  engineeringContext?: EngineeringContextSource | null;
+  onContextSummaryChange?(summary: ContextSummary | null, updatedAt?: string | null): void;
   chatBusy: boolean;
   cadGenerating: boolean;
   cadGenerationProgress: CadGenerationProgress | null;
@@ -200,6 +208,7 @@ type ChatPanelProps = {
   simulationPending: boolean;
   simulationProgress: SimulationProgress | null;
   setSelectedChatConnectionId(value: string): void;
+  setApprovalMode(value: ApprovalMode): void;
   setSettingsOpen(value: boolean): void;
   setMessage(value: string): void;
   sendUnified(promptOverride?: string): Promise<void>;
@@ -219,8 +228,13 @@ type ChatPanelProps = {
 export function ChatPanel({
   chatConnections,
   selectedChatConnectionId,
+  approvalMode,
+  approvalModeDisabled,
   selectedConnectionBlocked,
   selectedId,
+  activeSessionId,
+  engineeringContext,
+  onContextSummaryChange,
   chatBusy,
   cadGenerating,
   cadGenerationProgress,
@@ -233,6 +247,7 @@ export function ChatPanel({
   simulationPending,
   simulationProgress,
   setSelectedChatConnectionId,
+  setApprovalMode,
   setSettingsOpen,
   setMessage,
   sendUnified,
@@ -248,13 +263,8 @@ export function ChatPanel({
   recentPickedFaces,
   streamingState,
 }: ChatPanelProps) {
-  const [acOpen, setAcOpen] = useState(false);
-  const [acQuery, setAcQuery] = useState("");
-  const [acIndex, setAcIndex] = useState(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [newActivityAvailable, setNewActivityAvailable] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const acCursorRef = useRef<{ start: number; end: number } | null>(null);
   const wasNearBottomRef = useRef(true);
 
   const activeAutopilotRun = latestActiveAutopilotRun(chatHistory);
@@ -271,12 +281,6 @@ export function ChatPanel({
   }, [activeAutopilotRun]);
 
   useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    if (!message) el.style.height = "auto";
-  }, [message]);
-
-  useEffect(() => {
     const el = chatLogRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -289,10 +293,6 @@ export function ChatPanel({
     }
   }, [chatHistory, transcriptItems.length, chatLogRef]);
 
-  const acMatches = recentPickedFaces.filter((f) =>
-    f.pointer.toLowerCase().includes(acQuery.toLowerCase()) ||
-    f.label.toLowerCase().includes(acQuery.toLowerCase()),
-  );
   const activityLine = currentActivityLine({
     cadGenerationProgress,
     simulationProgress,
@@ -301,75 +301,6 @@ export function ChatPanel({
     chatBusy,
     nowMs,
   });
-
-  function closeAutocomplete() {
-    setAcOpen(false);
-    setAcQuery("");
-    acCursorRef.current = null;
-  }
-
-  function insertAutocomplete(face: PickedFace) {
-    if (!textareaRef.current || !acCursorRef.current) return;
-    const { start } = acCursorRef.current;
-    const before = message.slice(0, start - 1);
-    const after = message.slice(textareaRef.current.selectionStart);
-    const replacement = `${before}${face.pointer} ${after}`;
-    setMessage(replacement);
-    closeAutocomplete();
-    setTimeout(() => {
-      if (textareaRef.current) {
-        const pos = (before + face.pointer + " ").length;
-        textareaRef.current.selectionStart = pos;
-        textareaRef.current.selectionEnd = pos;
-        textareaRef.current.focus();
-      }
-    }, 0);
-  }
-
-  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (acOpen) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setAcIndex((i) => (i + 1) % acMatches.length);
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setAcIndex((i) => (i - 1 + acMatches.length) % acMatches.length);
-        return;
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
-        if (acMatches[acIndex]) insertAutocomplete(acMatches[acIndex]);
-        return;
-      }
-      if (e.key === "Escape") {
-        closeAutocomplete();
-        return;
-      }
-    }
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (message.trim()) void sendUnified();
-    }
-  }
-
-  function handleInput(value: string) {
-    setMessage(value);
-    const el = textareaRef.current;
-    if (!el) return;
-    const cursor = el.selectionStart;
-    const textBefore = value.slice(0, cursor);
-    const atIdx = textBefore.lastIndexOf("@");
-    if (atIdx !== -1 && !textBefore.slice(atIdx + 1).includes(" ") && recentPickedFaces.length) {
-      acCursorRef.current = { start: atIdx + 1, end: atIdx + 1 };
-      setAcQuery(textBefore.slice(atIdx + 1));
-      setAcIndex(0);
-      setAcOpen(true);
-    } else {
-      closeAutocomplete();
-    }
-  }
 
   function markScrollPosition() {
     const el = chatLogRef.current;
@@ -387,12 +318,15 @@ export function ChatPanel({
     setNewActivityAvailable(false);
   }
 
-  const selectedConn = chatConnections.find((c) => c.id === selectedChatConnectionId);
-  const connStatus = selectedConn?.status ?? "blocked";
-  const statusText = connStatus === "ready" ? "Ready" : connStatus === "blocked" ? "Unavailable" : connStatus.replace(/_/g, " ");
-
   return (
     <section className="chat-pane-body">
+      <ContextSummaryPanel
+        projectId={selectedId}
+        sessionId={activeSessionId}
+        engineeringContext={engineeringContext}
+        onSummaryChange={onContextSummaryChange}
+      />
+
       <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>} onScroll={markScrollPosition} data-i18n-skip>
         {transcriptItems.length ? (
           <ChatTranscript
@@ -404,6 +338,7 @@ export function ChatPanel({
             onRejectAutopilot={rejectAutopilot}
             onCancelAutopilot={cancelAutopilot}
             onReviseAutopilot={reviseAutopilot}
+            onReplyAutopilot={reviseAutopilot}
           />
         ) : (
           <div className="summary-note summary-muted chat-empty-state">
@@ -495,91 +430,23 @@ export function ChatPanel({
         </div>
       ) : null}
 
-      <div className="chat-input-toolbar">
-        <select
-          className="chat-connection-select"
-          value={selectedChatConnectionId}
-          onChange={(e) => setSelectedChatConnectionId(e.target.value)}
-        >
-          {chatConnections.map((conn) => (
-            <option key={conn.id} value={conn.id}>
-              {conn.status === "ready" ? "●" : conn.status === "blocked" ? "○" : "◐"} {conn.label}
-            </option>
-          ))}
-        </select>
-        <span className={`connection-status status-${connStatus}`} title={selectedConn?.detail ?? ""}>
-          {statusText}
-        </span>
-        <button
-          type="button"
-          className="ghost-button icon-only-button"
-          onClick={() => setSettingsOpen(true)}
-          title="Settings"
-          style={{ marginLeft: "auto" }}
-        >
-          <ActionIcon name="settings" />
-        </button>
-      </div>
-
-      <div className="chat-input-row">
-        <div className="chat-input-wrap">
-          <textarea
-            ref={textareaRef}
-            value={message}
-            onChange={(e) => {
-              handleInput(e.target.value);
-              e.target.style.height = "auto";
-              e.target.style.height = `${e.target.scrollHeight}px`;
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              selectedConnectionBlocked
-                ? "Select a project to start..."
-                : selectedChatConnectionId === "llm-api" && !llmReady
-                  ? "LLM provider configuration loading..."
-                  : "Check the current project status and generate a reviewable engineering execution plan."
-            }
-            disabled={selectedConnectionBlocked || (selectedChatConnectionId === "llm-api" && !llmReady)}
-          />
-          {acOpen && acMatches.length > 0 ? (
-            <div className="chat-autocomplete">
-              {acMatches.map((f, i) => (
-                <button
-                  key={f.pointer}
-                  type="button"
-                  className={i === acIndex ? "chat-autocomplete-item active" : "chat-autocomplete-item"}
-                  onClick={() => insertAutocomplete(f)}
-                >
-                  <span className="chat-autocomplete-badge">{f.surface_type}</span>
-                  <code>{f.pointer}</code>
-                  <span className="chat-autocomplete-label">{f.label}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {activeAutopilotRun && !message.trim() ? (
-            <button
-              type="button"
-              className="chat-action-button chat-action-button-stop"
-              disabled={!activeAutopilotRun.run_id}
-              onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
-              title="Stop active agent run"
-            >
-              <Square className="button-icon" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="chat-action-button chat-action-button-send"
-              disabled={selectedConnectionBlocked || (selectedChatConnectionId === "llm-api" && !llmReady) || !message.trim()}
-              onClick={() => void sendUnified()}
-              title="Send"
-            >
-              <ArrowUp className="button-icon" />
-            </button>
-          )}
-        </div>
-      </div>
+      <AgentInputBox
+        chatConnections={chatConnections}
+        selectedChatConnectionId={selectedChatConnectionId}
+        approvalMode={approvalMode}
+        approvalModeDisabled={approvalModeDisabled}
+        selectedConnectionBlocked={selectedConnectionBlocked}
+        llmReady={llmReady}
+        message={message}
+        activeAutopilotRun={activeAutopilotRun}
+        recentPickedFaces={recentPickedFaces}
+        setSelectedChatConnectionId={setSelectedChatConnectionId}
+        setApprovalMode={setApprovalMode}
+        setSettingsOpen={setSettingsOpen}
+        setMessage={setMessage}
+        sendUnified={sendUnified}
+        cancelAutopilot={cancelAutopilot}
+      />
     </section>
   );
 }

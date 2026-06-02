@@ -5,6 +5,7 @@ import type { StreamingState } from "../../app/useChatTranscript";
 import { AgentPlanCard } from "../agent/AgentPlanCard";
 import { PointerText } from "../PointerText";
 import { ApprovalLine } from "./ApprovalLine";
+import { AskUserLine } from "./AskUserLine";
 import { ArtifactLine } from "./ArtifactLine";
 import { EventDetail } from "./EventDetail";
 import { StreamingMessage } from "./StreamingMessage";
@@ -21,6 +22,7 @@ type ChatTranscriptProps = {
   onRejectAutopilot(runId: string): void;
   onCancelAutopilot(runId: string): void;
   onReviseAutopilot?(runId: string, message: string): void;
+  onReplyAutopilot?(runId: string, message: string): void;
 };
 
 export function ChatTranscript({
@@ -32,6 +34,7 @@ export function ChatTranscript({
   onRejectAutopilot,
   onCancelAutopilot,
   onReviseAutopilot,
+  onReplyAutopilot,
 }: ChatTranscriptProps) {
   return (
     <div className="chat-transcript">
@@ -39,6 +42,17 @@ export function ChatTranscript({
         if (item.kind === "message") return <TranscriptMessage key={item.id} item={item} />;
         if (item.kind === "plan") return <AgentPlanCard key={item.id} item={item} />;
         if (item.kind === "tool") return <ToolLine key={item.id} item={item} />;
+        if (item.kind === "ask_user") {
+          return (
+            <AskUserLine
+              key={item.id}
+              item={item}
+              busy={busy}
+              onReply={onReplyAutopilot}
+              onCancel={onCancelAutopilot}
+            />
+          );
+        }
         if (item.kind === "approval") {
           return (
             <ApprovalLine

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.agent_autopilot.schema import AgentPlan, AgentPlanStep, AgentWorkingState, AutopilotAgentAction, AutopilotRunRequest, AutopilotRunState, SkillToolOutput
+from app.agent_autopilot.schema import AgentNextAction, AgentPlan, AgentPlanStep, AgentWorkingState, AutopilotAgentAction, AutopilotRunRequest, AutopilotRunState, ContextSummary, SkillToolOutput, map_autopilot_action_to_next_action
 
 
 def test_agent_action_accepts_supported_action_types() -> None:
@@ -31,6 +31,42 @@ def test_agent_action_json_schema_serializes() -> None:
     schema = AutopilotAgentAction.json_schema_for_adapter()
     assert schema["type"] == "object"
     assert "action" in schema["properties"]
+
+
+def test_agent_next_action_mapper_matches_autopilot_actions() -> None:
+    tool = map_autopilot_action_to_next_action(
+        AutopilotAgentAction.model_validate(
+            {"action": {"type": "tool_call", "tool_name": "cad.get_source", "input": {"project_id": "p1"}}}
+        ).action,
+        target_step_id="step-1",
+    )
+    ask = map_autopilot_action_to_next_action(
+        AutopilotAgentAction.model_validate({"action": {"type": "ask_user", "question": "Which material?"}}).action
+    )
+    final = map_autopilot_action_to_next_action(
+        AutopilotAgentAction.model_validate({"action": {"type": "final", "message": "Done."}}).action,
+        done=True,
+    )
+    pause = map_autopilot_action_to_next_action(
+        AutopilotAgentAction.model_validate({"action": {"type": "pause", "reason": "Awaiting approval."}}).action
+    )
+    chat = map_autopilot_action_to_next_action(
+        AutopilotAgentAction.model_validate({"action": {"type": "chat", "message": "Checking context."}}).action
+    )
+
+    assert tool.type == "execute_step"
+    assert tool.target_step_id == "step-1"
+    assert tool.payload["tool_name"] == "cad.get_source"
+    assert ask.type == "ask_user"
+    assert ask.payload["question"] == "Which material?"
+    assert final.type == "finish_task"
+    assert pause.type == "wait_for_user"
+    assert chat.type == "answer_user"
+
+
+def test_agent_next_action_contract_rejects_unknown_type() -> None:
+    with pytest.raises(ValidationError):
+        AgentNextAction.model_validate({"type": "wander", "reason": "invalid", "payload": {}})
 
 
 def test_autopilot_request_accepts_llm_config() -> None:
@@ -134,6 +170,38 @@ def test_agent_working_state_round_trips_through_pydantic() -> None:
 
     assert restored == working_state
     assert restored.latest_evidence[0]["tool_name"] == "cad.plan_build123d_skill"
+
+
+def test_context_summary_contract_defaults_and_round_trip() -> None:
+    summary = ContextSummary(
+        session_id="session-1",
+        project_id="project-1",
+        goal="Make the Web Chat Agent stateful",
+        current_state="Plan model compatibility has been documented.",
+        completed_steps=["WCA-P1-001"],
+        pending_steps=["WCA-P1-002"],
+        relevant_files=["aieng-ui/docs/web-chat-agent-stateful-task.md"],
+        risks=["Do not rename existing AgentPlan fields in place."],
+        next_action="Implement AgentSession extension fields.",
+    )
+
+    restored = ContextSummary.model_validate(summary.model_dump())
+
+    assert restored == summary
+    assert restored.schema_version == 1
+    assert restored.important_decisions == []
+    assert restored.updated_at
+
+
+def test_context_summary_rejects_extra_sensitive_fields() -> None:
+    with pytest.raises(ValidationError):
+        ContextSummary.model_validate(
+            {
+                "session_id": "session-1",
+                "project_id": "project-1",
+                "api_key": "sk-test",
+            }
+        )
 
 
 def test_skill_tool_output_contract_defaults() -> None:

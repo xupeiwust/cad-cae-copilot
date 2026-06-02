@@ -15,6 +15,7 @@ import {
   withAssetVersion,
 } from "../appUtils";
 import type {
+  ApprovalMode,
   ArtifactResponse,
   ChatConnection,
   ProjectRecord,
@@ -22,6 +23,7 @@ import type {
   RuntimeConfigSnapshot,
   SolverFieldDescriptor,
 } from "../types";
+import type { EngineeringContextSource } from "./engineeringContextSource";
 import { useAgentActivityStream } from "./useAgentActivityStream";
 import { useAgentRuns } from "./useAgentRuns";
 import { mergeLocalAgentCapabilities } from "./workbenchHelpers";
@@ -73,6 +75,8 @@ export function useWorkbenchApp() {
     handleLiveChatSessionChange,
     handleLiveChatSessionDelete,
     renameActiveSessionForPrompt,
+    updateActiveSessionApprovalMode,
+    updateActiveSessionContextSummary,
   } = useChatSessions({ selectedId });
   const {
     chatHistory,
@@ -208,6 +212,11 @@ export function useWorkbenchApp() {
     () => chatConnections.find((item) => item.id === selectedChatConnectionId) ?? chatConnections[0] ?? DEFAULT_CHAT_CONNECTIONS[0],
     [chatConnections, selectedChatConnectionId],
   );
+  useEffect(() => {
+    if (!chatConnections.length) return;
+    if (chatConnections.some((item) => item.id === selectedChatConnectionId)) return;
+    setSelectedChatConnectionId(chatConnections[0].id);
+  }, [chatConnections, selectedChatConnectionId, setSelectedChatConnectionId]);
   const selectedConnectionBlocked = selectedChatConnection.requires_project && !selectedId;
   const {
     agentBusy,
@@ -244,6 +253,7 @@ export function useWorkbenchApp() {
   } = useAgentActivityStream({
     selectedId,
     activeSessionId,
+    activeRunId: activeSession?.active_run_id,
     agentBusy,
     cadGenerationProgress,
     refreshProjects,
@@ -548,6 +558,42 @@ export function useWorkbenchApp() {
     [caeFields, hasCaeResultArtifacts],
   );
   const activeFieldDescriptor = hasCaeResultArtifacts ? fieldDescriptor : null;
+  const engineeringContext = useMemo<EngineeringContextSource>(() => ({
+    projectId: selectedId,
+    projectName: selectedProject?.name ?? null,
+    selectedFaces: pickedFaces.map((face) => ({
+      pointer: face.pointer,
+      label: face.label,
+      surface_type: face.surface_type,
+    })),
+    highlightedFaceCount: highlightedFaceIds.size,
+    viewerAsset: effectiveViewerUrl
+      ? { url: effectiveViewerUrl, format: effectiveViewerFormat }
+      : selectedProject?.web_asset
+        ? { url: selectedProject.web_asset, format: selectedProject.web_asset_format ?? null }
+        : null,
+    shapeIrObjectCount: shapeIrObjects.length,
+    shapeIrVerificationStatus: shapeIrVerification?.status ?? null,
+    cae: {
+      hasContext: hasCaeContext,
+      hasResults: hasCaeResultArtifacts,
+      availableFields: renderableCaeFields,
+      activeField: activeFieldDescriptor?.field_name ?? null,
+    },
+  }), [
+    activeFieldDescriptor,
+    effectiveViewerFormat,
+    effectiveViewerUrl,
+    hasCaeContext,
+    hasCaeResultArtifacts,
+    highlightedFaceIds,
+    pickedFaces,
+    renderableCaeFields,
+    selectedId,
+    selectedProject,
+    shapeIrObjects,
+    shapeIrVerification,
+  ]);
 
   useEffect(() => {
     if (!renderableCaeFields.length) return;
@@ -593,6 +639,18 @@ export function useWorkbenchApp() {
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [chatHistory]);
+
+  async function setActiveSessionApprovalMode(approvalMode: ApprovalMode) {
+    try {
+      await updateActiveSessionApprovalMode(approvalMode);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        title: "Approval mode update failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   async function viewArtifact(path: string) {
     if (!selectedId || !path.trim()) return;
@@ -658,10 +716,20 @@ export function useWorkbenchApp() {
     clearHighlightedFaces,
     shapeIrObjects,
     shapeIrVerification,
+    engineeringContext,
     selectedShapeIrNodeId,
     selectShapeIrNode,
     chatConnections,
     selectedChatConnectionId,
+    approvalMode: (
+      activeSession?.approval_mode === "strict" ||
+      activeSession?.approval_mode === "manual" ||
+      activeSession?.approval_mode === "balanced"
+        ? activeSession.approval_mode
+        : "balanced"
+    ) as ApprovalMode,
+    setActiveSessionApprovalMode,
+    updateActiveSessionContextSummary,
     selectedConnectionBlocked,
     chatBusy,
     cadGenerating,

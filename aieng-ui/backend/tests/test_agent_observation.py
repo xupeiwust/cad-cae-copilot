@@ -273,6 +273,44 @@ def test_observation_for_premature_solver_request_reports_readiness_gaps(
                    for item in after.get("missing_items", []))
 
 
+def test_simulation_intent_plan_expands_to_full_cae_workflow(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project_id, pkg = _make_project(settings, "obs-simulation-plan", "p.aieng")
+    _make_minimal_package(pkg)
+
+    plan = _plan(client, project_id, message="Run the structural simulation now and tell me the stress.")
+    tool_names = [action["tool_name"] for action in plan["actions"]]
+
+    expected = [
+        "aieng.agent_context",
+        "aieng.inspect_package",
+        "cae.prepare_solver_run",
+        "cae.generate_solver_input",
+        "cae.run_solver",
+        "cae.extract_solver_results",
+        "cae.extract_field_regions",
+        "postprocess.refresh_cae_summary",
+    ]
+    assert tool_names[:len(expected)] == expected
+    phases = [action.get("workflow_phase") for action in plan["actions"][:len(expected)]]
+    assert phases == [
+        "check",
+        "check",
+        "check",
+        "preprocess",
+        "approval_execute",
+        "parse",
+        "parse",
+        "parse",
+    ]
+    solver = _find_action(plan, "cae.run_solver")
+    assert solver is not None
+    assert solver["requires_approval"] is True
+    assert solver["mode"] == "expensive"
+    assert solver["workflow_phase"] == "approval_execute"
+
+
 # ── 7: next-recommended-action appears for cantilever happy path ─────────────
 
 

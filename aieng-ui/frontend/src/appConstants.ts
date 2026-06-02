@@ -92,16 +92,4 @@ export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [
     tool_count: 0,
     adapters: [],
   },
-  {
-    id: "external-cad-adapter",
-    label: "External CAD adapter",
-    transport: "optional-cad-bridge",
-    status: "degraded",
-    detail: "Optional bridge for external preview/export adapters; build123d remains the default modelling path.",
-    requires_project: true,
-    supports_llm: false,
-    supports_execution: true,
-    approval_gated: true,
-    tool_count: 0,
-  },
 ];

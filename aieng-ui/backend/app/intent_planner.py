@@ -12,8 +12,9 @@ Safety contract:
   * read-only; planner never mutates the .aieng package or runs CAD/CAE.
   * every proposed action references a registered runtime tool.
   * every action carries an explicit ``mode`` and ``requires_approval`` flag.
-  * "Premature solver" requests are rewritten to readiness gaps; the planner
-    never proposes ``cae.run_solver`` directly from natural language.
+  * Solver requests are expanded into a reviewable CAE workflow: context check,
+    preflight / deck preparation, explicit solver approval, and postprocess
+    parsing. ``cae.run_solver`` is never marked auto-approved.
   * "Unsupported" engineering requests (drone arm, generic free-form CAD)
     return an honest missing_information list, not a fake template match.
   * claim_advancement is always ``"none"``.
@@ -253,6 +254,7 @@ def _action(
     expected_artifacts: list[str] | None = None,
     stale_impacts: list[str] | None = None,
     risk_notes: list[str] | None = None,
+    workflow_phase: str | None = None,
 ) -> dict[str, Any] | None:
     tool_info = next((t for t in runtime_tools if t.get("name") == tool_name), None)
     if tool_info is None:
@@ -260,7 +262,7 @@ def _action(
     requires_approval = bool(tool_info.get("requires_approval"))
     capability = capabilities_by_name.get(tool_name)
     mode = _classify_mode(tool_name, capability, requires_approval)
-    return {
+    action = {
         "id": f"action_{uuid.uuid4().hex[:8]}",
         "label": label,
         "description": description,
@@ -272,6 +274,9 @@ def _action(
         "stale_impacts": list(stale_impacts or []),
         "risk_notes": list(risk_notes or []),
     }
+    if workflow_phase:
+        action["workflow_phase"] = workflow_phase
+    return action
 
 
 def _template_actions(
@@ -448,10 +453,111 @@ def _solver_preflight_action(
         capabilities_by_name=capabilities_by_name,
         expected_artifacts=["preflight readiness report (inline, no package write)"],
         risk_notes=[
-            "Solver execution is approval-gated and requires the structural adapter card. "
-            "The planner never proposes cae.run_solver from natural language.",
+            "Solver execution remains approval-gated and should follow this preflight.",
         ],
+        workflow_phase="check",
     )
+
+
+def _solver_workflow_actions(
+    *,
+    project_id: str | None,
+    runtime_tools: list[dict[str, Any]],
+    capabilities_by_name: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not project_id:
+        return []
+    base = {"project_id": project_id}
+    candidates: list[dict[str, Any] | None] = [
+        _action(
+            label="Read CAD/CAE context for simulation",
+            description="Read geometry, CAE setup, selected faces, targets, and existing result state before planning solver work.",
+            tool_name="aieng.agent_context",
+            tool_args=base,
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+            workflow_phase="check",
+        ),
+        _action(
+            label="Inspect current package before simulation",
+            description="Read-only package inspection to confirm existing artifacts and stale evidence before solver preparation.",
+            tool_name="aieng.inspect_package",
+            tool_args=base,
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+            workflow_phase="check",
+        ),
+        _solver_preflight_action(
+            project_id=project_id,
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+        ),
+        _action(
+            label="Generate solver input deck if needed",
+            description=(
+                "Generate or refresh the CalculiX input deck from existing CAE setup artifacts. "
+                "If material, load, or boundary-condition data is missing, patch setup before this step."
+            ),
+            tool_name="cae.generate_solver_input",
+            tool_args=base,
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+            expected_artifacts=["simulation/runs/*/solver_input.inp"],
+            risk_notes=[
+                "Requires an existing CAE setup. Use cae.apply_setup_patch first when material, BC, or load data is incomplete.",
+            ],
+            workflow_phase="preprocess",
+        ),
+        _action(
+            label="Run structural solver",
+            description="Execute CalculiX on the prepared input deck. This is the only external solver execution step.",
+            tool_name="cae.run_solver",
+            tool_args=base,
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+            expected_artifacts=[
+                "simulation/runs/*/solver_run.json",
+                "simulation/runs/*/solver_log.txt",
+                "simulation/runs/*/outputs/result.frd",
+            ],
+            risk_notes=[
+                "Expensive external execution. Requires explicit approval in every approval mode.",
+                "Run cae.prepare_solver_run before approval so readiness gaps are visible.",
+            ],
+            workflow_phase="approval_execute",
+        ),
+        _action(
+            label="Extract solver metrics",
+            description="Parse CalculiX FRD output into computed metrics for downstream review.",
+            tool_name="cae.extract_solver_results",
+            tool_args=base,
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+            expected_artifacts=["analysis/computed_metrics.json"],
+            workflow_phase="parse",
+        ),
+        _action(
+            label="Extract high-field regions",
+            description="Cluster high-stress or displacement regions so the result can be tied back to geometry.",
+            tool_name="cae.extract_field_regions",
+            tool_args={**base, "field": "stress"},
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+            expected_artifacts=["results/field_regions.json"],
+            workflow_phase="parse",
+        ),
+        _action(
+            label="Refresh CAE result summary",
+            description="Regenerate the human-readable CAE summary and result field metadata after parsing.",
+            tool_name="postprocess.refresh_cae_summary",
+            tool_args=base,
+            runtime_tools=runtime_tools,
+            capabilities_by_name=capabilities_by_name,
+            expected_artifacts=["results/result_summary.json", "results/evidence_index.json"],
+            workflow_phase="parse",
+        ),
+    ]
+    return [action for action in candidates if action is not None]
 
 
 # ── plan assembly ────────────────────────────────────────────────────────────
@@ -579,7 +685,8 @@ def plan_from_request(
     structural_preflight:
         Optional output of ``structural_adapter.prepare_structural_run_preview``.
         When the user asks to "run the solver", the planner uses this to
-        report readiness gaps instead of proposing ``cae.run_solver``.
+        report readiness gaps and keep solver execution behind explicit
+        approval.
     agent_context:
         Optional output of ``agent_context.build_agent_context``. Included in
         the plan as the compact CAD/CAE state the connected agent should use
@@ -601,7 +708,7 @@ def plan_from_request(
     refusals: list[dict[str, Any]] = []
     wants_solver_now = _wants_solver_now(message)
 
-    # Branch 1: "run the solver now" — propose both solver + preflight.
+    # Branch 1: "run the solver now" — expand into the full CAE workflow.
     if wants_solver_now:
         if structural_preflight is not None:
             preflight = (
@@ -621,37 +728,11 @@ def plan_from_request(
             warnings.append(
                 "No preflight data available. Solver execution is offered but may fail."
             )
-        # Offer preflight as the safe first step
-        preflight_action = _solver_preflight_action(
+        actions.extend(_solver_workflow_actions(
             project_id=project_id,
             runtime_tools=runtime_tools,
             capabilities_by_name=capabilities_by_name,
-        )
-        if preflight_action is not None:
-            actions.append(preflight_action)
-        # Also offer the solver itself (approval-gated)
-        solver_action = _action(
-            label="Run structural solver",
-            description="Execute CalculiX solver on the existing input deck. Approval-gated.",
-            tool_name="cae.run_solver",
-            tool_args={"project_id": project_id} if project_id else {},
-            runtime_tools=runtime_tools,
-            capabilities_by_name=capabilities_by_name,
-            expected_artifacts=["results/*.frd", "results/solver_run.json"],
-            risk_notes=[
-                "Expensive external execution. Requires mesh, material, BC, and load case to be present.",
-                "Engineering correctness is not claimed from solver output alone.",
-            ],
-        )
-        if solver_action is not None:
-            actions.append(solver_action)
-        actions.extend(
-            _safe_inspection_actions(
-                project_id=project_id,
-                runtime_tools=runtime_tools,
-                capabilities_by_name=capabilities_by_name,
-            )
-        )
+        ))
 
     # Branch 2: template match — pilot path.
     elif template_id is not None:

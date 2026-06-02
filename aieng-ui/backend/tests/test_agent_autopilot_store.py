@@ -43,6 +43,9 @@ def test_store_round_trips_run_state_plan(tmp_path: Path) -> None:
     assert loaded.plan is not None
     assert loaded.plan.id == "plan1"
     assert loaded.plan.steps[0].id == "observe_context"
+    loaded_plan = store.load_plan("run1")
+    assert loaded_plan is not None
+    assert loaded_plan.id == "plan1"
 
 
 def test_store_round_trips_run_state_working_state(tmp_path: Path) -> None:
@@ -63,6 +66,25 @@ def test_store_round_trips_run_state_working_state(tmp_path: Path) -> None:
     assert loaded.working_state.objective == "make a bracket"
     assert loaded.working_state.current_blockers == ["Awaiting approval."]
     assert loaded.working_state.latest_evidence == [{"tool_name": "cad.plan_build123d_skill"}]
+
+
+def test_store_lists_and_deletes_runs_by_project_or_session(tmp_path: Path) -> None:
+    store = AutopilotStore(tmp_path / "runs")
+    keep = AutopilotRunState(run_id="keep", status="running", message="keep", adapter_id="fake", project_id="p1", session_id="s1")
+    remove_session = AutopilotRunState(run_id="remove-session", status="running", message="remove", adapter_id="fake", project_id="p1", session_id="s2")
+    remove_project = AutopilotRunState(run_id="remove-project", status="running", message="remove", adapter_id="fake", project_id="p2", session_id="s3")
+    for state in (keep, remove_session, remove_project):
+        store.save(state)
+        store.request_cancel(state.run_id)
+
+    assert {state.run_id for state in store.list_runs(project_id="p1")} == {"keep", "remove-session"}
+    assert {state.run_id for state in store.list_runs(session_id="s2")} == {"remove-session"}
+    assert store.delete_runs(session_id="s2") == 1
+    assert store.delete_run("remove-session") is False
+    assert {state.run_id for state in store.list_runs(project_id="p1")} == {"keep"}
+    assert store.delete_runs(project_id="p2") == 1
+    assert [state.run_id for state in store.list_runs()] == ["keep"]
+    assert store.is_cancel_requested("keep") is True
 
 
 def test_store_retries_transient_windows_replace_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

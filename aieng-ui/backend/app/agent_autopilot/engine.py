@@ -51,11 +51,42 @@ DEFAULT_PLAN_STEPS = [
     ("summarize_result", "Summarize", "summarize"),
 ]
 
+SIMULATION_PLAN_STEPS = [
+    ("observe_context", "Inspect CAD/CAE context", "observe"),
+    ("select_skill_or_tool", "Select simulation workflow", "skill"),
+    ("prepare_action", "Prepare CAE setup, preflight, or solver deck action", "tool"),
+    ("await_approval", "Request approval before solver execution", "approval"),
+    ("execute_tool", "Execute current CAE workflow step", "tool"),
+    ("repair_tool_input", "Repair CAE tool input", "repair"),
+    ("verify_result", "Preflight readiness or parse solver results", "verify"),
+    ("summarize_result", "Summarize simulation evidence", "summarize"),
+]
+
+
+def _looks_like_simulation_objective(objective: str) -> bool:
+    text = objective.lower()
+    simulation_terms = (
+        "simulate",
+        "simulation",
+        "solver",
+        "calculix",
+        "ccx",
+        "fea",
+        "fem",
+        "stress",
+        "displacement",
+        "deflection",
+        "load case",
+        "run cae",
+    )
+    return any(term in text for term in simulation_terms)
+
 
 def create_default_agent_plan(objective: str, *, plan_id: str | None = None) -> AgentPlan:
+    template = SIMULATION_PLAN_STEPS if _looks_like_simulation_objective(objective) else DEFAULT_PLAN_STEPS
     steps = [
         AgentPlanStep(id=step_id, title=title, kind=kind)  # type: ignore[arg-type]
-        for step_id, title, kind in DEFAULT_PLAN_STEPS
+        for step_id, title, kind in template
     ]
     return AgentPlan(
         id=plan_id or uuid.uuid4().hex[:12],
@@ -136,6 +167,7 @@ class AutopilotEngine:
         tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
         on_state_update: Callable[[AutopilotRunState], None] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        approval_mode: str = "balanced",
     ) -> None:
         self.store = store
         self.runtime_tools = runtime_tools
@@ -144,6 +176,7 @@ class AutopilotEngine:
         self.tool_executor = tool_executor
         self.on_state_update = on_state_update
         self.on_event = on_event
+        self.approval_mode = approval_mode if approval_mode in {"balanced", "strict", "manual"} else "balanced"
         self._system_layer = build_system_layer(
             runtime_tools=self.runtime_tools,
             rules=OPERATING_RULES,
@@ -798,9 +831,15 @@ class AutopilotEngine:
                 return
             if action.action.type == "ask_user":
                 state.status = "blocked"
-                state.observations.append(_observation("user_message", action.action.question))
+                state.observations.append(_observation("ask_user", action.action.question, {"question": action.action.question}))
                 self._finish_plan(state, "blocked", action.action.question)
-                self._emit_event(state, "agent_message", status="blocked", content=action.action.question, payload={"kind": "ask_user"})
+                self._emit_event(
+                    state,
+                    "ask_user_requested",
+                    status="blocked",
+                    content=action.action.question,
+                    payload={"kind": "ask_user", "question": action.action.question},
+                )
                 self._checkpoint(state)
                 return
             if action.action.type == "chat":
@@ -823,6 +862,7 @@ class AutopilotEngine:
                 active_project_id=state.project_id,
                 registered_tools=self.runtime_tools,
                 mode=state.mode,
+                approval_mode=self.approval_mode,  # type: ignore[arg-type]
             )
             state.steps[-1].policy = policy.model_dump()
             if not policy.allowed:

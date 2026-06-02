@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.agent_autopilot.engine import AutopilotEngine
+from app.agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
 from app.agent_autopilot.schema import AdapterInvocationResult, AutopilotAgentAction, AutopilotRunRequest
 from app.agent_autopilot.store import AutopilotStore
 
@@ -38,6 +38,26 @@ def test_engine_completes_on_final_action(tmp_path: Path) -> None:
     assert state.plan.status == "completed"
     assert state.plan.steps[0].status == "completed"
     assert state.plan.steps[-1].status == "completed"
+
+
+def test_simulation_objective_uses_cae_plan_template() -> None:
+    plan = create_default_agent_plan("Run the structural simulation and show stress results")
+    titles_by_id = {step.id: step.title for step in plan.steps}
+
+    assert list(titles_by_id) == [
+        "observe_context",
+        "select_skill_or_tool",
+        "prepare_action",
+        "await_approval",
+        "execute_tool",
+        "repair_tool_input",
+        "verify_result",
+        "summarize_result",
+    ]
+    assert titles_by_id["observe_context"] == "Inspect CAD/CAE context"
+    assert titles_by_id["prepare_action"] == "Prepare CAE setup, preflight, or solver deck action"
+    assert titles_by_id["await_approval"] == "Request approval before solver execution"
+    assert titles_by_id["verify_result"] == "Preflight readiness or parse solver results"
 
 
 def test_engine_blocks_then_recovers_when_agent_selects_legal_action(tmp_path: Path) -> None:
@@ -82,6 +102,84 @@ def test_engine_pauses_for_approval_required_action(tmp_path: Path) -> None:
     assert approval_step.status == "blocked"
     assert approval_step.tool_name == "cad.execute_build123d"
     assert state.plan.current_step_id == "await_approval"
+
+
+def test_engine_approval_mode_controls_low_risk_tool_execution(tmp_path: Path) -> None:
+    executed: list[str] = []
+
+    strict_engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "strict-runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        approval_mode="strict",
+        tool_executor=lambda tool_name, _tool_input: executed.append(tool_name) or {"ok": True},
+    )
+    strict_state = strict_engine.start(
+        AutopilotRunRequest(
+            message="patch setup",
+            project_id="p1",
+            fake_actions=[{
+                "action": {
+                    "type": "tool_call",
+                    "tool_name": "cae.apply_setup_patch",
+                    "input": {"project_id": "p1", "patch": []},
+                },
+            }],
+        )
+    )
+    assert strict_state.status == "awaiting_approval"
+    assert strict_state.pending_approval is not None
+    assert strict_state.pending_approval.tool_name == "cae.apply_setup_patch"
+    assert executed == []
+
+    manual_engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "manual-runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        approval_mode="manual",
+        tool_executor=lambda tool_name, _tool_input: executed.append(tool_name) or {"ok": True},
+    )
+    manual_state = manual_engine.start(
+        AutopilotRunRequest(
+            message="read context",
+            project_id="p1",
+            fake_actions=[{
+                "action": {
+                    "type": "tool_call",
+                    "tool_name": "aieng.agent_context",
+                    "input": {"project_id": "p1"},
+                },
+            }],
+        )
+    )
+    assert manual_state.status == "awaiting_approval"
+    assert manual_state.pending_approval is not None
+    assert manual_state.pending_approval.tool_name == "aieng.agent_context"
+    assert executed == []
+
+
+def test_engine_emits_distinct_ask_user_event(tmp_path: Path) -> None:
+    events = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        on_event=events.append,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="make cad",
+            fake_actions=[
+                {"action": {"type": "ask_user", "question": "Which material should I use?"}},
+            ],
+        )
+    )
+
+    assert state.status == "blocked"
+    ask_obs = next(obs for obs in state.observations if obs.kind == "ask_user")
+    assert ask_obs.data["question"] == "Which material should I use?"
+    ask_events = [event for event in events if event["type"] == "ask_user_requested"]
+    assert ask_events
+    assert ask_events[0]["content"] == "Which material should I use?"
+    assert ask_events[0]["payload"]["kind"] == "ask_user"
 
 
 def test_engine_emits_plan_lifecycle_events(tmp_path: Path) -> None:

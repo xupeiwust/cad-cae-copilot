@@ -7,6 +7,8 @@ import { applyAgentActivityEvent, createChatId } from "../appUtils";
 import type { AutopilotRunState } from "../types";
 import type { ChatSession, PersistedChatMessage } from "../api";
 import type { AgentTranscriptEvent } from "./chatTranscript";
+import { isTerminalAutopilotRun, nextStatusAfterStreamError, shouldPollActivityFallback } from "./agentActivityFallback";
+import { upsertAutopilotChatItem } from "./chatStateUtils";
 import {
   autopilotAgentLabel,
   summarizeAutopilotRun,
@@ -15,6 +17,7 @@ import {
 type UseAgentActivityStreamArgs = {
   selectedId: string | null;
   activeSessionId: string | null;
+  activeRunId?: string | null;
   agentBusy: boolean;
   cadGenerationProgress: CadGenerationProgress | null;
   refreshProjects(nextSelectedId?: string | null): Promise<void>;
@@ -35,6 +38,7 @@ type UseAgentActivityStreamArgs = {
 export function useAgentActivityStream({
   selectedId,
   activeSessionId,
+  activeRunId,
   agentBusy,
   cadGenerationProgress,
   refreshProjects,
@@ -56,6 +60,7 @@ export function useAgentActivityStream({
   const [liveSyncLastEventAt, setLiveSyncLastEventAt] = useState<string | null>(null);
   const selectedIdRef = useRef<string | null>(selectedId);
   const activeSessionIdRef = useRef<string | null>(activeSessionId);
+  const activeRunIdRef = useRef<string | null | undefined>(activeRunId);
   const onAutopilotRunUpdateRef = useRef(onAutopilotRunUpdate);
   const onChatMessageRef = useRef(onChatMessage);
   const onChatSessionChangeRef = useRef(onChatSessionChange);
@@ -69,6 +74,10 @@ export function useAgentActivityStream({
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  useEffect(() => {
+    activeRunIdRef.current = activeRunId;
+  }, [activeRunId]);
 
   useEffect(() => {
     onAutopilotRunUpdateRef.current = onAutopilotRunUpdate;
@@ -128,45 +137,21 @@ export function useAgentActivityStream({
         const run = event.run as AutopilotRunState | undefined;
         if (!run?.run_id) return;
         onAutopilotRunUpdateRef.current(run);
-        if (run.status !== "running") {
+        if (isTerminalAutopilotRun(run)) {
           stopAutopilotPoll();
           setAgentBusy(false);
           clearStreamingState();
         }
         if (run.project_id && current && run.project_id !== current) return;
         if (run.session_id && currentSession && run.session_id !== currentSession) return;
-        setChatHistory((currentHistory) => {
-          const index = currentHistory.findIndex((item) => item.autopilotRun?.run_id === run.run_id);
-          if (index === -1) {
-            return [
-              ...currentHistory,
-              {
-                id: `run-${run.run_id}`,
-                role: "assistant",
-                body: summarizeAutopilotRun(run),
-                createdAt: run.created_at,
-                mode: "runtime",
-                autopilotRun: run,
-                errors: run.errors,
-              },
-            ];
-          }
-          const updated = [...currentHistory];
-          updated[index] = {
-            ...updated[index],
-            autopilotRun: run,
-            errors: run.errors,
-            body: summarizeAutopilotRun(run),
-          };
-          return updated;
-        });
+        setChatHistory((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
         if (run.status === "chatting") {
           stopAutopilotPoll();
           setAgentBusy(false);
           clearStreamingState();
           return;
         }
-        if (run.status !== "running") {
+        if (isTerminalAutopilotRun(run)) {
           stopAutopilotPoll();
           setAgentBusy(false);
           setNotice({
@@ -208,6 +193,10 @@ export function useAgentActivityStream({
         event.type === "tool_failed" ||
         event.type === "approval_requested" ||
         event.type === "approval_resolved" ||
+        event.type === "ask_user_requested" ||
+        event.type === "agent_plan_created" ||
+        event.type === "agent_plan_step_updated" ||
+        event.type === "agent_phase_changed" ||
         event.type === "artifact_ready" ||
         event.type === "run_status_changed" ||
         event.type === "run_cancelled"
@@ -237,7 +226,7 @@ export function useAgentActivityStream({
       }
     };
     source.onerror = () => {
-      setLiveSyncStatus((current) => (current === "live" ? "reconnecting" : current === "polling" ? "polling" : "reconnecting"));
+      setLiveSyncStatus((current) => nextStatusAfterStreamError(current));
       setLiveSyncDetail("Live stream disconnected; browser will auto-reconnect and polling fallback is active.");
     };
     return () => source.close();
@@ -245,14 +234,27 @@ export function useAgentActivityStream({
 
   useEffect(() => {
     if (!selectedId) return;
-    if (liveSyncStatus === "live") return;
-    const shouldPoll = liveSyncStatus === "reconnecting" || liveSyncStatus === "polling" || agentBusy || Boolean(cadGenerationProgress);
+    const shouldPoll = shouldPollActivityFallback({ selectedId, liveSyncStatus, agentBusy, cadGenerationProgress });
     if (!shouldPoll) return;
     setLiveSyncStatus("polling");
     setLiveSyncDetail("Live stream unavailable; polling project state every 2.5s.");
     const timer = window.setInterval(() => {
       const current = selectedIdRef.current;
       if (current) void refreshProjects(current);
+      const runId = activeRunIdRef.current;
+      if (runId) {
+        void api.getAutopilotRun(runId)
+          .then((run) => {
+            onAutopilotRunUpdateRef.current(run);
+            setChatHistory((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
+            if (isTerminalAutopilotRun(run)) {
+              stopAutopilotPoll();
+              setAgentBusy(false);
+              clearStreamingState();
+            }
+          })
+          .catch(() => {});
+      }
     }, 2500);
     return () => window.clearInterval(timer);
   }, [agentBusy, cadGenerationProgress, liveSyncStatus, selectedId, refreshProjects]);

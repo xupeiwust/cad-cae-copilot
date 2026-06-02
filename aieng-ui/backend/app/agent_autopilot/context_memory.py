@@ -188,6 +188,9 @@ class ContextMemoryManager:
             "working_state": working_state or {},
             "working_memory": self._build_working_layer_payload(),
         }
+        repair_directive = self._latest_repair_directive()
+        if repair_directive:
+            payload["repair_directive"] = repair_directive
         if project_id is not None:
             payload["active_project_id"] = project_id
         if selected_geometry:
@@ -251,6 +254,9 @@ class ContextMemoryManager:
             payload["agent_context"] = agent_context
         if latest_observation is not None:
             payload["resume_summary"]["latest_observation"] = self._compact_single_observation(latest_observation)
+        repair_directive = self._latest_repair_directive(latest_observation)
+        if repair_directive:
+            payload["resume_summary"]["repair_directive"] = repair_directive
 
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -568,7 +574,39 @@ class ContextMemoryManager:
             compact["source_snippet"] = code
         elif isinstance(code, str):
             compact["source_snippet"] = code[:1800] + f"...[truncated {len(code) - 1800} chars]"
+        compact["repair_instruction"] = (
+            "Repair the failing build123d source and retry the same CAD tool. "
+            "Preserve project_id, mode, model_kind, user intent, labels, and colors unless the error proves they are invalid."
+        )
         return compact
+
+    def _latest_repair_directive(
+        self,
+        latest_observation: AutopilotObservation | dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        candidates: list[AutopilotObservation | dict[str, Any]] = []
+        if latest_observation is not None:
+            candidates.append(latest_observation)
+        candidates.extend(entry.observation for entry in reversed(self._working))
+        for obs in candidates:
+            compact = self._compact_single_observation(obs)
+            data = compact.get("data") if isinstance(compact.get("data"), dict) else {}
+            if data.get("error_class") != "cad_build_error":
+                continue
+            return {
+                "type": "cad_build_repair",
+                "tool_name": data.get("tool_name") or "cad.execute_build123d",
+                "exception_type": data.get("exception_type"),
+                "top_traceback_line": data.get("top_traceback_line"),
+                "failing_input": data.get("failing_input") or {},
+                "source_snippet": data.get("source_snippet"),
+                "instruction": (
+                    "Fix the specific build123d failure shown by top_traceback_line/source_snippet, "
+                    "then retry the CAD tool with the same project_id, mode, model_kind, labels, colors, "
+                    "and user-visible design intent. Do not restart from an unrelated design."
+                ),
+            }
+        return None
 
     @staticmethod
     def _top_traceback_line(error: str) -> str:

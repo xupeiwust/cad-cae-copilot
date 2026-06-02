@@ -51,3 +51,54 @@ def test_policy_allows_safe_write_and_requires_approval_for_mutation() -> None:
     assert mutation.allowed
     assert mutation.requires_approval
     assert mutation.level == "approval_mutation"
+
+
+def test_policy_approval_modes_adjust_low_risk_automation_only() -> None:
+    balanced_safe = evaluate_tool_call(
+        tool_name="cae.apply_setup_patch",
+        tool_input={"project_id": "active"},
+        active_project_id="active",
+        registered_tools=RUNTIME_TOOLS,
+        approval_mode="balanced",
+    )
+    assert balanced_safe.allowed
+    assert not balanced_safe.requires_approval
+
+    strict_safe = evaluate_tool_call(
+        tool_name="cae.apply_setup_patch",
+        tool_input={"project_id": "active"},
+        active_project_id="active",
+        registered_tools=RUNTIME_TOOLS,
+        approval_mode="strict",
+    )
+    assert strict_safe.allowed
+    assert strict_safe.requires_approval
+    assert strict_safe.level == "auto_write_safe"
+
+    manual_read = evaluate_tool_call(
+        tool_name="aieng.agent_context",
+        tool_input={"project_id": "active"},
+        active_project_id="active",
+        registered_tools=RUNTIME_TOOLS,
+        approval_mode="manual",
+    )
+    assert manual_read.allowed
+    assert manual_read.requires_approval
+    assert manual_read.level == "auto_read"
+
+    mutation = evaluate_tool_call(
+        tool_name="cad.execute_build123d",
+        tool_input={"project_id": "active", "code": "result = None"},
+        active_project_id="active",
+        registered_tools=RUNTIME_TOOLS,
+        approval_mode="balanced",
+    )
+    solver = evaluate_tool_call(
+        tool_name="cae.run_solver",
+        tool_input={"project_id": "active"},
+        active_project_id="active",
+        registered_tools=RUNTIME_TOOLS,
+        approval_mode="balanced",
+    )
+    assert mutation.requires_approval
+    assert solver.requires_approval

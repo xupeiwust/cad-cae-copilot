@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .schema import AutopilotRunState
+from .schema import AgentPlan, AutopilotRunState
 
 
 class AutopilotStore:
@@ -56,6 +56,43 @@ class AutopilotStore:
             return AutopilotRunState.model_validate(data)
         except Exception as exc:
             raise ValueError(f"Autopilot run file is invalid: {exc}") from exc
+
+    def load_plan(self, run_id: str) -> AgentPlan | None:
+        return self.load(run_id).plan
+
+    def list_runs(self, *, project_id: str | None = None, session_id: str | None = None) -> list[AutopilotRunState]:
+        runs: list[AutopilotRunState] = []
+        for path in sorted(self.runs_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                state = AutopilotRunState.model_validate(data)
+            except Exception:
+                continue
+            if project_id is not None and state.project_id != project_id:
+                continue
+            if session_id is not None and state.session_id != session_id:
+                continue
+            runs.append(state)
+        return runs
+
+    def delete_run(self, run_id: str) -> bool:
+        deleted = False
+        for path in (self._path(run_id), self._cancel_path(run_id)):
+            try:
+                path.unlink()
+                deleted = True
+            except FileNotFoundError:
+                pass
+        return deleted
+
+    def delete_runs(self, *, project_id: str | None = None, session_id: str | None = None) -> int:
+        if project_id is None and session_id is None:
+            raise ValueError("project_id or session_id is required")
+        removed = 0
+        for state in self.list_runs(project_id=project_id, session_id=session_id):
+            if self.delete_run(state.run_id):
+                removed += 1
+        return removed
 
     def request_cancel(self, run_id: str) -> None:
         self._cancel_path(run_id).write_text("cancelled", encoding="utf-8")

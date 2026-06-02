@@ -3,7 +3,6 @@ import { ArrowUp, SlidersHorizontal, Square } from "lucide-react";
 
 import type { PickedFace } from "../../appTypes";
 import type { ApprovalMode, AutopilotRunState, ChatConnection } from "../../types";
-import { ActionIcon } from "../common";
 
 type AgentInputBoxProps = {
   chatConnections: ChatConnection[];
@@ -236,15 +235,15 @@ export function AgentInputBox({
                 <Square className="button-icon" />
               </button>
             ) : (
-            <button
-              type="button"
-              className="chat-action-button chat-action-button-send"
-              disabled={inputDisabled || !message.trim()}
-              onClick={() => void sendUnified()}
-              title="Send"
-            >
-              <ArrowUp className="button-icon" />
-            </button>
+              <button
+                type="button"
+                className="chat-action-button chat-action-button-send"
+                disabled={inputDisabled || !message.trim()}
+                onClick={() => void sendUnified()}
+                title="Send"
+              >
+                <ArrowUp className="button-icon" />
+              </button>
             )}
           </div>
         </div>

@@ -28,6 +28,7 @@ CORE_TOOL_ORDER = [
 ]
 
 OPERATING_RULES = [
+    "MANDATORY: Before ANY cad.execute_build123d call, you MUST call aieng.agent_readme first to load the full AGENTS.md capability guide. Do not generate build123d code from memory — the guide contains exact API constraints (Color 3 args, Cylinder 2 args, .moved() not .move(), Polygon->Face->extrude, result= assignment, no exports, high-level helper signatures, append/replace modes) that you must follow.",
     "TOKEN BUDGET: be concise. Do not paste long source/context unless needed; prefer compact named parameters and brief validation notes.",
     "PROJECT SKILLS: before planning or choosing a tool, check project_agent_skills. Use matching skills as workflow/claim-discipline guidance, but do not invent tools from them.",
     "Skill conflict rule: active workbench runtime tools and AGENTS.md instructions override legacy skill workflows unless the user explicitly asks for that legacy/schema-bound flow.",

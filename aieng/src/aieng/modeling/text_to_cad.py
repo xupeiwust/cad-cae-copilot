@@ -217,3 +217,20 @@ def build_build123d_user_prompt(
         "The last line MUST assign the final Part to `result`."
     )
     return "\n".join(parts)
+
+
+def build_system_prompt(extra_context: str | None = None) -> str:
+    """Return the build123d system prompt, optionally augmented with extra context.
+
+    When ``extra_context`` is provided (e.g. the contents of AGENTS.md), it is
+    appended after the base prompt so the LLM receives the full capability guide
+    as its single source of truth.
+    """
+    prompt = BUILD123D_SYSTEM_PROMPT
+    if extra_context:
+        prompt = (
+            prompt.rstrip()
+            + "\n\n--- AGENTS.md capability guide (single source of truth) ---\n\n"
+            + extra_context.lstrip()
+        )
+    return prompt

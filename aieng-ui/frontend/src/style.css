@@ -1668,7 +1668,8 @@ input[type="file"] {
 .chat-window {
   min-height: 180px;
   max-height: 500px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2107,7 +2108,7 @@ input[type="file"] {
 .approval-code-preview pre,
 .event-detail pre {
   max-height: 260px;
-  max-width: 100%;
+  width: 100%;
   overflow: auto;
   margin: 6px 0 0;
   padding: 10px;
@@ -2121,6 +2122,7 @@ input[type="file"] {
 
 .event-detail {
   width: 100%;
+  min-width: 0;
   color: #8fa5c4;
 }
 
@@ -8091,6 +8093,7 @@ textarea:focus,
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 8px 9px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);

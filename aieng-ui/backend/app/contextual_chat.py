@@ -270,7 +270,17 @@ material substitution, load redistribution, mesh refinement).
     "change material to <name>" → re-preprocess with new material + re-simulate
     "refine mesh to <N> mm" → re-simulate with finer mesh
 - Do not invent numbers. Only reference values from the project state.
-- Answer in the same language the user writes in.\
+- Answer in the same language the user writes in.
+
+CAD MODELING (build123d):
+- Color(r, g, b) takes exactly 3 arguments (0..1). No alpha parameter.
+- Cylinder(radius, height) takes exactly 2 arguments.
+- Use .moved(Location(...)) to position shapes; .move() does not exist on Shape.
+- Polygon(...) returns a Wire. To extrude: extrude(Face(Polygon(...)), amount=...).
+- Final line MUST be: result = <shape>. Do NOT call export_step/export_stl/export_gltf.
+- Pre-injected helpers (prefer over raw BuildSketch/BuildPart): lofted_stack, rounded_box, capsule, tapered_cylinder, swept_tube, revolved_profile, organic_blend.
+- Organic forms (characters/vehicles): use loft/revolve/sweep + mirror + fillet. Avoid Box stacking for exterior curves.
+- Mechanical parts: use canonical labels (base_plate, mounting_hole, rib, boss, flange) and honor min wall >= 3mm.\
 """
 
 

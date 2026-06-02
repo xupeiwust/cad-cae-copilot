@@ -24,6 +24,34 @@ from fastapi import HTTPException
 
 from .config import ensure_aieng_on_path
 
+
+# ── AGENTS.md resolution (single source of truth for build123d capabilities) ──
+
+def _resolve_agents_md_path() -> Path | None:
+    """Find AGENTS.md in the workspace or backend root."""
+    backend_root = Path(__file__).resolve().parents[1]  # aieng-ui/backend
+    workspace_root = backend_root.parents[1]  # workspace root
+    candidates = [
+        workspace_root / "AGENTS.md",
+        backend_root / "AGENTS.md",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _load_agents_md() -> str | None:
+    """Read AGENTS.md content, or None if not found / unreadable."""
+    path = _resolve_agents_md_path()
+    if path is None:
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
 # ── build123d runner template ──────────────────────────────────────────────────
 # Placeholder __AIENG_GENERATED_CODE__ is replaced (not .format()-substituted)
 # so all { } inside this string are literal Python syntax.
@@ -1725,6 +1753,7 @@ def call_claude_for_build123d_code(
         BUILD123D_SYSTEM_PROMPT,
         TextToCadHints,
         build_build123d_user_prompt,
+        build_system_prompt,
     )
 
     hint_obj: TextToCadHints | None = None
@@ -1738,10 +1767,15 @@ def call_claude_for_build123d_code(
 
     user_prompt = build_build123d_user_prompt(description, hint_obj)
 
+    # Inject AGENTS.md as the single source of truth for build123d capabilities.
+    # Falls back to the base prompt if AGENTS.md is missing or unreadable.
+    agents_md = _load_agents_md()
+    system_prompt = build_system_prompt(agents_md)
+
     raw = _generate_llm_text(
         settings,
         llm_config=llm_config,
-        system_prompt=BUILD123D_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         user_prompt=user_prompt,
         api_key=api_key,
         model=model,
@@ -3672,14 +3706,22 @@ def call_claude_for_build123d_refinement(
         raise HTTPException(status_code=503, detail="LLM settings are required for CAD refinement")
 
     ensure_aieng_on_path()
-    from aieng.modeling.text_to_cad import BUILD123D_SYSTEM_PROMPT, build_build123d_refine_prompt
+    from aieng.modeling.text_to_cad import (
+        BUILD123D_SYSTEM_PROMPT,
+        build_build123d_refine_prompt,
+        build_system_prompt,
+    )
 
     user_prompt = build_build123d_refine_prompt(existing_code, feedback)
+
+    # Inject AGENTS.md as the single source of truth for build123d capabilities.
+    agents_md = _load_agents_md()
+    system_prompt = build_system_prompt(agents_md)
 
     raw = _generate_llm_text(
         settings,
         llm_config=llm_config,
-        system_prompt=BUILD123D_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         user_prompt=user_prompt,
         api_key=api_key,
         model=model,

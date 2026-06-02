@@ -10508,10 +10508,12 @@ def test_delete_chat_session_cancels_session_autopilot_runs(tmp_path: Path) -> N
     delete_resp = client.delete(f"/api/projects/{project['id']}/chat-sessions/{session_id}")
     assert delete_resp.status_code == 200
     assert delete_resp.json()["cancelled_autopilot_runs"] == 1
+    # The active run is cancelled, then its orphan run file is removed with the
+    # session (B-12), so it is no longer retrievable.
+    assert delete_resp.json()["deleted_autopilot_run_files"] == 1
 
     run = client.get(f"/api/agent/autopilot/runs/{run_id}")
-    assert run.status_code == 200
-    assert run.json()["status"] == "cancelled"
+    assert run.status_code == 404
     assert client.get(f"/api/projects/{project['id']}/chat-messages?session_id={session_id}").status_code == 404
 
 

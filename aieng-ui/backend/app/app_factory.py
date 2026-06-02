@@ -2914,17 +2914,25 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         clear_session_step_counters(session_id)
         if not db.delete_chat_session(db_path, project_id, session_id):
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        # Session row is gone — now remove this session's autopilot run files from
+        # disk so they don't linger as orphans (B-12). delete_runs sweeps by
+        # session_id only; runs belonging to other sessions are untouched. Done
+        # after the DB delete succeeds so a failed delete never strands run files;
+        # a store failure here surfaces as a 500 rather than silent inconsistency.
+        deleted_run_files = _autopilot_store().delete_runs(session_id=session_id)
         _publish_live_event({
             "type": "chat_session_deleted",
             "project_id": project_id,
             "session_id": session_id,
             "cancelled_autopilot_runs": cancelled_runs,
+            "deleted_autopilot_run_files": deleted_run_files,
         })
         return {
             "deleted": True,
             "project_id": project_id,
             "session_id": session_id,
             "cancelled_autopilot_runs": cancelled_runs,
+            "deleted_autopilot_run_files": deleted_run_files,
         }
 
     @app.get("/api/projects/{project_id}/chat-messages")

@@ -1,9 +1,9 @@
 import { useRef, type KeyboardEvent } from "react";
-import { ArrowUp, SlidersHorizontal, Square } from "lucide-react";
 
 import type { PickedFace } from "../../appTypes";
 import type { ApprovalMode, AutopilotRunState, ChatConnection } from "../../types";
 import { AutoResizeTextarea } from "./AutoResizeTextarea";
+import { ComposerControls, ConnectionSelector, getComposerActionState } from "./ComposerControls";
 import { usePointerAutocomplete } from "./usePointerAutocomplete";
 
 type AgentInputBoxProps = {
@@ -48,10 +48,15 @@ export function AgentInputBox({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const autocomplete = usePointerAutocomplete(recentPickedFaces);
 
-  const selectedConn = chatConnections.find((c) => c.id === selectedChatConnectionId);
-  const connStatus = selectedConn?.status ?? "blocked";
-  const statusText = connStatus === "ready" ? "Ready" : connStatus === "blocked" ? "Unavailable" : connStatus.replace(/_/g, " ");
   const inputDisabled = selectedConnectionBlocked || (selectedChatConnectionId === "llm-api" && !llmReady);
+  const action = getComposerActionState({
+    message,
+    selectedConnectionId: selectedChatConnectionId,
+    selectedConnectionBlocked,
+    llmReady,
+    activeRunId: activeAutopilotRun ? (activeAutopilotRun.run_id ?? "") : null,
+    agentProcessing,
+  });
 
   function applySuggestion(face?: PickedFace) {
     const el = textareaRef.current;
@@ -104,22 +109,11 @@ export function AgentInputBox({
 
   return (
     <div className="chat-composer">
-      <div className="chat-input-toolbar">
-        <select
-          className="chat-connection-select"
-          value={selectedChatConnectionId}
-          onChange={(e) => setSelectedChatConnectionId(e.target.value)}
-        >
-          {chatConnections.map((conn) => (
-            <option key={conn.id} value={conn.id}>
-              {conn.status === "ready" ? "●" : conn.status === "blocked" ? "○" : "◐"} {conn.label}
-            </option>
-          ))}
-        </select>
-        <span className={`connection-status status-${connStatus}`} title={selectedConn?.detail ?? ""}>
-          {statusText}
-        </span>
-      </div>
+      <ConnectionSelector
+        chatConnections={chatConnections}
+        selectedChatConnectionId={selectedChatConnectionId}
+        setSelectedChatConnectionId={setSelectedChatConnectionId}
+      />
 
       <div className="chat-input-row">
         <div className="chat-input-wrap">
@@ -163,53 +157,17 @@ export function AgentInputBox({
               ))}
             </div>
           ) : null}
-          <div className="chat-composer-footer">
-            <div className="chat-composer-controls">
-              <label className="agent-control-field">
-                <span>Approval</span>
-                <select
-                  className="agent-control-select"
-                  value={approvalMode}
-                  onChange={(e) => setApprovalMode(e.target.value as ApprovalMode)}
-                  disabled={approvalModeDisabled}
-                  title="Approval mode"
-                >
-                  <option value="balanced">Balanced</option>
-                  <option value="strict">Strict</option>
-                  <option value="manual">Manual</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                className="chat-composer-icon-button"
-                onClick={() => setSettingsOpen(true)}
-                title="Settings"
-              >
-                <SlidersHorizontal className="button-icon" />
-              </button>
-            </div>
-            {activeAutopilotRun && agentProcessing && !message.trim() ? (
-              <button
-                type="button"
-                className="chat-action-button chat-action-button-stop"
-                disabled={!activeAutopilotRun.run_id}
-                onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
-                title="Stop active agent run"
-              >
-                <Square className="button-icon" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="chat-action-button chat-action-button-send"
-                disabled={inputDisabled || !message.trim()}
-                onClick={() => void sendUnified()}
-                title="Send"
-              >
-                <ArrowUp className="button-icon" />
-              </button>
-            )}
-          </div>
+          <ComposerControls
+            approvalMode={approvalMode}
+            approvalModeDisabled={approvalModeDisabled}
+            setApprovalMode={setApprovalMode}
+            setSettingsOpen={setSettingsOpen}
+            action={action}
+            onSend={() => void sendUnified()}
+            onStop={() => {
+              if (activeAutopilotRun) cancelAutopilot(activeAutopilotRun.run_id);
+            }}
+          />
         </div>
       </div>
     </div>

@@ -208,6 +208,10 @@ export function useAgentActivityStream({
         event.type === "tool_failed" ||
         event.type === "approval_requested" ||
         event.type === "approval_resolved" ||
+        event.type === "ask_user_requested" ||
+        event.type === "agent_plan_created" ||
+        event.type === "agent_plan_step_updated" ||
+        event.type === "agent_phase_changed" ||
         event.type === "artifact_ready" ||
         event.type === "run_status_changed" ||
         event.type === "run_cancelled"

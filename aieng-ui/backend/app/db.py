@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 CHAT_ROLES = {"user", "assistant", "system"}
+APPROVAL_MODES = {"strict", "balanced", "manual"}
 _CONNECT_TIMEOUT_S = 30.0
 
 _DB_INIT_SQL = """
@@ -34,6 +35,9 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'idle',
     active_run_id TEXT,
+    approval_mode TEXT NOT NULL DEFAULT 'balanced',
+    context_summary_json TEXT,
+    context_summary_updated_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -70,6 +74,9 @@ def init_db(db_path: Path) -> None:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_DB_INIT_SQL)
         _ensure_column(conn, "chat_messages", "session_id", "TEXT")
+        _ensure_column(conn, "chat_sessions", "approval_mode", "TEXT NOT NULL DEFAULT 'balanced'")
+        _ensure_column(conn, "chat_sessions", "context_summary_json", "TEXT")
+        _ensure_column(conn, "chat_sessions", "context_summary_updated_at", "TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id, created_at, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_events_project_session ON agent_events(project_id, session_id, created_at, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_events_run ON agent_events(run_id, created_at, id)")
@@ -113,8 +120,12 @@ def create_chat_session(
     try:
         conn.execute(
             """
-            INSERT INTO chat_sessions (id, project_id, title, status, active_run_id, created_at, updated_at)
-            VALUES (?, ?, ?, 'idle', NULL, ?, ?)
+            INSERT INTO chat_sessions (
+                id, project_id, title, status, active_run_id,
+                approval_mode, context_summary_json, context_summary_updated_at,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'idle', NULL, 'balanced', NULL, NULL, ?, ?)
             """,
             (session_id, project_id, clean_title, now, now),
         )
@@ -130,7 +141,8 @@ def ensure_default_chat_session(db_path: Path, project_id: str) -> dict[str, Any
     try:
         row = conn.execute(
             """
-            SELECT id, project_id, title, status, active_run_id, created_at, updated_at
+            SELECT id, project_id, title, status, active_run_id, approval_mode,
+                   context_summary_json, context_summary_updated_at, created_at, updated_at
             FROM chat_sessions
             WHERE project_id = ?
             ORDER BY updated_at DESC, created_at DESC
@@ -150,7 +162,8 @@ def get_chat_session(db_path: Path, session_id: str) -> dict[str, Any] | None:
     try:
         row = conn.execute(
             """
-            SELECT id, project_id, title, status, active_run_id, created_at, updated_at
+            SELECT id, project_id, title, status, active_run_id, approval_mode,
+                   context_summary_json, context_summary_updated_at, created_at, updated_at
             FROM chat_sessions
             WHERE id = ?
             """,
@@ -166,7 +179,8 @@ def get_chat_sessions(db_path: Path, project_id: str) -> list[dict[str, Any]]:
     try:
         rows = conn.execute(
             """
-            SELECT id, project_id, title, status, active_run_id, created_at, updated_at
+            SELECT id, project_id, title, status, active_run_id, approval_mode,
+                   context_summary_json, context_summary_updated_at, created_at, updated_at
             FROM chat_sessions
             WHERE project_id = ?
             ORDER BY updated_at DESC, created_at DESC
@@ -185,6 +199,7 @@ def update_chat_session(
     title: str | None = None,
     status: str | None = None,
     active_run_id: str | None = None,
+    approval_mode: str | None = None,
 ) -> dict[str, Any] | None:
     from .config import now_iso
 
@@ -194,16 +209,61 @@ def update_chat_session(
     next_title = (title.strip() if isinstance(title, str) else current["title"]) or current["title"]
     next_status = (status.strip() if isinstance(status, str) else current["status"]) or current["status"]
     next_run_id = active_run_id if active_run_id is not None else current["active_run_id"]
+    next_approval_mode = (
+        approval_mode.strip().lower()
+        if isinstance(approval_mode, str)
+        else current["approval_mode"]
+    ) or current["approval_mode"]
+    if next_approval_mode not in APPROVAL_MODES:
+        raise ValueError(f"approval_mode must be one of: {', '.join(sorted(APPROVAL_MODES))}")
     updated_at = now_iso()
     conn = _conn(db_path)
     try:
         conn.execute(
             """
             UPDATE chat_sessions
-            SET title = ?, status = ?, active_run_id = ?, updated_at = ?
+            SET title = ?, status = ?, active_run_id = ?, approval_mode = ?, updated_at = ?
             WHERE id = ?
             """,
-            (next_title, next_status, next_run_id, updated_at, session_id),
+            (next_title, next_status, next_run_id, next_approval_mode, updated_at, session_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_chat_session(db_path, session_id)
+
+
+def update_chat_session_context_summary(
+    db_path: Path,
+    session_id: str,
+    *,
+    context_summary: dict[str, Any] | None,
+    updated_at: str | None = None,
+) -> dict[str, Any] | None:
+    from .config import now_iso
+
+    current = get_chat_session(db_path, session_id)
+    if current is None:
+        return None
+    if context_summary is None:
+        summary_json = None
+        summary_updated_at = None
+    else:
+        try:
+            summary_json = json.dumps(context_summary, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"context_summary must be JSON serializable: {exc}") from exc
+        summary_updated_at = updated_at or str(context_summary.get("updated_at") or now_iso())
+    row_updated_at = now_iso()
+    conn = _conn(db_path)
+    try:
+        conn.execute(
+            """
+            UPDATE chat_sessions
+            SET context_summary_json = ?, context_summary_updated_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (summary_json, summary_updated_at, row_updated_at, session_id),
         )
         conn.commit()
     finally:
@@ -244,15 +304,29 @@ def delete_project_chat(db_path: Path, project_id: str) -> int:
 
 
 def _session_row_to_dict(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
+    context_summary_json = row[6]
     return {
         "id": row[0],
         "project_id": row[1],
         "title": row[2],
         "status": row[3],
         "active_run_id": row[4],
-        "created_at": row[5],
-        "updated_at": row[6],
+        "approval_mode": row[5] or "balanced",
+        "context_summary_json": context_summary_json,
+        "context_summary": _json_loads(context_summary_json),
+        "context_summary_updated_at": row[7],
+        "created_at": row[8],
+        "updated_at": row[9],
     }
+
+
+def _json_loads(value: Any) -> Any:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return json.loads(value)
+    except Exception:
+        return None
 
 
 # chat_messages CRUD

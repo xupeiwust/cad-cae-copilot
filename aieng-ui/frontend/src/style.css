@@ -1841,6 +1841,219 @@ input[type="file"] {
   backdrop-filter: blur(8px);
 }
 
+.ask-user-line {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 10px;
+  background: rgba(8, 20, 30, 0.46);
+  backdrop-filter: blur(8px);
+}
+
+.ask-user-line-main {
+  display: grid;
+  gap: 6px;
+  color: #d9e7ff;
+}
+
+.ask-user-line-main strong {
+  overflow-wrap: anywhere;
+  color: #eef6ff;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.ask-user-line-badge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 999px;
+  background: rgba(14, 116, 144, 0.18);
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ask-user-reply {
+  display: grid;
+  gap: 8px;
+}
+
+.ask-user-reply textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.36);
+  color: #e2e8f0;
+  padding: 8px 9px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ask-user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-user-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-summary-panel {
+  flex-shrink: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 42vh;
+  overflow: hidden;
+  padding: 9px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 8px;
+  background: rgba(5, 10, 22, 0.46);
+  color: #d9e7ff;
+}
+
+.context-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.context-summary-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #eef6ff;
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.context-summary-toggle:hover:not(:disabled) {
+  background: transparent;
+  color: #ffffff;
+}
+
+.context-summary-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.context-summary-meta,
+.context-summary-counts {
+  min-width: 0;
+  color: #8da2c3;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.context-summary-counts {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-summary-refresh {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+}
+
+.context-summary-compact {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: baseline;
+  min-width: 0;
+  color: #c9d7ec;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.context-summary-compact strong,
+.context-summary-compact span:not(.context-summary-label) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.context-summary-label {
+  color: #8da2c3;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.context-summary-details {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.context-summary-block {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.context-summary-block ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.context-summary-block li,
+.context-summary-muted,
+.context-summary-empty {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #c9d7ec;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.context-summary-block-risk li {
+  color: #fbbf24;
+}
+
+.context-summary-block code {
+  color: #93c5fd;
+  font-size: 11px;
+  white-space: normal;
+}
+
+.context-summary-more,
+.context-summary-muted {
+  color: #8da2c3;
+}
+
+.context-summary-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .agent-plan-card {
   display: grid;
   gap: 10px;
@@ -1895,6 +2108,59 @@ input[type="file"] {
   font-weight: 850;
   text-transform: uppercase;
   white-space: normal;
+}
+
+.agent-plan-diagnostics {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-plan-diagnostic {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 7px;
+  border-left: 2px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.22);
+}
+
+.agent-plan-diagnostic span {
+  color: #8da2c3;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.agent-plan-diagnostic p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #c9d7ec;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.agent-plan-diagnostic-error {
+  border-left-color: rgba(251, 113, 133, 0.75);
+}
+
+.agent-plan-diagnostic-error p {
+  color: #fecdd3;
+}
+
+.agent-plan-diagnostic-warning {
+  border-left-color: rgba(251, 191, 36, 0.72);
+}
+
+.agent-plan-diagnostic-warning p {
+  color: #fde68a;
+}
+
+.agent-plan-diagnostic-output {
+  border-left-color: rgba(52, 211, 153, 0.65);
 }
 
 .agent-plan-steps {
@@ -8278,10 +8544,60 @@ textarea:focus,
 .chat-pane-body .chat-input-toolbar {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 0;
   margin: 0;
+}
+
+.chat-pane-body .chat-connection-select {
+  flex: 1 1 170px;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.agent-mode-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-control-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.agent-control-select {
+  max-width: 118px;
+  min-height: 28px;
+  padding: 3px 22px 3px 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+@media (max-width: 480px) {
+  .agent-mode-controls {
+    flex-basis: 100%;
+  }
+
+  .agent-control-field {
+    flex: 1 1 120px;
+  }
+
+  .agent-control-select {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 .chat-pane-body .chat-input-row {

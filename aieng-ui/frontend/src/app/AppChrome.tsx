@@ -113,8 +113,12 @@ export function AppChrome({ app }: AppChromeProps) {
             <ChatPanel
               chatConnections={app.chatConnections}
               selectedChatConnectionId={app.selectedChatConnectionId}
+              agentMode={app.agentMode}
+              approvalMode={app.approvalMode}
+              approvalModeDisabled={!app.activeSessionId}
               selectedConnectionBlocked={app.selectedConnectionBlocked}
               selectedId={app.selectedId}
+              activeSessionId={app.activeSessionId}
               chatBusy={app.chatBusy}
               cadGenerating={app.cadGenerating}
               cadGenerationProgress={app.cadGenerationProgress}
@@ -128,6 +132,8 @@ export function AppChrome({ app }: AppChromeProps) {
               simulationPending={app.simulationPending}
               simulationProgress={app.simulationProgress}
               setSelectedChatConnectionId={app.setSelectedChatConnectionId}
+              setAgentMode={app.setAgentMode}
+              setApprovalMode={app.setActiveSessionApprovalMode}
               setSettingsOpen={app.setSettingsOpen}
               setMessage={app.setMessage}
               sendUnified={app.sendUnified}

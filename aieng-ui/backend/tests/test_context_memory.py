@@ -274,6 +274,26 @@ def test_resume_prompt_includes_compact_state_and_working_memory() -> None:
     assert payload["system_context"]["tools"][0]["name"] == "cad.execute_build123d"
 
 
+def test_resume_prompt_includes_session_context_summary() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": []})
+    prompt = mgr.build_resume_prompt(
+        objective="continue",
+        agent_context={
+            "context_summary": {
+                "goal": "Build a reliable chat agent",
+                "current_state": "Waiting for user approval.",
+                "next_action": "Ask for approval before executing CAD.",
+            }
+        },
+    )
+    payload = json.loads(prompt)
+
+    summary = payload["agent_context"]["context_summary"]
+    assert summary["goal"] == "Build a reliable chat agent"
+    assert summary["current_state"] == "Waiting for user approval."
+    assert summary["next_action"] == "Ask for approval before executing CAD."
+
+
 # -- Memory stats --
 
 

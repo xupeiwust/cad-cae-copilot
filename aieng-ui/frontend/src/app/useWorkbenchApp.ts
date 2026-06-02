@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api";
 import {
+  AGENT_MODE_STORAGE_KEY,
   BASE_STAGES,
   CHAT_CONNECTION_ID_STORAGE_KEY,
   DEFAULT_CHAT_CONNECTIONS,
@@ -15,7 +16,9 @@ import {
   withAssetVersion,
 } from "../appUtils";
 import type {
+  ApprovalMode,
   ArtifactResponse,
+  AutopilotAgentMode,
   ChatConnection,
   ProjectRecord,
   ProjectSummary,
@@ -56,6 +59,11 @@ export function useWorkbenchApp() {
     "llm-api",
     { storage: "local" },
   );
+  const [agentMode, setAgentMode] = useBrowserStorageState<AutopilotAgentMode>(
+    AGENT_MODE_STORAGE_KEY,
+    "autopilot",
+    { storage: "local" },
+  );
   const [artifactViewerPath, setArtifactViewerPath] = useState("");
   const [artifactViewerData, setArtifactViewerData] = useState<ArtifactResponse | null>(null);
   const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);
@@ -73,6 +81,7 @@ export function useWorkbenchApp() {
     handleLiveChatSessionChange,
     handleLiveChatSessionDelete,
     renameActiveSessionForPrompt,
+    updateActiveSessionApprovalMode,
   } = useChatSessions({ selectedId });
   const {
     chatHistory,
@@ -229,6 +238,7 @@ export function useWorkbenchApp() {
     localAgentConfig,
     llmConfig,
     apiKey,
+    agentMode,
     agentPayloadGeometry,
     appendRunToChatHistory,
     runBusyTask,
@@ -594,6 +604,18 @@ export function useWorkbenchApp() {
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [chatHistory]);
 
+  async function setActiveSessionApprovalMode(approvalMode: ApprovalMode) {
+    try {
+      await updateActiveSessionApprovalMode(approvalMode);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        title: "Approval mode update failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function viewArtifact(path: string) {
     if (!selectedId || !path.trim()) return;
     setArtifactViewerPath(path.trim());
@@ -662,6 +684,16 @@ export function useWorkbenchApp() {
     selectShapeIrNode,
     chatConnections,
     selectedChatConnectionId,
+    agentMode,
+    setAgentMode,
+    approvalMode: (
+      activeSession?.approval_mode === "strict" ||
+      activeSession?.approval_mode === "manual" ||
+      activeSession?.approval_mode === "balanced"
+        ? activeSession.approval_mode
+        : "balanced"
+    ) as ApprovalMode,
+    setActiveSessionApprovalMode,
     selectedConnectionBlocked,
     chatBusy,
     cadGenerating,

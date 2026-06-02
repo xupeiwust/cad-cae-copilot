@@ -84,6 +84,32 @@ def test_engine_pauses_for_approval_required_action(tmp_path: Path) -> None:
     assert state.plan.current_step_id == "await_approval"
 
 
+def test_engine_emits_distinct_ask_user_event(tmp_path: Path) -> None:
+    events = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        on_event=events.append,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="make cad",
+            fake_actions=[
+                {"action": {"type": "ask_user", "question": "Which material should I use?"}},
+            ],
+        )
+    )
+
+    assert state.status == "blocked"
+    ask_obs = next(obs for obs in state.observations if obs.kind == "ask_user")
+    assert ask_obs.data["question"] == "Which material should I use?"
+    ask_events = [event for event in events if event["type"] == "ask_user_requested"]
+    assert ask_events
+    assert ask_events[0]["content"] == "Which material should I use?"
+    assert ask_events[0]["payload"]["kind"] == "ask_user"
+
+
 def test_engine_emits_plan_lifecycle_events(tmp_path: Path) -> None:
     events = []
     engine = AutopilotEngine(

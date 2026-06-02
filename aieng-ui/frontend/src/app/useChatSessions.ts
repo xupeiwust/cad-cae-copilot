@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, type ChatSession } from "../api";
-import type { AutopilotRunState } from "../types";
+import type { ApprovalMode, AutopilotRunState } from "../types";
 
 type UseChatSessionsArgs = {
   selectedId: string | null;
@@ -118,6 +118,23 @@ export function useChatSessions({ selectedId }: UseChatSessionsArgs) {
     });
   }
 
+  async function updateActiveSessionApprovalMode(approvalMode: ApprovalMode) {
+    if (!selectedId || !activeSessionId) return;
+    const previous = chatSessions;
+    setChatSessions((current) => current.map((session) => (
+      session.id === activeSessionId
+        ? { ...session, approval_mode: approvalMode, updated_at: new Date().toISOString() }
+        : session
+    )));
+    try {
+      const updated = await api.updateChatSession(selectedId, activeSessionId, { approval_mode: approvalMode });
+      setChatSessions((current) => current.map((session) => session.id === updated.id ? updated : session));
+    } catch (error) {
+      setChatSessions(previous);
+      throw error;
+    }
+  }
+
   return {
     chatSessions,
     activeSessionId,
@@ -130,5 +147,6 @@ export function useChatSessions({ selectedId }: UseChatSessionsArgs) {
     handleLiveChatSessionChange,
     handleLiveChatSessionDelete,
     renameActiveSessionForPrompt,
+    updateActiveSessionApprovalMode,
   };
 }

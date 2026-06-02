@@ -1,6 +1,6 @@
 # Chat Agent Current Flow Notes
 
-Last updated: 2026-05-30
+Last updated: 2026-06-02
 
 ## Mutation Paths
 
@@ -15,7 +15,9 @@ The main mutation paths are:
   `chat_message`, upserts Autopilot snapshots from `autopilot_update`, and now
   records typed transcript events from `agent_message`, `tool_started`,
   `tool_completed`, `tool_failed`, `approval_requested`, `approval_resolved`,
-  `artifact_ready`, `run_status_changed`, and `run_cancelled`.
+  `ask_user_requested`, `agent_plan_created`, `agent_plan_step_updated`,
+  `agent_phase_changed`, `artifact_ready`, `run_status_changed`, and
+  `run_cancelled`.
 - `useEngineeringActions.ts` appends direct CAD/CAE result messages for
   non-Autopilot flows.
 - Session load in `useWorkbenchApp.ts` fetches persisted chat messages and
@@ -36,6 +38,10 @@ The main mutation paths are:
   idempotent.
 - `autopilot_update` snapshots remain the compatibility fallback. New live UI
   rows should prefer typed events when available.
+- `ask_user_requested` is intentionally separate from `approval_requested`.
+  It renders as a user-input-needed row with a reply box and continues through
+  the Autopilot reply path; approval rows remain reserved for tool execution
+  decisions.
 
 ## Current Replay Sources
 

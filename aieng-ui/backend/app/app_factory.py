@@ -422,6 +422,55 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "created_at": now_iso(),
         })
 
+    def _cancel_session_autopilot_runs(project_id: str, session_id: str) -> int:
+        from .agent_autopilot.engine import AutopilotEngine
+
+        store = _autopilot_store()
+        engine = AutopilotEngine(
+            store=store,
+            runtime_tools=_rt.list_tools_for_mcp(),
+            on_state_update=_sync_autopilot_session,
+            on_event=_publish_agent_event,
+        )
+        cancelled = 0
+        for state in store.list_runs(project_id=project_id, session_id=session_id):
+            if state.status in {"completed", "failed", "cancelled"}:
+                continue
+            try:
+                engine.cancel_run(state.run_id)
+                cancelled += 1
+            except Exception:
+                continue
+        return cancelled
+
+    def _delete_project_autopilot_runs(project_id: str) -> int:
+        try:
+            return _autopilot_store().delete_runs(project_id=project_id)
+        except Exception:
+            return 0
+
+    def _delete_project_everywhere(project_id: str) -> dict[str, Any]:
+        import shutil
+        from . import db
+
+        get_project(active_settings, project_id)  # 404 if unknown
+        runs_removed = _delete_project_autopilot_runs(project_id)
+        chat_rows = 0
+        try:
+            chat_rows = db.delete_project_chat(db_path, project_id)
+        except Exception:
+            pass
+        target = project_dir(active_settings, project_id)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        _publish_live_event({"type": "project_deleted", "project_id": project_id})
+        return {
+            "deleted": True,
+            "project_id": project_id,
+            "chat_rows_removed": chat_rows,
+            "autopilot_runs_removed": runs_removed,
+        }
+
     def _autopilot_adapters(llm_config: dict[str, Any] | None = None) -> dict[str, Any]:
         from .agent_autopilot.adapters import adapter_registry
 
@@ -432,22 +481,35 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             adapters["llm-api"] = LlmApiAdapter(active_settings, llm_config)
         return adapters
 
-    def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
-        from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
-
-        agent_context_snapshot = None
-        if request.project_id:
+    def _agent_context_with_session_summary(project_id: str | None, session_id: str | None) -> dict[str, Any] | None:
+        agent_context_snapshot: dict[str, Any] | None = None
+        if project_id:
             try:
                 from . import agent_context
 
-                agent_context_snapshot = agent_context.build_agent_context(active_settings, request.project_id)
+                agent_context_snapshot = agent_context.build_agent_context(active_settings, project_id)
             except Exception as exc:
                 agent_context_snapshot = {"error": str(exc)}
+        if session_id:
+            try:
+                from . import db
+
+                session = db.get_chat_session(db_path, session_id)
+                if session and session.get("context_summary"):
+                    agent_context_snapshot = dict(agent_context_snapshot or {})
+                    agent_context_snapshot["context_summary"] = session["context_summary"]
+            except Exception:
+                pass
+        return agent_context_snapshot
+
+    def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
+        from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
+
         return AutopilotEngine(
             store=_autopilot_store(),
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(request.llm_config),
-            agent_context=agent_context_snapshot,
+            agent_context=_agent_context_with_session_summary(request.project_id, request.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
@@ -558,6 +620,26 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except ValueError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    def _agent_plan_response_from_run(state: Any) -> dict[str, Any]:
+        return {
+            "run_id": state.run_id,
+            "project_id": state.project_id,
+            "session_id": state.session_id,
+            "plan": state.plan.model_dump() if state.plan is not None else None,
+            "run_status": state.status,
+            "updated_at": state.updated_at,
+        }
+
+    @app.get("/api/agent/autopilot/runs/{run_id}/plan")
+    def get_agent_autopilot_run_plan(run_id: str) -> dict[str, Any]:
+        store = _autopilot_store()
+        try:
+            return _agent_plan_response_from_run(store.load(run_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     @app.post("/api/agent/autopilot/runs/{run_id}/continue")
     def continue_agent_autopilot_run(
         run_id: str,
@@ -597,6 +679,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(llm_config),
+            agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
@@ -651,6 +734,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(llm_config),
+            agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
@@ -692,6 +776,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             store=store,
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(llm_config),
+            agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
@@ -1040,20 +1125,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         """Delete a project: its directory (.aieng package, metadata, viewer,
         logs) and all its chat sessions/messages (kept in a separate sqlite db).
         Idempotent-ish: 404s only if the project metadata doesn't exist."""
-        import shutil
-        from . import db
-
-        get_project(active_settings, project_id)  # 404 if unknown
-        chat_rows = 0
-        try:
-            chat_rows = db.delete_project_chat(db_path, project_id)
-        except Exception:
-            pass
-        target = project_dir(active_settings, project_id)
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        _publish_live_event({"type": "project_deleted", "project_id": project_id})
-        return {"deleted": True, "project_id": project_id, "chat_rows_removed": chat_rows}
+        return _delete_project_everywhere(project_id)
 
     @app.get("/api/projects/{project_id}/agent-context")
     def get_project_agent_context(project_id: str) -> dict[str, Any]:
@@ -2664,31 +2736,173 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
         get_project(active_settings, project_id)
         p = payload or {}
-        updated = db.update_chat_session(
-            db_path,
-            session_id,
-            title=p.get("title") if isinstance(p.get("title"), str) else None,
-            status=p.get("status") if isinstance(p.get("status"), str) else None,
-            active_run_id=p.get("active_run_id") if isinstance(p.get("active_run_id"), str) else None,
-        )
+        try:
+            updated = db.update_chat_session(
+                db_path,
+                session_id,
+                title=p.get("title") if isinstance(p.get("title"), str) else None,
+                status=p.get("status") if isinstance(p.get("status"), str) else None,
+                active_run_id=p.get("active_run_id") if isinstance(p.get("active_run_id"), str) else None,
+                approval_mode=p.get("approval_mode") if isinstance(p.get("approval_mode"), str) else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if updated is None or updated["project_id"] != project_id:
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
         _publish_chat_session_event(updated)
         return updated
+
+    @app.get("/api/projects/{project_id}/chat-sessions/{session_id}/agent-plan")
+    def get_chat_session_agent_plan(project_id: str, session_id: str) -> dict[str, Any]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        session = db.get_chat_session(db_path, session_id)
+        if session is None or session["project_id"] != project_id:
+            raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        run_id = session.get("active_run_id")
+        if not run_id:
+            return {
+                "run_id": None,
+                "project_id": project_id,
+                "session_id": session_id,
+                "plan": None,
+                "run_status": session.get("status"),
+                "updated_at": session.get("updated_at"),
+            }
+        store = _autopilot_store()
+        try:
+            return _agent_plan_response_from_run(store.load(str(run_id)))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    def _require_chat_session(project_id: str, session_id: str) -> dict[str, Any]:
+        from . import db
+
+        get_project(active_settings, project_id)
+        session = db.get_chat_session(db_path, session_id)
+        if session is None or session["project_id"] != project_id:
+            raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        return session
+
+    def _context_summary_response(session: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "project_id": session["project_id"],
+            "session_id": session["id"],
+            "context_summary": session.get("context_summary"),
+            "context_summary_updated_at": session.get("context_summary_updated_at"),
+        }
+
+    def _redact_context_summary_text(value: Any, *, limit: int = 360) -> str:
+        from .agent_autopilot.context_summary import redact_context_summary_text
+
+        return redact_context_summary_text(value, limit=limit)
+
+    def _build_rule_context_summary(project_id: str, session: dict[str, Any]) -> dict[str, Any]:
+        from . import db
+        from .agent_autopilot.context_summary import build_context_summary
+
+        messages = db.get_chat_messages(db_path, project_id, session_id=session["id"])
+        events = db.get_agent_events(db_path, project_id, session_id=session["id"])
+        run = None
+        run_id = session.get("active_run_id")
+        if run_id:
+            try:
+                run = _autopilot_store().load(str(run_id))
+            except Exception:
+                run = None
+        return build_context_summary(
+            project_id=project_id,
+            session=session,
+            messages=messages,
+            events=events,
+            run=run,
+        ).model_dump()
+
+    @app.get("/api/projects/{project_id}/chat-sessions/{session_id}/context-summary")
+    def get_chat_session_context_summary(project_id: str, session_id: str) -> dict[str, Any]:
+        return _context_summary_response(_require_chat_session(project_id, session_id))
+
+    @app.put("/api/projects/{project_id}/chat-sessions/{session_id}/context-summary")
+    def update_chat_session_context_summary_endpoint(
+        project_id: str,
+        session_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        from pydantic import ValidationError
+        from . import db
+        from .agent_autopilot.schema import ContextSummary
+
+        _require_chat_session(project_id, session_id)
+        data = payload or {}
+        raw_summary = data.get("context_summary") if "context_summary" in data else data
+        if raw_summary is None:
+            updated = db.update_chat_session_context_summary(db_path, session_id, context_summary=None)
+            if updated is None:
+                raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+            _publish_chat_session_event(updated)
+            return _context_summary_response(updated)
+        if not isinstance(raw_summary, dict):
+            raise HTTPException(status_code=400, detail="context_summary must be an object or null")
+        try:
+            summary = ContextSummary.model_validate(raw_summary)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors()) from exc
+        if summary.project_id != project_id or summary.session_id != session_id:
+            raise HTTPException(status_code=400, detail="context_summary session_id/project_id must match the URL")
+        updated = db.update_chat_session_context_summary(
+            db_path,
+            session_id,
+            context_summary=summary.model_dump(),
+            updated_at=summary.updated_at,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        _publish_chat_session_event(updated)
+        return _context_summary_response(updated)
+
+    @app.post("/api/projects/{project_id}/chat-sessions/{session_id}/context-summary/refresh")
+    def refresh_chat_session_context_summary(project_id: str, session_id: str) -> dict[str, Any]:
+        from . import db
+
+        session = _require_chat_session(project_id, session_id)
+        summary = _build_rule_context_summary(project_id, session)
+        updated = db.update_chat_session_context_summary(
+            db_path,
+            session_id,
+            context_summary=summary,
+            updated_at=str(summary.get("updated_at") or ""),
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        _publish_chat_session_event(updated)
+        return _context_summary_response(updated)
 
     @app.delete("/api/projects/{project_id}/chat-sessions/{session_id}")
     def delete_chat_session_endpoint(project_id: str, session_id: str) -> dict[str, Any]:
         from . import db
 
         get_project(active_settings, project_id)
+        session = db.get_chat_session(db_path, session_id)
+        if session is None or session.get("project_id") != project_id:
+            raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
+        cancelled_runs = _cancel_session_autopilot_runs(project_id, session_id)
         if not db.delete_chat_session(db_path, project_id, session_id):
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
         _publish_live_event({
             "type": "chat_session_deleted",
             "project_id": project_id,
             "session_id": session_id,
+            "cancelled_autopilot_runs": cancelled_runs,
         })
-        return {"deleted": True, "project_id": project_id, "session_id": session_id}
+        return {
+            "deleted": True,
+            "project_id": project_id,
+            "session_id": session_id,
+            "cancelled_autopilot_runs": cancelled_runs,
+        }
 
     @app.get("/api/projects/{project_id}/chat-messages")
     def list_chat_messages(project_id: str, session_id: str | None = None) -> list[dict[str, Any]]:
@@ -5175,26 +5389,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
     def _tool_aieng_delete_project(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         """Permanently delete a project: its directory + chat sessions/messages."""
-        import shutil
-        from . import db
-
         pid = str(_inp.get("project_id") or "").strip()
         if not pid:
             return {"status": "error", "message": "project_id is required"}
         try:
-            get_project(active_settings, pid)
+            result = _delete_project_everywhere(pid)
         except HTTPException:
             return {"status": "error", "code": "not_found", "message": f"project not found: {pid}"}
-        chat_rows = 0
-        try:
-            chat_rows = db.delete_project_chat(db_path, pid)
-        except Exception:
-            pass
-        target = project_dir(active_settings, pid)
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        _publish_live_event({"type": "project_deleted", "project_id": pid})
-        return {"status": "ok", "deleted": True, "project_id": pid, "chat_rows_removed": chat_rows}
+        return {"status": "ok", **result}
 
     _rt.register_tool(
         "aieng.delete_project",

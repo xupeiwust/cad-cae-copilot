@@ -1245,6 +1245,26 @@ export type AutopilotObservation = {
   created_at: string;
 };
 
+export type AgentNextActionType =
+  | "answer_user"
+  | "create_plan"
+  | "update_plan"
+  | "execute_step"
+  | "ask_user"
+  | "summarize_context"
+  | "wait_for_user"
+  | "finish_task";
+
+export type AgentNextAction = {
+  type: AgentNextActionType;
+  reason: string;
+  target_step_id?: string | null;
+  payload: Record<string, unknown>;
+};
+
+export type AutopilotAgentMode = "assist" | "autopilot" | "full_agent";
+export type ApprovalMode = "strict" | "balanced" | "manual";
+
 export type AutopilotApproval = {
   id: string;
   tool_name: string;

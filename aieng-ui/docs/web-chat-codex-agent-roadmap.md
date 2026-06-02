@@ -1,13 +1,20 @@
 # Web Chat Toward Codex-Style Agent Roadmap
 
-Status: **Draft / executable backlog**
-Last updated: **2026-06-01**
+Status: **Historical implementation evidence**
+Last updated: **2026-06-02**
 Owner: **AIENG workbench maintainers + handoff LLM agents**
+
+> Active Web Chat Agent work is now tracked in
+> [`web-chat-agent-stateful-task.md`](web-chat-agent-stateful-task.md). This
+> document is retained as implementation evidence for the completed M1-M6
+> Codex-style Autopilot milestones and should not receive new active backlog
+> rows.
 
 ## Purpose
 
-This document turns the gap between the current AIENG Web Chat Autopilot and a
-Codex-style engineering agent into concrete implementation tasks.
+This document records the completed work that narrowed the gap between the
+current AIENG Web Chat Autopilot and a Codex-style engineering agent. New tasks
+belong in the canonical stateful roadmap linked above.
 
 The target is not to bypass the agent with local shortcuts. The target is:
 
@@ -41,7 +48,7 @@ Relevant current pieces:
 | CAD skill tool | `backend/app/cad_skill_planner.py` | Early proof: read-only planner returns a parameterized `cad.execute_build123d` input for flanges. |
 | Chat transcript | `frontend/src/app/chatTranscript.ts`, `useAgentActivityStream.ts` | Merges chat rows, agent events, and run snapshots into UI transcript items. |
 
-Known user-visible problem:
+Historical user-visible problem addressed by the completed milestones:
 
 - Long Local Agent JSON-mode calls still feel like waiting on a blank wall.
 - Skill routing exists as prompt guidance, but the plan state is not yet a
@@ -50,8 +57,9 @@ Known user-visible problem:
 
 ## Status Management
 
-Use this document as the task board. Update only the relevant task row and the
-task's status note when you start or finish work.
+This document is no longer the active task board. Use
+`web-chat-agent-stateful-task.md` for all new task status changes. Existing rows
+below remain useful as historical evidence and regression context.
 
 Allowed statuses:
 

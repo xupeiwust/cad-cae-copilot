@@ -58,6 +58,66 @@ AutopilotAction = Annotated[
     Field(discriminator="type"),
 ]
 
+AgentNextActionType = Literal[
+    "answer_user",
+    "create_plan",
+    "update_plan",
+    "execute_step",
+    "ask_user",
+    "summarize_context",
+    "wait_for_user",
+    "finish_task",
+]
+
+
+class AgentNextAction(StrictModel):
+    type: AgentNextActionType
+    reason: str
+    target_step_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def map_autopilot_action_to_next_action(
+    action: AutopilotAction,
+    *,
+    done: bool = False,
+    target_step_id: str | None = None,
+) -> AgentNextAction:
+    if action.type == "tool_call":
+        return AgentNextAction(
+            type="execute_step",
+            reason=f"Execute tool {action.tool_name}.",
+            target_step_id=target_step_id,
+            payload={"tool_name": action.tool_name, "input": action.input},
+        )
+    if action.type == "ask_user":
+        return AgentNextAction(
+            type="ask_user",
+            reason="The agent needs user input before continuing.",
+            target_step_id=target_step_id,
+            payload={"question": action.question},
+        )
+    if action.type == "final":
+        return AgentNextAction(
+            type="finish_task" if done else "answer_user",
+            reason="The agent is ready to provide a final response.",
+            target_step_id=target_step_id,
+            payload={"message": action.message},
+        )
+    if action.type == "pause":
+        return AgentNextAction(
+            type="wait_for_user",
+            reason=action.reason,
+            target_step_id=target_step_id,
+            payload={"reason": action.reason},
+        )
+    return AgentNextAction(
+        type="answer_user",
+        reason="The agent is sending an intermediate chat message.",
+        target_step_id=target_step_id,
+        payload={"message": action.message},
+    )
+
 
 class AutopilotAgentAction(StrictModel):
     thought_summary: str = ""
@@ -100,6 +160,7 @@ class AutopilotObservation(StrictModel):
         "tool_error",
         "policy_block",
         "approval_required",
+        "ask_user",
         "agent_activity",
         "agent_thought",
         "user_message",
@@ -140,6 +201,22 @@ class AgentWorkingState(StrictModel):
     current_blockers: list[str] = Field(default_factory=list)
     last_successful_tool: str | None = None
     recommended_next_action: str | None = None
+    updated_at: str = Field(default_factory=now_iso)
+
+
+class ContextSummary(StrictModel):
+    schema_version: Literal[1] = 1
+    session_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1)
+    goal: str = ""
+    current_state: str = ""
+    important_decisions: list[str] = Field(default_factory=list)
+    completed_steps: list[str] = Field(default_factory=list)
+    pending_steps: list[str] = Field(default_factory=list)
+    user_constraints: list[str] = Field(default_factory=list)
+    relevant_files: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    next_action: str = ""
     updated_at: str = Field(default_factory=now_iso)
 
 

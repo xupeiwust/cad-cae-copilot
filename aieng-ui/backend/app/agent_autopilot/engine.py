@@ -798,9 +798,15 @@ class AutopilotEngine:
                 return
             if action.action.type == "ask_user":
                 state.status = "blocked"
-                state.observations.append(_observation("user_message", action.action.question))
+                state.observations.append(_observation("ask_user", action.action.question, {"question": action.action.question}))
                 self._finish_plan(state, "blocked", action.action.question)
-                self._emit_event(state, "agent_message", status="blocked", content=action.action.question, payload={"kind": "ask_user"})
+                self._emit_event(
+                    state,
+                    "ask_user_requested",
+                    status="blocked",
+                    content=action.action.question,
+                    payload={"kind": "ask_user", "question": action.action.question},
+                )
                 self._checkpoint(state)
                 return
             if action.action.type == "chat":

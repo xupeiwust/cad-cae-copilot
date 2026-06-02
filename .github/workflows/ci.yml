@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (vitest + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aieng-ui/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: aieng-ui/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: Typecheck + build
+        run: npm run build
+
+  backend:
+    name: Backend (focused tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aieng-ui/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: aieng-ui/backend/pyproject.toml
+
+      - name: Install backend (with dev extras)
+        # Installs the full backend incl. build123d/OCP so the CAD-generation
+        # tests can run; pytest + httpx come from the [dev] extra.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Autopilot / adapter tests
+        # Adapter tests mock the CLI subprocess (no real Claude/Codex needed);
+        # autopilot tests use the deterministic fake adapter (no LLM/network).
+        run: pytest tests -q -k "claude or adapter or autopilot"
+
+      - name: CAD generation tests (labels / named parts / append)
+        run: pytest tests/test_cad_generation.py -q -k "label or named_parts or append_preserves or single_labeled"

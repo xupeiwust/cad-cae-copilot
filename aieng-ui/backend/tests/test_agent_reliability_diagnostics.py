@@ -173,7 +173,22 @@ def test_local_agent_preflight_all_and_filter(monkeypatch) -> None:
     }
     monkeypatch.setattr(
         "app.agent_autopilot.claude_code_adapter.run_claude_preflight",
-        lambda **kwargs: {"ok": True, "stdout_parsed_result": {"is_error": False}, "stderr": "", "rc": 0},
+        lambda **kwargs: {
+            "ok": True,
+            "stdout_parsed_result": {"is_error": False},
+            "stderr": "",
+            "rc": 0,
+            "env_summary": {
+                "USERPROFILE": "C:/Users/SecretUser",
+                "APPDATA": "C:/Users/SecretUser/AppData/Roaming",
+                "LOCALAPPDATA": "C:/Users/SecretUser/AppData/Local",
+                "HOME": "C:/Users/SecretUser",
+                "PATH_first_entries": ["C:/secret/bin", "D:/tools"],
+                "claude_dir_in_PATH": True,
+                "ANTHROPIC_env_names": ["ANTHROPIC_API_KEY"],
+                "CLAUDE_env_names": [],
+            },
+        },
     )
     result = local_agent_preflight(adapters=adapters)
     assert [item["adapter_id"] for item in result["adapters"]] == ["claude-code", "codex-cli"]
@@ -211,7 +226,22 @@ def test_local_agent_preflight_endpoint_is_safe_and_backward_compatible(monkeypa
     monkeypatch.setattr("app.agent_autopilot.local_agent_preflight.adapter_registry", lambda: adapters)
     monkeypatch.setattr(
         "app.agent_autopilot.claude_code_adapter.run_claude_preflight",
-        lambda **kwargs: {"ok": True, "stdout_parsed_result": {"is_error": False}, "stderr": "", "rc": 0},
+        lambda **kwargs: {
+            "ok": True,
+            "stdout_parsed_result": {"is_error": False},
+            "stderr": "",
+            "rc": 0,
+            "env_summary": {
+                "USERPROFILE": "C:/Users/SecretUser",
+                "APPDATA": "C:/Users/SecretUser/AppData/Roaming",
+                "LOCALAPPDATA": "C:/Users/SecretUser/AppData/Local",
+                "HOME": "C:/Users/SecretUser",
+                "PATH_first_entries": ["C:/secret/bin", "D:/tools"],
+                "claude_dir_in_PATH": True,
+                "ANTHROPIC_env_names": ["ANTHROPIC_API_KEY"],
+                "CLAUDE_env_names": [],
+            },
+        },
     )
     client = TestClient(create_app(_settings(tmp_path)))
 
@@ -219,8 +249,13 @@ def test_local_agent_preflight_endpoint_is_safe_and_backward_compatible(monkeypa
     assert preflight.status_code == 200
     data = preflight.json()
     assert len(data["adapters"]) == 2
-    assert data["adapters"][0]["diagnostic"]["env_summary"]["ANTHROPIC_env_names"] == ["ANTHROPIC_API_KEY"]
+    claude_diag = data["adapters"][0]["diagnostic"]
+    assert claude_diag["env_summary"]["ANTHROPIC_env_names"] == ["ANTHROPIC_API_KEY"]
+    assert claude_diag["plain_cli_preflight"]["env_summary"]["ANTHROPIC_env_names"] == ["ANTHROPIC_API_KEY"]
+    assert claude_diag["plain_cli_preflight"]["env_summary"]["PATH_entry_count"] == 2
     assert secret not in str(data)
+    assert "SecretUser" not in str(data)
+    assert "C:/secret/bin" not in str(data)
 
     filtered = client.get("/api/local-agents/preflight?adapter=codex-cli")
     assert filtered.status_code == 200

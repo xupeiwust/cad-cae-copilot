@@ -26,7 +26,7 @@ def _diagnostic_env(command_path: str | None) -> dict[str, Any]:
         "APPDATA_present": bool(os.environ.get("APPDATA")),
         "LOCALAPPDATA_present": bool(os.environ.get("LOCALAPPDATA")),
         "HOME_present": bool(os.environ.get("HOME")),
-        "PATH_first_entries": path_entries[:6],
+        "PATH_entry_count": len(path_entries),
         "command_dir_in_PATH": bool(command_dir) and any(
             os.path.normcase(os.path.abspath(entry)) == os.path.normcase(command_dir)
             for entry in path_entries
@@ -103,6 +103,33 @@ def _claude_plain_preflight(adapter: LocalAgentAdapter) -> dict[str, Any] | None
         return {"ok": False, "error": str(exc)}
 
 
+def _safe_preflight_payload(preflight: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Remove environment values from the embedded plain-CLI preflight result.
+
+    ``run_claude_preflight`` is also used in failure diagnostics where detailed
+    USERPROFILE/PATH values were intentionally requested.  The public
+    /api/local-agents/preflight contract is stricter: expose env variable names
+    and presence/count metadata, not env values.
+    """
+    if preflight is None:
+        return None
+    safe = dict(preflight)
+    env = safe.get("env_summary")
+    if isinstance(env, dict):
+        path_entries = env.get("PATH_first_entries")
+        safe["env_summary"] = {
+            "USERPROFILE_present": bool(env.get("USERPROFILE")),
+            "APPDATA_present": bool(env.get("APPDATA")),
+            "LOCALAPPDATA_present": bool(env.get("LOCALAPPDATA")),
+            "HOME_present": bool(env.get("HOME")),
+            "PATH_entry_count": len(path_entries) if isinstance(path_entries, list) else None,
+            "claude_dir_in_PATH": bool(env.get("claude_dir_in_PATH")),
+            "ANTHROPIC_env_names": list(env.get("ANTHROPIC_env_names") or []),
+            "CLAUDE_env_names": list(env.get("CLAUDE_env_names") or []),
+        }
+    return safe
+
+
 def local_agent_preflight(
     *,
     adapter: str | None = None,
@@ -120,6 +147,7 @@ def local_agent_preflight(
         item_start = time.perf_counter()
         capability = instance.probe()
         plain_preflight = _claude_plain_preflight(instance)
+        safe_plain_preflight = _safe_preflight_payload(plain_preflight)
         status = classify_local_agent_status(capability, preflight=plain_preflight)
         command_path = capability.command_path or resolve_command(capability.command)
         items.append({
@@ -135,7 +163,7 @@ def local_agent_preflight(
                 "platform": platform.platform(),
                 "env_summary": _diagnostic_env(command_path),
                 "capability": capability.model_dump(),
-                **({"plain_cli_preflight": plain_preflight} if plain_preflight is not None else {}),
+                **({"plain_cli_preflight": safe_plain_preflight} if safe_plain_preflight is not None else {}),
             },
             "actionable_fix": actionable_fix(status, capability.adapter_id),
             "duration_ms": int((time.perf_counter() - item_start) * 1000),
@@ -145,4 +173,3 @@ def local_agent_preflight(
         "available": [item for item in items if item["available"]],
         "duration_ms": int((time.perf_counter() - started) * 1000),
     }
-

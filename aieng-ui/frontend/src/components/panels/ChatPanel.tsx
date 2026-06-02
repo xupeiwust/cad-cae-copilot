@@ -4,7 +4,7 @@ import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "../../a
 import type { StreamingState } from "../../app/useChatTranscript";
 import type { ContextSummary } from "../../api";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
-import type { ApprovalMode, AutopilotAgentMode, AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
+import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
 import type { EngineeringContextSource } from "../../app/engineeringContextSource";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
 import { ContextSummaryPanel } from "../agent/ContextSummaryPanel";
@@ -189,7 +189,6 @@ function currentActivityLine({
 type ChatPanelProps = {
   chatConnections: ChatConnection[];
   selectedChatConnectionId: string;
-  agentMode: AutopilotAgentMode;
   approvalMode: ApprovalMode;
   approvalModeDisabled: boolean;
   selectedConnectionBlocked: boolean;
@@ -209,7 +208,6 @@ type ChatPanelProps = {
   simulationPending: boolean;
   simulationProgress: SimulationProgress | null;
   setSelectedChatConnectionId(value: string): void;
-  setAgentMode(value: AutopilotAgentMode): void;
   setApprovalMode(value: ApprovalMode): void;
   setSettingsOpen(value: boolean): void;
   setMessage(value: string): void;
@@ -230,7 +228,6 @@ type ChatPanelProps = {
 export function ChatPanel({
   chatConnections,
   selectedChatConnectionId,
-  agentMode,
   approvalMode,
   approvalModeDisabled,
   selectedConnectionBlocked,
@@ -250,7 +247,6 @@ export function ChatPanel({
   simulationPending,
   simulationProgress,
   setSelectedChatConnectionId,
-  setAgentMode,
   setApprovalMode,
   setSettingsOpen,
   setMessage,
@@ -437,7 +433,6 @@ export function ChatPanel({
       <AgentInputBox
         chatConnections={chatConnections}
         selectedChatConnectionId={selectedChatConnectionId}
-        agentMode={agentMode}
         approvalMode={approvalMode}
         approvalModeDisabled={approvalModeDisabled}
         selectedConnectionBlocked={selectedConnectionBlocked}
@@ -446,7 +441,6 @@ export function ChatPanel({
         activeAutopilotRun={activeAutopilotRun}
         recentPickedFaces={recentPickedFaces}
         setSelectedChatConnectionId={setSelectedChatConnectionId}
-        setAgentMode={setAgentMode}
         setApprovalMode={setApprovalMode}
         setSettingsOpen={setSettingsOpen}
         setMessage={setMessage}

@@ -15,7 +15,6 @@ export const CAD_PROVIDER_OPTIONS = [
 export const LLM_CONFIG_STORAGE_KEY = "aieng-ui.llm-config";
 export const LOCAL_AGENT_CONFIG_STORAGE_KEY = "aieng-ui.local-agent-config";
 export const CHAT_CONNECTION_ID_STORAGE_KEY = "aieng-ui.chat-connection-id";
-export const AGENT_MODE_STORAGE_KEY = "aieng-ui.agent-mode";
 export const LLM_PROVIDER_SUGGESTIONS = ["openai-compatible", "anthropic", "openai", "azure-openai"] as const;
 export const LLM_CONFIG_TEMPLATES = [
   {
@@ -92,17 +91,5 @@ export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [
     approval_gated: true,
     tool_count: 0,
     adapters: [],
-  },
-  {
-    id: "external-cad-adapter",
-    label: "External CAD adapter",
-    transport: "optional-cad-bridge",
-    status: "degraded",
-    detail: "Optional bridge for external preview/export adapters; build123d remains the default modelling path.",
-    requires_project: true,
-    supports_llm: false,
-    supports_execution: true,
-    approval_gated: true,
-    tool_count: 0,
   },
 ];

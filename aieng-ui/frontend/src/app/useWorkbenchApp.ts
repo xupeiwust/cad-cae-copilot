@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api";
 import {
-  AGENT_MODE_STORAGE_KEY,
   BASE_STAGES,
   CHAT_CONNECTION_ID_STORAGE_KEY,
   DEFAULT_CHAT_CONNECTIONS,
@@ -18,7 +17,6 @@ import {
 import type {
   ApprovalMode,
   ArtifactResponse,
-  AutopilotAgentMode,
   ChatConnection,
   ProjectRecord,
   ProjectSummary,
@@ -58,11 +56,6 @@ export function useWorkbenchApp() {
   const [selectedChatConnectionId, setSelectedChatConnectionId] = useBrowserStorageState<string>(
     CHAT_CONNECTION_ID_STORAGE_KEY,
     "llm-api",
-    { storage: "local" },
-  );
-  const [agentMode, setAgentMode] = useBrowserStorageState<AutopilotAgentMode>(
-    AGENT_MODE_STORAGE_KEY,
-    "autopilot",
     { storage: "local" },
   );
   const [artifactViewerPath, setArtifactViewerPath] = useState("");
@@ -219,6 +212,11 @@ export function useWorkbenchApp() {
     () => chatConnections.find((item) => item.id === selectedChatConnectionId) ?? chatConnections[0] ?? DEFAULT_CHAT_CONNECTIONS[0],
     [chatConnections, selectedChatConnectionId],
   );
+  useEffect(() => {
+    if (!chatConnections.length) return;
+    if (chatConnections.some((item) => item.id === selectedChatConnectionId)) return;
+    setSelectedChatConnectionId(chatConnections[0].id);
+  }, [chatConnections, selectedChatConnectionId, setSelectedChatConnectionId]);
   const selectedConnectionBlocked = selectedChatConnection.requires_project && !selectedId;
   const {
     agentBusy,
@@ -240,7 +238,6 @@ export function useWorkbenchApp() {
     localAgentConfig,
     llmConfig,
     apiKey,
-    agentMode,
     agentPayloadGeometry,
     appendRunToChatHistory,
     runBusyTask,
@@ -724,8 +721,6 @@ export function useWorkbenchApp() {
     selectShapeIrNode,
     chatConnections,
     selectedChatConnectionId,
-    agentMode,
-    setAgentMode,
     approvalMode: (
       activeSession?.approval_mode === "strict" ||
       activeSession?.approval_mode === "manual" ||

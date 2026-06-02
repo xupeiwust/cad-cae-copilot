@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, SlidersHorizontal, Square } from "lucide-react";
 
 import type { PickedFace } from "../../appTypes";
-import type { ApprovalMode, AutopilotAgentMode, AutopilotRunState, ChatConnection } from "../../types";
+import type { ApprovalMode, AutopilotRunState, ChatConnection } from "../../types";
 import { ActionIcon } from "../common";
 
 type AgentInputBoxProps = {
   chatConnections: ChatConnection[];
   selectedChatConnectionId: string;
-  agentMode: AutopilotAgentMode;
   approvalMode: ApprovalMode;
   approvalModeDisabled: boolean;
   selectedConnectionBlocked: boolean;
@@ -17,7 +16,6 @@ type AgentInputBoxProps = {
   activeAutopilotRun: AutopilotRunState | null;
   recentPickedFaces: PickedFace[];
   setSelectedChatConnectionId(value: string): void;
-  setAgentMode(value: AutopilotAgentMode): void;
   setApprovalMode(value: ApprovalMode): void;
   setSettingsOpen(value: boolean): void;
   setMessage(value: string): void;
@@ -28,7 +26,6 @@ type AgentInputBoxProps = {
 export function AgentInputBox({
   chatConnections,
   selectedChatConnectionId,
-  agentMode,
   approvalMode,
   approvalModeDisabled,
   selectedConnectionBlocked,
@@ -37,7 +34,6 @@ export function AgentInputBox({
   activeAutopilotRun,
   recentPickedFaces,
   setSelectedChatConnectionId,
-  setAgentMode,
   setApprovalMode,
   setSettingsOpen,
   setMessage,
@@ -140,7 +136,7 @@ export function AgentInputBox({
   }
 
   return (
-    <>
+    <div className="chat-composer">
       <div className="chat-input-toolbar">
         <select
           className="chat-connection-select"
@@ -156,48 +152,20 @@ export function AgentInputBox({
         <span className={`connection-status status-${connStatus}`} title={selectedConn?.detail ?? ""}>
           {statusText}
         </span>
-        <div className="agent-mode-controls">
-          <label className="agent-control-field">
-            <span>Mode</span>
-            <select
-              className="agent-control-select"
-              value={agentMode}
-              onChange={(e) => setAgentMode(e.target.value as AutopilotAgentMode)}
-              title="Agent mode"
-            >
-              <option value="assist">Assist</option>
-              <option value="autopilot">Autopilot</option>
-              <option value="full_agent">Full agent</option>
-            </select>
-          </label>
-          <label className="agent-control-field">
-            <span>Approval</span>
-            <select
-              className="agent-control-select"
-              value={approvalMode}
-              onChange={(e) => setApprovalMode(e.target.value as ApprovalMode)}
-              disabled={approvalModeDisabled}
-              title="Approval mode"
-            >
-              <option value="balanced">Balanced</option>
-              <option value="strict">Strict</option>
-              <option value="manual">Manual</option>
-            </select>
-          </label>
-        </div>
-        <button
-          type="button"
-          className="ghost-button icon-only-button"
-          onClick={() => setSettingsOpen(true)}
-          title="Settings"
-          style={{ marginLeft: "auto" }}
-        >
-          <ActionIcon name="settings" />
-        </button>
       </div>
 
       <div className="chat-input-row">
         <div className="chat-input-wrap">
+          {recentPickedFaces.length ? (
+            <div className="chat-context-chips" aria-label="Selected geometry">
+              {recentPickedFaces.slice(0, 2).map((face) => (
+                <code key={face.pointer} title={face.label}>
+                  {face.pointer}
+                </code>
+              ))}
+              {recentPickedFaces.length > 2 ? <span>+{recentPickedFaces.length - 2}</span> : null}
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             value={message}
@@ -212,7 +180,7 @@ export function AgentInputBox({
                 ? "Select a project to start..."
                 : selectedChatConnectionId === "llm-api" && !llmReady
                   ? "LLM provider configuration loading..."
-                  : "Check the current project status and generate a reviewable engineering execution plan."
+                  : "Describe what to build"
             }
             disabled={inputDisabled}
           />
@@ -232,17 +200,42 @@ export function AgentInputBox({
               ))}
             </div>
           ) : null}
-          {activeAutopilotRun && !message.trim() ? (
-            <button
-              type="button"
-              className="chat-action-button chat-action-button-stop"
-              disabled={!activeAutopilotRun.run_id}
-              onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
-              title="Stop active agent run"
-            >
-              <Square className="button-icon" />
-            </button>
-          ) : (
+          <div className="chat-composer-footer">
+            <div className="chat-composer-controls">
+              <label className="agent-control-field">
+                <span>Approval</span>
+                <select
+                  className="agent-control-select"
+                  value={approvalMode}
+                  onChange={(e) => setApprovalMode(e.target.value as ApprovalMode)}
+                  disabled={approvalModeDisabled}
+                  title="Approval mode"
+                >
+                  <option value="balanced">Balanced</option>
+                  <option value="strict">Strict</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                className="chat-composer-icon-button"
+                onClick={() => setSettingsOpen(true)}
+                title="Settings"
+              >
+                <SlidersHorizontal className="button-icon" />
+              </button>
+            </div>
+            {activeAutopilotRun && !message.trim() ? (
+              <button
+                type="button"
+                className="chat-action-button chat-action-button-stop"
+                disabled={!activeAutopilotRun.run_id}
+                onClick={() => cancelAutopilot(activeAutopilotRun.run_id)}
+                title="Stop active agent run"
+              >
+                <Square className="button-icon" />
+              </button>
+            ) : (
             <button
               type="button"
               className="chat-action-button chat-action-button-send"
@@ -252,9 +245,10 @@ export function AgentInputBox({
             >
               <ArrowUp className="button-icon" />
             </button>
-          )}
+            )}
+          </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

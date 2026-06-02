@@ -1346,7 +1346,7 @@ export type AutopilotRunState = {
 };
 
 export type ChatConnection = {
-  id: "llm-api" | "external-cad-adapter" | string;
+  id: "llm-api" | "local-agent" | string;
   label: string;
   transport: string;
   status: "ready" | "configurable" | "degraded" | "blocked" | string;

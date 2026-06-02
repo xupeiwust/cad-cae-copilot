@@ -11,7 +11,6 @@ import type {
   LocalAgentConfig,
   RuntimeRun,
   AutopilotRunState,
-  AutopilotAgentMode,
 } from "../types";
 import {
   autopilotAgentLabel,
@@ -27,7 +26,6 @@ type UseAgentRunsArgs = {
   localAgentConfig: LocalAgentConfig;
   llmConfig: LLMConfig;
   apiKey: string;
-  agentMode: AutopilotAgentMode;
   agentPayloadGeometry(): SelectedGeometryContext | undefined;
   appendRunToChatHistory(run: RuntimeRun): void;
   runBusyTask(task: () => Promise<void>): Promise<void>;
@@ -45,7 +43,6 @@ export function useAgentRuns({
   localAgentConfig,
   llmConfig,
   apiKey,
-  agentMode,
   agentPayloadGeometry,
   appendRunToChatHistory,
   runBusyTask,
@@ -228,7 +225,7 @@ export function useAgentRuns({
         selected_geometry: agentPayloadGeometry(),
         adapter_id: adapterId,
         ...(isLlmApi ? { llm_config: llmConfig, api_key: apiKey || undefined } : {}),
-        mode: agentMode,
+        mode: "autopilot",
         dry_run: false,
       });
       onAutopilotRunUpdate?.(result);

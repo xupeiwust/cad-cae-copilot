@@ -23,6 +23,47 @@ export function NoticeCenter({ notice, onDismiss }: { notice: Notice | null; onD
   );
 }
 
+export function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = "Delete",
+  cancelLabel = "Cancel",
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="confirm-dialog-backdrop" onClick={onCancel}>
+      <div
+        className="confirm-dialog-panel"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
+        <h3 className="confirm-dialog-title">{title}</h3>
+        <p className="confirm-dialog-message">{message}</p>
+        <div className="confirm-dialog-actions">
+          <button type="button" className="confirm-dialog-btn" onClick={onCancel}>
+            {cancelLabel}
+          </button>
+          <button type="button" className="confirm-dialog-btn" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export type ActionIconName =
   | "settings"
   | "global"

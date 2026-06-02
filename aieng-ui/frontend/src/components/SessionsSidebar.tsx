@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { ChevronsLeft, ChevronsRight, Folder, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
 
 import { api } from "../api";
+import { ConfirmDialog } from "./common";
 import type { Notice, StageItem } from "../appTypes";
 import type { ProjectRecord } from "../types";
 import type { ChatSession } from "../api";
@@ -20,6 +22,7 @@ type SessionsSidebarProps = {
   activeSessionId: string | null;
   onSelectSession(sessionId: string): void;
   onCreateSession(): void;
+  onDeleteSession(sessionId: string): void;
   stages: StageItem[];
   runBusyTask(task: () => Promise<void>): Promise<void>;
   refreshProjects(nextSelectedId?: string | null): Promise<void>;
@@ -42,11 +45,19 @@ export function SessionsSidebar({
   activeSessionId,
   onSelectSession,
   onCreateSession,
+  onDeleteSession,
   runBusyTask,
   refreshProjects,
   setNotice,
   runWorkbenchImportFlow,
 }: SessionsSidebarProps) {
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
   if (collapsed) {
     return (
       <aside className="sessions-sidebar collapsed">
@@ -140,17 +151,22 @@ export function SessionsSidebar({
               aria-label={`Delete project ${project.name}`}
               onClick={(event) => {
                 event.stopPropagation();
-                if (!window.confirm(`Delete project "${project.name}"? This removes its geometry and chat history and cannot be undone.`)) {
-                  return;
-                }
-                void runBusyTask(async () => {
-                  await api.deleteProject(project.id);
-                  await refreshProjects(project.id === selectedId ? null : selectedId);
-                  setNotice({ tone: "success", title: "Project deleted", detail: `Deleted ${project.name}.` });
+                setConfirmDialog({
+                  open: true,
+                  title: `Delete project "${project.name}"?`,
+                  message: "This removes its geometry and chat history and cannot be undone.",
+                  onConfirm: () => {
+                    setConfirmDialog(null);
+                    void runBusyTask(async () => {
+                      await api.deleteProject(project.id);
+                      await refreshProjects(project.id === selectedId ? null : selectedId);
+                      setNotice({ tone: "success", title: "Project deleted", detail: `Deleted ${project.name}.` });
+                    });
+                  },
                 });
               }}
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 style={{ width: 12, height: 12 }} />
             </button>
           </div>
         ))}
@@ -171,15 +187,39 @@ export function SessionsSidebar({
         </div>
         <div className="sessions-thread-list">
           {chatSessions.map((session) => (
-            <button
-              type="button"
-              key={session.id}
-              className={session.id === activeSessionId ? "thread-item active" : "thread-item"}
-              onClick={() => onSelectSession(session.id)}
-            >
-              <span className="thread-title">{session.title}</span>
-              <span className={`thread-status status-${session.status}`}>{session.status}</span>
-            </button>
+            <div key={session.id} className="thread-item-wrap">
+              <button
+                type="button"
+                className={session.id === activeSessionId ? "thread-item active" : "thread-item"}
+                onClick={() => onSelectSession(session.id)}
+              >
+                <span className="thread-title">{session.title}</span>
+                <span className={`thread-status status-${session.status}`}>{session.status}</span>
+              </button>
+              <button
+                type="button"
+                className="thread-item-delete"
+                title="Delete session"
+                aria-label={`Delete session ${session.title}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setConfirmDialog({
+                    open: true,
+                    title: `Delete session "${session.title}"?`,
+                    message: "This cannot be undone.",
+                    onConfirm: () => {
+                      setConfirmDialog(null);
+                      void runBusyTask(async () => {
+                        await onDeleteSession(session.id);
+                        setNotice({ tone: "success", title: "Session deleted", detail: `Deleted ${session.title}.` });
+                      });
+                    },
+                  });
+                }}
+              >
+                <Trash2 style={{ width: 12, height: 12 }} />
+              </button>
+            </div>
           ))}
           {!chatSessions.length ? (
             <span className="thread-empty">No sessions yet</span>
@@ -205,6 +245,16 @@ export function SessionsSidebar({
           Import
         </button>
       </div>
+
+      {confirmDialog ? (
+        <ConfirmDialog
+          open={confirmDialog.open}
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={() => setConfirmDialog(null)}
+        />
+      ) : null}
     </aside>
   );
 }

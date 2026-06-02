@@ -7410,6 +7410,65 @@ textarea:focus,
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* ── Confirm dialog ── */
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.confirm-dialog-panel {
+  width: min(360px, 90vw);
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+
+.confirm-dialog-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.confirm-dialog-message {
+  margin: 0 0 24px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-dialog-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.confirm-dialog-btn:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
 /* ── Notification center ── */
 .notification-center {
   top: 16px;
@@ -7892,18 +7951,20 @@ textarea:focus,
 .session-item-delete {
   position: absolute;
   top: 6px;
-  right: 6px;
-  display: inline-flex;
+  right: 4px;
+  display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+  transition: opacity 0.12s ease, color 0.12s ease;
 }
 
 .session-item-wrap:hover .session-item-delete,
@@ -7912,8 +7973,44 @@ textarea:focus,
 }
 
 .session-item-delete:hover {
-  background: var(--bg-hover);
-  color: var(--danger, #e5484d);
+  color: var(--text-primary);
+}
+
+.thread-item-wrap {
+  position: relative;
+}
+
+.thread-item-wrap:hover .thread-item {
+  padding-right: 24px;
+}
+
+.thread-item-delete {
+  position: absolute;
+  top: 7px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+  z-index: 1;
+}
+
+.thread-item-wrap:hover .thread-item-delete,
+.thread-item-delete:focus-visible {
+  opacity: 1;
+}
+
+.thread-item-delete:hover {
+  color: var(--text-primary);
 }
 
 .session-item:hover {
@@ -8001,6 +8098,7 @@ textarea:focus,
   color: var(--text-secondary);
   text-align: left;
   box-shadow: none;
+  transition: padding-right 0.12s ease;
 }
 
 .thread-item:hover:not(:disabled),

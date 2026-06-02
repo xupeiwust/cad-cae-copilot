@@ -64,6 +64,7 @@ export function AppChrome({ app }: AppChromeProps) {
             activeSessionId={app.activeSessionId}
             onSelectSession={app.selectChatSession}
             onCreateSession={() => void app.createChatSession()}
+            onDeleteSession={(sessionId) => void app.deleteChatSession(sessionId)}
             stages={app.stages}
             runBusyTask={app.runBusyTask}
             refreshProjects={app.refreshProjects}

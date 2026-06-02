@@ -107,6 +107,17 @@ export function useChatSessions({ selectedId }: UseChatSessionsArgs) {
     setActiveSessionId(sessionId);
   }
 
+  async function deleteChatSession(sessionId: string) {
+    if (!selectedId) return;
+    await api.deleteChatSession(selectedId, sessionId);
+    setChatSessions((current) => current.filter((session) => session.id !== sessionId));
+    setActiveSessionId((current) => {
+      if (current !== sessionId) return current;
+      const remaining = chatSessions.filter((session) => session.id !== sessionId);
+      return remaining[0]?.id ?? null;
+    });
+  }
+
   return {
     chatSessions,
     activeSessionId,
@@ -114,6 +125,7 @@ export function useChatSessions({ selectedId }: UseChatSessionsArgs) {
     sessionsReady,
     createChatSession,
     selectChatSession,
+    deleteChatSession,
     updateActiveSessionFromRun,
     handleLiveChatSessionChange,
     handleLiveChatSessionDelete,

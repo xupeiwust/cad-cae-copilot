@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 from .adapters import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
     DEFAULT_STEP_TIMEOUT_SECONDS,
+    AdapterResultError,
+    ProseResultError,
     _elapsed_ms,
     _first_line,
     capability_from_missing,
@@ -22,6 +24,21 @@ from .adapters import (
     run_probe_command,
 )
 from .schema import AdapterInvocationResult, LocalAgentCapability
+
+# Interactive demo usage needs a tight ceiling: a non-interactive claude-code
+# step that runs for many minutes is unusable.  Configurable via env.
+DEFAULT_CLAUDE_TIMEOUT_SECONDS = 180
+
+
+def _claude_timeout_default() -> int:
+    raw = os.environ.get("AIENG_CLAUDE_CODE_TIMEOUT_SECONDS")
+    if not raw:
+        return DEFAULT_CLAUDE_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_CLAUDE_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_CLAUDE_TIMEOUT_SECONDS
 
 
 def _resolve_claude_exe(command: str) -> str | None:
@@ -113,6 +130,8 @@ class ClaudeCodeAdapter:
         # tools; a comma-separated list (e.g. "Read,Edit,Grep") enables only those.
         # Default allows most common tools except Bash to avoid arbitrary shell execution.
         self.tools = os.environ.get("AIENG_CLAUDE_CODE_TOOLS", "Read,Edit,Grep,Glob,LS,Search")
+        # Hard ceiling for a single non-interactive step (interactive demo usage).
+        self.timeout_seconds = _claude_timeout_default()
 
     @staticmethod
     def _claude_session_id(session_id: str | None) -> str:
@@ -203,6 +222,10 @@ class ClaudeCodeAdapter:
         step_index: int = 0,
     ) -> AdapterInvocationResult:
         start = time.perf_counter()
+        # Clamp to the adapter ceiling so a caller's large global step timeout
+        # (e.g. the engine's 1800s default) cannot leave a demo run hanging for
+        # many minutes.  An explicitly-smaller caller value still wins.
+        timeout_seconds = min(timeout_seconds, self.timeout_seconds)
         if on_progress is not None:
             on_progress(progress_event(self.adapter_id, "started", "Starting Claude Code CLI in non-interactive JSON mode."))
         command_path = _resolve_claude_exe(self.command)
@@ -270,13 +293,14 @@ class ClaudeCodeAdapter:
                 ))
             result = _run_claude_step(cmd, prompt, timeout_seconds)
         except subprocess.TimeoutExpired as exc:
+            msg = f"Claude Code timed out before producing a structured action (after {timeout_seconds}s)."
             if on_progress is not None:
-                on_progress(progress_event(self.adapter_id, "timeout", f"Claude Code step timed out after {timeout_seconds}s.", step_index=step_index))
+                on_progress(progress_event(self.adapter_id, "timeout", msg, step_index=step_index))
             return AdapterInvocationResult(
                 status="timeout",
                 raw_output=exc.stdout or "",
                 stderr=exc.stderr or "",
-                diagnostic=f"Claude Code step timed out after {timeout_seconds}s.",
+                diagnostic=msg,
                 duration_ms=_elapsed_ms(start),
             )
         except OSError as exc:
@@ -297,13 +321,14 @@ class ClaudeCodeAdapter:
             try:
                 result = _run_claude_step(cmd, prompt, timeout_seconds)
             except subprocess.TimeoutExpired as exc:
+                msg = f"Claude Code timed out before producing a structured action (after {timeout_seconds}s)."
                 if on_progress is not None:
-                    on_progress(progress_event(self.adapter_id, "timeout", f"Claude Code step timed out after {timeout_seconds}s.", step_index=step_index))
+                    on_progress(progress_event(self.adapter_id, "timeout", msg, step_index=step_index))
                 return AdapterInvocationResult(
                     status="timeout",
                     raw_output=exc.stdout or "",
                     stderr=exc.stderr or "",
-                    diagnostic=f"Claude Code step timed out after {timeout_seconds}s.",
+                    diagnostic=msg,
                     duration_ms=_elapsed_ms(start),
                 )
             except OSError as exc:
@@ -345,6 +370,27 @@ class ClaudeCodeAdapter:
                     step_index=step_index,
                 ))
             action = parse_action_json(result.stdout)
+        except (ProseResultError, AdapterResultError) as exc:
+            # Claude returned prose (or a failed/errored wrapper) instead of a
+            # structured action.  Fail fast and clearly with a non-empty message
+            # — do NOT fabricate a success/final action.
+            headline = str(exc)
+            diag = (
+                f"{headline}\n"
+                f"session_id={effective_session_id} step={step_index}\n"
+                f"stderr: {result.stderr[:800]!r}\n"
+                f"stdout_preview: {result.stdout[:800]!r}"
+            )
+            logger.warning("claude returned non-structured output: %s", diag)
+            if on_progress is not None:
+                on_progress(progress_event(self.adapter_id, "error", headline, step_index=step_index))
+            return AdapterInvocationResult(
+                status="error",
+                raw_output=result.stdout,
+                stderr=result.stderr,
+                diagnostic=diag,
+                duration_ms=_elapsed_ms(start),
+            )
         except Exception as exc:
             diag = (
                 f"Claude Code returned invalid action JSON: {exc}\n"

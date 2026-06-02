@@ -147,7 +147,8 @@ def test_action_prompt_compacts_cad_critique_observation() -> None:
     assert "hole edge distance too small" in prompt
     assert "finding_count" in prompt
     assert "finding 19" not in prompt
-    assert len(prompt) < 9300
+    # Budget includes the fixed OPERATING_RULES (incl. the output-contract rule).
+    assert len(prompt) < 9800
 
 
 def test_action_prompt_compacts_cad_build_error_for_repair() -> None:

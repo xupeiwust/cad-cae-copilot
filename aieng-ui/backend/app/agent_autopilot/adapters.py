@@ -101,6 +101,104 @@ def capability_from_missing(adapter_id: str, label: str, command: str, duration_
     )
 
 
+class AdapterResultError(ValueError):
+    """The CLI wrapper reported a failed/errored result (is_error / failure subtype)."""
+
+
+class ProseResultError(ValueError):
+    """The CLI returned prose (or otherwise non-structured) text instead of an action."""
+
+
+PROSE_RESULT_MESSAGE = (
+    "Claude Code returned prose instead of a structured action. No CAD tool was executed."
+)
+
+
+def _looks_like_cli_wrapper(payload: Any) -> bool:
+    """Detect the Claude CLI result wrapper envelope.
+
+    The CLI (``--output-format json``) wraps the model output in an envelope like
+    ``{"type": "result", "subtype": "success", "is_error": false, "result": "..."}``
+    where the actual model output lives in the ``result`` field (a string or, for
+    ``--json-schema`` runs, a structured object).  We must not validate this
+    envelope directly as an AutopilotAgentAction.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("type") == "result":
+        return True
+    if "is_error" in payload and ("result" in payload or "subtype" in payload):
+        return True
+    return False
+
+
+def _strip_code_fence(text: str) -> str:
+    inner = text.strip()
+    if not inner.startswith("```"):
+        return inner
+    # Drop the opening fence line (``` or ```json) and the trailing fence.
+    body = inner.split("\n", 1)[1] if "\n" in inner else ""
+    if body.rstrip().endswith("```"):
+        body = body.rstrip()[: -3]
+    return body.strip()
+
+
+def _parse_result_string(result: str) -> dict[str, Any]:
+    """Parse the wrapper's string ``result`` field into an action payload.
+
+    Raises ProseResultError when the text is prose rather than structured
+    action JSON.
+    """
+    inner = result.strip()
+    if not inner:
+        raise ProseResultError(PROSE_RESULT_MESSAGE)
+    candidate: Any = None
+    for text_candidate in (inner, _strip_code_fence(inner)):
+        try:
+            candidate = json.loads(text_candidate)
+            break
+        except json.JSONDecodeError:
+            candidate = None
+    if candidate is None:
+        # Last resort: extract the outermost {...} substring from prose.
+        start = inner.find("{")
+        end = inner.rfind("}")
+        if 0 <= start < end:
+            try:
+                candidate = json.loads(inner[start : end + 1])
+            except json.JSONDecodeError:
+                candidate = None
+    if isinstance(candidate, dict) and (
+        "action" in candidate or isinstance(candidate.get("structured_output"), dict)
+    ):
+        return candidate
+    raise ProseResultError(PROSE_RESULT_MESSAGE)
+
+
+def _unwrap_cli_wrapper(payload: Any) -> Any:
+    """Unwrap a Claude CLI result envelope to the inner action payload.
+
+    Raises AdapterResultError if the wrapper reports failure, and
+    ProseResultError if the inner result is prose rather than action JSON.
+    """
+    if not _looks_like_cli_wrapper(payload):
+        return payload
+    is_error = bool(payload.get("is_error"))
+    subtype = payload.get("subtype")
+    if is_error or (subtype is not None and subtype != "success"):
+        raise AdapterResultError(
+            f"Claude Code reported a failed result (is_error={is_error}, subtype={subtype!r})."
+        )
+    if isinstance(payload.get("structured_output"), dict):
+        return payload["structured_output"]
+    result = payload.get("result")
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        return _parse_result_string(result)
+    raise ProseResultError(PROSE_RESULT_MESSAGE)
+
+
 def parse_action_json(text: str) -> AutopilotAgentAction:
     stripped = text.strip()
     if not stripped:
@@ -113,8 +211,7 @@ def parse_action_json(text: str) -> AutopilotAgentAction:
         if start < 0 or end <= start:
             raise
         payload = json.loads(stripped[start : end + 1])
-    if isinstance(payload, dict) and "result" in payload and isinstance(payload["result"], dict):
-        payload = payload["result"]
+    payload = _unwrap_cli_wrapper(payload)
     if isinstance(payload, dict) and isinstance(payload.get("structured_output"), dict):
         payload = payload["structured_output"]
     if isinstance(payload, dict) and isinstance(payload.get("action"), dict):
@@ -252,6 +349,9 @@ def probe_local_agent_capabilities() -> list[dict[str, Any]]:
 __all__ = [
     "DEFAULT_PROBE_TIMEOUT_SECONDS",
     "DEFAULT_STEP_TIMEOUT_SECONDS",
+    "AdapterResultError",
+    "ProseResultError",
+    "PROSE_RESULT_MESSAGE",
     "FakeLocalAgentAdapter",
     "COMMON_PROGRESS_PHASES",
     "LocalAgentAdapter",

@@ -19,6 +19,8 @@ expectEqual(isTerminalAutopilotStatus("running"), false, "running is not termina
 expectEqual(isTerminalAutopilotStatus("awaiting_approval"), false, "awaiting_approval is not terminal");
 expectEqual(isTerminalAutopilotStatus("chatting"), false, "chatting is not terminal");
 expectEqual(isTerminalAutopilotStatus("blocked"), false, "blocked is not terminal");
+expectEqual(isTerminalAutopilotStatus("paused"), false, "paused is not terminal");
+expectEqual(isTerminalAutopilotStatus("some_future_status"), false, "unknown is not terminal");
 expectEqual(isTerminalAutopilotStatus(null), false, "null is not terminal");
 expectEqual(isTerminalAutopilotStatus(undefined), false, "undefined is not terminal");
 

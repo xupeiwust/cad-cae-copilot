@@ -33,7 +33,15 @@ expectEqual(
   "no selected project",
 );
 expectEqual(isTerminalAutopilotRun({ status: "completed" } as never), true, "completed terminal");
+expectEqual(isTerminalAutopilotRun({ status: "failed" } as never), true, "failed terminal");
+expectEqual(isTerminalAutopilotRun({ status: "cancelled" } as never), true, "cancelled terminal");
 expectEqual(isTerminalAutopilotRun({ status: "running" } as never), false, "running not terminal");
+expectEqual(isTerminalAutopilotRun({ status: "awaiting_approval" } as never), false, "awaiting_approval not terminal");
+expectEqual(isTerminalAutopilotRun({ status: "chatting" } as never), false, "chatting not terminal");
+expectEqual(isTerminalAutopilotRun({ status: "blocked" } as never), false, "blocked not terminal");
+expectEqual(isTerminalAutopilotRun({ status: "some_future_status" } as never), false, "unknown not terminal");
+expectEqual(isTerminalAutopilotRun(null), false, "null run not terminal");
+expectEqual(isTerminalAutopilotRun(undefined), false, "undefined run not terminal");
 
 function expectEqual(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) {

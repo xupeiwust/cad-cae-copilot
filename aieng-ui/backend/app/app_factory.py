@@ -315,7 +315,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         })
 
     def _run_session_status(status: str) -> str:
-        if status in {"running", "awaiting_approval", "chatting"}:
+        # "blocked" means the run is waiting on the user (ask_user / pause), not
+        # finished — keep the session active so the UI restores the run + card.
+        if status in {"running", "awaiting_approval", "chatting", "blocked"}:
             return "running"
         if status in {"completed", "failed", "cancelled"}:
             return status

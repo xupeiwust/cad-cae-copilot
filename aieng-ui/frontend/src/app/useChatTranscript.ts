@@ -16,7 +16,7 @@ import {
 } from "./chatStateUtils";
 import { runtimeRunChatEntry } from "./runtimeRunChat";
 
-const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
+const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting", "blocked"]);
 
 type UseChatTranscriptArgs = {
   selectedId: string | null;

@@ -6,6 +6,7 @@ import type { ContextSummary } from "../../api";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
 import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
 import type { EngineeringContextSource } from "../../app/engineeringContextSource";
+import { isRunActivelyProcessing } from "../../app/agentActivityFallback";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
 import { ContextSummaryPanel } from "../agent/ContextSummaryPanel";
 import { AgentInputBox } from "../chat/AgentInputBox";
@@ -157,10 +158,22 @@ function currentActivityLine({
     };
   }
   if (activeAutopilotRun) {
+    const processing = isRunActivelyProcessing(activeAutopilotRun, nowMs);
+    if (activeAutopilotRun.status === "running" && !processing) {
+      // "running" but no recent update — the worker is gone (e.g. backend
+      // restart). Show a passive paused line, never an infinite spinner.
+      return {
+        title: "Run paused",
+        detail: "This run is no longer being processed. Send a message to continue, or start a new request.",
+        tone: "idle",
+        running: false,
+        elapsed: formatElapsed(activeAutopilotRun.created_at, nowMs),
+      };
+    }
     const activity = currentAutopilotActivity(activeAutopilotRun);
     return {
       ...activity,
-      running: activeAutopilotRun.status === "running",
+      running: processing,
       elapsed: formatElapsed(activeAutopilotRun.created_at, nowMs),
     };
   }
@@ -268,17 +281,20 @@ export function ChatPanel({
   const wasNearBottomRef = useRef(true);
 
   const activeAutopilotRun = latestActiveAutopilotRun(chatHistory);
+  const agentProcessing = isRunActivelyProcessing(activeAutopilotRun, nowMs);
   const transcriptItems = useMemo(
     () => chatHistoryToTranscriptItems(chatHistory, agentEvents).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.sourceId.localeCompare(b.sourceId)),
     [agentEvents, chatHistory],
   );
 
   useEffect(() => {
-    if (!activeAutopilotRun) return;
+    // Only tick the elapsed clock while a run is genuinely processing — never
+    // for a stale "running" run on load (that would also drive the spinner).
+    if (!agentProcessing) return;
     setNowMs(Date.now());
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [activeAutopilotRun]);
+  }, [agentProcessing]);
 
   useEffect(() => {
     const el = chatLogRef.current;
@@ -439,6 +455,7 @@ export function ChatPanel({
         llmReady={llmReady}
         message={message}
         activeAutopilotRun={activeAutopilotRun}
+        agentProcessing={agentProcessing}
         recentPickedFaces={recentPickedFaces}
         setSelectedChatConnectionId={setSelectedChatConnectionId}
         setApprovalMode={setApprovalMode}

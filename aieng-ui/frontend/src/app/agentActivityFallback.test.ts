@@ -1,4 +1,4 @@
-import { isTerminalAutopilotRun, nextStatusAfterStreamError, shouldPollActivityFallback } from "./agentActivityFallback";
+import { isRunActivelyProcessing, isTerminalAutopilotRun, nextStatusAfterStreamError, shouldPollActivityFallback } from "./agentActivityFallback";
 import { test } from "vitest";
 
 test("agent activity fallback", () => {
@@ -45,6 +45,23 @@ expectEqual(isTerminalAutopilotRun({ status: "blocked" } as never), false, "bloc
 expectEqual(isTerminalAutopilotRun({ status: "some_future_status" } as never), false, "unknown not terminal");
 expectEqual(isTerminalAutopilotRun(null), false, "null run not terminal");
 expectEqual(isTerminalAutopilotRun(undefined), false, "undefined run not terminal");
+
+// isRunActivelyProcessing: only a recently-updated "running" run drives the spinner/Stop.
+const now = Date.parse("2026-06-02T12:00:00.000Z");
+const recent = "2026-06-02T11:59:30.000Z"; // 30s ago
+const stale = "2026-06-02T11:00:00.000Z"; // 60min ago (worker gone, e.g. backend restart)
+const run = (status: string, updated: string) => ({ status, updated_at: updated, created_at: updated }) as never;
+expectEqual(isRunActivelyProcessing(null, now), false, "no run -> not processing (initial load)");
+expectEqual(isRunActivelyProcessing(undefined, now), false, "undefined run -> not processing");
+expectEqual(isRunActivelyProcessing(run("running", recent), now), true, "running + recent -> processing");
+expectEqual(isRunActivelyProcessing(run("running", stale), now), false, "running + stale -> NOT processing (no infinite spinner)");
+expectEqual(isRunActivelyProcessing(run("awaiting_approval", recent), now), false, "awaiting_approval active but not processing");
+expectEqual(isRunActivelyProcessing(run("blocked", recent), now), false, "blocked active but not processing");
+expectEqual(isRunActivelyProcessing(run("chatting", recent), now), false, "chatting not processing");
+expectEqual(isRunActivelyProcessing(run("completed", recent), now), false, "completed not processing");
+expectEqual(isRunActivelyProcessing(run("failed", recent), now), false, "failed not processing");
+expectEqual(isRunActivelyProcessing(run("cancelled", recent), now), false, "cancelled not processing");
+expectEqual(isRunActivelyProcessing(run("running", "not-a-date"), now), false, "invalid updated_at -> not processing");
 
 function expectEqual(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) {

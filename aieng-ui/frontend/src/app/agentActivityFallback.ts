@@ -30,3 +30,22 @@ export function isTerminalAutopilotRun(run: AutopilotRunState | null | undefined
   // waiting on the user. Shares the single source of truth in chatTranscript.
   return isTerminalAutopilotStatus(run?.status);
 }
+
+// A "running" run drives the processing spinner / composer Stop only while a
+// worker is plausibly still alive — i.e. it was updated recently. Grace exceeds
+// the max adapter step timeout (Claude Code: 180s) so a live run mid-step is not
+// misread as idle. A run left "running" with no recent update (e.g. the backend
+// restarted and abandoned the worker) is NOT actively processing, so on initial
+// load it shows a passive "paused" line instead of an infinite spinner.
+// awaiting_approval / blocked / chatting are active runs but are NOT processing.
+export const ACTIVELY_PROCESSING_GRACE_MS = 240_000;
+
+export function isRunActivelyProcessing(
+  run: AutopilotRunState | null | undefined,
+  nowMs: number,
+): boolean {
+  if (!run || run.status !== "running") return false;
+  const updatedMs = Date.parse(run.updated_at ?? run.created_at ?? "");
+  if (!Number.isFinite(updatedMs)) return false;
+  return nowMs - updatedMs <= ACTIVELY_PROCESSING_GRACE_MS;
+}

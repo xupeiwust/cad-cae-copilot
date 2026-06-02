@@ -15,6 +15,9 @@ type AgentInputBoxProps = {
   llmReady: boolean;
   message: string;
   activeAutopilotRun: AutopilotRunState | null;
+  /** True only while a run is genuinely processing (running + recently updated).
+   *  awaiting_approval / blocked / stale "running" are NOT processing. */
+  agentProcessing: boolean;
   recentPickedFaces: PickedFace[];
   setSelectedChatConnectionId(value: string): void;
   setApprovalMode(value: ApprovalMode): void;
@@ -33,6 +36,7 @@ export function AgentInputBox({
   llmReady,
   message,
   activeAutopilotRun,
+  agentProcessing,
   recentPickedFaces,
   setSelectedChatConnectionId,
   setApprovalMode,
@@ -184,7 +188,7 @@ export function AgentInputBox({
                 <SlidersHorizontal className="button-icon" />
               </button>
             </div>
-            {activeAutopilotRun && !message.trim() ? (
+            {activeAutopilotRun && agentProcessing && !message.trim() ? (
               <button
                 type="button"
                 className="chat-action-button chat-action-button-stop"

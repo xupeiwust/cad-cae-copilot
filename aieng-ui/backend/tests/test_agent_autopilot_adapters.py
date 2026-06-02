@@ -571,6 +571,10 @@ def test_claude_argv_can_opt_into_bare_for_diagnostics(monkeypatch) -> None:
     assert captured["cmd"][:3] == ["claude.exe", "-p", "--bare"]
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows env/PATH synthesis: uses os.pathsep/os.path.join with Windows paths, so claude_dir_in_PATH only holds on Windows.",
+)
 def test_claude_env_preserves_windows_profile_and_path(monkeypatch) -> None:
     monkeypatch.setenv("USERPROFILE", r"C:\Users\RL_Carla")
     monkeypatch.setenv("APPDATA", r"C:\Users\RL_Carla\AppData\Roaming")

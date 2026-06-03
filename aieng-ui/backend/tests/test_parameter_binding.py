@@ -16,6 +16,8 @@ from app.agent_autopilot.parameter_binding import (
     bind_parameter_slots,
     build_parameter_index,
     format_parameter_bindings,
+    parameter_scope,
+    summarize_parameter_index,
 )
 from app.agent_autopilot.intent_resolution import ParameterSlot, extract_parameter_slots
 from app.agent_autopilot.schema import AutopilotRunRequest
@@ -76,6 +78,34 @@ def test_build_parameter_index_flattens_and_tokenizes() -> None:
 @pytest.mark.parametrize("bad", [None, {}, {"features": "nope"}, {"features": [1, 2]}])
 def test_build_parameter_index_robust(bad) -> None:
     assert build_parameter_index(bad) == []
+
+
+def test_index_carries_scope() -> None:
+    index = build_parameter_index(_FEATURE_GRAPH)
+    wall = next(e for e in index if e["cad_parameter_name"] == "WALL_THICKNESS")
+    motor = next(e for e in index if e["cad_parameter_name"] == "MOTOR_POD_RADIUS")
+    # global_params → shared/global; a named_part → local (the safe edit).
+    assert wall["scope"] == "global"
+    assert wall["feature_type"] == "global_params"
+    assert motor["scope"] == "local"
+
+
+def test_parameter_scope_mapping() -> None:
+    assert parameter_scope("global_params") == "global"
+    assert parameter_scope("model_params") == "unscoped"
+    assert parameter_scope("named_part") == "local"
+    assert parameter_scope(None) == "local"
+
+
+def test_summarize_parameter_index() -> None:
+    index = build_parameter_index(_FEATURE_GRAPH)
+    summary = summarize_parameter_index(index)
+    assert summary["total"] == 3
+    # WALL_THICKNESS + FILLET_RADIUS are global; MOTOR_POD_RADIUS is local.
+    assert summary["by_scope"]["global"] == 2
+    assert summary["by_scope"]["local"] == 1
+    assert summary["by_scope"]["unscoped"] == 0
+    assert summarize_parameter_index(None) == {"total": 0, "by_scope": {"local": 0, "global": 0, "unscoped": 0}}
 
 
 # --------------------------------------------------------------------------- #
@@ -200,6 +230,35 @@ def test_engine_unverified_when_no_loader(tmp_path: Path) -> None:
     assert obs
     binding = obs[0].data["parameter_bindings"][0]
     assert binding["known"] is None
+
+
+def test_list_editable_parameters_tool_registered_and_empty(tmp_path: Path) -> None:
+    # The read-only explorer tool returns a well-formed empty listing for a project
+    # with no feature graph yet (no build123d needed for the glue + registration).
+    from fastapi.testclient import TestClient
+
+    from app.main import Settings, create_app, default_project, save_project
+
+    settings = Settings(
+        platform_root=tmp_path / "platform",
+        workspace_root=tmp_path / "workspace",
+        data_root=tmp_path / "data",
+        aieng_root=tmp_path / "workspace" / "aieng",
+        sample_step=tmp_path / "workspace" / "sample.step",
+    )
+    project = save_project(settings, default_project("param-explorer"))
+    client = TestClient(create_app(settings))
+
+    resp = client.post(
+        "/api/agent/invoke-tool",
+        json={"tool": "cad.list_editable_parameters", "input": {"project_id": project["id"]}},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["parameters"] == []
+    assert body["summary"] == {"total": 0, "by_scope": {"local": 0, "global": 0, "unscoped": 0}}
+    assert isinstance(body.get("message"), str) and body["message"]
 
 
 def test_engine_skips_for_non_modify(tmp_path: Path) -> None:

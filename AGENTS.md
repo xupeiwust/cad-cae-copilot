@@ -278,9 +278,21 @@ renders "Understood as `/modify`" (with source + confidence and per-slot binding
 pills: bound / out-of-range / ambiguous / unverified) or, for a low-confidence /
 ambiguous intent, an amber "confirming before acting" variant. Explicit
 slash-command runs record no `resolved_intent`, so they show no chip.
-- **Future work:** re-resolve follow-up / reply messages (currently the initial
-  intent is reused), and consume the LLM classifier's `targets` / `parameters`
-  beyond the deterministic slots.
+**Editable Parameter Explorer (discovery surface).** The "point" half of
+point-and-shoot: the editable-parameter index (`build_parameter_index` +
+`summarize_parameter_index` in
+[`parameter_binding.py`](aieng-ui/backend/app/agent_autopilot/parameter_binding.py),
+each entry now carrying a `scope` of `local` / `global` / `unscoped`) is exposed
+read-only via the `cad.list_editable_parameters` tool so the user and agent can
+see **what can be edited fast** before editing — and pick a precise
+`cad.edit_parameter` target. Same single source the `/modify` slot binding uses;
+`global` parameters are flagged as shared (edits ripple), `local` as the safe
+single-part edit. Backend only so far.
+- **Future work:** a frontend Editable Parameters panel (render the listing with
+  current values + inline edit through the approval-gated `cad.edit_parameter`),
+  re-resolve follow-up / reply messages (currently the initial intent is reused),
+  and consume the LLM classifier's `targets` / `parameters` beyond the
+  deterministic slots.
 
 **`@`-mentions (strict binding, v1).** The composer parses lightweight
 `@kind:value` mentions (`extractComposerMentions` in
@@ -778,6 +790,7 @@ fixture and load on flat interfaces.
 | `aieng.write_completeness_report` | What is missing before simulation |
 | `cae.prepare_solver_run` | Solver preflight — checks readiness, runs nothing |
 | `cad.get_source` | Accumulated build123d source + `{named_parts, has_base}` — call before an incremental edit |
+| `cad.list_editable_parameters` | List the parameters editable fast via `cad.edit_parameter` (the "point" of point-and-shoot): per-parameter `featureId`/`parameterName`/`cad_parameter_name`/current/min-max + `scope` (`local`/`global`/`unscoped`) + a summary. Answers "what can I change here?" |
 | `cad.critique` | Deterministic engineering audit (min wall, hole sizes, floating components) — call after building an engineering part |
 
 ### Geometry creation (requires approval — mutates package)

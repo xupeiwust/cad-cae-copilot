@@ -497,6 +497,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
+    "cad.list_editable_parameters": _project_id_schema(),
     "cad.get_named_part_bbox": {
         "type": "object",
         "required": ["project_id", "part_name"],

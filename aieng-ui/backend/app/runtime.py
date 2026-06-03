@@ -493,6 +493,15 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
         "cad.edit_parameter",
         "Apply a parametric edit to a CAD model feature (requires approval)",
     ),
+    (
+        [
+            "editable parameters", "list parameters", "what can i edit",
+            "which parameters", "what parameters", "editable dimensions",
+            "what can i change", "tunable parameters",
+        ],
+        "cad.list_editable_parameters",
+        "List the CAD parameters that can be edited fast via cad.edit_parameter (read-only)",
+    ),
 ]
 
 

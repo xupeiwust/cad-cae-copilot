@@ -6244,6 +6244,63 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         ),
     )
 
+    def _tool_cad_list_editable_parameters(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .agent_autopilot.parameter_binding import summarize_parameter_index
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        # Reuse the same package read the /modify slot binding uses (single source).
+        index = _load_project_feature_parameters(str(project_id))
+        if index is None:
+            return {
+                "status": "ok",
+                "project_id": project_id,
+                "parameters": [],
+                "summary": {"total": 0, "by_scope": {"local": 0, "global": 0, "unscoped": 0}},
+                "message": (
+                    "No editable-parameter index available — the project has no feature "
+                    "graph yet. Build CAD (cad.execute_build123d) with dimensions declared "
+                    "as UPPER_SNAKE_CASE constants to make them editable."
+                ),
+            }
+        # Drop the internal search_tokens; keep the user/agent-facing fields.
+        parameters = [{k: v for k, v in entry.items() if k != "search_tokens"} for entry in index]
+        summary = summarize_parameter_index(index)
+        message = (
+            f"{summary['total']} editable parameter(s): "
+            f"{summary['by_scope']['local']} local, {summary['by_scope']['global']} global "
+            f"(shared — edits ripple), {summary['by_scope']['unscoped']} unscoped."
+            if summary["total"]
+            else (
+                "No editable parameters found. Declare dimensions as UPPER_SNAKE_CASE "
+                "constants in the build123d source so cad.edit_parameter can target them."
+            )
+        )
+        return {
+            "status": "ok",
+            "project_id": project_id,
+            "parameters": parameters,
+            "summary": summary,
+            "message": message,
+        }
+
+    _rt.register_tool(
+        "cad.list_editable_parameters",
+        _tool_cad_list_editable_parameters,
+        input_schema=_schema("cad.list_editable_parameters"),
+        description=(
+            "Read-only: list the CAD parameters that can be edited fast and deterministically "
+            "via cad.edit_parameter (the 'point' half of point-and-shoot editing). Reads the "
+            "project's feature graph and returns, per parameter, its featureId / parameterName / "
+            "editable constant (cad_parameter_name) / current value / min-max range, plus a "
+            "`scope`: 'local' (one named part — the safe local edit), 'global' (a shared "
+            "constant — editing ripples across parts) or 'unscoped'. Use this to answer 'what "
+            "can I change here?' and to pick a precise cad.edit_parameter target before editing. "
+            "Does not modify the package and is never approval-gated."
+        ),
+    )
+
     def _tool_cad_critique(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
 

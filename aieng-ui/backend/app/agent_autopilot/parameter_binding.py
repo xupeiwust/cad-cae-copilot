@@ -38,14 +38,31 @@ def _tokens(text: Any) -> set[str]:
     return {t for t in _TOKEN_RE.findall(str(text or "").lower()) if t not in _PARAM_STOPTOKENS}
 
 
+# Feature-graph feature types → editing scope. A "global" parameter is shared and
+# edits ripple across parts (collateral risk — see cad.edit_parameter's
+# regression_diff); a "local" parameter belongs to one named part and is the safe,
+# local edit; "unscoped" constants matched no part and live in a generic bucket.
+_SCOPE_BY_FEATURE_TYPE = {
+    "global_params": "global",
+    "model_params": "unscoped",
+}
+
+
+def parameter_scope(feature_type: Any) -> str:
+    """Editing scope for a feature type: ``local`` / ``global`` / ``unscoped``."""
+    return _SCOPE_BY_FEATURE_TYPE.get(str(feature_type or ""), "local")
+
+
 def build_parameter_index(feature_graph: Any) -> list[dict[str, Any]]:
     """Flatten ``feature_graph.features[].parameters`` into a searchable index. Pure.
 
-    Each entry: ``{feature_id, feature_name, parameter_name, cad_parameter_name,
-    current_value, min_value, max_value, search_tokens}``. The search tokens union
-    the constant name (the strongest signal — e.g. ``WALL_THICKNESS`` →
-    ``{wall, thickness}``), the inferred parameter name, and the feature name.
-    Returns ``[]`` for a missing/malformed graph or one with no editable params.
+    Each entry: ``{feature_id, feature_name, feature_type, scope, parameter_name,
+    cad_parameter_name, current_value, min_value, max_value, search_tokens}``. The
+    search tokens union the constant name (the strongest signal — e.g.
+    ``WALL_THICKNESS`` → ``{wall, thickness}``), the inferred parameter name, and
+    the feature name. ``scope`` records whether editing is ``local`` (one part),
+    ``global`` (shared — edits ripple), or ``unscoped``. Returns ``[]`` for a
+    missing/malformed graph or one with no editable params.
     """
     entries: list[dict[str, Any]] = []
     if not isinstance(feature_graph, dict):
@@ -58,6 +75,7 @@ def build_parameter_index(feature_graph: Any) -> list[dict[str, Any]]:
             continue
         feature_id = feature.get("id") or feature.get("feature_id")
         feature_name = feature.get("name") or ""
+        feature_type = feature.get("type") or ""
         params = feature.get("parameters")
         if not isinstance(params, dict):
             continue
@@ -69,6 +87,8 @@ def build_parameter_index(feature_graph: Any) -> list[dict[str, Any]]:
             entries.append({
                 "feature_id": feature_id,
                 "feature_name": feature_name,
+                "feature_type": feature_type,
+                "scope": parameter_scope(feature_type),
                 "parameter_name": parameter_name,
                 "cad_parameter_name": cad_parameter_name,
                 "current_value": info.get("current_value"),
@@ -77,6 +97,20 @@ def build_parameter_index(feature_graph: Any) -> list[dict[str, Any]]:
                 "search_tokens": sorted(tokens),
             })
     return entries
+
+
+def summarize_parameter_index(index: Any) -> dict[str, Any]:
+    """Counts for an editable-parameter listing: total + per-scope. Pure."""
+    by_scope: dict[str, int] = {"local": 0, "global": 0, "unscoped": 0}
+    total = 0
+    for entry in index or []:
+        if not isinstance(entry, dict):
+            continue
+        total += 1
+        scope = entry.get("scope")
+        if scope in by_scope:
+            by_scope[scope] += 1
+    return {"total": total, "by_scope": by_scope}
 
 
 def _score(slot_tokens: set[str], entry_tokens: set[str]) -> float:

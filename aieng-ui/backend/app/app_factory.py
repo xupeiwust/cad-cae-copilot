@@ -584,7 +584,14 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
     def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
         from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
+        from .agent_autopilot.intent_resolution import build_llm_intent_classifier
 
+        # Natural-language intent classifier (LLM-backed). Degrades to the
+        # deterministic keyword heuristic when no provider/API key is configured,
+        # and is skipped entirely for fake/replay runs inside the engine.
+        intent_classifier = build_llm_intent_classifier(
+            agent_engine._build_provider, active_settings
+        )
         return AutopilotEngine(
             store=_autopilot_store(),
             runtime_tools=_rt.list_tools_for_mcp(),
@@ -594,6 +601,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             on_event=_publish_agent_event,
             approval_mode=_session_approval_mode(request.session_id),
             simulation_setup_loader=_load_project_simulation_setup,
+            intent_classifier=intent_classifier,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,

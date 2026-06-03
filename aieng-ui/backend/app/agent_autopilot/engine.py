@@ -7,6 +7,13 @@ from typing import Any, Callable
 
 from .adapters import DEFAULT_STEP_TIMEOUT_SECONDS, LocalAgentAdapter, adapter_registry
 from .context_memory import ContextMemoryManager
+from .intent_resolution import (
+    INTENT_REGISTRY,
+    IntentResolution,
+    commands_where,
+    intent_labels,
+    resolve_intent,
+)
 from .mention_binding import build_mention_bindings, mention_status_word
 from .policy import evaluate_tool_call
 from .simulation_readiness import build_simulation_readiness_report, load_simulation_setup
@@ -112,33 +119,11 @@ GEOMETRY_MUTATION_REPAIR_INSTRUCTION = (
     "Select a CAD mutation tool or ask the user for clarification."
 )
 
-_GEOMETRY_CREATE_TERMS = (
-    "创建",
-    "生成",
-    "画",
-    "建模",
-    "create",
-    "generate",
-    "build",
-    "draw",
-)
-
-_GEOMETRY_MODIFY_TERMS = (
-    "修改",
-    "改成",
-    "加",
-    "删除",
-    "替换",
-    "变成",
-    "优化外形",
-    "modify",
-    "change",
-    "add",
-    "remove",
-    "replace",
-    "make it",
-    "turn into",
-)
+# Free-text trigger terms for the geometry-mutation guard. Sourced from the
+# intent registry so the guard and the natural-language intent resolver share one
+# vocabulary (see intent_resolution.INTENT_REGISTRY).
+_GEOMETRY_CREATE_TERMS = INTENT_REGISTRY["build"].trigger_terms
+_GEOMETRY_MODIFY_TERMS = INTENT_REGISTRY["modify"].trigger_terms
 
 SIMULATION_PLAN_STEPS = [
     ("observe_context", "Inspect CAD/CAE context", "observe"),
@@ -235,30 +220,38 @@ SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION = (
     "clearly state that the solver has not run and no results are available."
 )
 
-# Commands whose run must not complete on a bare `final` until a CAD mutation
-# tool has succeeded (or the agent asks for clarification / reports a blocker).
-_MUTATION_REQUIRED_COMMANDS = frozenset({"build", "modify"})
+# Natural-language intent resolution: when no explicit slash command is present
+# the engine resolves the message into a routed command so the same routing +
+# guards apply (see intent_resolution.resolve_intent). When the inferred intent
+# is actionable but low-confidence/ambiguous, this clarification bias is injected
+# instead of routing on a guess — "ask before guessing".
+INTENT_CLARIFY_INSTRUCTION = (
+    "The user's request appears to be a {intent_label} request, but the intent is "
+    "ambiguous or low-confidence (no explicit /command was used). Before doing any "
+    "geometry edit or simulation, briefly confirm with the user what they want "
+    "(ask_user) — do not guess between creating, modifying, critiquing, explaining, "
+    "or simulating. A read-only inspection to inform the question is fine."
+)
 
-# Read-only commands: the geometry-mutation guard is suppressed so a `final` is
-# allowed after a read-only inspection (or a clear "nothing to explain/critique"
-# answer) even if the free text contains words like "add"/"change".
-_READ_ONLY_COMMANDS = frozenset({"critique", "explain"})
-
-# Simulation-planning commands: not geometry mutations, so the CAD-mutation guard
-# is suppressed (a simulation PLAN final must not be blocked for lack of a CAD
-# edit, and free text like "add a 500N load" must not trip the create/modify
-# heuristic). These are NOT read-only (they may patch CAE setup) and they never
-# auto-run the solver or bypass approval.
-_SIMULATION_COMMANDS = frozenset({"simulate"})
+# Routed-command semantics are owned by intent_resolution.INTENT_REGISTRY (the
+# single source of truth). These views are derived from it so adding a new intent
+# is a one-line registry edit rather than editing several frozensets here.
+#
+# _MUTATION_REQUIRED_COMMANDS — must not complete on a bare `final` until a CAD
+#   mutation tool has succeeded (build, modify).
+# _READ_ONLY_COMMANDS — the geometry-mutation guard is suppressed so a `final` is
+#   allowed after a read-only inspection even if the text says "add" (critique,
+#   explain).
+# _SIMULATION_COMMANDS — not geometry mutations; the CAD-mutation guard is
+#   suppressed (a simulation PLAN final must not be blocked for lack of a CAD edit,
+#   and "add a 500N load" must not trip the create/modify heuristic). NOT read-only
+#   (may patch CAE setup); never auto-runs the solver or bypasses approval.
+_MUTATION_REQUIRED_COMMANDS = commands_where(lambda s: s.mutation_required)
+_READ_ONLY_COMMANDS = commands_where(lambda s: s.read_only)
+_SIMULATION_COMMANDS = commands_where(lambda s: s.simulation)
 
 # Routed command → forced semantic intent label.
-_COMMAND_INTENT_LABELS = {
-    "critique": "critique_geometry",
-    "build": "create_geometry",
-    "modify": "modify_geometry",
-    "explain": "explain_project",
-    "simulate": "plan_simulation",
-}
+_COMMAND_INTENT_LABELS = intent_labels()
 
 
 def get_composer_command(obj: Any) -> str | None:
@@ -582,6 +575,7 @@ class AutopilotEngine:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         approval_mode: str = "balanced",
         simulation_setup_loader: Callable[[str], dict[str, Any] | None] | None = None,
+        intent_classifier: Callable[[str, dict[str, Any]], IntentResolution | None] | None = None,
     ) -> None:
         self.store = store
         self.runtime_tools = runtime_tools
@@ -594,6 +588,11 @@ class AutopilotEngine:
         # ({"data", "setup_source", "setup_source_kind"}) or None. Used by
         # /simulate readiness to read live simulation/setup.* files.
         self.simulation_setup_loader = simulation_setup_loader
+        # Optional app-wired natural-language intent classifier (e.g. LLM-backed).
+        # When None, intent resolution falls back to the deterministic keyword
+        # heuristic. Skipped in fake/replay runs (request.fake_actions) so tests
+        # stay deterministic and never make a provider call.
+        self.intent_classifier = intent_classifier
         self.approval_mode = approval_mode if approval_mode in {"balanced", "strict", "manual"} else "balanced"
         self._system_layer = build_system_layer(
             runtime_tools=self.runtime_tools,
@@ -645,6 +644,7 @@ class AutopilotEngine:
                 },
             )
         )
+        self._resolve_natural_language_intent(state, request)
         self._inject_command_context(state)
         self._inject_mention_context(state)
         self._inject_simulation_readiness(state)
@@ -676,6 +676,88 @@ class AutopilotEngine:
 
     def _new_plan(self, request: AutopilotRunRequest, *, run_id: str) -> AgentPlan:
         return create_default_agent_plan(request.message, plan_id=f"{run_id}-plan")
+
+    def _resolve_natural_language_intent(
+        self, state: AutopilotRunState, request: AutopilotRunRequest
+    ) -> None:
+        """Infer a routed command from a plain-language message ("point and shoot").
+
+        No-op when an explicit slash command is already present (it always wins).
+        Otherwise the message is resolved (LLM classifier if app-wired and not a
+        fake/replay run, else the deterministic keyword heuristic). The resolution
+        is always recorded on ``state.composer_intent["resolved_intent"]`` for
+        transparency. Then:
+
+        * No actionable command → leave the run as free natural language (unchanged
+          behavior).
+        * Confident command → write it onto ``state.composer_intent["command"]`` so
+          the existing ``_inject_command_context`` routing + guards apply verbatim.
+        * Actionable but ambiguous/low-confidence → inject a clarification bias
+          (toward ``ask_user``) and do NOT force a command — never route on a guess.
+
+        The resolver never relaxes a guard; it only proposes a command. Robust to a
+        missing/misbehaving classifier (resolve_intent swallows classifier errors).
+        """
+        if get_composer_command(state) is not None:
+            return  # explicit command wins; nothing to infer
+
+        classifier = None if request.fake_actions else self.intent_classifier
+        project_summary = (
+            self.agent_context.get("project_summary")
+            if isinstance(self.agent_context, dict)
+            else None
+        )
+        resolution = resolve_intent(
+            state.message,
+            existing_command=None,
+            classifier=classifier,
+            context={
+                "llm_config": dict(request.llm_config or {}),
+                "project_summary": project_summary,
+            },
+        )
+
+        if resolution.command is None:
+            # No actionable intent — leave composer_intent untouched (backward
+            # compatible: a plain message stays a plain message) and proceed as
+            # free natural language.
+            return
+
+        # An actionable intent was inferred — record it for transparency (covers
+        # both the confident-route and the clarification cases).
+        intent = dict(state.composer_intent or {})
+        intent["resolved_intent"] = resolution.to_metadata()
+        state.composer_intent = intent
+
+        if resolution.needs_clarification:
+            state.observations.append(
+                _observation(
+                    "context",
+                    INTENT_CLARIFY_INSTRUCTION.format(
+                        intent_label=resolution.intent_type or resolution.command
+                    ),
+                    {
+                        "intent_resolution": resolution.to_metadata(),
+                        "needs_clarification": True,
+                    },
+                )
+            )
+            return
+
+        # Confident: adopt the inferred command so the existing routing applies.
+        intent["command"] = resolution.command
+        intent["intent_source"] = resolution.source
+        state.composer_intent = intent
+        state.observations.append(
+            _observation(
+                "context",
+                f"No explicit /command was used; resolved natural-language intent to "
+                f"/{resolution.command} ({resolution.source}, confidence "
+                f"{resolution.confidence:.2f}). Routing applies as if the user had typed "
+                f"/{resolution.command}.",
+                {"intent_resolution": resolution.to_metadata()},
+            )
+        )
 
     def _inject_command_context(self, state: AutopilotRunState) -> None:
         """Add a routing instruction observation for routed slash commands.

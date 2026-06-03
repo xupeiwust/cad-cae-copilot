@@ -244,3 +244,109 @@ def test_no_command_natural_language_unchanged(tmp_path: Path) -> None:
     assert state.status == "awaiting_approval"
     guard = [o for o in state.observations if o.summary == GEOMETRY_MUTATION_REPAIR_INSTRUCTION]
     assert guard and guard[-1].data["intent"] == "create_geometry"
+
+
+# --- v1.5: deterministic readiness report injection -------------------------
+
+
+def _readiness_obs(state):
+    return next(
+        (o for o in state.observations if isinstance(o.data, dict) and o.data.get("simulation_readiness")),
+        None,
+    )
+
+
+def test_simulate_injects_readiness_report_when_setup_incomplete(tmp_path: Path) -> None:
+    # No CAE context → setup not_found, required inputs missing, agent must ask.
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate the bracket",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate the bracket"),
+            fake_actions=[
+                {"action": {"type": "ask_user", "question": "Which material/loads/constraints?"}},
+            ],
+        )
+    )
+    obs = _readiness_obs(state)
+    assert obs is not None
+    report = obs.data["simulation_readiness"]
+    assert report["setup_source"] == "not_found"
+    assert set(report["missing_required_inputs"]) == {"material", "loads", "constraints"}
+    assert report["solver_executed"] is False
+    assert "Missing REQUIRED inputs" in obs.summary
+    # Asking the user is allowed and not blocked by the mutation guard.
+    assert state.status == "blocked"
+    assert not any(s == GEOMETRY_MUTATION_REPAIR_INSTRUCTION for s in _summaries(state))
+
+
+def test_simulate_readiness_complete_setup_allows_plan_final(tmp_path: Path) -> None:
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={
+            "cae": {
+                "present": True,
+                "materials": ["steel"],
+                "loads": [{"type": "force"}],
+                "boundary_conditions": [{"type": "fixed"}],
+            }
+        },
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate the bracket under load",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate the bracket under load"),
+            fake_actions=[
+                {"action": {"type": "final", "message": "Plan ready; solver not run."}, "done": True},
+            ],
+        )
+    )
+    obs = _readiness_obs(state)
+    assert obs is not None
+    report = obs.data["simulation_readiness"]
+    assert report["setup_source"] == "cae_setup"
+    assert report["missing_required_inputs"] == []
+    assert report["ready_for_solver"] is True
+    assert report["solver_executed"] is False
+    assert state.status == "completed"
+
+
+def test_simulate_readiness_marks_unknown_mentioned_part(tmp_path: Path) -> None:
+    part = {"kind": "part", "raw": "@part:ghost", "value": "ghost"}
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cad": {"named_parts": ["bracket", "rib"]}},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate @part:ghost",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate @part:ghost", [part]),
+            fake_actions=[
+                {"action": {"type": "ask_user", "question": "That part does not exist — which part?"}},
+            ],
+        )
+    )
+    report = _readiness_obs(state).data["simulation_readiness"]
+    targets = {t["value"]: t["known"] for t in report["targets"]["parts"]}
+    assert targets["ghost"] is False  # not in known named_parts
+
+
+def test_non_simulate_command_gets_no_readiness_report(tmp_path: Path) -> None:
+    engine = AutopilotEngine(store=AutopilotStore(tmp_path / "runs"), runtime_tools=RUNTIME_TOOLS)
+    state = engine.start(
+        AutopilotRunRequest(
+            message="explain the model",
+            project_id="p1",
+            composer_intent=_intent("explain", "explain the model"),
+            fake_actions=[{"action": {"type": "final", "message": "It is a bracket."}, "done": True}],
+        )
+    )
+    assert _readiness_obs(state) is None

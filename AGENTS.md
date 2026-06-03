@@ -155,22 +155,36 @@ The raw `/command` text is always preserved in the stored user message.
   If no CAD/project/artifact exists, `ask_user` or a clear blocking `final` is
   acceptable. It does **not** force any specific tool, change CAD execution, or
   bypass approval.
-- **`/simulate` (routed, simulation planning / readiness — v1).** When
+- **`/simulate` (routed, simulation planning / readiness — v1.5).** When
   `AutopilotRunState.composer_intent.command == "simulate"`, the engine injects a
   simulation planning instruction (`intent_type == "plan_simulation"`) biasing the
   agent toward CAE setup/preflight + read-only inspection tools
   (`aieng.agent_context` / `aieng.inspect_package` / `cae.prepare_solver_run` /
   `aieng.write_completeness_report`) and **suppresses the geometry-mutation
   guard** (a simulation *plan* `final` is not a CAD edit, and free text like
-  "add a 500N load" must not trip the create/modify heuristic). The agent is told
-  to check the essential inputs — **analysis type, material, loads,
-  constraints/supports, mesh, solver** — and `ask_user` when any are
-  missing/ambiguous, or otherwise emit an ordered plan (setup → mesh → preflight
-  → deck → solver → post-processing) that **explicitly states the solver has NOT
-  run**. v1 does **not** auto-run the solver (`cae.run_solver` stays
-  approval-gated and out of scope), does **not** modify CAD, and does **not**
-  bypass approval. `/simulate` is **not** read-only (it may patch CAE setup), so
-  it carries `simulation_planning: true` rather than `read_only: true`.
+  "add a 500N load" must not trip the create/modify heuristic).
+  - **Deterministic readiness report (v1.5).** Alongside the prompt bias the
+    engine injects a structured, deterministic readiness report built from the
+    project's CAE context block by
+    [`simulation_readiness.py`](aieng-ui/backend/app/agent_autopilot/simulation_readiness.py)
+    (`build_simulation_readiness_report`). It classifies the six core inputs —
+    **analysis_type, material, loads, constraints, mesh, solver** — as
+    `present` / `missing` / `defaultable` / `unknown`. `material`, `loads`, and
+    `constraints` are **required** (a `missing` one populates
+    `missing_required_inputs`); `analysis_type`, `mesh`, and `solver` are
+    **defaultable** for planning unless the setup explicitly marks them
+    unavailable (`unknown`). When no CAE setup artifact exists the report is
+    `setup_source: "not_found"` with the required inputs `missing`. `@part` /
+    `@artifact` mentions are echoed as targets with `known` true/false/`null`
+    (unverified). The injected summary tells the agent to **ask the user** for any
+    missing required inputs and to **never claim the solver ran**
+    (`solver_executed` is always `false`).
+  - v1.5 does **not** auto-run the solver (`cae.run_solver` stays approval-gated
+    and out of scope), does **not** modify CAD, and does **not** bypass approval.
+    `/simulate` is **not** read-only (it may patch CAE setup), so it carries
+    `simulation_planning: true` rather than `read_only: true`. Deeper readiness
+    (validating against the live setup artifacts rather than the context block,
+    and an approved end-to-end solver path) remains future work.
 
 Command-specific routing **never bypasses approval** — `cad.execute_build123d`,
 `cae.run_solver`, and the other gated tools still pause for approval as usual.

@@ -8,6 +8,7 @@ from typing import Any, Callable
 from .adapters import DEFAULT_STEP_TIMEOUT_SECONDS, LocalAgentAdapter, adapter_registry
 from .context_memory import ContextMemoryManager
 from .policy import evaluate_tool_call
+from .simulation_readiness import build_simulation_readiness_report
 from .prompts import build_system_layer, OPERATING_RULES
 from .schema import (
     AgentPlan,
@@ -594,6 +595,7 @@ class AutopilotEngine:
         )
         self._inject_command_context(state)
         self._inject_mention_context(state)
+        self._inject_simulation_readiness(state)
         if not request.fake_actions:
             self._bootstrap_project_context(state)
         self._set_plan_step(state, "observe_context", "completed", summary="Initial run context is ready.")
@@ -686,6 +688,60 @@ class AutopilotEngine:
                 },
             )
         )
+
+    def _inject_simulation_readiness(self, state: AutopilotRunState) -> None:
+        """Inject a deterministic simulation-readiness report for /simulate runs.
+
+        v1.5: reads the already-computed CAE context block (no solver run, no CAD
+        change, approval unchanged) and reports present/missing/defaultable/
+        unknown status for the six core inputs. When required inputs are missing
+        the summary instructs the agent to ask the user and not claim a solver
+        run. A no-op for non-/simulate runs. The observation persists in state, so
+        it survives continue/reply/follow-up rebuilds.
+        """
+        if not is_simulation_command(state):
+            return
+        cae = self.agent_context.get("cae") if isinstance(self.agent_context, dict) else None
+        report = build_simulation_readiness_report(
+            cae,
+            mentioned_parts=mentioned_parts(state),
+            mentioned_artifacts=mentioned_artifacts(state),
+            available_parts=self._context_named_parts(),
+            available_artifacts=self._context_artifact_names(),
+        )
+        state.observations.append(
+            _observation(
+                "context",
+                report["summary"],
+                {
+                    "composer_command": "simulate",
+                    "simulation_readiness": report,
+                    "missing_required_inputs": report["missing_required_inputs"],
+                    "setup_source": report["setup_source"],
+                    "solver_executed": report["solver_executed"],
+                },
+            )
+        )
+
+    def _context_named_parts(self) -> list[str] | None:
+        """Best-effort authoritative list of CAD part labels, or None if unknown."""
+        ctx = self.agent_context if isinstance(self.agent_context, dict) else {}
+        for path in (("cad", "named_parts"), ("project", "named_parts"), ("named_parts",)):
+            node: Any = ctx
+            for key in path:
+                node = node.get(key) if isinstance(node, dict) else None
+            if isinstance(node, list):
+                values = [str(item) for item in node if isinstance(item, str) and item.strip()]
+                return values
+        return None
+
+    def _context_artifact_names(self) -> list[str] | None:
+        """Best-effort authoritative list of artifact ids, or None if unknown."""
+        ctx = self.agent_context if isinstance(self.agent_context, dict) else {}
+        node = ctx.get("artifacts")
+        if isinstance(node, list):
+            return [str(item) for item in node if isinstance(item, str) and item.strip()]
+        return None
 
     def _set_plan_step(
         self,

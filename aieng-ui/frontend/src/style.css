@@ -1882,6 +1882,83 @@ input[type="file"] {
   font-size: 12px;
 }
 
+/* Post-edit regression-diff verdict line */
+.transcript-verify-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: 18px;
+  padding: 5px 10px;
+  border-left: 2px solid rgba(148, 163, 184, 0.3);
+  border-radius: 0 6px 6px 0;
+  background: rgba(148, 163, 184, 0.04);
+  color: #b9c9e3;
+  font-size: 12px;
+}
+
+.transcript-verify-ok {
+  border-left-color: rgba(52, 211, 153, 0.6);
+}
+
+.transcript-verify-ok .transcript-status-icon {
+  color: #34d399;
+}
+
+.transcript-verify-warn {
+  border-left-color: rgba(251, 191, 36, 0.65);
+  background: rgba(217, 164, 65, 0.07);
+}
+
+.transcript-verify-warn .transcript-status-icon {
+  color: #f5b945;
+}
+
+.transcript-verify-neutral .transcript-status-icon {
+  color: #94a3b8;
+}
+
+.transcript-verify-label {
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.transcript-verify-headline {
+  color: #9fb6d6;
+}
+
+.transcript-verify-parts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.verify-part {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  background: rgba(2, 6, 23, 0.24);
+  color: #b8f0d6;
+}
+
+.verify-part-collateral {
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fde68a;
+}
+
+.verify-part-added {
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #bfe3ff;
+}
+
+.verify-part-removed {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
 .tool-line code,
 .artifact-line code {
   padding: 1px 6px;

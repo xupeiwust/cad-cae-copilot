@@ -504,6 +504,15 @@ shouldn't have. Read its `verdict` before trusting the result:
 (For edits to a `Global Parameters` constant, collateral is not judged — shared
 dims are *meant* to move many parts.)
 
+The workbench **surfaces this verdict in the chat transcript** as a verification
+line right after the edit tool (the "see what happened" half of point-and-shoot):
+green for `clean`, amber for `collateral_change` / `topology_changed`, neutral for
+`identical`, with the changed parts (and collateral ones highlighted) shown as
+chips. Pure projection in
+[`editVerification.ts`](aieng-ui/frontend/src/app/editVerification.ts) →
+`runToTranscriptItems` emits a `verification`-kind item rendered by
+[`EditVerificationLine.tsx`](aieng-ui/frontend/src/components/chat/EditVerificationLine.tsx).
+
 **Part-level edits — `cad.replace_part` / `cad.remove_part` (the visible loop).**
 `append` only ADDS geometry; when you need to fix or drop ONE part of a
 character/product without resubmitting the whole script, use these:

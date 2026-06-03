@@ -6,13 +6,14 @@ import {
   resolvedIntentFromRun,
   type ResolvedIntentSummary,
 } from "./resolvedIntent";
+import { editVerificationFromObservation, type EditVerification } from "./editVerification";
 
 export type TranscriptStatus = "pending" | "running" | "done" | "failed" | "blocked" | "approval" | "queued" | "cancelled";
 
 type TranscriptBase = {
   id: string;
   sourceId: string;
-  kind: "message" | "tool" | "approval" | "ask_user" | "artifact" | "status" | "error" | "plan" | "intent";
+  kind: "message" | "tool" | "approval" | "ask_user" | "artifact" | "status" | "error" | "plan" | "intent" | "verification";
   runId?: string | null;
   sessionId?: string | null;
   projectId?: string | null;
@@ -103,6 +104,12 @@ export type TranscriptIntentLine = TranscriptBase & {
   intent: ResolvedIntentSummary;
 };
 
+/** Post-edit regression-diff verdict ("clean" / "collateral change" / …). */
+export type TranscriptVerificationLine = TranscriptBase & {
+  kind: "verification";
+  verification: EditVerification;
+};
+
 export type ChatTranscriptItem =
   | TranscriptUserMessage
   | TranscriptAgentMessage
@@ -113,7 +120,8 @@ export type ChatTranscriptItem =
   | TranscriptStatusLine
   | TranscriptErrorLine
   | TranscriptAgentPlanLine
-  | TranscriptIntentLine;
+  | TranscriptIntentLine
+  | TranscriptVerificationLine;
 
 export type AgentTranscriptEvent = {
   event_id?: string;
@@ -472,8 +480,21 @@ function observationToTranscriptItems(run: AutopilotRunState, obs: AutopilotObse
   if (obs.kind === "tool_result") {
     const artifact = outputToArtifactLine(base, obs.data, "done");
     const output = objectValue(obs.data?.output);
+    // Post-edit verification: surface the regression-diff verdict as its own line
+    // right after the edit tool (clean / collateral / no-op / topology changed).
+    const verification = editVerificationFromObservation(obs);
+    const verificationLine: ChatTranscriptItem | null = verification
+      ? {
+          ...base,
+          id: `${base.id}-verify`,
+          sourceId: `${sourceId}:verify`,
+          kind: "verification",
+          verification,
+        }
+      : null;
     return [
       { ...base, kind: "tool", status: "done", toolName: toolName || "tool", summary: skillDiagnosticSummary(output) || obs.summary },
+      ...(verificationLine ? [verificationLine] : []),
       ...(artifact ? [artifact] : []),
     ];
   }

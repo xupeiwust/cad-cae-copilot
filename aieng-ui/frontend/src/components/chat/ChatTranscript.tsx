@@ -7,6 +7,7 @@ import { PointerText } from "../PointerText";
 import { ApprovalLine } from "./ApprovalLine";
 import { AskUserLine } from "./AskUserLine";
 import { ArtifactLine } from "./ArtifactLine";
+import { EditVerificationLine } from "./EditVerificationLine";
 import { EventDetail } from "./EventDetail";
 import { IntentChip } from "./IntentChip";
 import { StreamingMessage } from "./StreamingMessage";
@@ -42,6 +43,7 @@ export function ChatTranscript({
       {items.map((item) => {
         if (item.kind === "message") return <TranscriptMessage key={item.id} item={item} />;
         if (item.kind === "intent") return <IntentChip key={item.id} item={item} />;
+        if (item.kind === "verification") return <EditVerificationLine key={item.id} item={item} />;
         if (item.kind === "plan") return <AgentPlanCard key={item.id} item={item} />;
         if (item.kind === "tool") return <ToolLine key={item.id} item={item} />;
         if (item.kind === "ask_user") {

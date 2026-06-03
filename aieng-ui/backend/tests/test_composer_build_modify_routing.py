@@ -104,7 +104,7 @@ def test_command_helpers_route_build_and_modify() -> None:
     assert is_mutation_required_command(critique) is False
 
     # Unrouted / unknown / natural language → no forced intent.
-    for command in ("explain", "simulate", "totally-unknown"):
+    for command in ("simulate", "totally-unknown"):
         obj = SimpleNamespace(composer_intent={"command": command})
         assert command_intent_label(obj) is None
         assert command_mutation_intent(obj) is None
@@ -297,13 +297,13 @@ def test_no_command_natural_language_uses_heuristic(tmp_path: Path) -> None:
 
 
 def test_unknown_command_is_backward_compatible(tmp_path: Path) -> None:
-    # An unrouted command (e.g. /explain) with neutral text behaves like plain
-    # natural language: no forced mutation requirement, final allowed.
+    # An unrouted/unknown command with neutral text behaves like plain natural
+    # language: no forced mutation requirement, final allowed.
     state = _engine(tmp_path).start(
         AutopilotRunRequest(
             message="what parts does this model have?",
             project_id="p1",
-            composer_intent=_intent("explain", "what parts does this model have?"),
+            composer_intent=_intent("totally-unknown", "what parts does this model have?"),
             fake_actions=[
                 {"action": {"type": "final", "message": "It has a body and arms."}, "done": True},
             ],

@@ -149,7 +149,8 @@ SIMULATION_PLAN_STEPS = [
 #   /build    → create_geometry, mutation-required
 #   /modify   → modify_geometry, mutation-required
 #   /critique → critique_geometry, read-only (mutation guard suppressed)
-# /explain and /simulate are parsed and stored as metadata but NOT routed yet.
+#   /explain  → explain_project,   read-only (mutation guard suppressed)
+# /simulate is parsed and stored as metadata but NOT routed yet.
 
 CRITIQUE_COMMAND_INSTRUCTION = (
     "The user explicitly invoked /critique. Treat this as a read-only CAD "
@@ -174,15 +175,31 @@ MODIFY_COMMAND_INSTRUCTION = (
     "report the blocker clearly — do not claim a false success."
 )
 
+EXPLAIN_COMMAND_INSTRUCTION = (
+    "The user explicitly invoked /explain. Treat this as a read-only explanation "
+    "request. Explain the current project/model/artifacts/parts using available "
+    "context and source/topology information — prefer read-only tools (e.g. "
+    "aieng.agent_context, aieng.inspect_package, cad.get_source, "
+    "aieng.agent_readme). Do not modify geometry unless the user explicitly asks "
+    "for edits. If no CAD/project/artifact is available, say so clearly or ask "
+    "the user — do not invent a mutation."
+)
+
 # Commands whose run must not complete on a bare `final` until a CAD mutation
 # tool has succeeded (or the agent asks for clarification / reports a blocker).
 _MUTATION_REQUIRED_COMMANDS = frozenset({"build", "modify"})
+
+# Read-only commands: the geometry-mutation guard is suppressed so a `final` is
+# allowed after a read-only inspection (or a clear "nothing to explain/critique"
+# answer) even if the free text contains words like "add"/"change".
+_READ_ONLY_COMMANDS = frozenset({"critique", "explain"})
 
 # Routed command → forced semantic intent label.
 _COMMAND_INTENT_LABELS = {
     "critique": "critique_geometry",
     "build": "create_geometry",
     "modify": "modify_geometry",
+    "explain": "explain_project",
 }
 
 
@@ -209,12 +226,23 @@ def is_mutation_required_command(obj: Any) -> bool:
     return get_composer_command(obj) in _MUTATION_REQUIRED_COMMANDS
 
 
+def is_read_only_command(obj: Any) -> bool:
+    """True when the routed command (/critique, /explain) is read-only.
+
+    Read-only commands suppress the geometry-mutation guard, so a `final` is
+    allowed after a read-only inspection even if the free text contains words
+    like "add"/"change".
+    """
+    return get_composer_command(obj) in _READ_ONLY_COMMANDS
+
+
 def command_intent_label(obj: Any) -> str | None:
     """Semantic intent label for a routed command, or None when not routed.
 
-    Routed: /critique → ``critique_geometry`` (read-only), /build →
-    ``create_geometry``, /modify → ``modify_geometry`` (both mutation-required).
-    Unrouted commands (/explain, /simulate) and natural language return None.
+    Routed: /critique → ``critique_geometry`` (read-only), /explain →
+    ``explain_project`` (read-only), /build → ``create_geometry``, /modify →
+    ``modify_geometry`` (both mutation-required). Unrouted commands (/simulate)
+    and natural language return None.
     """
     return _COMMAND_INTENT_LABELS.get(get_composer_command(obj) or "")
 
@@ -475,24 +503,26 @@ class AutopilotEngine:
         Routed commands deliver a prompt-only bias as a context observation
         (no tool ranking change, no CAD execution change, approval unchanged):
           * /critique → read-only critique/inspection bias
+          * /explain  → read-only explanation bias
           * /build    → create-geometry bias (mutation-required)
           * /modify   → modify-geometry bias (mutation-required)
         The observation persists in state, so it survives continue/reply/
-        follow-up rebuilds. Unrouted commands (/explain, /simulate) and natural
-        language are a no-op here.
+        follow-up rebuilds. Unrouted commands (/simulate) and natural language
+        are a no-op here.
         """
         command = get_composer_command(state)
         instruction: str | None = None
-        read_only = False
         if command == "critique":
             instruction = CRITIQUE_COMMAND_INSTRUCTION
-            read_only = True
+        elif command == "explain":
+            instruction = EXPLAIN_COMMAND_INSTRUCTION
         elif command == "build":
             instruction = BUILD_COMMAND_INSTRUCTION
         elif command == "modify":
             instruction = MODIFY_COMMAND_INSTRUCTION
         if instruction is None:
             return
+        read_only = is_read_only_command(state)
         state.observations.append(
             _observation(
                 "context",
@@ -1045,12 +1075,12 @@ class AutopilotEngine:
                 self._emit_event(state, "tool_failed", status="failed", content=state.errors[-1], payload=result.model_dump())
                 return
             action = result.action
-            # /critique is an explicit read-only request: never gate its final on
-            # a geometry mutation, even if the free-text happens to contain words
+            # Read-only commands (/critique, /explain) never gate their final on a
+            # geometry mutation, even if the free-text happens to contain words
             # like "add"/"change". /build and /modify are explicitly mutation-
             # required (regardless of free-text trigger words). Other commands and
             # natural language fall back to the free-text heuristic unchanged.
-            if is_critique_command(state):
+            if is_read_only_command(state):
                 mutation_intent = None
             else:
                 mutation_intent = command_mutation_intent(state) or _latest_geometry_mutation_intent(state)

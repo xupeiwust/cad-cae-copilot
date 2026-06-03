@@ -104,11 +104,15 @@ def test_command_helpers_route_build_and_modify() -> None:
     assert is_mutation_required_command(critique) is False
 
     # Unrouted / unknown / natural language → no forced intent.
-    for command in ("simulate", "totally-unknown"):
+    for command in ("totally-unknown",):
         obj = SimpleNamespace(composer_intent={"command": command})
         assert command_intent_label(obj) is None
         assert command_mutation_intent(obj) is None
         assert is_mutation_required_command(obj) is False
+    # /simulate is routed (planning), but never mutation-required.
+    sim = SimpleNamespace(composer_intent={"command": "simulate"})
+    assert command_mutation_intent(sim) is None
+    assert is_mutation_required_command(sim) is False
     assert command_mutation_intent(SimpleNamespace(composer_intent=None)) is None
 
 

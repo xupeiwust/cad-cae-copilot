@@ -155,14 +155,28 @@ The raw `/command` text is always preserved in the stored user message.
   If no CAD/project/artifact exists, `ask_user` or a clear blocking `final` is
   acceptable. It does **not** force any specific tool, change CAD execution, or
   bypass approval.
-- **`/simulate` (parsed, not routed).** Stored as metadata only — no tool/prompt
-  routing yet. Natural-language intent and the geometry-mutation guard behave
-  exactly as before for it.
+- **`/simulate` (routed, simulation planning / readiness — v1).** When
+  `AutopilotRunState.composer_intent.command == "simulate"`, the engine injects a
+  simulation planning instruction (`intent_type == "plan_simulation"`) biasing the
+  agent toward CAE setup/preflight + read-only inspection tools
+  (`aieng.agent_context` / `aieng.inspect_package` / `cae.prepare_solver_run` /
+  `aieng.write_completeness_report`) and **suppresses the geometry-mutation
+  guard** (a simulation *plan* `final` is not a CAD edit, and free text like
+  "add a 500N load" must not trip the create/modify heuristic). The agent is told
+  to check the essential inputs — **analysis type, material, loads,
+  constraints/supports, mesh, solver** — and `ask_user` when any are
+  missing/ambiguous, or otherwise emit an ordered plan (setup → mesh → preflight
+  → deck → solver → post-processing) that **explicitly states the solver has NOT
+  run**. v1 does **not** auto-run the solver (`cae.run_solver` stays
+  approval-gated and out of scope), does **not** modify CAD, and does **not**
+  bypass approval. `/simulate` is **not** read-only (it may patch CAE setup), so
+  it carries `simulation_planning: true` rather than `read_only: true`.
 
-Command-specific routing **never bypasses approval** — `cad.execute_build123d`
-and the other mutation tools still pause for approval as usual. Helpers live in
-[`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py):
+Command-specific routing **never bypasses approval** — `cad.execute_build123d`,
+`cae.run_solver`, and the other gated tools still pause for approval as usual.
+Helpers live in [`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py):
 `get_composer_command` / `is_critique_command` / `is_read_only_command` /
+`is_simulation_command` / `suppresses_mutation_guard` /
 `is_mutation_required_command` / `command_intent_label` / `command_mutation_intent`.
 
 **`@`-mentions (routed as prompt/context, v1).** The composer also parses
@@ -174,16 +188,21 @@ into `{ kind, raw, value }` and persists them on `composer_intent.mentions`.
   parts: …" / "… these artifacts: …"), with command-aware targeting guidance:
   `/explain @part:x` → explain that part (read-only), `/critique @part:x` →
   critique that part if available (read-only), `/modify @part:x` → target the
-  CAD edit at that part **(approval and the mutation guard are unchanged)**.
+  CAD edit at that part **(approval and the mutation guard are unchanged)**,
+  `/simulate @part:x` → scope the simulation setup/plan to that part (no solver
+  run).
 - This is **prompt/context guidance only** — *not* strict object binding. If a
   referenced part/artifact is not found in the current model/topology, the agent
   is told to ask the user or clearly report "target not found" rather than invent
   it. Mentions are never required for any command.
 - Helpers: `mentioned_parts` / `mentioned_artifacts` / `mention_context_label`
   (in `engine.py`), robust to missing/malformed metadata.
-- **Future work:** `@workspace` / `@project` / `@face` mention routing, strict
-  topology/artifact binding, and `/simulate` command routing are not implemented
-  yet (the parser recognizes those kinds, but the backend does not route them).
+- **Future work:** `@workspace` / `@project` / `@face` mention routing and strict
+  topology/artifact binding are not implemented yet (the parser recognizes those
+  kinds, but the backend does not bind them). All five slash commands (`/build`,
+  `/modify`, `/critique`, `/explain`, `/simulate`) are now routed; deeper
+  `/simulate` work (actual readiness validation against the CAE setup, not just
+  prompt guidance) remains future work.
 
 ---
 

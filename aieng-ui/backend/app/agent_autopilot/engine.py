@@ -150,7 +150,8 @@ SIMULATION_PLAN_STEPS = [
 #   /modify   → modify_geometry, mutation-required
 #   /critique → critique_geometry, read-only (mutation guard suppressed)
 #   /explain  → explain_project,   read-only (mutation guard suppressed)
-# /simulate is parsed and stored as metadata but NOT routed yet.
+#   /simulate → plan_simulation,   planning/readiness (mutation guard suppressed,
+#               solver NOT auto-run, approval NOT bypassed)
 
 CRITIQUE_COMMAND_INSTRUCTION = (
     "The user explicitly invoked /critique. Treat this as a read-only CAD "
@@ -185,6 +186,23 @@ EXPLAIN_COMMAND_INSTRUCTION = (
     "the user — do not invent a mutation."
 )
 
+SIMULATE_COMMAND_INSTRUCTION = (
+    "The user explicitly invoked /simulate. Treat this as a simulation PLANNING "
+    "and readiness check — do NOT run the solver in this turn (cae.run_solver is "
+    "approval-gated and out of scope for /simulate v1), do NOT modify CAD "
+    "geometry, and do NOT bypass approval. First inspect the current CAE setup "
+    "and geometry (e.g. aieng.agent_context, aieng.inspect_package, "
+    "cae.prepare_solver_run, aieng.write_completeness_report). Determine whether "
+    "the essential simulation inputs are present: analysis type, material, "
+    "loads, constraints/supports, mesh settings, and solver. If any of these are "
+    "missing or ambiguous, ask the user for the missing inputs (ask_user) instead "
+    "of guessing or inventing values. If the inputs are sufficient, output a "
+    "clear ordered simulation plan (setup → mesh → preflight → solver deck → "
+    "solver run → post-processing) and state explicitly that the solver has NOT "
+    "been executed yet and that running it will require a separate, approved "
+    "cae.run_solver step."
+)
+
 # Commands whose run must not complete on a bare `final` until a CAD mutation
 # tool has succeeded (or the agent asks for clarification / reports a blocker).
 _MUTATION_REQUIRED_COMMANDS = frozenset({"build", "modify"})
@@ -194,12 +212,20 @@ _MUTATION_REQUIRED_COMMANDS = frozenset({"build", "modify"})
 # answer) even if the free text contains words like "add"/"change".
 _READ_ONLY_COMMANDS = frozenset({"critique", "explain"})
 
+# Simulation-planning commands: not geometry mutations, so the CAD-mutation guard
+# is suppressed (a simulation PLAN final must not be blocked for lack of a CAD
+# edit, and free text like "add a 500N load" must not trip the create/modify
+# heuristic). These are NOT read-only (they may patch CAE setup) and they never
+# auto-run the solver or bypass approval.
+_SIMULATION_COMMANDS = frozenset({"simulate"})
+
 # Routed command → forced semantic intent label.
 _COMMAND_INTENT_LABELS = {
     "critique": "critique_geometry",
     "build": "create_geometry",
     "modify": "modify_geometry",
     "explain": "explain_project",
+    "simulate": "plan_simulation",
 }
 
 
@@ -236,13 +262,28 @@ def is_read_only_command(obj: Any) -> bool:
     return get_composer_command(obj) in _READ_ONLY_COMMANDS
 
 
+def is_simulation_command(obj: Any) -> bool:
+    """True when the run was explicitly invoked with /simulate."""
+    return get_composer_command(obj) in _SIMULATION_COMMANDS
+
+
+def suppresses_mutation_guard(obj: Any) -> bool:
+    """True when a routed command's final must NOT be gated on a CAD mutation.
+
+    Read-only commands (/critique, /explain) and simulation-planning commands
+    (/simulate) are not geometry edits, so their final is allowed without a CAD
+    mutation even when the free text contains create/modify trigger words.
+    """
+    return is_read_only_command(obj) or is_simulation_command(obj)
+
+
 def command_intent_label(obj: Any) -> str | None:
     """Semantic intent label for a routed command, or None when not routed.
 
     Routed: /critique → ``critique_geometry`` (read-only), /explain →
-    ``explain_project`` (read-only), /build → ``create_geometry``, /modify →
-    ``modify_geometry`` (both mutation-required). Unrouted commands (/simulate)
-    and natural language return None.
+    ``explain_project`` (read-only), /simulate → ``plan_simulation``
+    (planning/readiness), /build → ``create_geometry``, /modify →
+    ``modify_geometry`` (both mutation-required). Natural language returns None.
     """
     return _COMMAND_INTENT_LABELS.get(get_composer_command(obj) or "")
 
@@ -303,9 +344,9 @@ def mention_context_label(obj: Any) -> str | None:
     """Human-readable prompt/context section for @part / @artifact mentions.
 
     Returns None when there are no part/artifact mentions. Adds command-specific
-    targeting guidance for /explain, /critique, and /modify, and always reminds
-    the agent to ask / report "not found" rather than invent a missing target.
-    v1 is prompt-level context only — no strict object binding.
+    targeting guidance for /explain, /critique, /modify, and /simulate, and
+    always reminds the agent to ask / report "not found" rather than invent a
+    missing target. v1 is prompt-level context only — no strict object binding.
     """
     parts = mentioned_parts(obj)
     artifacts = mentioned_artifacts(obj)
@@ -329,6 +370,11 @@ def mention_context_label(obj: Any) -> str | None:
             lines.append(
                 f"Target your CAD edit at the referenced part(s): {target}, if possible "
                 "(approval and the mutation guard are unchanged)."
+            )
+        elif command == "simulate":
+            lines.append(
+                f"Scope the simulation setup/plan to the referenced part(s): {target}, "
+                "if applicable (do not run the solver)."
             )
 
     lines.append(
@@ -584,11 +630,11 @@ class AutopilotEngine:
         (no tool ranking change, no CAD execution change, approval unchanged):
           * /critique → read-only critique/inspection bias
           * /explain  → read-only explanation bias
+          * /simulate → simulation planning/readiness bias (solver NOT auto-run)
           * /build    → create-geometry bias (mutation-required)
           * /modify   → modify-geometry bias (mutation-required)
         The observation persists in state, so it survives continue/reply/
-        follow-up rebuilds. Unrouted commands (/simulate) and natural language
-        are a no-op here.
+        follow-up rebuilds. Natural language is a no-op here.
         """
         command = get_composer_command(state)
         instruction: str | None = None
@@ -596,13 +642,14 @@ class AutopilotEngine:
             instruction = CRITIQUE_COMMAND_INSTRUCTION
         elif command == "explain":
             instruction = EXPLAIN_COMMAND_INSTRUCTION
+        elif command == "simulate":
+            instruction = SIMULATE_COMMAND_INSTRUCTION
         elif command == "build":
             instruction = BUILD_COMMAND_INSTRUCTION
         elif command == "modify":
             instruction = MODIFY_COMMAND_INSTRUCTION
         if instruction is None:
             return
-        read_only = is_read_only_command(state)
         state.observations.append(
             _observation(
                 "context",
@@ -611,7 +658,8 @@ class AutopilotEngine:
                     "composer_command": command,
                     "intent_type": command_intent_label(state),
                     "mutation_required": is_mutation_required_command(state),
-                    "read_only": read_only,
+                    "read_only": is_read_only_command(state),
+                    "simulation_planning": is_simulation_command(state),
                 },
             )
         )
@@ -1178,12 +1226,14 @@ class AutopilotEngine:
                 self._emit_event(state, "tool_failed", status="failed", content=state.errors[-1], payload=result.model_dump())
                 return
             action = result.action
-            # Read-only commands (/critique, /explain) never gate their final on a
-            # geometry mutation, even if the free-text happens to contain words
-            # like "add"/"change". /build and /modify are explicitly mutation-
-            # required (regardless of free-text trigger words). Other commands and
-            # natural language fall back to the free-text heuristic unchanged.
-            if is_read_only_command(state):
+            # Guard-suppressed commands — read-only (/critique, /explain) and
+            # simulation planning (/simulate) — never gate their final on a
+            # geometry mutation, even if the free text happens to contain words
+            # like "add"/"change" (e.g. "/simulate ... add a 500N load"). /build
+            # and /modify are explicitly mutation-required (regardless of
+            # free-text trigger words). Other commands and natural language fall
+            # back to the free-text heuristic unchanged.
+            if suppresses_mutation_guard(state):
                 mutation_intent = None
             else:
                 mutation_intent = command_mutation_intent(state) or _latest_geometry_mutation_intent(state)

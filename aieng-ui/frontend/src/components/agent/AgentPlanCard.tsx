@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Circle, Clock3, Loader2, PauseCircle } from "lucide-react";
+import { AlertCircle, Ban, CheckCircle2, Circle, Clock3, Loader2, PauseCircle } from "lucide-react";
 
 import type { TranscriptAgentPlanLine } from "../../app/chatTranscript";
 import type { AutopilotAgentPlanStep } from "../../types";
@@ -22,6 +22,7 @@ const STATUS_LABELS: Record<string, string> = {
   blocked: "waiting approval",
   failed: "failed",
   skipped: "skipped",
+  cancelled: "cancelled",
 };
 
 export function AgentPlanCard({ item }: AgentPlanCardProps) {
@@ -82,6 +83,7 @@ function PlanStatusIcon({ status }: { status: string }) {
   if (status === "running") return <Loader2 className="agent-plan-icon spin" aria-label="running" />;
   if (status === "completed" || status === "done") return <CheckCircle2 className="agent-plan-icon" aria-label="done" />;
   if (status === "failed") return <AlertCircle className="agent-plan-icon" aria-label="failed" />;
+  if (status === "cancelled") return <Ban className="agent-plan-icon" aria-label="cancelled" />;
   if (status === "blocked" || status === "approval") return <PauseCircle className="agent-plan-icon" aria-label="waiting approval" />;
   if (status === "skipped") return <Clock3 className="agent-plan-icon" aria-label="skipped" />;
   return <Circle className="agent-plan-icon" aria-label={status || "pending"} />;

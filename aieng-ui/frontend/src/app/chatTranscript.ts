@@ -2,7 +2,7 @@ import type { PersistedChatMessage } from "../api";
 import type { ChatHistoryItem } from "../appTypes";
 import type { AutopilotAgentPlan, AutopilotAgentPlanStep, AutopilotObservation, AutopilotRunState } from "../types";
 
-export type TranscriptStatus = "pending" | "running" | "done" | "failed" | "blocked" | "approval" | "queued";
+export type TranscriptStatus = "pending" | "running" | "done" | "failed" | "blocked" | "approval" | "queued" | "cancelled";
 
 type TranscriptBase = {
   id: string;
@@ -179,7 +179,7 @@ export function runToTranscriptItems(
       detail: run.plan,
       errors: run.errors,
       currentBlockers: run.working_state?.current_blockers ?? [],
-    }));
+    }, run.status));
   }
 
   if (run.pending_approval) {
@@ -283,7 +283,7 @@ export function chatHistoryToTranscriptItems(
       items.push(...agentEventToTranscriptItems(event, index));
     }
   }
-  items.push(...planEventsToTranscriptItems(agentEvents));
+  items.push(...planEventsToTranscriptItems(agentEvents, runStatusById));
 
   return dedupeAndSort(
     collapseDuplicateStatusRows(
@@ -397,7 +397,7 @@ export function agentEventToTranscriptItems(event: AgentTranscriptEvent, occurre
       return [{
         ...base,
         kind: "status",
-        status: "blocked",
+        status: "cancelled",
         summary: event.content || "Run cancelled",
       }];
     case "run_status_changed":
@@ -510,7 +510,10 @@ function approvalToTranscriptItem(
   };
 }
 
-function planEventsToTranscriptItems(events: AgentTranscriptEvent[]): TranscriptAgentPlanLine[] {
+function planEventsToTranscriptItems(
+  events: AgentTranscriptEvent[],
+  runStatusById?: Map<string, string>,
+): TranscriptAgentPlanLine[] {
   const plans = new Map<string, {
     plan: AutopilotAgentPlan;
     event: AgentTranscriptEvent;
@@ -573,21 +576,56 @@ function planEventsToTranscriptItems(events: AgentTranscriptEvent[]): Transcript
     projectId: event.project_id ?? null,
     createdAt,
     detail: { type: "agent_plan_replay", plan },
-  }));
+  }, event.run_id ? runStatusById?.get(event.run_id) : undefined));
+}
+
+type TerminalRunKind = "completed" | "failed" | "cancelled";
+
+function terminalRunKind(status?: string | null): TerminalRunKind | null {
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "cancelled") return "cancelled";
+  return null;
+}
+
+// Plan-step statuses that already represent a settled outcome — never rewritten.
+const FINISHED_STEP_STATUSES = new Set(["completed", "done", "failed", "skipped", "cancelled"]);
+
+/**
+ * Display-only normalization of a terminal run's plan steps so stopped work
+ * never reads as active. Pure.
+ * - completed: unreached `pending` steps become `skipped` (historical behavior).
+ * - cancelled: every not-yet-finished step (pending/running/blocked/approval)
+ *   becomes `cancelled` — no spinner, no "waiting approval".
+ * - failed: left untouched (historical behavior preserved).
+ */
+export function normalizeTerminalPlanSteps(
+  steps: AutopilotAgentPlanStep[],
+  kind: TerminalRunKind,
+): AutopilotAgentPlanStep[] {
+  if (kind === "completed") {
+    return steps.map((step) => (step.status === "pending" ? { ...step, status: "skipped" } : step));
+  }
+  if (kind === "cancelled") {
+    return steps.map((step) =>
+      FINISHED_STEP_STATUSES.has(step.status) ? step : { ...step, status: "cancelled" },
+    );
+  }
+  return steps;
 }
 
 function planToTranscriptItem(
   plan: AutopilotAgentPlan,
   base: Omit<TranscriptAgentPlanLine, "kind" | "status" | "objective" | "steps" | "currentStepId">,
+  runStatus?: string | null,
 ): TranscriptAgentPlanLine {
-  const status = normalizeStatus(plan.status);
-  // Once the run is done, steps that were never reached (e.g. await_approval /
-  // repair on a run that needed neither) stay "pending" forever and read as
-  // unfinished work. Show them as "skipped" — display-only, terminal plans only;
-  // active (running/blocked) plans keep their live pending steps untouched.
-  const steps = status === "done"
-    ? plan.steps.map((step) => (step.status === "pending" ? { ...step, status: "skipped" } : step))
-    : plan.steps;
+  // The run's own terminal status is authoritative: a cancelled/failed run can
+  // carry a plan whose status still reads "running"/"blocked" (the plan is not
+  // re-stamped on cancel), so we must not let the plan glow as active. Fall back
+  // to the plan's own status when the run is not (yet) terminal.
+  const kind = terminalRunKind(runStatus) ?? terminalRunKind(plan.status);
+  const status: TranscriptStatus = kind ? normalizeStatus(kind) : normalizeStatus(plan.status);
+  const steps = kind ? normalizeTerminalPlanSteps(plan.steps, kind) : plan.steps;
   return {
     ...base,
     kind: "plan",
@@ -813,7 +851,8 @@ function phaseSummary(payload: Record<string, unknown>, content?: string | null)
 function normalizeStatus(status?: string | null): TranscriptStatus {
   if (status === "completed" || status === "ok" || status === "done") return "done";
   if (status === "failed" || status === "error") return "failed";
-  if (status === "blocked" || status === "cancelled") return "blocked";
+  if (status === "cancelled") return "cancelled";
+  if (status === "blocked") return "blocked";
   if (status === "awaiting_approval" || status === "approval") return "approval";
   if (status === "queued") return "queued";
   return "running";
@@ -822,7 +861,8 @@ function normalizeStatus(status?: string | null): TranscriptStatus {
 function terminalTranscriptStatus(runStatus?: string | null): TranscriptStatus | null {
   if (runStatus === "completed") return "done";
   if (runStatus === "failed") return "failed";
-  if (runStatus === "cancelled" || runStatus === "blocked") return "blocked";
+  if (runStatus === "cancelled") return "cancelled";
+  if (runStatus === "blocked") return "blocked";
   return null;
 }
 

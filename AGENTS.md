@@ -90,6 +90,26 @@ changing code:
   hidden cross-file coupling. Use TypeScript build results and reference searches
   to prove that cleanup is safe.
 
+### Agent run display state
+
+- **Terminal runs must look stopped.** `completed` / `failed` / `cancelled` are
+  terminal (`isTerminalAutopilotStatus` in
+  [`chatTranscript.ts`](aieng-ui/frontend/src/app/chatTranscript.ts)). A terminal
+  run must never render an active spinner, a pending/glowing plan step, or a
+  "waiting approval" badge after reload.
+- **Cancelled is distinct from blocked.** A cancelled run projects to the
+  `cancelled` transcript tone (stopped/neutral, no spinner), *not* `blocked`
+  (which stays amber "waiting approval" for genuinely paused runs). The run's own
+  status is authoritative over a stale `plan.status`: `planToTranscriptItem` /
+  `normalizeTerminalPlanSteps` rewrite any not-yet-finished step of a cancelled
+  run to `cancelled` so nothing reads as in-flight. Completed keeps its
+  pending→`skipped` normalization; failed is left untouched.
+- Active-run restore / processing indicators key off the active set
+  (`running` / `awaiting_approval` / `chatting` / `blocked`) — never the terminal
+  set — so a reloaded cancelled run does not re-arm the composer Stop button or
+  the elapsed-time spinner. Raw event/run detail stays available via the
+  per-row Details disclosure.
+
 ### Composer slash commands and @-mentions
 
 The chat composer recognizes leading slash commands (`/build`, `/modify`,

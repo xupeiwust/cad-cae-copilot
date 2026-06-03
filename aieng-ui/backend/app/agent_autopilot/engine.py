@@ -561,6 +561,9 @@ class AutopilotEngine:
             "payload": payload or {},
             "created_at": now_iso(),
         }
+        from .event_contract import apply_event_metadata
+
+        event = apply_event_metadata(event)
         if self.on_event is not None:
             try:
                 self.on_event(event)

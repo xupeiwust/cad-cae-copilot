@@ -545,7 +545,8 @@ def get_agent_events(db_path: Path, project_id: str, session_id: str | None = No
 
 
 def _agent_event_row_to_dict(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
-    return {
+    payload = json.loads(row[8]) if row[8] else {}
+    event = {
         "id": row[0],
         "event_id": row[1],
         "run_id": row[2],
@@ -554,9 +555,14 @@ def _agent_event_row_to_dict(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, An
         "type": row[5],
         "status": row[6],
         "content": row[7],
-        "payload": json.loads(row[8]) if row[8] else {},
+        "payload": payload,
         "created_at": row[9],
     }
+    if isinstance(payload, dict):
+        for key in ("category", "visibility", "user_visible"):
+            if key in payload:
+                event[key] = payload[key]
+    return event
 
 
 # user_settings CRUD

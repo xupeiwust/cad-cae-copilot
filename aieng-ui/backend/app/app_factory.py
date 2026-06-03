@@ -248,6 +248,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         return enrich_run_response(state, live_run_ids=_live_autopilot_run_ids())
 
     def _publish_live_event(event: dict[str, Any]) -> None:
+        from .agent_autopilot.event_contract import apply_event_metadata
+
+        event = apply_event_metadata(event)
         if event.get("type") in {
             "agent_message",
             "tool_started",
@@ -291,7 +294,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
     def _publish_agent_event(event: dict[str, Any]) -> None:
         from . import db
+        from .agent_autopilot.event_contract import apply_event_metadata
 
+        event = apply_event_metadata(event)
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {
             k: v for k, v in event.items() if k not in {"payload"}
         }

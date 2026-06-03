@@ -222,6 +222,34 @@ The cancel path persists `status="cancelled"`, emits one public
 `run_cancelled` terminal event, and repeated cancel calls on terminal runs are
 no-ops.
 
+### Autopilot event contract metadata
+
+Agent transcript events remain backward compatible: consumers may continue to
+use `type`, `status`, `content`, and `payload`. The backend also annotates live
+and persisted events with:
+
+- `category`: `status`, `progress`, `terminal`, `tool`, `approval`,
+  `user_input`, `artifact`, or `diagnostic`
+- `visibility`: `public` or `diagnostic`
+- `user_visible`: boolean
+
+The same fields are mirrored into `payload` because the current SQLite event
+table stores payload JSON rather than dedicated metadata columns. Frontends
+should use these fields to keep user-facing timelines compact:
+
+- show `user_visible=true` rows by default;
+- keep `visibility="diagnostic"` rows available in details/debug views;
+- treat `agent_phase_changed` as diagnostic progress when it duplicates a
+  public progress/status row for the same phase;
+- treat `awaiting_approval`, `blocked`, and `chatting` as waiting states, not
+  terminal failures;
+- treat public terminal rows (`category="terminal"`) as mutually exclusive run
+  endings. A normal completion emits one public `run_status_changed/completed`;
+  a stale or user cancel emits one public `run_cancelled/cancelled`.
+
+`tool_failed` is classified as a public `tool` event so the UI can show the
+tool-level error without confusing adapter/tool failures with user cancellation.
+
 ## CAD modelling without an API key (agent writes the code)
 
 The backend's built-in text-to-CAD flow (`/generate-cad-stream`) calls Claude

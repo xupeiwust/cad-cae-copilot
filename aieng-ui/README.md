@@ -104,6 +104,23 @@ clean up a stale run even after a backend restart. A cancel request emits one
 public `run_cancelled` terminal event and terminal runs are no-ops on repeat
 cancel.
 
+Autopilot transcript events now carry advisory, backward-compatible metadata on
+both the top-level event object and the stored payload:
+
+- `category`: `status`, `progress`, `terminal`, `tool`, `approval`,
+  `user_input`, `artifact`, or `diagnostic`
+- `visibility`: `public` or `diagnostic`
+- `user_visible`: boolean
+
+Existing consumers can continue to switch on `type` / `status`. Newer UI code
+should prefer `user_visible=false` for diagnostic rows (for example
+`agent_phase_changed`) and show at most one public progress row when a
+same-phase `run_status_changed` also exists. Public terminal events are
+reserved for `run_status_changed` with `completed` / `failed` / `cancelled` and
+`run_cancelled`; tool failures remain `category="tool"` unless a separate run
+terminal status event is emitted. Waiting states (`awaiting_approval`,
+`blocked`, `chatting`) are not terminal.
+
 Local CLI readiness is available at:
 
 - `GET /api/local-agents/capabilities` — legacy/backward-compatible capability

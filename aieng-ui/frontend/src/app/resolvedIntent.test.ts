@@ -109,6 +109,9 @@ test("isIntentResolutionObservation matches only intent context observations", (
   // Other context observations (command instruction, mention bindings) are untouched.
   expect(isIntentResolutionObservation(obs("context", "x", { composer_command: "build" }))).toBe(false);
   expect(isIntentResolutionObservation(obs("tool_result", "x", { parameter_slots: [] }))).toBe(false);
+  // Follow-up normalized intent stays VISIBLE (its own key) — not folded into the
+  // run-level chip, so it shows inline near the follow-up message.
+  expect(isIntentResolutionObservation(obs("context", "x", { followup_intent: { command: "explain" } }))).toBe(false);
 });
 
 // --- projection into the transcript -----------------------------------------

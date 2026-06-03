@@ -490,6 +490,57 @@ def test_explicit_modify_with_slot_injects_parametric_bias(tmp_path: Path) -> No
     assert found, "explicit /modify with a dimensional slot should also get the parametric bias"
 
 
+def _engine_with_loader(tmp_path: Path, loader=None) -> AutopilotEngine:
+    store = AutopilotStore(tmp_path / "runs")
+    return AutopilotEngine(store=store, runtime_tools=[], feature_parameter_loader=loader)
+
+
+def test_followup_modify_with_slot_emits_parametric_binding(tmp_path: Path) -> None:
+    index = [{
+        "feature_id": "feat_global_params", "feature_name": "Global Parameters",
+        "feature_type": "global_params", "scope": "global",
+        "parameter_name": "thickness_mm", "cad_parameter_name": "WALL_THICKNESS",
+        "current_value": 3.0, "min_value": 0.15, "max_value": 15.0,
+        "search_tokens": ["thickness", "wall"],
+    }]
+    engine = _engine_with_loader(tmp_path, lambda _pid: index)
+    request = AutopilotRunRequest(message="build a bracket", project_id="p1", adapter_id="fake")
+    state = engine._new_state(request)
+    before = len(state.observations)
+
+    engine._normalize_followup_intent(state, "now change the wall thickness to 6mm")
+
+    new = state.observations[before:]
+    assert any(o.data.get("parameter_slots") for o in new)
+    binding = next(o for o in new if o.data.get("parameter_bindings")).data["parameter_bindings"][0]
+    assert binding["known"] is True and binding["cad_parameter_name"] == "WALL_THICKNESS"
+
+
+def test_followup_non_modify_records_normalized_intent(tmp_path: Path) -> None:
+    engine = _engine_with_loader(tmp_path)
+    request = AutopilotRunRequest(message="build a bracket", project_id="p1", adapter_id="fake")
+    state = engine._new_state(request)
+    before = len(state.observations)
+
+    engine._normalize_followup_intent(state, "now explain what this looks like")
+
+    new = state.observations[before:]
+    assert len(new) == 1
+    assert new[0].data["followup_intent"]["command"] == "explain"
+    assert "Normalized follow-up intent: /explain" in new[0].summary
+
+
+def test_followup_no_actionable_intent_is_noop(tmp_path: Path) -> None:
+    engine = _engine_with_loader(tmp_path)
+    request = AutopilotRunRequest(message="build a bracket", project_id="p1", adapter_id="fake")
+    state = engine._new_state(request)
+    before = len(state.observations)
+
+    engine._normalize_followup_intent(state, "thanks, that looks good")
+
+    assert len(state.observations) == before  # nothing forced — the agent proceeds
+
+
 def test_resolve_method_skips_classifier_for_fake_runs(tmp_path: Path) -> None:
     calls = {"n": 0}
 

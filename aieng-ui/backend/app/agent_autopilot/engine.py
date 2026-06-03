@@ -833,22 +833,30 @@ class AutopilotEngine:
         )
 
     def _inject_parametric_edit_context(self, state: AutopilotRunState) -> None:
-        """Bias a modify intent that names value changes toward cad.edit_parameter.
+        """Bias the initial modify intent that names value changes toward cad.edit_parameter.
 
         Fires for the ``modify`` command (explicit /modify or a resolved
-        natural-language modify) when the message contains deterministic
-        dimensional slots ("change the wall thickness to 5mm"). Prompt/context
-        only — it does not select a tool, change CAD execution, or bypass approval;
-        the mutation guard is unchanged. The extracted slots ride on the
-        observation so the frontend/audit can show what was understood. No-op for
-        other commands or when no slot is found. Persists in state (survives
-        continue/reply/follow-up rebuilds).
+        natural-language modify) when the initial message contains deterministic
+        dimensional slots ("change the wall thickness to 5mm"). See
+        ``_emit_parametric_edit_context`` for the behavior contract.
         """
         if get_composer_command(state) != "modify":
             return
-        slots = extract_parameter_slots(state.message)
+        self._emit_parametric_edit_context(state, state.message)
+
+    def _emit_parametric_edit_context(self, state: AutopilotRunState, message: str) -> bool:
+        """Emit the dimensional-edit binding context for ``message``. Returns True if emitted.
+
+        Prompt/context only — it does not select a tool, change CAD execution, or
+        bypass approval; the mutation guard is unchanged. The extracted slots +
+        deterministic feature-parameter bindings ride on the observation so the
+        agent gets a concrete cad.edit_parameter target (featureId / parameterName)
+        and the frontend/audit can show what was understood. No-op (returns False)
+        when the message contains no dimensional slot.
+        """
+        slots = extract_parameter_slots(message)
         if not slots:
-            return
+            return False
 
         instruction = PARAMETRIC_EDIT_INSTRUCTION.format(slots=format_parameter_slots(slots))
         data: dict[str, Any] = {
@@ -869,6 +877,36 @@ class AutopilotEngine:
             )
 
         state.observations.append(_observation("context", instruction, data))
+        return True
+
+    def _normalize_followup_intent(self, state: AutopilotRunState, message: str) -> None:
+        """Explicitly record the normalized intent of a follow-up / reply message.
+
+        Lightweight by design: connected agents (Claude Code, Codex, Kimi, …) are
+        intelligent and infer what a follow-up means on their own — this does NOT
+        try to out-think them. It runs only the *deterministic keyword* resolver
+        (no LLM) and lands the result as an explicit, normalized observation so the
+        intent is recorded in state rather than left implicit. For a dimensional
+        ``modify`` follow-up it reuses the same parameter binding as the initial
+        message, handing the agent a concrete cad.edit_parameter target. A no-op
+        when nothing actionable is recognized (the agent then proceeds on its own).
+        """
+        resolution = resolve_intent(message, classifier=None)
+        if resolution.command is None:
+            return
+        # High-value case: a dimensional modify — give the agent the bound target.
+        if resolution.command == "modify" and self._emit_parametric_edit_context(state, message):
+            return
+        # Otherwise just record the normalized command (visible, light — not the
+        # run-level chip, which represents the initial message).
+        state.observations.append(
+            _observation(
+                "context",
+                f"Normalized follow-up intent: /{resolution.command} "
+                f"({resolution.source}, confidence {resolution.confidence:.2f}).",
+                {"followup_intent": resolution.to_metadata()},
+            )
+        )
 
     def _feature_parameter_index(self, state: AutopilotRunState) -> list[dict[str, Any]] | None:
         """Editable feature-parameter index for this project, or None if unavailable.
@@ -2553,6 +2591,7 @@ class AutopilotEngine:
             )
         else:
             state.observations.append(_observation("user_message", message, {"reply": True}))
+            self._normalize_followup_intent(state, message)
             state.working_state.recommended_next_action = f"Address user follow-up: {message[:240]}"
             state.working_state.updated_at = now_iso()
         state.status = "running"
@@ -2577,6 +2616,7 @@ class AutopilotEngine:
         if state.status in {"running", "awaiting_approval"}:
             state.queued_user_messages.append(message)
             state.observations.append(_observation("user_message", f"Queued follow-up: {message}", {"queued": True}))
+            self._normalize_followup_intent(state, message)
             state.working_state.recommended_next_action = f"Address queued user follow-up: {message[:240]}"
             state.working_state.updated_at = now_iso()
             self._emit_event(

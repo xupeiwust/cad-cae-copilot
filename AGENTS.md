@@ -297,10 +297,23 @@ single-part edit.
   shows each parameter's current value + allowed range + editable constant, and a
   click drafts a `/modify set <name> to ` into the composer — so editing still
   flows through the existing approval-gated path (the panel itself never mutates).
+**Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
+so their intent is recorded explicitly rather than left implicit
+(`_normalize_followup_intent` in
+[`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py), called from
+`reply_to_run` and the queued `follow_up_run` path). **Deliberately lightweight**:
+connected agents (Claude Code, Codex, Kimi, …) infer follow-up meaning on their
+own, so this does NOT try to out-think them — it runs only the *deterministic
+keyword* resolver (no LLM) and lands the normalized result in state. A dimensional
+`modify` follow-up reuses the same parameter binding as the initial message
+(`_emit_parametric_edit_context`), handing the agent a concrete
+`cad.edit_parameter` target; other recognized commands record a visible
+`followup_intent` note; an unrecognized follow-up is a no-op (the agent just
+proceeds). The principle: **let the agent associate, but have the system make the
+association explicit as a normalized intent.**
 - **Future work:** inline value editing in the panel (a field that calls the
-  approval-gated `cad.edit_parameter` directly), re-resolve follow-up / reply
-  messages (currently the initial intent is reused), and consume the LLM
-  classifier's `targets` / `parameters` beyond the deterministic slots.
+  approval-gated `cad.edit_parameter` directly), and consume the LLM classifier's
+  `targets` / `parameters` beyond the deterministic slots.
 
 **`@`-mentions (strict binding, v1).** The composer parses lightweight
 `@kind:value` mentions (`extractComposerMentions` in

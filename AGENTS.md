@@ -101,7 +101,21 @@ autopilot run create request (echoed back on `AutopilotRunState.composer_intent`
 The raw `/command` text is always preserved in the stored user message.
 
 **Backend routing status:**
-- **`/critique` (v1, routed, read-only).** When
+- **`/build` (routed, mutation-required).** When
+  `AutopilotRunState.composer_intent.command == "build"`, the engine injects a
+  create-geometry instruction into the run context (biasing the agent toward CAD
+  mutation tools such as `cad.execute_build123d`) and **forces the geometry-
+  mutation guard ON** (`intent_type == "create_geometry"`) — a bare `final` is
+  rejected until a CAD mutation tool has succeeded. This holds **even when the
+  free text contains no create trigger word**. Asking the user for clarification
+  (`ask_user`) or reporting a clear blocker is still allowed; a false success is
+  not.
+- **`/modify` (routed, mutation-required).** Same as `/build` but with a modify-
+  geometry instruction (`intent_type == "modify_geometry"`). A read-only result
+  such as `cad.critique` does **not** satisfy the requirement. If no CAD model
+  exists yet, `ask_user` or a clear blocking `final` is acceptable — no false
+  success.
+- **`/critique` (routed, read-only).** When
   `AutopilotRunState.composer_intent.command == "critique"`, the engine injects a
   read-only critique/inspection instruction into the run context (biasing the
   agent toward `cad.critique` and read-only inspection tools such as
@@ -109,12 +123,16 @@ The raw `/command` text is always preserved in the stored user message.
   the geometry-mutation guard** so a `final` is allowed after a read-only result
   (or a clear "no CAD available" answer) even if the free text contains words
   like "add". It does **not** force `cad.critique`, change CAD execution, or
-  bypass approval. Helpers live in
-  [`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py):
-  `get_composer_command` / `is_critique_command` / `command_intent_label`.
-- **`/build`, `/modify`, `/explain`, `/simulate` (parsed, not routed).** Stored as
-  metadata only — no tool/prompt routing yet. Natural-language intent and the
-  geometry-mutation guard behave exactly as before for these.
+  bypass approval.
+- **`/explain`, `/simulate` (parsed, not routed).** Stored as metadata only — no
+  tool/prompt routing yet. Natural-language intent and the geometry-mutation
+  guard behave exactly as before for these.
+
+Command-specific routing **never bypasses approval** — `cad.execute_build123d`
+and the other mutation tools still pause for approval as usual. Helpers live in
+[`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py):
+`get_composer_command` / `is_critique_command` / `is_mutation_required_command` /
+`command_intent_label` / `command_mutation_intent`.
 
 ---
 

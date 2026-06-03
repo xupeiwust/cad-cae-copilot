@@ -144,9 +144,12 @@ SIMULATION_PLAN_STEPS = [
 ]
 
 
-# --- Composer slash-command routing (v1: /critique only) -------------------
-# Other commands (build/modify/explain/simulate) are parsed and stored as
-# metadata but NOT routed yet — only /critique influences backend behavior.
+# --- Composer slash-command routing ----------------------------------------
+# Routed commands influence backend prompt/context + the mutation guard:
+#   /build    → create_geometry, mutation-required
+#   /modify   → modify_geometry, mutation-required
+#   /critique → critique_geometry, read-only (mutation guard suppressed)
+# /explain and /simulate are parsed and stored as metadata but NOT routed yet.
 
 CRITIQUE_COMMAND_INSTRUCTION = (
     "The user explicitly invoked /critique. Treat this as a read-only CAD "
@@ -156,6 +159,31 @@ CRITIQUE_COMMAND_INSTRUCTION = (
     "asks for edits. If no CAD/geometry is available, say so clearly or ask the "
     "user — do not invent a mutation."
 )
+
+BUILD_COMMAND_INSTRUCTION = (
+    "The user explicitly invoked /build. Create a new CAD model or ask for "
+    "clarification. Prefer CAD mutation tools such as cad.execute_build123d. "
+    "Do not finish without creating/updating CAD."
+)
+
+MODIFY_COMMAND_INSTRUCTION = (
+    "The user explicitly invoked /modify. Modify the current CAD model or ask "
+    "for clarification. Prefer CAD mutation tools (cad.execute_build123d, "
+    "cad.edit_parameter, cad.replace_part, cad.remove_part). Do not finish with "
+    "a critique-only/no-op result. If no CAD model exists yet, ask the user or "
+    "report the blocker clearly — do not claim a false success."
+)
+
+# Commands whose run must not complete on a bare `final` until a CAD mutation
+# tool has succeeded (or the agent asks for clarification / reports a blocker).
+_MUTATION_REQUIRED_COMMANDS = frozenset({"build", "modify"})
+
+# Routed command → forced semantic intent label.
+_COMMAND_INTENT_LABELS = {
+    "critique": "critique_geometry",
+    "build": "create_geometry",
+    "modify": "modify_geometry",
+}
 
 
 def get_composer_command(obj: Any) -> str | None:
@@ -176,13 +204,31 @@ def is_critique_command(obj: Any) -> bool:
     return get_composer_command(obj) == "critique"
 
 
+def is_mutation_required_command(obj: Any) -> bool:
+    """True when the routed command (/build, /modify) requires a CAD mutation."""
+    return get_composer_command(obj) in _MUTATION_REQUIRED_COMMANDS
+
+
 def command_intent_label(obj: Any) -> str | None:
     """Semantic intent label for a routed command, or None when not routed.
 
-    v1 only routes /critique → read-only ``critique_geometry``.
+    Routed: /critique → ``critique_geometry`` (read-only), /build →
+    ``create_geometry``, /modify → ``modify_geometry`` (both mutation-required).
+    Unrouted commands (/explain, /simulate) and natural language return None.
     """
-    if get_composer_command(obj) == "critique":
-        return "critique_geometry"
+    return _COMMAND_INTENT_LABELS.get(get_composer_command(obj) or "")
+
+
+def command_mutation_intent(obj: Any) -> str | None:
+    """Mutation intent forced by a routed mutation command (/build, /modify).
+
+    Returns ``create_geometry`` for /build, ``modify_geometry`` for /modify, and
+    None for /critique, unrouted commands, and natural language (those fall back
+    to the free-text heuristic). This lets /build and /modify be mutation-
+    required even when the message contains no create/modify trigger words.
+    """
+    if is_mutation_required_command(obj):
+        return _COMMAND_INTENT_LABELS.get(get_composer_command(obj) or "")
     return None
 
 
@@ -426,24 +472,39 @@ class AutopilotEngine:
     def _inject_command_context(self, state: AutopilotRunState) -> None:
         """Add a routing instruction observation for routed slash commands.
 
-        v1 routes only /critique: a read-only critique/inspection bias delivered
-        as a context observation (prompt-only — no tool ranking change, no CAD
-        execution change). The observation persists in state, so it survives
-        continue/reply/follow-up rebuilds. Unrouted commands are a no-op.
+        Routed commands deliver a prompt-only bias as a context observation
+        (no tool ranking change, no CAD execution change, approval unchanged):
+          * /critique → read-only critique/inspection bias
+          * /build    → create-geometry bias (mutation-required)
+          * /modify   → modify-geometry bias (mutation-required)
+        The observation persists in state, so it survives continue/reply/
+        follow-up rebuilds. Unrouted commands (/explain, /simulate) and natural
+        language are a no-op here.
         """
-        if is_critique_command(state):
-            state.observations.append(
-                _observation(
-                    "context",
-                    CRITIQUE_COMMAND_INSTRUCTION,
-                    {
-                        "composer_command": "critique",
-                        "intent_type": command_intent_label(state),
-                        "mutation_required": False,
-                        "read_only": True,
-                    },
-                )
+        command = get_composer_command(state)
+        instruction: str | None = None
+        read_only = False
+        if command == "critique":
+            instruction = CRITIQUE_COMMAND_INSTRUCTION
+            read_only = True
+        elif command == "build":
+            instruction = BUILD_COMMAND_INSTRUCTION
+        elif command == "modify":
+            instruction = MODIFY_COMMAND_INSTRUCTION
+        if instruction is None:
+            return
+        state.observations.append(
+            _observation(
+                "context",
+                instruction,
+                {
+                    "composer_command": command,
+                    "intent_type": command_intent_label(state),
+                    "mutation_required": is_mutation_required_command(state),
+                    "read_only": read_only,
+                },
             )
+        )
 
     def _set_plan_step(
         self,
@@ -986,8 +1047,13 @@ class AutopilotEngine:
             action = result.action
             # /critique is an explicit read-only request: never gate its final on
             # a geometry mutation, even if the free-text happens to contain words
-            # like "add"/"change". Other commands / natural language are unchanged.
-            mutation_intent = None if is_critique_command(state) else _latest_geometry_mutation_intent(state)
+            # like "add"/"change". /build and /modify are explicitly mutation-
+            # required (regardless of free-text trigger words). Other commands and
+            # natural language fall back to the free-text heuristic unchanged.
+            if is_critique_command(state):
+                mutation_intent = None
+            else:
+                mutation_intent = command_mutation_intent(state) or _latest_geometry_mutation_intent(state)
             if (
                 action.action.type == "final"
                 and mutation_intent

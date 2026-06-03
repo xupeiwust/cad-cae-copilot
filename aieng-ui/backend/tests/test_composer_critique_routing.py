@@ -73,7 +73,7 @@ def test_composer_command_helpers() -> None:
     mod = SimpleNamespace(composer_intent={"command": "modify"})
     assert get_composer_command(mod) == "modify"
     assert is_critique_command(mod) is False
-    assert command_intent_label(mod) is None  # not routed in v1
+    assert command_intent_label(mod) == "modify_geometry"  # now routed
 
     # Robust to missing / malformed metadata.
     assert get_composer_command(SimpleNamespace(composer_intent=None)) is None

@@ -8,6 +8,7 @@ import { ApprovalLine } from "./ApprovalLine";
 import { AskUserLine } from "./AskUserLine";
 import { ArtifactLine } from "./ArtifactLine";
 import { EventDetail } from "./EventDetail";
+import { IntentChip } from "./IntentChip";
 import { StreamingMessage } from "./StreamingMessage";
 import { TranscriptMessage } from "./TranscriptMessage";
 import { StatusIcon } from "./ToolLine";
@@ -40,6 +41,7 @@ export function ChatTranscript({
     <div className="chat-transcript">
       {items.map((item) => {
         if (item.kind === "message") return <TranscriptMessage key={item.id} item={item} />;
+        if (item.kind === "intent") return <IntentChip key={item.id} item={item} />;
         if (item.kind === "plan") return <AgentPlanCard key={item.id} item={item} />;
         if (item.kind === "tool") return <ToolLine key={item.id} item={item} />;
         if (item.kind === "ask_user") {

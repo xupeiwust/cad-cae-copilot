@@ -264,10 +264,23 @@ path instead of regenerating the whole model.
   mutation guard is unchanged, and `cad.edit_parameter` stays approval-gated — the
   binding only *proposes* a target, and out-of-range / ambiguous edits are routed
   to user confirmation.
-- **Future work:** surface `resolved_intent` in the composer as a visible
-  "understood as /build — correct?" confirmation, re-resolve follow-up / reply
-  messages (currently the initial intent is reused), and consume the LLM
-  classifier's `targets` / `parameters` beyond the deterministic slots.
+
+**Frontend echo (intent chip).** The resolved intent is surfaced in the chat
+transcript as a compact chip instead of the raw agent-facing instruction text.
+`resolvedIntentFromRun` ([`resolvedIntent.ts`](aieng-ui/frontend/src/app/resolvedIntent.ts))
+reads `composer_intent.resolved_intent` (+ the `parameter_bindings` observation)
+into a render-ready summary; `runToTranscriptItems`
+([`chatTranscript.ts`](aieng-ui/frontend/src/app/chatTranscript.ts)) projects a
+single `intent`-kind item per run and **suppresses** the intent-bearing context
+observations (`isIntentResolutionObservation`) so they are not duplicated as
+status lines. [`IntentChip.tsx`](aieng-ui/frontend/src/components/chat/IntentChip.tsx)
+renders "Understood as `/modify`" (with source + confidence and per-slot binding
+pills: bound / out-of-range / ambiguous / unverified) or, for a low-confidence /
+ambiguous intent, an amber "confirming before acting" variant. Explicit
+slash-command runs record no `resolved_intent`, so they show no chip.
+- **Future work:** re-resolve follow-up / reply messages (currently the initial
+  intent is reused), and consume the LLM classifier's `targets` / `parameters`
+  beyond the deterministic slots.
 
 **`@`-mentions (strict binding, v1).** The composer parses lightweight
 `@kind:value` mentions (`extractComposerMentions` in

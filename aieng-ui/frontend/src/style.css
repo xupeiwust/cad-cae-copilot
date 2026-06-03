@@ -1775,6 +1775,97 @@ input[type="file"] {
   text-transform: uppercase;
 }
 
+.transcript-intent-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.08);
+  color: #cfe6ff;
+  font-size: 12px;
+}
+
+.transcript-intent-line code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(2, 6, 23, 0.32);
+  color: #bfe3ff;
+  font-weight: 700;
+}
+
+.transcript-intent-line .transcript-status-icon {
+  color: #38bdf8;
+}
+
+.transcript-intent-clarify {
+  border-color: rgba(217, 164, 65, 0.4);
+  background: rgba(217, 164, 65, 0.1);
+  color: #fde68a;
+}
+
+.transcript-intent-clarify .transcript-status-icon {
+  color: #f5b945;
+}
+
+.transcript-intent-source {
+  color: #8aa0c0;
+  font-size: 11px;
+}
+
+.transcript-intent-bindings {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.intent-binding {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(2, 6, 23, 0.24);
+}
+
+.intent-binding code {
+  padding: 0 4px;
+  font-size: 10px;
+  color: #9fb6d6;
+}
+
+.intent-binding-known {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #b8f0d6;
+}
+
+.intent-binding-warn {
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #fde68a;
+}
+
+.intent-binding-warn-icon {
+  width: 12px;
+  height: 12px;
+  color: #f5b945;
+}
+
+.intent-binding-unresolved {
+  border-color: rgba(217, 164, 65, 0.4);
+  color: #fcd9a0;
+}
+
+.intent-binding-unverified {
+  color: #93a4c0;
+}
+
 .tool-line,
 .artifact-line,
 .transcript-status-line,

@@ -1,13 +1,18 @@
 import type { PersistedChatMessage } from "../api";
 import type { ChatHistoryItem } from "../appTypes";
 import type { AutopilotAgentPlan, AutopilotAgentPlanStep, AutopilotObservation, AutopilotRunState } from "../types";
+import {
+  isIntentResolutionObservation,
+  resolvedIntentFromRun,
+  type ResolvedIntentSummary,
+} from "./resolvedIntent";
 
 export type TranscriptStatus = "pending" | "running" | "done" | "failed" | "blocked" | "approval" | "queued" | "cancelled";
 
 type TranscriptBase = {
   id: string;
   sourceId: string;
-  kind: "message" | "tool" | "approval" | "ask_user" | "artifact" | "status" | "error" | "plan";
+  kind: "message" | "tool" | "approval" | "ask_user" | "artifact" | "status" | "error" | "plan" | "intent";
   runId?: string | null;
   sessionId?: string | null;
   projectId?: string | null;
@@ -92,6 +97,12 @@ export type TranscriptAgentPlanLine = TranscriptBase & {
   currentBlockers?: string[];
 };
 
+/** Backend-resolved natural-language intent ("understood as /build" chip). */
+export type TranscriptIntentLine = TranscriptBase & {
+  kind: "intent";
+  intent: ResolvedIntentSummary;
+};
+
 export type ChatTranscriptItem =
   | TranscriptUserMessage
   | TranscriptAgentMessage
@@ -101,7 +112,8 @@ export type ChatTranscriptItem =
   | TranscriptArtifactLine
   | TranscriptStatusLine
   | TranscriptErrorLine
-  | TranscriptAgentPlanLine;
+  | TranscriptAgentPlanLine
+  | TranscriptIntentLine;
 
 export type AgentTranscriptEvent = {
   event_id?: string;
@@ -164,7 +176,23 @@ export function runToTranscriptItems(
     });
   }
 
+  // Backend-resolved natural-language intent → a single "understood as /X" chip,
+  // shown near the user message. The raw context observations that carry this
+  // (agent-facing instruction text) are suppressed below so it is not duplicated.
+  const resolvedIntent = resolvedIntentFromRun(run);
+  if (resolvedIntent) {
+    items.push({
+      ...base,
+      id: `run-${run.run_id}-intent`,
+      sourceId: `run:${run.run_id}:intent`,
+      kind: "intent",
+      intent: resolvedIntent,
+      createdAt,
+    });
+  }
+
   for (const [index, obs] of run.observations.entries()) {
+    if (isIntentResolutionObservation(obs)) continue;
     items.push(...observationToTranscriptItems(run, obs, index));
   }
 

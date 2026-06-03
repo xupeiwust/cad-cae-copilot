@@ -11,6 +11,8 @@ from .intent_resolution import (
     INTENT_REGISTRY,
     IntentResolution,
     commands_where,
+    extract_parameter_slots,
+    format_parameter_slots,
     intent_labels,
     resolve_intent,
 )
@@ -231,6 +233,21 @@ INTENT_CLARIFY_INSTRUCTION = (
     "geometry edit or simulation, briefly confirm with the user what they want "
     "(ask_user) — do not guess between creating, modifying, critiquing, explaining, "
     "or simulating. A read-only inspection to inform the question is fine."
+)
+
+# Dimensional-edit bias for a modify intent that names concrete value changes.
+# Pushes the agent toward the fast, deterministic cad.edit_parameter path instead
+# of regenerating the whole model — but the agent still binds each name to a real
+# feature parameter and the edit stays approval-gated.
+PARAMETRIC_EDIT_INSTRUCTION = (
+    "The user requested dimensional edit(s): {slots}. Prefer the fast parametric "
+    "path: for each requested change, resolve the named dimension to an editable "
+    "feature parameter (featureId / parameterName from aieng.agent_context or "
+    "feature_graph.json) and call cad.edit_parameter — do NOT regenerate the whole "
+    "model for a pure dimensional tweak. If a requested dimension has no matching "
+    "editable parameter (no UPPER_SNAKE_CASE constant), say so and ask the user or "
+    "fall back to a cad.execute_build123d edit. cad.edit_parameter is approval-"
+    "gated as usual; respect declared min/max bounds."
 )
 
 # Routed-command semantics are owned by intent_resolution.INTENT_REGISTRY (the
@@ -646,6 +663,7 @@ class AutopilotEngine:
         )
         self._resolve_natural_language_intent(state, request)
         self._inject_command_context(state)
+        self._inject_parametric_edit_context(state)
         self._inject_mention_context(state)
         self._inject_simulation_readiness(state)
         if not request.fake_actions:
@@ -796,6 +814,34 @@ class AutopilotEngine:
                     "mutation_required": is_mutation_required_command(state),
                     "read_only": is_read_only_command(state),
                     "simulation_planning": is_simulation_command(state),
+                },
+            )
+        )
+
+    def _inject_parametric_edit_context(self, state: AutopilotRunState) -> None:
+        """Bias a modify intent that names value changes toward cad.edit_parameter.
+
+        Fires for the ``modify`` command (explicit /modify or a resolved
+        natural-language modify) when the message contains deterministic
+        dimensional slots ("change the wall thickness to 5mm"). Prompt/context
+        only — it does not select a tool, change CAD execution, or bypass approval;
+        the mutation guard is unchanged. The extracted slots ride on the
+        observation so the frontend/audit can show what was understood. No-op for
+        other commands or when no slot is found. Persists in state (survives
+        continue/reply/follow-up rebuilds).
+        """
+        if get_composer_command(state) != "modify":
+            return
+        slots = extract_parameter_slots(state.message)
+        if not slots:
+            return
+        state.observations.append(
+            _observation(
+                "context",
+                PARAMETRIC_EDIT_INSTRUCTION.format(slots=format_parameter_slots(slots)),
+                {
+                    "composer_command": "modify",
+                    "parameter_slots": [slot.to_dict() for slot in slots],
                 },
             )
         )

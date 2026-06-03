@@ -25,6 +25,7 @@ deterministic guards in ``engine.py`` remain the safety net.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -290,6 +291,160 @@ def resolve_intent(
                 return _apply_clarification_gate(sanitized)
 
     return _apply_clarification_gate(keyword_classify(message))
+
+
+# --- Parameter slot extraction ----------------------------------------------
+# Deterministic, best-effort extraction of dimensional edits from a modify
+# request ("change the wall thickness to 5mm", "把壁厚改成5"). These are HINTS
+# for the agent to prefer the fast cad.edit_parameter path over a full rebuild;
+# the agent still binds each name to a real feature parameter (featureId /
+# parameterName) and the edit stays approval-gated. Not a parser of record — the
+# LLM classifier can populate richer parameters; this guarantees a useful floor
+# with no API key.
+
+
+@dataclass
+class ParameterSlot:
+    """One requested dimensional edit: ``name`` → ``value`` (optional ``unit``)."""
+
+    name: str
+    value: float
+    unit: Optional[str] = None
+    raw: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "value": self.value, "unit": self.unit, "raw": self.raw}
+
+
+# Words that are never a real parameter name even if they land in the capture.
+_SLOT_NAME_STOPWORDS = frozenset({
+    "it", "this", "that", "them", "the", "a", "an", "one", "thing", "part", "model",
+    "这个", "那个", "它", "这", "那",
+})
+
+# Space-delimited words to strip from the START of a captured name.
+_SLOT_LEADING_NOISE = (
+    "set", "change", "adjust", "make", "increase", "decrease", "reduce",
+    "resize", "update", "modify", "the", "a", "an", "and", "or",
+)
+# CJK particles that prefix a name with no separating space ("把壁厚").
+_SLOT_LEADING_CJK = ("帮我", "把", "将", "请", "让")
+# Connective words that can be greedily swept into the END of a name
+# ("radius to" from the verb-direct pattern) — strip them back off.
+_SLOT_TRAILING_NOISE_SP = (" to", " into", " is", " =", " of")
+_SLOT_TRAILING_NOISE_CJK = ("为", "是")
+
+_NUM = r"-?\d+(?:\.\d+)?"
+_UNIT = r"mm|cm|millimeters?|centimeters?|metres?|meters?|in|inch|inches|deg|degrees?|°|度|毫米|厘米|米"
+_NAME = r"[A-Za-z一-鿿][A-Za-z0-9_一-鿿 \-]{0,28}?"
+
+# Connective form: <name> (to|=|改成|...) <value><unit>.
+_SLOT_RE_CONNECTIVE = re.compile(
+    r"(?:(?:set|change|adjust|make|increase|decrease|reduce|resize|update|modify|把|将)\s+)?"
+    r"(?:the\s+|a\s+|an\s+)?"
+    r"(?P<name>" + _NAME + r")"
+    r"\s*(?:改成|改为|调整到|调到|设置为|设为|设成|to|into|=|:|为|是)\s*"
+    r"(?P<value>" + _NUM + r")"
+    r"\s*(?P<unit>" + _UNIT + r")?",
+    re.IGNORECASE,
+)
+
+# Verb-direct form: make/set <name> <value><unit>  (no explicit connective).
+_SLOT_RE_DIRECT = re.compile(
+    r"(?:make|set)\s+(?:the\s+|a\s+|an\s+)?"
+    r"(?P<name>" + _NAME + r")\s+"
+    r"(?P<value>" + _NUM + r")"
+    r"\s*(?P<unit>" + _UNIT + r")?",
+    re.IGNORECASE,
+)
+
+
+def _clean_slot_name(raw_name: str) -> str:
+    name = " ".join(str(raw_name or "").split())
+    # Strip leading verb/article/conjunction/particle noise that crept in.
+    changed = True
+    while changed and name:
+        changed = False
+        for cjk in _SLOT_LEADING_CJK:  # no-space CJK prefix
+            if name.startswith(cjk):
+                name = name[len(cjk):].strip()
+                changed = True
+                break
+        if changed:
+            continue
+        lowered = name.lower()
+        for noise in _SLOT_LEADING_NOISE:
+            if lowered == noise:  # whole name is noise
+                return ""
+            if lowered.startswith(noise + " "):
+                name = name[len(noise) + 1:].strip()
+                changed = True
+                break
+    # Strip trailing connective words swept in by the verb-direct pattern.
+    changed = True
+    while changed and name:
+        changed = False
+        lowered = name.lower()
+        for tail in _SLOT_TRAILING_NOISE_SP:
+            if lowered.endswith(tail):
+                name = name[: -len(tail)].strip()
+                changed = True
+                break
+        if changed:
+            continue
+        for tail in _SLOT_TRAILING_NOISE_CJK:
+            if name.endswith(tail):
+                name = name[: -len(tail)].strip()
+                changed = True
+                break
+    return name.strip()
+
+
+def extract_parameter_slots(message: str) -> list[ParameterSlot]:
+    """Extract dimensional edits from a message. Pure, deterministic, best-effort.
+
+    Returns a de-duplicated (by name+value) list of ``ParameterSlot``. Names that
+    reduce to a stopword or empty after cleaning are dropped. Handles common EN/ZH
+    phrasings; ambiguous prose simply yields nothing (the agent then proceeds
+    without the parametric hint).
+    """
+    text = str(message or "")
+    if not text.strip():
+        return []
+    slots: list[ParameterSlot] = []
+    seen: set[tuple[str, float]] = set()
+    for pattern in (_SLOT_RE_CONNECTIVE, _SLOT_RE_DIRECT):
+        for match in pattern.finditer(text):
+            name = _clean_slot_name(match.group("name"))
+            if not name or name.lower() in _SLOT_NAME_STOPWORDS:
+                continue
+            try:
+                value = float(match.group("value"))
+            except (TypeError, ValueError):
+                continue
+            key = (name.lower(), value)
+            if key in seen:
+                continue
+            seen.add(key)
+            unit = match.group("unit")
+            slots.append(
+                ParameterSlot(
+                    name=name,
+                    value=value,
+                    unit=unit.lower() if isinstance(unit, str) and unit else None,
+                    raw=match.group(0).strip(),
+                )
+            )
+    return slots
+
+
+def format_parameter_slots(slots: list[ParameterSlot]) -> str:
+    """Human-readable ``wall thickness→5mm, radius→12`` summary."""
+    parts: list[str] = []
+    for slot in slots:
+        value = int(slot.value) if float(slot.value).is_integer() else slot.value
+        parts.append(f"{slot.name}→{value}{slot.unit or ''}")
+    return ", ".join(parts)
 
 
 # --- Tier 2 factory: LLM-backed classifier ----------------------------------

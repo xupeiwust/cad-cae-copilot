@@ -28,6 +28,7 @@ from app.agent_autopilot.engine import (
     EXPLAIN_COMMAND_INSTRUCTION,
     GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
     INTENT_CLARIFY_INSTRUCTION,
+    PARAMETRIC_EDIT_INSTRUCTION,
     _MUTATION_REQUIRED_COMMANDS,
     _READ_ONLY_COMMANDS,
     _SIMULATION_COMMANDS,
@@ -36,6 +37,8 @@ from app.agent_autopilot.engine import (
 from app.agent_autopilot.intent_resolution import (
     INTENT_REGISTRY,
     IntentResolution,
+    extract_parameter_slots,
+    format_parameter_slots,
     keyword_classify,
     parse_classifier_json,
     resolve_intent,
@@ -170,6 +173,49 @@ def test_parse_classifier_json(raw: str, expected_command) -> None:
         assert res is None or res.command is None
     else:
         assert res is not None and res.command == expected_command
+
+
+# --------------------------------------------------------------------------- #
+# Unit tests — parameter slot extraction                                      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "message,name,value,unit",
+    [
+        ("change the wall thickness to 5mm", "wall thickness", 5.0, "mm"),
+        ("set radius to 12", "radius", 12.0, None),
+        ("increase wall thickness to 6 mm", "wall thickness", 6.0, "mm"),
+        ("make the fillet radius 8mm", "fillet radius", 8.0, "mm"),
+        ("把壁厚改成5", "壁厚", 5.0, None),
+        ("the bolt diameter to 4.5mm", "bolt diameter", 4.5, "mm"),
+    ],
+)
+def test_extract_parameter_slots(message: str, name: str, value: float, unit) -> None:
+    slots = extract_parameter_slots(message)
+    assert slots, f"expected a slot from {message!r}"
+    assert slots[0].name == name
+    assert slots[0].value == value
+    assert slots[0].unit == unit
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["build a bracket", "make it 5mm taller", "explain the project", "hello"],
+)
+def test_extract_parameter_slots_no_false_positive(message: str) -> None:
+    # "make it 5mm taller" → name "it" is a stopword, dropped.
+    assert extract_parameter_slots(message) == []
+
+
+def test_extract_parameter_slots_dedup() -> None:
+    slots = extract_parameter_slots("set radius to 5 and set radius to 5")
+    assert len(slots) == 1
+
+
+def test_format_parameter_slots() -> None:
+    slots = extract_parameter_slots("change wall thickness to 5mm")
+    assert format_parameter_slots(slots) == "wall thickness→5mm"
 
 
 # --------------------------------------------------------------------------- #
@@ -368,6 +414,80 @@ def test_resolve_method_confident_classifier_sets_command(tmp_path: Path) -> Non
     assert state.composer_intent["command"] == "build"
     assert state.composer_intent["intent_source"] == "llm_classifier"
     assert state.composer_intent["resolved_intent"]["needs_clarification"] is False
+
+
+def test_nl_modify_with_slot_injects_parametric_bias(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("nl-param-edit"))
+    client = TestClient(create_app(settings))
+
+    resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "change the wall thickness to 5mm",
+            "project_id": project["id"],
+            "adapter_id": "fake",
+            "max_steps": 2,  # modify is mutation-required; bare final keeps bouncing
+            "fake_actions": [{"action": {"type": "final", "message": "done"}, "done": True}],
+        },
+    )
+    assert resp.status_code == 200
+    run_id = resp.json()["run_id"]
+
+    # Give the run a moment to inject the startup context observations.
+    final = _wait_for_status(client, run_id, {"completed", "failed", "blocked", "running"}, timeout_s=4.0)
+    deadline = time.time() + 4.0
+    found = False
+    slots = None
+    while time.time() < deadline:
+        final = client.get(f"/api/agent/autopilot/runs/{run_id}").json()
+        for obs in final.get("observations", []):
+            if "wall thickness" in str(obs.get("summary", "")) and "cad.edit_parameter" in str(obs.get("summary", "")):
+                found = True
+                slots = (obs.get("data") or {}).get("parameter_slots")
+        if found:
+            break
+        time.sleep(0.05)
+
+    assert found, "expected a parametric-edit bias observation for the dimensional modify"
+    assert final["composer_intent"]["command"] == "modify"
+    assert slots and slots[0]["name"] == "wall thickness" and slots[0]["value"] == 5.0
+
+
+def test_explicit_modify_with_slot_injects_parametric_bias(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    project = save_project(settings, default_project("explicit-param-edit"))
+    client = TestClient(create_app(settings))
+
+    resp = client.post(
+        "/api/agent/autopilot/runs",
+        json={
+            "message": "/modify set the radius to 12mm",
+            "project_id": project["id"],
+            "adapter_id": "fake",
+            "max_steps": 2,
+            "composer_intent": {
+                "command": "modify", "commandRaw": "/modify",
+                "text": "set the radius to 12mm", "mentions": [], "errors": [],
+            },
+            "fake_actions": [{"action": {"type": "final", "message": "done"}, "done": True}],
+        },
+    )
+    assert resp.status_code == 200
+    run_id = resp.json()["run_id"]
+
+    deadline = time.time() + 4.0
+    found = False
+    while time.time() < deadline:
+        final = client.get(f"/api/agent/autopilot/runs/{run_id}").json()
+        if any(
+            "radius" in str(o.get("summary", "")) and PARAMETRIC_EDIT_INSTRUCTION[:30] in str(o.get("summary", ""))
+            for o in final.get("observations", [])
+        ):
+            found = True
+            break
+        time.sleep(0.05)
+    assert found, "explicit /modify with a dimensional slot should also get the parametric bias"
 
 
 def test_resolve_method_skips_classifier_for_fake_runs(tmp_path: Path) -> None:

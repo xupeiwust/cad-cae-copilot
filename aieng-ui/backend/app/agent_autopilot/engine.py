@@ -9,7 +9,7 @@ from .adapters import DEFAULT_STEP_TIMEOUT_SECONDS, LocalAgentAdapter, adapter_r
 from .context_memory import ContextMemoryManager
 from .mention_binding import build_mention_bindings, mention_status_word
 from .policy import evaluate_tool_call
-from .simulation_readiness import build_simulation_readiness_report
+from .simulation_readiness import build_simulation_readiness_report, load_simulation_setup
 from .prompts import build_system_layer, OPERATING_RULES
 from .schema import (
     AgentPlan,
@@ -551,6 +551,7 @@ class AutopilotEngine:
         on_state_update: Callable[[AutopilotRunState], None] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         approval_mode: str = "balanced",
+        simulation_setup_loader: Callable[[str], dict[str, Any] | None] | None = None,
     ) -> None:
         self.store = store
         self.runtime_tools = runtime_tools
@@ -559,6 +560,10 @@ class AutopilotEngine:
         self.tool_executor = tool_executor
         self.on_state_update = on_state_update
         self.on_event = on_event
+        # Optional app-wired loader: project_id -> direct CAE setup artifact
+        # ({"data", "setup_source", "setup_source_kind"}) or None. Used by
+        # /simulate readiness to read live simulation/setup.* files.
+        self.simulation_setup_loader = simulation_setup_loader
         self.approval_mode = approval_mode if approval_mode in {"balanced", "strict", "manual"} else "balanced"
         self._system_layer = build_system_layer(
             runtime_tools=self.runtime_tools,
@@ -728,6 +733,7 @@ class AutopilotEngine:
         cae = self.agent_context.get("cae") if isinstance(self.agent_context, dict) else None
         report = build_simulation_readiness_report(
             cae,
+            setup_artifact=self._load_simulation_setup(state),
             mention_bindings=self._mention_bindings(state),
         )
         state.observations.append(
@@ -739,10 +745,37 @@ class AutopilotEngine:
                     "simulation_readiness": report,
                     "missing_required_inputs": report["missing_required_inputs"],
                     "setup_source": report["setup_source"],
+                    "setup_source_kind": report["setup_source_kind"],
                     "solver_executed": report["solver_executed"],
                 },
             )
         )
+
+    def _load_simulation_setup(self, state: AutopilotRunState) -> dict[str, Any] | None:
+        """Find a direct CAE setup artifact (file-based loader, then context).
+
+        Prefers the app-wired ``simulation_setup_loader`` (reads simulation/setup.*
+        / cae/setup.* from the package); falls back to inline cae_setup /
+        simulation_setup artifacts already exposed in ``agent_context``. Best-effort
+        and never raises — returns None so the report falls back to the cae block.
+        """
+        if self.simulation_setup_loader and state.project_id:
+            try:
+                result = self.simulation_setup_loader(state.project_id)
+            except Exception:
+                result = None
+            if isinstance(result, dict) and result.get("data"):
+                return result
+        artifacts = self._context_setup_artifacts()
+        if artifacts:
+            return load_simulation_setup(lambda _name: None, artifacts=artifacts)
+        return None
+
+    def _context_setup_artifacts(self) -> list[Any] | None:
+        """Workspace artifacts exposed in context (for inline cae_setup lookup)."""
+        ctx = self.agent_context if isinstance(self.agent_context, dict) else {}
+        node = ctx.get("artifacts")
+        return node if isinstance(node, list) else None
 
     def _mention_bindings(self, state: AutopilotRunState) -> list[dict[str, Any]]:
         """Resolve this run's @part/@artifact mentions against workspace context."""

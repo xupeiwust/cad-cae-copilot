@@ -540,6 +540,36 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 pass
         return agent_context_snapshot
 
+    def _load_project_simulation_setup(project_id: str | None) -> dict[str, Any] | None:
+        """Read a project's direct CAE setup artifact for /simulate readiness.
+
+        Opens the .aieng package and reads simulation/setup.* / cae/setup.* via the
+        pure ``load_simulation_setup`` loader. Best-effort: any failure returns None
+        so readiness falls back to the agent_context cae block.
+        """
+        if not project_id:
+            return None
+        try:
+            import zipfile
+            from pathlib import Path
+
+            from . import package_inspection, project_io
+            from .agent_autopilot.simulation_readiness import load_simulation_setup
+
+            project = project_io.get_project(active_settings, project_id)
+            aieng_file = project.get("aieng_file")
+            if not aieng_file:
+                return None
+            package_path = Path(aieng_file)
+            if not package_path.exists():
+                return None
+            with zipfile.ZipFile(package_path) as archive:
+                return load_simulation_setup(
+                    lambda name: package_inspection.read_package_text(archive, name)
+                )
+        except Exception:
+            return None
+
     def _session_approval_mode(session_id: str | None) -> str:
         if not session_id:
             return "balanced"
@@ -563,6 +593,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             approval_mode=_session_approval_mode(request.session_id),
+            simulation_setup_loader=_load_project_simulation_setup,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -735,6 +766,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             approval_mode=_session_approval_mode(current.session_id),
+            simulation_setup_loader=_load_project_simulation_setup,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -791,6 +823,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             approval_mode=_session_approval_mode(current.session_id),
+            simulation_setup_loader=_load_project_simulation_setup,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -834,6 +867,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             approval_mode=_session_approval_mode(current.session_id),
+            simulation_setup_loader=_load_project_simulation_setup,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,

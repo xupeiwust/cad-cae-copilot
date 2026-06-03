@@ -1,10 +1,15 @@
-"""Deterministic /simulate readiness report (v1.5) — pure helper coverage."""
+"""Deterministic /simulate readiness report — pure helper coverage (v1.5 + v2)."""
 
 from app.agent_autopilot.mention_binding import build_mention_bindings
 from app.agent_autopilot.simulation_readiness import (
     build_simulation_readiness_report,
+    load_simulation_setup,
     REQUIRED_INPUTS,
 )
+
+
+def _reader(files: dict[str, str]):
+    return lambda name: files.get(name)
 
 
 def _statuses(report: dict) -> dict[str, str]:
@@ -151,3 +156,138 @@ def test_mention_targets_consume_bindings() -> None:
     assert "bracket (known)" in report["summary"]
     assert "ghost (not found)" in report["summary"]
     assert "model.glb (unverified)" in report["summary"]
+
+
+# --- v2: direct setup artifact reading --------------------------------------
+
+_YAML_COMPLETE = """
+analysis_type: linear_static
+material:
+  name: steel
+loads:
+  - type: force
+    magnitude: 500
+constraints:
+  - type: fixed
+mesh:
+  element_size: 2.0
+solver: CalculiX
+"""
+
+_JSON_PARTIAL = '{"material": {"name": "al"}, "loads": [{"type": "pressure"}]}'
+
+
+def test_load_yaml_setup_from_simulation_path() -> None:
+    loaded = load_simulation_setup(_reader({"simulation/setup.yaml": _YAML_COMPLETE}))
+    assert loaded is not None
+    assert loaded["setup_source"] == "simulation/setup.yaml"
+    assert loaded["setup_source_kind"] == "setup_artifact"
+    assert loaded["data"]["material"]["name"] == "steel"
+
+
+def test_load_json_setup_from_cae_path() -> None:
+    loaded = load_simulation_setup(_reader({"cae/setup.json": _JSON_PARTIAL}))
+    assert loaded is not None
+    assert loaded["setup_source"] == "cae/setup.json"
+    assert loaded["data"]["material"]["name"] == "al"
+
+
+def test_setup_path_priority_simulation_over_cae() -> None:
+    loaded = load_simulation_setup(
+        _reader({"simulation/setup.yaml": _YAML_COMPLETE, "cae/setup.json": _JSON_PARTIAL})
+    )
+    assert loaded["setup_source"] == "simulation/setup.yaml"
+
+
+def test_malformed_setup_is_safe_and_returns_none() -> None:
+    assert load_simulation_setup(_reader({"simulation/setup.yaml": "::: not : yaml :::"})) is None
+    assert load_simulation_setup(_reader({})) is None
+    assert load_simulation_setup(None) is None
+
+
+def test_workspace_artifact_inline_setup() -> None:
+    artifacts = [
+        {"kind": "viewer", "name": "preview.glb"},
+        {"kind": "cae_setup", "name": "setup-1", "data": {"material": ["steel"], "loads": ["L"], "constraints": ["C"]}},
+    ]
+    loaded = load_simulation_setup(_reader({}), artifacts=artifacts)
+    assert loaded is not None
+    assert loaded["setup_source_kind"] == "workspace_artifact"
+    assert loaded["setup_source"] == "setup-1"
+
+
+def test_complete_setup_artifact_is_ready() -> None:
+    setup = load_simulation_setup(_reader({"simulation/setup.yaml": _YAML_COMPLETE}))
+    report = build_simulation_readiness_report(setup_artifact=setup)
+    assert report["setup_source"] == "simulation/setup.yaml"
+    assert report["setup_source_kind"] == "setup_artifact"
+    s = _statuses(report)
+    assert s["material"] == "present"
+    assert s["loads"] == "present"
+    assert s["constraints"] == "present"
+    assert s["analysis_type"] == "present"
+    assert s["mesh"] == "present"
+    assert s["solver"] == "present"
+    assert report["missing_required_inputs"] == []
+    assert report["ready_for_solver"] is True
+    assert report["solver_executed"] is False
+
+
+def test_partial_setup_artifact_misses_required() -> None:
+    setup = load_simulation_setup(_reader({"cae/setup.json": _JSON_PARTIAL}))
+    report = build_simulation_readiness_report(setup_artifact=setup)
+    s = _statuses(report)
+    assert s["material"] == "present"
+    assert s["loads"] == "present"
+    assert s["constraints"] == "missing"
+    assert report["missing_required_inputs"] == ["constraints"]
+    assert report["ready_for_solver"] is False
+
+
+def test_setup_artifact_takes_priority_over_cae_block() -> None:
+    # A partial direct setup must win over a complete agent_context cae block.
+    setup = {
+        "data": {"material": ["steel"]},
+        "setup_source": "simulation/setup.yaml",
+        "setup_source_kind": "setup_artifact",
+    }
+    complete_cae = {"present": True, "materials": ["s"], "loads": ["l"], "boundary_conditions": ["b"]}
+    report = build_simulation_readiness_report(complete_cae, setup_artifact=setup)
+    assert report["setup_source_kind"] == "setup_artifact"
+    # constraints/loads come from the direct setup (absent there), not the cae block.
+    assert set(report["missing_required_inputs"]) == {"loads", "constraints"}
+
+
+def test_missing_setup_falls_back_to_cae_block() -> None:
+    report = build_simulation_readiness_report(
+        {"present": True, "materials": ["s"], "loads": ["l"], "boundary_conditions": ["b"]},
+        setup_artifact=None,
+    )
+    assert report["setup_source"] == "cae_setup"
+    assert report["setup_source_kind"] == "agent_context"
+    assert report["ready_for_solver"] is True
+
+
+def test_no_source_at_all_is_not_found() -> None:
+    report = build_simulation_readiness_report(None, setup_artifact=None)
+    assert report["setup_source"] == "not_found"
+    assert report["setup_source_kind"] == "none"
+    assert report["missing_required_inputs"] == list(REQUIRED_INPUTS)
+
+
+def test_explicit_unavailable_mesh_solver_in_setup_artifact() -> None:
+    setup = {
+        "data": {
+            "material": ["s"], "loads": ["l"], "constraints": ["c"],
+            "mesh": False,
+            "solver": {"available": False},
+        },
+        "setup_source": "simulation/setup.yaml",
+        "setup_source_kind": "setup_artifact",
+    }
+    report = build_simulation_readiness_report(setup_artifact=setup)
+    s = _statuses(report)
+    assert s["mesh"] == "unknown"
+    assert s["solver"] == "unknown"
+    # Required still satisfied — unknown defaultables do not block readiness.
+    assert report["ready_for_solver"] is True

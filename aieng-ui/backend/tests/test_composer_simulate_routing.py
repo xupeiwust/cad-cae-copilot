@@ -350,3 +350,110 @@ def test_non_simulate_command_gets_no_readiness_report(tmp_path: Path) -> None:
         )
     )
     assert _readiness_obs(state) is None
+
+
+# --- v2: direct setup artifact reading via the engine -----------------------
+
+
+def test_simulate_uses_direct_setup_loader(tmp_path: Path) -> None:
+    setup = {
+        "data": {"material": ["steel"], "loads": ["L"], "constraints": ["C"], "mesh": {"size": 2}, "solver": "CalculiX"},
+        "setup_source": "simulation/setup.yaml",
+        "setup_source_kind": "setup_artifact",
+    }
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        simulation_setup_loader=lambda _pid: setup,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate the bracket",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate the bracket"),
+            fake_actions=[{"action": {"type": "final", "message": "Plan ready; solver not run."}, "done": True}],
+        )
+    )
+    report = _readiness_obs(state).data["simulation_readiness"]
+    assert report["setup_source"] == "simulation/setup.yaml"
+    assert report["setup_source_kind"] == "setup_artifact"
+    assert report["missing_required_inputs"] == []
+    assert report["ready_for_solver"] is True
+    assert report["solver_executed"] is False
+    assert state.status == "completed"
+
+
+def test_direct_setup_loader_takes_priority_over_agent_context(tmp_path: Path) -> None:
+    # Loader returns a PARTIAL setup; agent_context cae is COMPLETE. The direct
+    # setup must win, so constraints are reported missing.
+    partial = {
+        "data": {"material": ["steel"]},
+        "setup_source": "simulation/setup.yaml",
+        "setup_source_kind": "setup_artifact",
+    }
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": {"present": True, "materials": ["s"], "loads": ["l"], "boundary_conditions": ["b"]}},
+        simulation_setup_loader=lambda _pid: partial,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate it"),
+            fake_actions=[{"action": {"type": "ask_user", "question": "What loads/constraints?"}}],
+        )
+    )
+    report = _readiness_obs(state).data["simulation_readiness"]
+    assert report["setup_source_kind"] == "setup_artifact"
+    assert set(report["missing_required_inputs"]) == {"loads", "constraints"}
+
+
+def test_loader_failure_falls_back_to_cae_block(tmp_path: Path) -> None:
+    def _boom(_pid):
+        raise RuntimeError("package unreadable")
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": {"present": True, "materials": ["s"], "loads": ["l"], "boundary_conditions": ["b"]}},
+        simulation_setup_loader=_boom,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate it"),
+            fake_actions=[{"action": {"type": "final", "message": "Plan ready."}, "done": True}],
+        )
+    )
+    report = _readiness_obs(state).data["simulation_readiness"]
+    # Loader raised → fell back to the agent_context cae block.
+    assert report["setup_source"] == "cae_setup"
+    assert report["setup_source_kind"] == "agent_context"
+    assert report["ready_for_solver"] is True
+
+
+def test_inline_context_setup_artifact_without_loader(tmp_path: Path) -> None:
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={
+            "artifacts": [
+                {"kind": "cae_setup", "name": "draft-1", "data": {"material": ["s"], "loads": ["l"], "constraints": ["c"]}},
+            ]
+        },
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate it"),
+            fake_actions=[{"action": {"type": "final", "message": "Plan ready."}, "done": True}],
+        )
+    )
+    report = _readiness_obs(state).data["simulation_readiness"]
+    assert report["setup_source_kind"] == "workspace_artifact"
+    assert report["setup_source"] == "draft-1"
+    assert report["ready_for_solver"] is True

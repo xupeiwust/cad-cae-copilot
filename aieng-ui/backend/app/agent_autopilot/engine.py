@@ -260,6 +260,85 @@ def command_mutation_intent(obj: Any) -> str | None:
     return None
 
 
+# --- Composer @-mentions ----------------------------------------------------
+# The composer parses lightweight "@kind:value" mentions (composerIntent.ts) and
+# persists them on composer_intent.mentions. v1 surfaces @part / @artifact to the
+# agent as prompt/context only — no strict topology binding, no CAD execution
+# change. Robust to missing/malformed metadata.
+
+
+def _composer_mentions(obj: Any) -> list[dict[str, Any]]:
+    intent = getattr(obj, "composer_intent", None)
+    if not isinstance(intent, dict):
+        return []
+    mentions = intent.get("mentions")
+    if not isinstance(mentions, list):
+        return []
+    return [m for m in mentions if isinstance(m, dict)]
+
+
+def _mention_values(obj: Any, kind: str) -> list[str]:
+    """De-duplicated, order-preserving non-empty string values for one mention kind."""
+    values: list[str] = []
+    for mention in _composer_mentions(obj):
+        if mention.get("kind") != kind:
+            continue
+        value = mention.get("value")
+        if isinstance(value, str) and value and value not in values:
+            values.append(value)
+    return values
+
+
+def mentioned_parts(obj: Any) -> list[str]:
+    """CAD part labels referenced via @part:<label>, or an empty list."""
+    return _mention_values(obj, "part")
+
+
+def mentioned_artifacts(obj: Any) -> list[str]:
+    """Artifact ids referenced via @artifact:<id>, or an empty list."""
+    return _mention_values(obj, "artifact")
+
+
+def mention_context_label(obj: Any) -> str | None:
+    """Human-readable prompt/context section for @part / @artifact mentions.
+
+    Returns None when there are no part/artifact mentions. Adds command-specific
+    targeting guidance for /explain, /critique, and /modify, and always reminds
+    the agent to ask / report "not found" rather than invent a missing target.
+    v1 is prompt-level context only — no strict object binding.
+    """
+    parts = mentioned_parts(obj)
+    artifacts = mentioned_artifacts(obj)
+    if not parts and not artifacts:
+        return None
+
+    lines: list[str] = []
+    if parts:
+        lines.append(f"The user referenced these CAD parts: {', '.join(parts)}.")
+    if artifacts:
+        lines.append(f"The user referenced these artifacts: {', '.join(artifacts)}.")
+
+    if parts:
+        target = ", ".join(parts)
+        command = get_composer_command(obj)
+        if command == "explain":
+            lines.append(f"Focus your read-only explanation on the referenced part(s): {target}.")
+        elif command == "critique":
+            lines.append(f"Focus your read-only critique on the referenced part(s): {target}, if available.")
+        elif command == "modify":
+            lines.append(
+                f"Target your CAD edit at the referenced part(s): {target}, if possible "
+                "(approval and the mutation guard are unchanged)."
+            )
+
+    lines.append(
+        "If a referenced part/artifact cannot be found in the current "
+        "model/topology, ask the user or clearly say the target was not found — "
+        "do not invent it."
+    )
+    return " ".join(lines)
+
+
 def _geometry_mutation_intent(text: str) -> str | None:
     lowered = text.lower()
     if any(term in lowered for term in _GEOMETRY_MODIFY_TERMS):
@@ -468,6 +547,7 @@ class AutopilotEngine:
             )
         )
         self._inject_command_context(state)
+        self._inject_mention_context(state)
         if not request.fake_actions:
             self._bootstrap_project_context(state)
         self._set_plan_step(state, "observe_context", "completed", summary="Initial run context is ready.")
@@ -532,6 +612,29 @@ class AutopilotEngine:
                     "intent_type": command_intent_label(state),
                     "mutation_required": is_mutation_required_command(state),
                     "read_only": read_only,
+                },
+            )
+        )
+
+    def _inject_mention_context(self, state: AutopilotRunState) -> None:
+        """Surface @part / @artifact composer mentions as a context observation.
+
+        Prompt/context only (v1): no strict topology binding, no tool-ranking or
+        CAD-execution change, approval/mutation-guard unchanged. The observation
+        persists in state, so it survives continue/reply/follow-up rebuilds. A
+        no-op when there are no part/artifact mentions.
+        """
+        label = mention_context_label(state)
+        if label is None:
+            return
+        state.observations.append(
+            _observation(
+                "context",
+                label,
+                {
+                    "composer_command": get_composer_command(state),
+                    "mentioned_parts": mentioned_parts(state),
+                    "mentioned_artifacts": mentioned_artifacts(state),
                 },
             )
         )

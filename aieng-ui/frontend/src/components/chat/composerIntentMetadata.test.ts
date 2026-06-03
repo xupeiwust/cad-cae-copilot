@@ -34,6 +34,27 @@ test("composer intent metadata for the send pipeline", () => {
   expectEqual(m.mentions[0].raw, "@face:f_top", "mentions: raw token");
   expectEqual(m.mentions[1].kind, "project", "mentions: project kind");
 
+  // @part and @artifact mentions parse into { kind, raw, value }.
+  m = toComposerIntentMetadata("/explain @part:rotor_1 and @artifact:model.glb");
+  expectEqual(m.command, "explain", "part/artifact: command parsed");
+  expectEqual(m.mentions.length, 2, "part/artifact: two mentions");
+  expectEqual(m.mentions[0].kind, "part", "part/artifact: part kind");
+  expectEqual(m.mentions[0].value, "rotor_1", "part/artifact: part value (underscore+digit)");
+  expectEqual(m.mentions[0].raw, "@part:rotor_1", "part/artifact: part raw");
+  expectEqual(m.mentions[1].kind, "artifact", "part/artifact: artifact kind");
+  expectEqual(m.mentions[1].value, "model.glb", "part/artifact: artifact value (dot kept)");
+
+  // Multiple part mentions are all recorded (order preserved); unknown kinds dropped.
+  m = toComposerIntentMetadata("/modify @part:arm_L @part:arm_R ignore @widget:w_1");
+  expectEqual(m.mentions.length, 2, "multi-part: unknown kind ignored");
+  expectEqual(m.mentions[0].value, "arm_L", "multi-part: first");
+  expectEqual(m.mentions[1].value, "arm_R", "multi-part: second");
+
+  // A non-ASCII part value is preserved verbatim.
+  m = toComposerIntentMetadata("/critique @part:转子");
+  expectEqual(m.mentions.length, 1, "chinese mention: one");
+  expectEqual(m.mentions[0].value, "转子", "chinese mention: value preserved");
+
   // Chinese command + text roundtrips verbatim.
   m = toComposerIntentMetadata("/build 一个四旋翼无人机");
   expectEqual(m.command, "build", "chinese: command parsed");

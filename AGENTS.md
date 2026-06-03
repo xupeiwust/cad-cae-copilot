@@ -193,30 +193,37 @@ Helpers live in [`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py):
 `is_simulation_command` / `suppresses_mutation_guard` /
 `is_mutation_required_command` / `command_intent_label` / `command_mutation_intent`.
 
-**`@`-mentions (routed as prompt/context, v1).** The composer also parses
-lightweight `@kind:value` mentions (`extractComposerMentions` in
+**`@`-mentions (strict binding, v1).** The composer parses lightweight
+`@kind:value` mentions (`extractComposerMentions` in
 [`composerIntent.ts`](aieng-ui/frontend/src/components/chat/composerIntent.ts))
 into `{ kind, raw, value }` and persists them on `composer_intent.mentions`.
-- **`@part:<label>` and `@artifact:<id>` are routed.** The engine surfaces them
-  to the agent as a mention-context section ("The user referenced these CAD
-  parts: …" / "… these artifacts: …"), with command-aware targeting guidance:
-  `/explain @part:x` → explain that part (read-only), `/critique @part:x` →
-  critique that part if available (read-only), `/modify @part:x` → target the
-  CAD edit at that part **(approval and the mutation guard are unchanged)**,
-  `/simulate @part:x` → scope the simulation setup/plan to that part (no solver
-  run).
-- This is **prompt/context guidance only** — *not* strict object binding. If a
-  referenced part/artifact is not found in the current model/topology, the agent
-  is told to ask the user or clearly report "target not found" rather than invent
-  it. Mentions are never required for any command.
+- **`@part:<label>` and `@artifact:<id>` are routed and bound.** The engine
+  resolves each mention against the available workspace context
+  ([`mention_binding.py`](aieng-ui/backend/app/agent_autopilot/mention_binding.py)
+  `build_mention_bindings`): `@part` against `cad.named_parts` + `topology_map`,
+  `@artifact` against the known workspace artifacts. Each binding records
+  `known` (`true` / `false` / `null`), `source`, `canonical_id`, and a `reason`.
+  The honesty rule: when **no authoritative index is available**, the binding is
+  `known: null` ("unverified") — never a false negative; `known: false` is used
+  only when an index exists and the value is genuinely absent. The bindings ride
+  on the mention-context observation (`mention_bindings`), the label annotates
+  each value with its status (e.g. `bracket (known)`, `ghost (not found)`,
+  `rotor_1 (unverified)`), and `/simulate` readiness reuses them for its
+  `targets` (no duplicate lookup).
+- Still **prompt/context only** — binding does not block commands or change tool
+  selection/approval. Command-aware targeting guidance is unchanged: `/explain` →
+  explain that part (read-only), `/critique` → critique it if available
+  (read-only), `/modify` → target the CAD edit at it (approval + mutation guard
+  unchanged), `/simulate` → scope the plan to it (no solver run). The agent is
+  still told to ask / report "target not found" rather than invent a target, and
+  mentions are never required for any command.
 - Helpers: `mentioned_parts` / `mentioned_artifacts` / `mention_context_label`
-  (in `engine.py`), robust to missing/malformed metadata.
-- **Future work:** `@workspace` / `@project` / `@face` mention routing and strict
-  topology/artifact binding are not implemented yet (the parser recognizes those
-  kinds, but the backend does not bind them). All five slash commands (`/build`,
-  `/modify`, `/critique`, `/explain`, `/simulate`) are now routed; deeper
-  `/simulate` work (actual readiness validation against the CAE setup, not just
-  prompt guidance) remains future work.
+  (engine), `build_mention_bindings` / `bindings_to_targets` /
+  `mention_status_word` (mention_binding) — all robust to missing/malformed
+  metadata.
+- **Future work:** `@workspace` / `@project` / `@face` mention routing (the
+  parser recognizes those kinds, but the backend does not bind them yet) and
+  deeper `/simulate` readiness validation against the live CAE setup artifacts.
 
 ---
 

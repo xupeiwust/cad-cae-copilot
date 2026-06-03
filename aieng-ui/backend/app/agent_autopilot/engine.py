@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from .adapters import DEFAULT_STEP_TIMEOUT_SECONDS, LocalAgentAdapter, adapter_registry
 from .context_memory import ContextMemoryManager
+from .mention_binding import build_mention_bindings, mention_status_word
 from .policy import evaluate_tool_call
 from .simulation_readiness import build_simulation_readiness_report
 from .prompts import build_system_layer, OPERATING_RULES
@@ -341,24 +342,40 @@ def mentioned_artifacts(obj: Any) -> list[str]:
     return _mention_values(obj, "artifact")
 
 
-def mention_context_label(obj: Any) -> str | None:
+def mention_context_label(obj: Any, bindings: list[dict[str, Any]] | None = None) -> str | None:
     """Human-readable prompt/context section for @part / @artifact mentions.
 
     Returns None when there are no part/artifact mentions. Adds command-specific
     targeting guidance for /explain, /critique, /modify, and /simulate, and
     always reminds the agent to ask / report "not found" rather than invent a
-    missing target. v1 is prompt-level context only — no strict object binding.
+    missing target. When ``bindings`` (from ``build_mention_bindings``) are
+    supplied, each referenced value is annotated with its resolution status
+    (known / not found / unverified).
     """
     parts = mentioned_parts(obj)
     artifacts = mentioned_artifacts(obj)
     if not parts and not artifacts:
         return None
 
+    status: dict[tuple[Any, Any], Any] = {}
+    for binding in bindings or []:
+        if isinstance(binding, dict):
+            status[(binding.get("kind"), binding.get("value"))] = binding.get("known")
+
+    def _format(kind: str, values: list[str]) -> str:
+        out: list[str] = []
+        for value in values:
+            if (kind, value) in status:
+                out.append(f"{value} ({mention_status_word(status[(kind, value)])})")
+            else:
+                out.append(value)
+        return ", ".join(out)
+
     lines: list[str] = []
     if parts:
-        lines.append(f"The user referenced these CAD parts: {', '.join(parts)}.")
+        lines.append(f"The user referenced these CAD parts: {_format('part', parts)}.")
     if artifacts:
-        lines.append(f"The user referenced these artifacts: {', '.join(artifacts)}.")
+        lines.append(f"The user referenced these artifacts: {_format('artifact', artifacts)}.")
 
     if parts:
         target = ", ".join(parts)
@@ -669,12 +686,17 @@ class AutopilotEngine:
     def _inject_mention_context(self, state: AutopilotRunState) -> None:
         """Surface @part / @artifact composer mentions as a context observation.
 
-        Prompt/context only (v1): no strict topology binding, no tool-ranking or
-        CAD-execution change, approval/mutation-guard unchanged. The observation
-        persists in state, so it survives continue/reply/follow-up rebuilds. A
-        no-op when there are no part/artifact mentions.
+        v1 strict binding: each mention is resolved against the available
+        workspace context (cad.named_parts / topology_map for parts, workspace
+        artifacts for artifacts) into structured ``mention_bindings`` with a
+        known/unknown/unverified flag, source, canonical_id, and reason. Still
+        prompt/context only — no tool-ranking or CAD-execution change,
+        approval/mutation-guard unchanged. The observation persists in state, so
+        it survives continue/reply/follow-up rebuilds. A no-op when there are no
+        part/artifact mentions.
         """
-        label = mention_context_label(state)
+        bindings = self._mention_bindings(state)
+        label = mention_context_label(state, bindings)
         if label is None:
             return
         state.observations.append(
@@ -685,6 +707,7 @@ class AutopilotEngine:
                     "composer_command": get_composer_command(state),
                     "mentioned_parts": mentioned_parts(state),
                     "mentioned_artifacts": mentioned_artifacts(state),
+                    "mention_bindings": bindings,
                 },
             )
         )
@@ -694,20 +717,18 @@ class AutopilotEngine:
 
         v1.5: reads the already-computed CAE context block (no solver run, no CAD
         change, approval unchanged) and reports present/missing/defaultable/
-        unknown status for the six core inputs. When required inputs are missing
-        the summary instructs the agent to ask the user and not claim a solver
-        run. A no-op for non-/simulate runs. The observation persists in state, so
-        it survives continue/reply/follow-up rebuilds.
+        unknown status for the six core inputs. Targets reuse the resolved
+        ``mention_bindings`` (no duplicate part lookup). When required inputs are
+        missing the summary instructs the agent to ask the user and not claim a
+        solver run. A no-op for non-/simulate runs. The observation persists in
+        state, so it survives continue/reply/follow-up rebuilds.
         """
         if not is_simulation_command(state):
             return
         cae = self.agent_context.get("cae") if isinstance(self.agent_context, dict) else None
         report = build_simulation_readiness_report(
             cae,
-            mentioned_parts=mentioned_parts(state),
-            mentioned_artifacts=mentioned_artifacts(state),
-            available_parts=self._context_named_parts(),
-            available_artifacts=self._context_artifact_names(),
+            mention_bindings=self._mention_bindings(state),
         )
         state.observations.append(
             _observation(
@@ -723,6 +744,32 @@ class AutopilotEngine:
             )
         )
 
+    def _mention_bindings(self, state: AutopilotRunState) -> list[dict[str, Any]]:
+        """Resolve this run's @part/@artifact mentions against workspace context."""
+        return build_mention_bindings(
+            _composer_mentions(state),
+            part_indexes=self._part_indexes(),
+            artifact_indexes=self._artifact_indexes(),
+        )
+
+    def _part_indexes(self) -> list[tuple[str, list[str]]] | None:
+        """Ordered (source, labels) part indexes, or None when none are available."""
+        indexes: list[tuple[str, list[str]]] = []
+        named = self._context_named_parts()
+        if named is not None:
+            indexes.append(("cad.named_parts", named))
+        topology = self._context_topology_parts()
+        if topology is not None:
+            indexes.append(("topology_map", topology))
+        return indexes or None
+
+    def _artifact_indexes(self) -> list[tuple[str, list[str]]] | None:
+        """Ordered (source, labels) artifact indexes, or None when unavailable."""
+        artifacts = self._context_artifact_names()
+        if artifacts is not None:
+            return [("workspace_artifacts", artifacts)]
+        return None
+
     def _context_named_parts(self) -> list[str] | None:
         """Best-effort authoritative list of CAD part labels, or None if unknown."""
         ctx = self.agent_context if isinstance(self.agent_context, dict) else {}
@@ -734,6 +781,34 @@ class AutopilotEngine:
                 values = [str(item) for item in node if isinstance(item, str) and item.strip()]
                 return values
         return None
+
+    def _context_topology_parts(self) -> list[str] | None:
+        """Best-effort part labels from a topology_map in context, or None."""
+        ctx = self.agent_context if isinstance(self.agent_context, dict) else {}
+        topology: Any = None
+        for path in (("cad", "topology_map"), ("topology_map",), ("cad", "topology")):
+            node: Any = ctx
+            for key in path:
+                node = node.get(key) if isinstance(node, dict) else None
+            if isinstance(node, dict):
+                topology = node
+                break
+        if not isinstance(topology, dict):
+            return None
+        labels: list[str] = []
+        named = topology.get("named_parts")
+        if isinstance(named, list):
+            labels.extend(str(item) for item in named if isinstance(item, str) and item.strip())
+        entries = topology.get("parts")
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict):
+                    label = entry.get("label") or entry.get("name")
+                    if isinstance(label, str) and label.strip():
+                        labels.append(label)
+                elif isinstance(entry, str) and entry.strip():
+                    labels.append(entry)
+        return labels or None
 
     def _context_artifact_names(self) -> list[str] | None:
         """Best-effort authoritative list of artifact ids, or None if unknown."""

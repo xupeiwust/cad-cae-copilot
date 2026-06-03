@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .mention_binding import bindings_to_targets, mention_status_word
+
 # --- Status vocabulary ------------------------------------------------------
 STATUS_PRESENT = "present"        # the setup clearly defines this input
 STATUS_MISSING = "missing"        # a required input is absent (must ask the user)
@@ -72,28 +74,18 @@ def _explicitly_unavailable(value: Any) -> bool:
     return False
 
 
-def _targets(values: list[str] | None, available: list[str] | None) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for value in values or []:
-        # known is True/False when we have an authoritative list, else None
-        # ("unknown" — we could not determine availability).
-        known: bool | None = (value in available) if isinstance(available, list) else None
-        out.append({"value": value, "known": known})
-    return out
-
-
 def build_simulation_readiness_report(
     cae: dict[str, Any] | None,
     *,
-    mentioned_parts: list[str] | None = None,
-    mentioned_artifacts: list[str] | None = None,
-    available_parts: list[str] | None = None,
-    available_artifacts: list[str] | None = None,
+    mention_bindings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a structured, deterministic simulation-readiness report.
 
     ``cae`` is the ``cae`` block of ``aieng.agent_context`` (or None when no CAE
-    context is available). The report never asserts that the solver ran.
+    context is available). ``mention_bindings`` are the resolved @part/@artifact
+    bindings (see ``mention_binding.build_mention_bindings``); the report reuses
+    them for its ``targets`` instead of duplicating the lookup. The report never
+    asserts that the solver ran.
     """
     cae = _as_dict(cae)
     draft = _as_dict(cae.get("fea_setup_draft"))
@@ -177,10 +169,7 @@ def build_simulation_readiness_report(
         "inputs": inputs,
         "missing_required_inputs": missing_required_inputs,
         "defaultable_inputs": defaultable_inputs,
-        "targets": {
-            "parts": _targets(mentioned_parts, available_parts),
-            "artifacts": _targets(mentioned_artifacts, available_artifacts),
-        },
+        "targets": bindings_to_targets(mention_bindings),
     }
     report["summary"] = summarize_simulation_readiness(report)
     return report
@@ -201,8 +190,7 @@ def summarize_simulation_readiness(report: dict[str, Any]) -> str:
     for kind in ("parts", "artifacts"):
         for entry in targets.get(kind, []) or []:
             value = entry.get("value")
-            known = entry.get("known")
-            mark = "known" if known is True else "NOT FOUND" if known is False else "unverified"
+            mark = mention_status_word(entry.get("known"))
             target_bits.append(f"{kind[:-1]}:{value} ({mark})")
     if target_bits:
         lines.append("Referenced targets: " + ", ".join(target_bits) + ".")

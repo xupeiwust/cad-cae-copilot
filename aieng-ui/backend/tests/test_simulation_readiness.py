@@ -1,5 +1,6 @@
 """Deterministic /simulate readiness report (v1.5) — pure helper coverage."""
 
+from app.agent_autopilot.mention_binding import build_mention_bindings
 from app.agent_autopilot.simulation_readiness import (
     build_simulation_readiness_report,
     REQUIRED_INPUTS,
@@ -123,19 +124,30 @@ def test_fea_setup_draft_satisfies_required_inputs() -> None:
     assert report["missing_required_inputs"] == []
 
 
-def test_mention_targets_known_unknown_and_unverified() -> None:
+def test_mention_targets_consume_bindings() -> None:
+    mentions = [
+        {"kind": "part", "raw": "@part:bracket", "value": "bracket"},
+        {"kind": "part", "raw": "@part:ghost", "value": "ghost"},
+        {"kind": "artifact", "raw": "@artifact:model.glb", "value": "model.glb"},
+    ]
+    bindings = build_mention_bindings(
+        mentions,
+        part_indexes=[("cad.named_parts", ["bracket", "rib"])],
+        artifact_indexes=None,  # cannot determine → unverified (known=None)
+    )
     report = build_simulation_readiness_report(
         {"materials": ["s"], "loads": ["l"], "boundary_conditions": ["b"]},
-        mentioned_parts=["bracket", "ghost"],
-        mentioned_artifacts=["model.glb"],
-        available_parts=["bracket", "rib"],
-        available_artifacts=None,  # cannot determine → unverified (None)
+        mention_bindings=bindings,
     )
     parts = {t["value"]: t["known"] for t in report["targets"]["parts"]}
     assert parts["bracket"] is True
     assert parts["ghost"] is False
     arts = {t["value"]: t["known"] for t in report["targets"]["artifacts"]}
     assert arts["model.glb"] is None
+    # canonical_id / source propagate into the readiness targets.
+    bracket = next(t for t in report["targets"]["parts"] if t["value"] == "bracket")
+    assert bracket["source"] == "cad.named_parts"
+    assert bracket["canonical_id"] == "bracket"
     assert "bracket (known)" in report["summary"]
-    assert "ghost (NOT FOUND)" in report["summary"]
+    assert "ghost (not found)" in report["summary"]
     assert "model.glb (unverified)" in report["summary"]

@@ -2,8 +2,10 @@
 
 The composer parses "@kind:value" mentions (composerIntent.ts) and persists them
 on composer_intent.mentions. The engine surfaces @part / @artifact to the agent
-as a prompt/context section (v1: prompt-level only — no strict topology binding,
-no CAD-execution change, approval/mutation-guard unchanged).
+as a prompt/context section and (v1 strict binding) resolves them against the
+available workspace context into mention_bindings (known/unknown/unverified).
+Still prompt/context only — no CAD-execution change, approval/mutation-guard
+unchanged.
 
 Uses the deterministic fake adapter — no real Claude/Codex/LLM and no build123d
 execution required.
@@ -199,3 +201,79 @@ def test_modify_part_still_requires_mutation(tmp_path: Path) -> None:
     assert guard_obs and guard_obs[-1].data["intent"] == "modify_geometry"
     # The target part still reached the context.
     assert any("rotor_1" in s and "Target your CAD edit" in s for s in _summaries(state))
+
+
+# --- v1 strict binding: mention_bindings against workspace context ----------
+
+
+def _mention_obs(state):
+    return next(
+        (o for o in state.observations if isinstance(o.data, dict) and "mention_bindings" in o.data),
+        None,
+    )
+
+
+def test_known_part_binding_from_named_parts(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, agent_context={"cad": {"named_parts": ["rotor_1", "body"]}})
+    state = engine.start(
+        AutopilotRunRequest(
+            message="/explain @part:rotor_1",
+            project_id="p1",
+            composer_intent=_intent("explain", "explain", [_part("rotor_1")]),
+            fake_actions=[{"action": {"type": "final", "message": "ok"}, "done": True}],
+        )
+    )
+    obs = _mention_obs(state)
+    assert obs is not None
+    binding = obs.data["mention_bindings"][0]
+    assert binding["known"] is True
+    assert binding["source"] == "cad.named_parts"
+    assert binding["canonical_id"] == "rotor_1"
+    # The label annotates the known status.
+    assert "rotor_1 (known)" in obs.summary
+
+
+def test_unknown_part_binding_is_false(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, agent_context={"cad": {"named_parts": ["body"]}})
+    state = engine.start(
+        AutopilotRunRequest(
+            message="/explain @part:ghost",
+            project_id="p1",
+            composer_intent=_intent("explain", "explain", [_part("ghost")]),
+            fake_actions=[{"action": {"type": "ask_user", "question": "No such part — which one?"}}],
+        )
+    )
+    binding = _mention_obs(state).data["mention_bindings"][0]
+    assert binding["known"] is False
+    assert "not found" in binding["reason"]
+
+
+def test_unavailable_context_marks_binding_unverified(tmp_path: Path) -> None:
+    # No agent_context → no authoritative index → known=None (not False).
+    state = _engine(tmp_path).start(
+        AutopilotRunRequest(
+            message="/explain @part:rotor_1",
+            project_id="p1",
+            composer_intent=_intent("explain", "explain", [_part("rotor_1")]),
+            fake_actions=[{"action": {"type": "final", "message": "ok"}, "done": True}],
+        )
+    )
+    binding = _mention_obs(state).data["mention_bindings"][0]
+    assert binding["known"] is None
+    assert "rotor_1 (unverified)" in _mention_obs(state).summary
+
+
+def test_known_artifact_binding(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, agent_context={"artifacts": ["model.glb", "result.step"]})
+    state = engine.start(
+        AutopilotRunRequest(
+            message="/explain @artifact:model.glb",
+            project_id="p1",
+            composer_intent=_intent("explain", "explain", [_artifact("model.glb")]),
+            fake_actions=[{"action": {"type": "final", "message": "ok"}, "done": True}],
+        )
+    )
+    binding = _mention_obs(state).data["mention_bindings"][0]
+    assert binding["kind"] == "artifact"
+    assert binding["known"] is True
+    assert binding["source"] == "workspace_artifacts"

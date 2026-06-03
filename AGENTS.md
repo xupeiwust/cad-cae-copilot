@@ -212,6 +212,51 @@ Helpers live in [`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py):
 `is_simulation_command` / `suppresses_mutation_guard` /
 `is_mutation_required_command` / `command_intent_label` / `command_mutation_intent`.
 
+**Natural-language intent resolution ("point and shoot").** When a run carries
+**no** explicit slash command, the engine resolves the plain-text message into one
+of the same routed commands so all of the routing + guards above apply unchanged —
+the user does not have to learn the slash vocabulary.
+[`intent_resolution.py`](aieng-ui/backend/app/agent_autopilot/intent_resolution.py)
+owns this:
+- **`INTENT_REGISTRY`** is now the **single source of truth** for the five routed
+  commands (intent_type, mutation-required / read-only / simulation, trigger
+  terms). `engine.py` derives `_MUTATION_REQUIRED_COMMANDS` / `_READ_ONLY_COMMANDS`
+  / `_SIMULATION_COMMANDS` / `_COMMAND_INTENT_LABELS` and the geometry-guard term
+  lists from it — adding a new intent is a one-line registry edit.
+- **`resolve_intent`** is three-tier: an **explicit `/command` always wins**
+  (confidence 1.0); else an optional, app-wired **LLM classifier**
+  (`build_llm_intent_classifier`, degrades silently to keyword when no
+  provider/API key, and is **skipped for fake/replay runs** so tests stay
+  deterministic); else a deterministic **keyword heuristic** (`keyword_classify`,
+  mutation intent takes precedence over read-only/simulation).
+- **`_resolve_natural_language_intent`** (engine) runs **before**
+  `_inject_command_context`. A confident command is written back onto
+  `composer_intent.command` (+ `intent_source`) so existing routing takes over; a
+  plain message with no actionable intent is **left untouched** (backward
+  compatible). When the inferred command is actionable but **low-confidence or
+  ambiguous**, it injects `INTENT_CLARIFY_INSTRUCTION` biasing the agent toward
+  `ask_user` **instead of routing on a guess** — and does **not** set a command.
+  The resolution is recorded on `composer_intent.resolved_intent` for
+  transparency. The resolver **never relaxes a guard**; it only proposes a command.
+
+**Parametric-edit slot bias (deterministic).** For a **modify** intent (explicit
+`/modify` or a resolved natural-language modify) whose message names concrete
+dimensional changes ("change the wall thickness to 5mm", "把壁厚改成5"),
+`extract_parameter_slots` (pure, bilingual, best-effort) pulls `{name, value,
+unit}` slots and `_inject_parametric_edit_context` injects
+`PARAMETRIC_EDIT_INSTRUCTION` — biasing the agent to the fast `cad.edit_parameter`
+path (bind each name to a real editable feature parameter; ask / fall back to a
+build123d edit when none matches) instead of regenerating the whole model. The
+slots ride on the observation (`parameter_slots`) for the frontend/audit.
+Prompt/context only: no tool is selected, CAD execution is unchanged, the mutation
+guard is unchanged, and `cad.edit_parameter` stays approval-gated.
+- **Future work:** drive the slots into a deterministic feature-parameter binding
+  (resolve name → `cad_parameter_name` against the feature graph, like
+  `@part`/`@artifact` binding), surface `resolved_intent` in the composer as a
+  visible "understood as /build — correct?" confirmation, re-resolve follow-up /
+  reply messages (currently the initial intent is reused), and consume the LLM
+  classifier's `targets` / `parameters` beyond the deterministic slots.
+
 **`@`-mentions (strict binding, v1).** The composer parses lightweight
 `@kind:value` mentions (`extractComposerMentions` in
 [`composerIntent.ts`](aieng-ui/frontend/src/components/chat/composerIntent.ts))

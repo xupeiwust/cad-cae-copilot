@@ -17,6 +17,7 @@ from .intent_resolution import (
     resolve_intent,
 )
 from .mention_binding import build_mention_bindings, mention_status_word
+from .parameter_binding import bind_parameter_slots, format_parameter_bindings
 from .policy import evaluate_tool_call
 from .simulation_readiness import build_simulation_readiness_report, load_simulation_setup
 from .simulation_workflow import (
@@ -248,6 +249,14 @@ PARAMETRIC_EDIT_INSTRUCTION = (
     "editable parameter (no UPPER_SNAKE_CASE constant), say so and ask the user or "
     "fall back to a cad.execute_build123d edit. cad.edit_parameter is approval-"
     "gated as usual; respect declared min/max bounds."
+)
+
+# Appended to PARAMETRIC_EDIT_INSTRUCTION when an editable-parameter index is
+# available: per-slot deterministic resolution to a concrete featureId/parameterName
+# (or an ambiguous/not-found note telling the agent to ask the user).
+PARAMETRIC_BINDING_INSTRUCTION = (
+    "Resolved targets (deterministic, from the feature graph — still approval-"
+    "gated; confirm out-of-range or ambiguous edits with the user):\n{bindings}"
 )
 
 # Routed-command semantics are owned by intent_resolution.INTENT_REGISTRY (the
@@ -593,6 +602,7 @@ class AutopilotEngine:
         approval_mode: str = "balanced",
         simulation_setup_loader: Callable[[str], dict[str, Any] | None] | None = None,
         intent_classifier: Callable[[str, dict[str, Any]], IntentResolution | None] | None = None,
+        feature_parameter_loader: Callable[[str], list[dict[str, Any]] | None] | None = None,
     ) -> None:
         self.store = store
         self.runtime_tools = runtime_tools
@@ -610,6 +620,10 @@ class AutopilotEngine:
         # heuristic. Skipped in fake/replay runs (request.fake_actions) so tests
         # stay deterministic and never make a provider call.
         self.intent_classifier = intent_classifier
+        # Optional app-wired loader: project_id -> flattened editable feature-graph
+        # parameter index (build_parameter_index output) or None. Used to bind
+        # dimensional slots to concrete featureId/parameterName for cad.edit_parameter.
+        self.feature_parameter_loader = feature_parameter_loader
         self.approval_mode = approval_mode if approval_mode in {"balanced", "strict", "manual"} else "balanced"
         self._system_layer = build_system_layer(
             runtime_tools=self.runtime_tools,
@@ -835,16 +849,42 @@ class AutopilotEngine:
         slots = extract_parameter_slots(state.message)
         if not slots:
             return
-        state.observations.append(
-            _observation(
-                "context",
-                PARAMETRIC_EDIT_INSTRUCTION.format(slots=format_parameter_slots(slots)),
-                {
-                    "composer_command": "modify",
-                    "parameter_slots": [slot.to_dict() for slot in slots],
-                },
+
+        instruction = PARAMETRIC_EDIT_INSTRUCTION.format(slots=format_parameter_slots(slots))
+        data: dict[str, Any] = {
+            "composer_command": "modify",
+            "parameter_slots": [slot.to_dict() for slot in slots],
+        }
+
+        # Deterministic binding: resolve each slot to a concrete editable feature
+        # parameter when an index is available (mirrors @part/@artifact honesty —
+        # unverified when no index, not-found/ambiguous reported, never invented).
+        bindings = bind_parameter_slots(slots, self._feature_parameter_index(state))
+        if bindings:
+            data["parameter_bindings"] = bindings
+            instruction = (
+                instruction
+                + "\n"
+                + PARAMETRIC_BINDING_INSTRUCTION.format(bindings=format_parameter_bindings(bindings))
             )
-        )
+
+        state.observations.append(_observation("context", instruction, data))
+
+    def _feature_parameter_index(self, state: AutopilotRunState) -> list[dict[str, Any]] | None:
+        """Editable feature-parameter index for this project, or None if unavailable.
+
+        Uses the app-wired ``feature_parameter_loader`` (reads the package's
+        feature_graph.json). Best-effort: any failure / no loader / no project
+        returns None, so binding degrades to ``known=None`` (unverified) rather
+        than a false negative.
+        """
+        if self.feature_parameter_loader is None or not state.project_id:
+            return None
+        try:
+            index = self.feature_parameter_loader(state.project_id)
+        except Exception:
+            return None
+        return index if isinstance(index, list) else None
 
     def _inject_mention_context(self, state: AutopilotRunState) -> None:
         """Surface @part / @artifact composer mentions as a context observation.

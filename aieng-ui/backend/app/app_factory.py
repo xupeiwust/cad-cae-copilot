@@ -570,6 +570,38 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except Exception:
             return None
 
+    def _load_project_feature_parameters(project_id: str | None) -> list[dict[str, Any]] | None:
+        """Read a project's editable feature-graph parameter index for slot binding.
+
+        Opens the .aieng package, reads graph/feature_graph.json, and flattens it via
+        the pure ``build_parameter_index``. Best-effort: any failure / missing graph
+        returns None, so parametric-slot binding degrades to ``known=None``
+        (unverified) rather than a false negative.
+        """
+        if not project_id:
+            return None
+        try:
+            import zipfile
+            from pathlib import Path
+
+            from . import package_inspection, project_io
+            from .agent_autopilot.parameter_binding import build_parameter_index
+
+            project = project_io.get_project(active_settings, project_id)
+            aieng_file = project.get("aieng_file")
+            if not aieng_file:
+                return None
+            package_path = Path(aieng_file)
+            if not package_path.exists():
+                return None
+            with zipfile.ZipFile(package_path) as archive:
+                feature_graph = package_inspection.read_package_json(
+                    archive, "graph/feature_graph.json"
+                )
+            return build_parameter_index(feature_graph)
+        except Exception:
+            return None
+
     def _session_approval_mode(session_id: str | None) -> str:
         if not session_id:
             return "balanced"
@@ -602,6 +634,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             approval_mode=_session_approval_mode(request.session_id),
             simulation_setup_loader=_load_project_simulation_setup,
             intent_classifier=intent_classifier,
+            feature_parameter_loader=_load_project_feature_parameters,
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,

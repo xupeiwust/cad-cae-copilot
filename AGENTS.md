@@ -239,22 +239,34 @@ owns this:
   The resolution is recorded on `composer_intent.resolved_intent` for
   transparency. The resolver **never relaxes a guard**; it only proposes a command.
 
-**Parametric-edit slot bias (deterministic).** For a **modify** intent (explicit
-`/modify` or a resolved natural-language modify) whose message names concrete
-dimensional changes ("change the wall thickness to 5mm", "把壁厚改成5"),
+**Parametric-edit slot bias + deterministic binding.** For a **modify** intent
+(explicit `/modify` or a resolved natural-language modify) whose message names
+concrete dimensional changes ("change the wall thickness to 5mm", "把壁厚改成5"),
 `extract_parameter_slots` (pure, bilingual, best-effort) pulls `{name, value,
 unit}` slots and `_inject_parametric_edit_context` injects
 `PARAMETRIC_EDIT_INSTRUCTION` — biasing the agent to the fast `cad.edit_parameter`
-path (bind each name to a real editable feature parameter; ask / fall back to a
-build123d edit when none matches) instead of regenerating the whole model. The
-slots ride on the observation (`parameter_slots`) for the frontend/audit.
-Prompt/context only: no tool is selected, CAD execution is unchanged, the mutation
-guard is unchanged, and `cad.edit_parameter` stays approval-gated.
-- **Future work:** drive the slots into a deterministic feature-parameter binding
-  (resolve name → `cad_parameter_name` against the feature graph, like
-  `@part`/`@artifact` binding), surface `resolved_intent` in the composer as a
-  visible "understood as /build — correct?" confirmation, re-resolve follow-up /
-  reply messages (currently the initial intent is reused), and consume the LLM
+path instead of regenerating the whole model.
+- **Slot → feature-parameter binding** ([`parameter_binding.py`](aieng-ui/backend/app/agent_autopilot/parameter_binding.py)).
+  Each slot is bound to a concrete editable feature parameter via
+  `build_parameter_index` (flattens `feature_graph.features[].parameters`,
+  tokenizing the `cad_parameter_name` constant — e.g. `WALL_THICKNESS` →
+  `{wall, thickness}` — plus the inferred parameter name and feature name) and
+  `bind_parameter_slots` (best-token-overlap match). On a unique match the agent
+  is handed the exact `featureId` / `parameterName` / constant / current value /
+  range (with an **out-of-range** flag); the feature graph is read through the
+  app-wired `feature_parameter_loader`. Mirrors `@part`/`@artifact` **honesty**:
+  no index → `known=None` (unverified, never a false negative); index present but
+  no overlap → `known=False` (not found); two+ equally-good matches →
+  `known=False` (**ambiguous**, candidates listed → ask the user); never invents a
+  target. Slots + bindings ride on the observation (`parameter_slots` /
+  `parameter_bindings`) for the frontend/audit.
+- Prompt/context only: no tool is selected, CAD execution is unchanged, the
+  mutation guard is unchanged, and `cad.edit_parameter` stays approval-gated — the
+  binding only *proposes* a target, and out-of-range / ambiguous edits are routed
+  to user confirmation.
+- **Future work:** surface `resolved_intent` in the composer as a visible
+  "understood as /build — correct?" confirmation, re-resolve follow-up / reply
+  messages (currently the initial intent is reused), and consume the LLM
   classifier's `targets` / `parameters` beyond the deterministic slots.
 
 **`@`-mentions (strict binding, v1).** The composer parses lightweight

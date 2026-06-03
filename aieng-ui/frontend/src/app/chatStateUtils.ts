@@ -11,14 +11,25 @@ export function chatItemExtra(item: ChatHistoryItem): Record<string, unknown> | 
     body: _body,
     createdAt: _createdAt,
     mode: _mode,
+    composerIntent,
     ...extra
   } = item;
   const entries = Object.entries(extra).filter(([, value]) => value !== undefined);
-  return Object.fromEntries([["client_id", item.id], ...entries]);
+  const result: Record<string, unknown> = Object.fromEntries([["client_id", item.id], ...entries]);
+  // Persist intent metadata under a stable snake_case key the backend can read.
+  if (composerIntent !== undefined) result.composer_intent = composerIntent;
+  return result;
 }
 
 export function persistedMessageToChatItem(message: PersistedChatMessage): ChatHistoryItem {
-  const { client_id: _clientId, ...extra } = (message.extra ?? {}) as Partial<ChatHistoryItem> & { client_id?: string };
+  const {
+    client_id: _clientId,
+    composer_intent,
+    ...extra
+  } = (message.extra ?? {}) as Partial<ChatHistoryItem> & {
+    client_id?: string;
+    composer_intent?: ChatHistoryItem["composerIntent"];
+  };
   const role = message.role === "assistant" ? "assistant" : "user";
   const mode =
     message.mode === "plan" || message.mode === "execute" || message.mode === "runtime"
@@ -31,6 +42,7 @@ export function persistedMessageToChatItem(message: PersistedChatMessage): ChatH
     body: message.content,
     createdAt: message.created_at,
     mode,
+    ...(composer_intent ? { composerIntent: composer_intent } : {}),
   };
 }
 

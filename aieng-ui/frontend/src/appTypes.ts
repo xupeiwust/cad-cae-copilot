@@ -1,3 +1,4 @@
+import type { ComposerIntentMetadata } from "./components/chat/composerIntent";
 import type { ArtifactDiff, AutopilotRunState, ChatResponse } from "./types";
 
 export type StageState = "idle" | "active" | "done" | "error";
@@ -27,6 +28,8 @@ export type ChatHistoryItem = {
   artifactPaths?: string[];
   artifactDiffs?: ArtifactDiff[];
   autopilotRun?: AutopilotRunState;
+  /** Parsed slash-command intent metadata, persisted in the message `extra`. */
+  composerIntent?: ComposerIntentMetadata;
   advisoryItems?: string[];
   cadResult?: { face_count: number; feature_count: number; code: string };
   simulationResult?: {

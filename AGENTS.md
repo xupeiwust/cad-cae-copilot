@@ -90,6 +90,20 @@ changing code:
   hidden cross-file coupling. Use TypeScript build results and reference searches
   to prove that cleanup is safe.
 
+### Composer slash commands (metadata only)
+
+The chat composer recognizes leading slash commands (`/build`, `/modify`,
+`/critique`, `/explain`, `/simulate`) and surfaces a suggestion menu. Today these
+are **parsed and recorded as metadata only** — `parseComposerIntent` /
+`toComposerIntentMetadata` (in
+[`composerIntent.ts`](aieng-ui/frontend/src/components/chat/composerIntent.ts))
+attach a `composer_intent` blob to the persisted chat message `extra` and to the
+autopilot run create request (echoed back on `AutopilotRunState.composer_intent`).
+There is **no command-specific routing yet**: `/build` does not switch tools,
+`/critique` does not auto-call `cad.critique`, approval logic is unchanged, and the
+raw `/command` text is still sent to the agent verbatim. Command-specific execution
+(mapping intent → tool/prompt) is future work.
+
 ---
 
 ## What the workbench can actually do

@@ -24,6 +24,7 @@ import type {
   SolverFieldDescriptor,
 } from "../types";
 import type { EngineeringContextSource } from "./engineeringContextSource";
+import { toComposerIntentMetadata } from "../components/chat/composerIntent";
 import { useAgentActivityStream } from "./useAgentActivityStream";
 import { useAgentRuns } from "./useAgentRuns";
 import { mergeLocalAgentCapabilities } from "./workbenchHelpers";
@@ -463,6 +464,10 @@ export function useWorkbenchApp() {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) return;
     renameActiveSessionForPrompt(prompt);
+    // Parse slash-command intent once and carry it as metadata on the persisted
+    // user message and (for autopilot) the run request. Metadata only — it does
+    // not change routing, tool selection, or how the prompt is executed.
+    const composerIntent = toComposerIntentMetadata(prompt);
     if (selectedChatConnection.id === "local-agent" || selectedChatConnection.id === "llm-api") {
       const activeAutopilotRun = chatHistory
         .slice()
@@ -477,6 +482,7 @@ export function useWorkbenchApp() {
             body: prompt,
             createdAt: new Date().toISOString(),
             mode: "runtime",
+            composerIntent,
           },
         ]);
         setMessage("");
@@ -488,17 +494,17 @@ export function useWorkbenchApp() {
       }
       setPersistentChatHistory((current) => [
         ...current,
-        { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+        { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime", composerIntent },
       ]);
       setMessage("");
-      await runAutopilotAgent(prompt, true);
+      await runAutopilotAgent(prompt, true, composerIntent);
       return;
     }
     const agentPrompt = withSelectedGeometryPrompt(prompt);
 
     setPersistentChatHistory((current) => [
       ...current,
-      { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString() },
+      { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), composerIntent },
     ]);
     setMessage("");
 

@@ -600,6 +600,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             llm_config=agent_engine.sanitize_llm_config(request.llm_config),
             plan=create_default_agent_plan(request.message, plan_id=f"{run_id}-plan"),
             working_state=AgentWorkingState(objective=request.message, current_mode=request.mode),
+            composer_intent=request.composer_intent,
         )
         state.observations.append(
             AutopilotObservation(

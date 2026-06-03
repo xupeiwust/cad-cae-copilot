@@ -196,6 +196,7 @@ export const api = {
     api_key?: string;
     mode?: "assist" | "autopilot" | "full_agent";
     dry_run?: boolean;
+    composer_intent?: Record<string, unknown> | null;
   }) =>
     request<AutopilotRunState>("/api/agent/autopilot/runs", {
       method: "POST",

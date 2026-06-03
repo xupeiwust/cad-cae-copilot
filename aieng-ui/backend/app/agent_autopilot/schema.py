@@ -259,6 +259,10 @@ class AutopilotRunRequest(StrictModel):
     dry_run: bool = True
     max_steps: int = Field(default=30, ge=1, le=30)
     fake_actions: list[dict[str, Any]] | None = None
+    # Parsed composer slash-command intent. Recorded as metadata only — it does
+    # not change adapter/tool routing or prompt execution. Backward compatible:
+    # absent / null for plain messages and for older clients.
+    composer_intent: dict[str, Any] | None = None
 
 
 class AutopilotRunState(StrictModel):
@@ -291,6 +295,8 @@ class AutopilotRunState(StrictModel):
     errors: list[str] = Field(default_factory=list)
     queued_user_messages: list[str] = Field(default_factory=list)
     repair_attempts: dict[str, int] = Field(default_factory=dict)
+    # Echoed from the create request; metadata only (see AutopilotRunRequest).
+    composer_intent: dict[str, Any] | None = None
 
 
 class LocalAgentCapability(StrictModel):

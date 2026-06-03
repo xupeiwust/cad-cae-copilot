@@ -5,6 +5,7 @@ import type { ChatHistoryItem, Notice, SelectedGeometryContext } from "../appTyp
 import { createChatId, isLlmConfigReady, runtimeStatusLabel } from "../appUtils";
 import { isTerminalAutopilotStatus } from "./chatTranscript";
 import { upsertAutopilotChatItem } from "./chatStateUtils";
+import { toComposerIntentMetadata, type ComposerIntentMetadata } from "../components/chat/composerIntent";
 import type {
   AgentPlan,
   ChatConnection,
@@ -181,12 +182,20 @@ export function useAgentRuns({
     }
   }
 
-  async function runAutopilotAgent(promptOverride?: string, skipUserMsg = false) {
+  async function runAutopilotAgent(
+    promptOverride?: string,
+    skipUserMsg = false,
+    composerIntentOverride?: ComposerIntentMetadata,
+  ) {
     const prompt = (promptOverride ?? message).trim();
     if (!prompt) {
       if (!promptOverride) setNotice({ tone: "info", title: "Please enter an agent goal", detail: "Agent needs a modeling, inspection or analysis goal." });
       return;
     }
+    // Metadata only — does not change which adapter/tool runs or how the prompt
+    // is executed. The caller may pass a pre-parsed value to keep the persisted
+    // user message and the run request perfectly in sync.
+    const composerIntent = composerIntentOverride ?? toComposerIntentMetadata(prompt);
     const isLlmApi = selectedChatConnection.id === "llm-api";
     const adapters = selectedChatConnection.adapters ?? [];
     const userPreferredId = localAgentConfig.preferredAdapterId;
@@ -205,7 +214,7 @@ export function useAgentRuns({
       if (!skipUserMsg) {
         setChatHistory((current) => [
           ...current,
-          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime", composerIntent },
         ]);
       }
       setChatHistory((current) => [
@@ -229,12 +238,13 @@ export function useAgentRuns({
         ...(isLlmApi ? { llm_config: llmConfig, api_key: apiKey || undefined } : {}),
         mode: "autopilot",
         dry_run: false,
+        composer_intent: composerIntent,
       });
       onAutopilotRunUpdate?.(result);
       if (!skipUserMsg) {
         setChatHistory((current) => [
           ...current,
-          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime" },
+          { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime", composerIntent },
         ]);
       }
       // Canonical run-keyed upsert (id `run-${run_id}`) so the optimistic item,

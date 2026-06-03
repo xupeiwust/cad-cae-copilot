@@ -374,6 +374,7 @@ class AutopilotEngine:
             llm_config={str(k): v for k, v in request.llm_config.items() if k != "api_key"},
             plan=self._new_plan(request, run_id=resolved_run_id),
             working_state=AgentWorkingState(objective=request.message, current_mode=request.mode),
+            composer_intent=request.composer_intent,
         )
 
     def _new_plan(self, request: AutopilotRunRequest, *, run_id: str) -> AgentPlan:

@@ -1343,6 +1343,8 @@ export type AutopilotRunState = {
   final_message?: string | null;
   errors: string[];
   queued_user_messages?: string[];
+  /** Parsed slash-command intent metadata carried from the create request. */
+  composer_intent?: Record<string, unknown> | null;
 };
 
 export type ChatConnection = {

@@ -124,6 +124,11 @@ export function AppChrome({ app }: AppChromeProps) {
               cadGenerating={app.cadGenerating}
               cadGenerationProgress={app.cadGenerationProgress}
               llmReady={app.llmReady}
+              liveSyncStatus={app.liveSyncStatus}
+              liveSyncDetail={app.liveSyncDetail}
+              runtime={app.runtime}
+              runtimeReady={app.runtimeReady}
+              runtimeProvider={app.runtimeProvider}
               chatHistory={app.chatHistory}
               agentEvents={app.agentEvents}
               streamingState={app.streamingState}

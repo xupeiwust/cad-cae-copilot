@@ -4,7 +4,8 @@ import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "../../a
 import type { StreamingState } from "../../app/useChatTranscript";
 import type { ContextSummary } from "../../api";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
-import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeRun } from "../../types";
+import type { LiveSyncStatus } from "../../appUtils";
+import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeConfigSnapshot, RuntimeRun } from "../../types";
 import type { EngineeringContextSource } from "../../app/engineeringContextSource";
 import { isRunActivelyProcessing } from "../../app/agentActivityFallback";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
@@ -213,6 +214,11 @@ type ChatPanelProps = {
   cadGenerating: boolean;
   cadGenerationProgress: CadGenerationProgress | null;
   llmReady: boolean;
+  liveSyncStatus: LiveSyncStatus;
+  liveSyncDetail: string;
+  runtime: RuntimeConfigSnapshot | null;
+  runtimeReady: boolean;
+  runtimeProvider: string;
   chatHistory: ChatHistoryItem[];
   agentEvents: AgentTranscriptEvent[];
   chatLogRef: RefObject<HTMLDivElement | null>;
@@ -252,6 +258,11 @@ export function ChatPanel({
   cadGenerating,
   cadGenerationProgress,
   llmReady,
+  liveSyncStatus,
+  liveSyncDetail,
+  runtime,
+  runtimeReady,
+  runtimeProvider,
   chatHistory,
   agentEvents,
   chatLogRef,
@@ -453,6 +464,11 @@ export function ChatPanel({
         approvalModeDisabled={approvalModeDisabled}
         selectedConnectionBlocked={selectedConnectionBlocked}
         llmReady={llmReady}
+        liveSyncStatus={liveSyncStatus}
+        liveSyncDetail={liveSyncDetail}
+        runtime={runtime}
+        runtimeReady={runtimeReady}
+        runtimeProvider={runtimeProvider}
         message={message}
         activeAutopilotRun={activeAutopilotRun}
         agentProcessing={agentProcessing}

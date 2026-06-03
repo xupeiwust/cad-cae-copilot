@@ -1,8 +1,10 @@
 import { useRef, type KeyboardEvent } from "react";
 
+import type { LiveSyncStatus } from "../../appUtils";
 import type { PickedFace } from "../../appTypes";
-import type { ApprovalMode, AutopilotRunState, ChatConnection } from "../../types";
+import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeConfigSnapshot } from "../../types";
 import { AutoResizeTextarea } from "./AutoResizeTextarea";
+import { ConnectionHealthBar } from "./ConnectionHealthBar";
 import { ComposerControls, ConnectionSelector, getComposerActionState } from "./ComposerControls";
 import { usePointerAutocomplete } from "./usePointerAutocomplete";
 
@@ -13,6 +15,11 @@ type AgentInputBoxProps = {
   approvalModeDisabled: boolean;
   selectedConnectionBlocked: boolean;
   llmReady: boolean;
+  liveSyncStatus: LiveSyncStatus;
+  liveSyncDetail: string;
+  runtime: RuntimeConfigSnapshot | null;
+  runtimeReady: boolean;
+  runtimeProvider: string;
   message: string;
   activeAutopilotRun: AutopilotRunState | null;
   /** True only while a run is genuinely processing (running + recently updated).
@@ -34,6 +41,11 @@ export function AgentInputBox({
   approvalModeDisabled,
   selectedConnectionBlocked,
   llmReady,
+  liveSyncStatus,
+  liveSyncDetail,
+  runtime,
+  runtimeReady,
+  runtimeProvider,
   message,
   activeAutopilotRun,
   agentProcessing,
@@ -113,6 +125,17 @@ export function AgentInputBox({
         chatConnections={chatConnections}
         selectedChatConnectionId={selectedChatConnectionId}
         setSelectedChatConnectionId={setSelectedChatConnectionId}
+      />
+      <ConnectionHealthBar
+        chatConnections={chatConnections}
+        selectedConnectionId={selectedChatConnectionId}
+        selectedConnectionBlocked={selectedConnectionBlocked}
+        llmReady={llmReady}
+        liveSyncStatus={liveSyncStatus}
+        liveSyncDetail={liveSyncDetail}
+        runtime={runtime}
+        runtimeReady={runtimeReady}
+        runtimeProvider={runtimeProvider}
       />
 
       <div className="chat-input-row">

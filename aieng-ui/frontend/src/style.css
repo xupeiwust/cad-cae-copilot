@@ -8602,6 +8602,79 @@ textarea:focus,
   background: transparent;
 }
 
+.chat-pane-body .connection-health-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-surface) 92%, var(--bg-elevated));
+}
+
+.connection-health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.connection-health-label {
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.78;
+}
+
+.connection-health-status {
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.connection-health-badge.health-ready {
+  border-color: rgba(34, 197, 94, 0.18);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.connection-health-badge.health-ready .connection-health-status {
+  color: var(--success);
+}
+
+.connection-health-badge.health-warning {
+  border-color: rgba(245, 158, 11, 0.2);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.connection-health-badge.health-warning .connection-health-status {
+  color: var(--warning);
+}
+
+.connection-health-badge.health-error {
+  border-color: rgba(239, 68, 68, 0.22);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.connection-health-badge.health-error .connection-health-status {
+  color: var(--danger);
+}
+
+.connection-health-badge.health-loading,
+.connection-health-badge.health-unknown {
+  border-color: color-mix(in srgb, var(--border-subtle) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-muted) 70%, transparent);
+}
+
 .agent-mode-controls {
   display: flex;
   flex-wrap: wrap;

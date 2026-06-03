@@ -10,6 +10,12 @@ from .context_memory import ContextMemoryManager
 from .mention_binding import build_mention_bindings, mention_status_word
 from .policy import evaluate_tool_call
 from .simulation_readiness import build_simulation_readiness_report, load_simulation_setup
+from .simulation_workflow import (
+    PREPARE_SOLVER_TOOL,
+    RUN_SOLVER_TOOL,
+    build_simulation_workflow_state,
+    final_claims_results,
+)
 from .prompts import build_system_layer, OPERATING_RULES
 from .schema import (
     AgentPlan,
@@ -189,20 +195,44 @@ EXPLAIN_COMMAND_INSTRUCTION = (
 )
 
 SIMULATE_COMMAND_INSTRUCTION = (
-    "The user explicitly invoked /simulate. Treat this as a simulation PLANNING "
-    "and readiness check — do NOT run the solver in this turn (cae.run_solver is "
-    "approval-gated and out of scope for /simulate v1), do NOT modify CAD "
-    "geometry, and do NOT bypass approval. First inspect the current CAE setup "
-    "and geometry (e.g. aieng.agent_context, aieng.inspect_package, "
-    "cae.prepare_solver_run, aieng.write_completeness_report). Determine whether "
-    "the essential simulation inputs are present: analysis type, material, "
-    "loads, constraints/supports, mesh settings, and solver. If any of these are "
-    "missing or ambiguous, ask the user for the missing inputs (ask_user) instead "
-    "of guessing or inventing values. If the inputs are sufficient, output a "
-    "clear ordered simulation plan (setup → mesh → preflight → solver deck → "
-    "solver run → post-processing) and state explicitly that the solver has NOT "
-    "been executed yet and that running it will require a separate, approved "
-    "cae.run_solver step."
+    "The user explicitly invoked /simulate. Treat this as a simulation readiness "
+    "and (approval-gated) solver workflow — do NOT modify CAD geometry and do NOT "
+    "bypass approval. A deterministic readiness report is provided below. Follow "
+    "this workflow:\n"
+    "1. If required inputs (material, loads, constraints) are MISSING, ask the "
+    "user for them (ask_user) instead of guessing.\n"
+    "2. If a referenced @part/@artifact target is NOT FOUND (known=false), ask "
+    "the user to confirm a valid target before preparing or running anything.\n"
+    "3. When required inputs are present and targets are valid, prepare the solver "
+    "deck with cae.prepare_solver_run.\n"
+    "4. cae.run_solver is approval-gated and MUST come after a successful "
+    "cae.prepare_solver_run — request approval before running it.\n"
+    "5. Only after an approved, successful cae.run_solver may you summarize actual "
+    "results and their artifacts.\n"
+    "6. If the solver has not been executed, state explicitly that it has NOT run "
+    "and never claim results."
+)
+
+SIMULATE_MISSING_INPUT_INSTRUCTION = (
+    "Required simulation inputs are missing — ask the user for them before "
+    "preparing a deck or running the solver. Do not prepare or run yet."
+)
+
+SIMULATE_TARGET_BLOCK_INSTRUCTION = (
+    "A referenced @part/@artifact target was not found in the project "
+    "(known=false). Ask the user to confirm a valid target before preparing or "
+    "running the solver — do not prepare or run against an unknown target."
+)
+
+SIMULATE_PREPARE_FIRST_INSTRUCTION = (
+    "cae.run_solver cannot run before a successful cae.prepare_solver_run. "
+    "Prepare the solver deck first, then request approval to run the solver."
+)
+
+SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION = (
+    "Do not claim simulation results: the solver has NOT been executed in this "
+    "run. Either prepare the deck and request approval to run cae.run_solver, or "
+    "clearly state that the solver has not run and no results are available."
 )
 
 # Commands whose run must not complete on a bare `final` until a CAD mutation
@@ -736,6 +766,8 @@ class AutopilotEngine:
             setup_artifact=self._load_simulation_setup(state),
             mention_bindings=self._mention_bindings(state),
         )
+        # Initial workflow phase (no deck prepared, solver not run yet).
+        report["workflow"] = build_simulation_workflow_state(report)
         state.observations.append(
             _observation(
                 "context",
@@ -743,11 +775,82 @@ class AutopilotEngine:
                 {
                     "composer_command": "simulate",
                     "simulation_readiness": report,
+                    "simulation_workflow": report["workflow"],
                     "missing_required_inputs": report["missing_required_inputs"],
                     "setup_source": report["setup_source"],
                     "setup_source_kind": report["setup_source_kind"],
                     "solver_executed": report["solver_executed"],
                 },
+            )
+        )
+
+    # --- /simulate v3 solver workflow ------------------------------------
+
+    def _simulate_readiness(self, state: AutopilotRunState) -> dict[str, Any] | None:
+        """The readiness report injected at run start (latest), or None."""
+        for obs in reversed(state.observations):
+            data = obs.data if isinstance(obs.data, dict) else {}
+            report = data.get("simulation_readiness")
+            if isinstance(report, dict):
+                return report
+        return None
+
+    def _latest_tool_output(
+        self, state: AutopilotRunState, tool_name: str, *, only_success: bool
+    ) -> dict[str, Any] | None:
+        """Latest tool_result output for ``tool_name`` (optionally success-only)."""
+        for obs in reversed(state.observations):
+            if obs.kind != "tool_result":
+                continue
+            data = obs.data if isinstance(obs.data, dict) else {}
+            if data.get("tool_name") != tool_name or data.get("dry_run") is True:
+                continue
+            output = data.get("output") if isinstance(data.get("output"), dict) else {}
+            if only_success:
+                status = str(output.get("status") or "").lower()
+                if status in {"error", "failed", "failure"} or output.get("error"):
+                    continue
+            return output
+        return None
+
+    def _simulate_workflow(self, state: AutopilotRunState) -> dict[str, Any]:
+        """Live /simulate workflow phase computed from readiness + observed tools."""
+        return build_simulation_workflow_state(
+            self._simulate_readiness(state),
+            prepared=self._latest_tool_output(state, PREPARE_SOLVER_TOOL, only_success=True),
+            executed=self._latest_tool_output(state, RUN_SOLVER_TOOL, only_success=False),
+        )
+
+    def _simulate_tool_block(self, state: AutopilotRunState, tool_name: str) -> str | None:
+        """Return a repair instruction if a prepare/run tool must be blocked now.
+
+        Blocks ``cae.prepare_solver_run`` / ``cae.run_solver`` when required inputs
+        are missing or a referenced target is unknown, and blocks ``cae.run_solver``
+        before a successful ``cae.prepare_solver_run``. Approval is unchanged — an
+        allowed run still goes through the normal approval gate.
+        """
+        if tool_name not in (PREPARE_SOLVER_TOOL, RUN_SOLVER_TOOL):
+            return None
+        workflow = self._simulate_workflow(state)
+        if workflow["blocked_targets"]:
+            return SIMULATE_TARGET_BLOCK_INSTRUCTION
+        if workflow["missing_required_inputs"]:
+            return SIMULATE_MISSING_INPUT_INSTRUCTION
+        if tool_name == RUN_SOLVER_TOOL and not workflow["solver_deck_prepared"]:
+            return SIMULATE_PREPARE_FIRST_INSTRUCTION
+        return None
+
+    def _refresh_simulation_workflow(self, state: AutopilotRunState, tool_name: str) -> None:
+        """Re-inject the workflow phase after a prepare/run tool executes."""
+        if not is_simulation_command(state) or tool_name not in (PREPARE_SOLVER_TOOL, RUN_SOLVER_TOOL):
+            return
+        workflow = self._simulate_workflow(state)
+        state.observations.append(
+            _observation(
+                "context",
+                f"Simulation workflow: solver_status={workflow['solver_status']}; "
+                f"solver_executed={workflow['solver_executed']}.",
+                {"composer_command": "simulate", "simulation_workflow": workflow},
             )
         )
 
@@ -1446,6 +1549,50 @@ class AutopilotEngine:
                 )
                 self._checkpoint(state)
                 continue
+            # /simulate (v3): a `final` must not claim solver results unless the
+            # solver actually ran in this run. Recoverable — the agent can prepare
+            # + run (with approval) or restate that the solver has not executed.
+            if (
+                action.action.type == "final"
+                and is_simulation_command(state)
+                and final_claims_results(action.action.message)
+                and not self._simulate_workflow(state)["solver_executed"]
+            ):
+                state.observations.append(
+                    _observation(
+                        "tool_error",
+                        SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION,
+                        _classified_error_data(
+                            "missing_context",
+                            error=SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION,
+                            adapter_id=adapter.adapter_id,
+                            action_type="final",
+                            recoverable=True,
+                        ),
+                    )
+                )
+                self._record_working_blocker(
+                    state,
+                    SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION,
+                    next_action="Prepare the deck and run cae.run_solver (with approval), or state the solver has not run.",
+                )
+                self._set_plan_step(
+                    state,
+                    "repair_tool_input",
+                    "running",
+                    summary=SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION,
+                    evidence={"rejected_action_type": "final", "kind": "simulate_result_claim_guard"},
+                    current=True,
+                )
+                self._emit_event(
+                    state,
+                    "tool_failed",
+                    status="running",
+                    content=SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION,
+                    payload={"kind": "simulate_result_claim_guard", "adapter_id": adapter.adapter_id},
+                )
+                self._checkpoint(state)
+                continue
             step = AutopilotStep(index=len(state.steps), adapter_id=state.adapter_id, action=action)
             state.steps.append(step)
             state.updated_at = now_iso()
@@ -1536,6 +1683,49 @@ class AutopilotEngine:
                 self._checkpoint(state)
                 return
             tool_call = action.action
+            # /simulate (v3) workflow gate: refuse to prepare/run while required
+            # inputs are missing or a referenced target is unknown, and refuse
+            # cae.run_solver before a successful cae.prepare_solver_run. This runs
+            # BEFORE policy/approval — it never bypasses approval, only adds a
+            # precondition. Recoverable (the agent can ask the user / prepare first).
+            if is_simulation_command(state):
+                simulate_block = self._simulate_tool_block(state, tool_call.tool_name)
+                if simulate_block:
+                    state.observations.append(
+                        _observation(
+                            "tool_error",
+                            simulate_block,
+                            _classified_error_data(
+                                "missing_context",
+                                error=simulate_block,
+                                adapter_id=adapter.adapter_id,
+                                tool_name=tool_call.tool_name,
+                                recoverable=True,
+                            ),
+                        )
+                    )
+                    self._record_working_blocker(
+                        state,
+                        simulate_block,
+                        next_action="Ask the user for missing inputs / confirm the target, or prepare the deck first.",
+                    )
+                    self._set_plan_step(
+                        state,
+                        "repair_tool_input",
+                        "running",
+                        summary=simulate_block,
+                        evidence={"tool_name": tool_call.tool_name, "kind": "simulate_workflow_guard"},
+                        current=True,
+                    )
+                    self._emit_event(
+                        state,
+                        "tool_failed",
+                        status="running",
+                        content=simulate_block,
+                        payload={"kind": "simulate_workflow_guard", "tool_name": tool_call.tool_name},
+                    )
+                    self._checkpoint(state)
+                    continue
             policy = evaluate_tool_call(
                 tool_name=tool_call.tool_name,
                 tool_input=tool_call.input,
@@ -1832,6 +2022,7 @@ class AutopilotEngine:
             )
         self._checkpoint(state)
         self._execute_followups(state, tool_name, tool_input)
+        self._refresh_simulation_workflow(state, tool_name)
         return True
 
     def _record_repair_attempt(

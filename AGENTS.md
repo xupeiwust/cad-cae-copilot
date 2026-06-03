@@ -155,14 +155,14 @@ The raw `/command` text is always preserved in the stored user message.
   If no CAD/project/artifact exists, `ask_user` or a clear blocking `final` is
   acceptable. It does **not** force any specific tool, change CAD execution, or
   bypass approval.
-- **`/simulate` (routed, simulation planning / readiness — v2).** When
+- **`/simulate` (routed, approval-gated solver workflow — v3).** When
   `AutopilotRunState.composer_intent.command == "simulate"`, the engine injects a
-  simulation planning instruction (`intent_type == "plan_simulation"`) biasing the
+  simulation workflow instruction (`intent_type == "plan_simulation"`) biasing the
   agent toward CAE setup/preflight + read-only inspection tools
   (`aieng.agent_context` / `aieng.inspect_package` / `cae.prepare_solver_run` /
   `aieng.write_completeness_report`) and **suppresses the geometry-mutation
-  guard** (a simulation *plan* `final` is not a CAD edit, and free text like
-  "add a 500N load" must not trip the create/modify heuristic).
+  guard** (a simulation step is not a CAD edit, and free text like "add a 500N
+  load" must not trip the create/modify heuristic).
   - **Deterministic readiness report.** Alongside the prompt bias the engine
     injects a structured, deterministic readiness report from
     [`simulation_readiness.py`](aieng-ui/backend/app/agent_autopilot/simulation_readiness.py)
@@ -185,11 +185,25 @@ The raw `/command` text is always preserved in the stored user message.
     (`setup_artifact` / `workspace_artifact` / `agent_context` / `none`). The
     file loader is app-wired (`simulation_setup_loader`) and best-effort —
     malformed/missing setup safely falls back to the cae block, then `not_found`.
-  - v2 does **not** auto-run the solver (`cae.run_solver` stays approval-gated
-    and out of scope), does **not** modify CAD, and does **not** bypass approval.
-    `/simulate` is **not** read-only (it may patch CAE setup), so it carries
-    `simulation_planning: true` rather than `read_only: true`. An approved
-    end-to-end solver path remains future work.
+  - **v3: approval-gated prepare → run workflow.**
+    [`simulation_workflow.py`](aieng-ui/backend/app/agent_autopilot/simulation_workflow.py)
+    (`build_simulation_workflow_state`) derives, from the readiness report plus the
+    observed `cae.prepare_solver_run` / `cae.run_solver` results, the phase fields
+    `ready_to_prepare_solver_run`, `solver_deck_prepared`, `deck_path` /
+    `manifest_path`, `ready_to_run_solver`, `solver_run_approval_required`,
+    `solver_executed`, `solver_status`, and `result_artifacts`. The engine enforces
+    it deterministically: **prepare/run are blocked while required inputs are
+    missing or a referenced target is `known=false`** (ask the user instead);
+    **`cae.run_solver` is blocked until a successful `cae.prepare_solver_run`**; and
+    an allowed `cae.run_solver` still goes through the **normal approval gate** (the
+    workflow never bypasses approval). A `final` that **claims solver results is
+    rejected unless `solver_executed` is true** — `solver_executed` only flips true
+    after an approved, non-error `cae.run_solver`, so denied/failed runs never read
+    as success.
+  - v3 does **not** auto-run the solver (`cae.run_solver` stays approval-gated),
+    does **not** modify CAD, and does **not** bypass approval. `/simulate` is
+    **not** read-only (it may patch CAE setup), so it carries
+    `simulation_planning: true` rather than `read_only: true`.
 
 Command-specific routing **never bypasses approval** — `cad.execute_build123d`,
 `cae.run_solver`, and the other gated tools still pause for approval as usual.

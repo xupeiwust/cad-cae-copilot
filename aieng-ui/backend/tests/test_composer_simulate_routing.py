@@ -20,6 +20,10 @@ from types import SimpleNamespace
 from app.agent_autopilot.engine import (
     GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
     SIMULATE_COMMAND_INSTRUCTION,
+    SIMULATE_MISSING_INPUT_INSTRUCTION,
+    SIMULATE_PREPARE_FIRST_INSTRUCTION,
+    SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION,
+    SIMULATE_TARGET_BLOCK_INSTRUCTION,
     AutopilotEngine,
     command_intent_label,
     command_mutation_intent,
@@ -131,8 +135,14 @@ def test_simulate_can_ask_user_for_missing_inputs(tmp_path: Path) -> None:
 
 
 def test_simulate_after_readonly_preflight_is_allowed(tmp_path: Path) -> None:
+    # With a complete setup the deck prepare is allowed (v3); the solver is never
+    # auto-invoked and the plan final completes.
     calls: list[tuple[str, dict]] = []
-    engine = _engine(tmp_path, tool_executor=lambda name, inp: calls.append((name, inp)) or {"status": "ready"})
+    engine = _engine(
+        tmp_path,
+        agent_context={"cae": {"present": True, "materials": ["s"], "loads": ["l"], "boundary_conditions": ["b"]}},
+        tool_executor=lambda name, inp: calls.append((name, inp)) or {"status": "ready", "deck_path": "cae/sim.inp"},
+    )
     state = engine.start(
         AutopilotRunRequest(
             message="simulate the bracket under load",
@@ -457,3 +467,248 @@ def test_inline_context_setup_artifact_without_loader(tmp_path: Path) -> None:
     assert report["setup_source_kind"] == "workspace_artifact"
     assert report["setup_source"] == "draft-1"
     assert report["ready_for_solver"] is True
+
+
+# --- v3: approval-gated prepare -> run solver workflow -----------------------
+
+_COMPLETE_CAE = {
+    "present": True,
+    "materials": ["steel"],
+    "loads": [{"type": "force"}],
+    "boundary_conditions": [{"type": "fixed"}],
+}
+
+
+def _workflow(state):
+    """Latest simulation_workflow snapshot from the run observations."""
+    for obs in reversed(state.observations):
+        data = obs.data if isinstance(obs.data, dict) else {}
+        if isinstance(data.get("simulation_workflow"), dict):
+            return data["simulation_workflow"]
+    return None
+
+
+def test_prepare_blocked_when_inputs_missing(tmp_path: Path) -> None:
+    calls: list[str] = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        tool_executor=lambda name, inp: calls.append(name) or {"status": "ok"},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate it"),
+            max_steps=3,
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cae.prepare_solver_run", "input": {"project_id": "p1"}}},
+                {"action": {"type": "ask_user", "question": "What material/loads/constraints?"}},
+            ],
+        )
+    )
+    # No CAE setup → prepare is blocked; the solver tools never execute.
+    assert "cae.prepare_solver_run" not in calls
+    assert any(s == SIMULATE_MISSING_INPUT_INSTRUCTION for s in _summaries(state))
+    assert state.status == "blocked"
+
+
+def test_run_blocked_before_prepare(tmp_path: Path) -> None:
+    calls: list[str] = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": _COMPLETE_CAE},
+        tool_executor=lambda name, inp: calls.append(name) or {"status": "ok"},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate it"),
+            max_steps=3,
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cae.run_solver", "input": {"project_id": "p1"}}},
+                {"action": {"type": "ask_user", "question": "OK to prepare first?"}},
+            ],
+        )
+    )
+    # run_solver before any prepare → blocked; solver never executes.
+    assert "cae.run_solver" not in calls
+    assert any(s == SIMULATE_PREPARE_FIRST_INSTRUCTION for s in _summaries(state))
+
+
+def test_prepare_then_run_requires_approval(tmp_path: Path) -> None:
+    calls: list[str] = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": _COMPLETE_CAE},
+        tool_executor=lambda name, inp: calls.append(name) or {"status": "completed", "deck_path": "cae/sim.inp"},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            dry_run=False,
+            composer_intent=_intent("simulate", "simulate it"),
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cae.prepare_solver_run", "input": {"project_id": "p1"}}},
+                {"action": {"type": "tool_call", "tool_name": "cae.run_solver", "input": {"project_id": "p1"}}},
+                {"action": {"type": "final", "message": "Plan ready; solver not run."}, "done": True},
+            ],
+        )
+    )
+    # Prepare executed; run_solver paused for approval (never auto-run).
+    assert "cae.prepare_solver_run" in calls
+    assert "cae.run_solver" not in calls
+    assert state.status == "awaiting_approval"
+    assert state.pending_approval.tool_name == "cae.run_solver"
+    wf = _workflow(state)
+    assert wf["solver_deck_prepared"] is True
+    assert wf["solver_run_approval_required"] is True
+    assert wf["solver_executed"] is False
+
+
+def test_denied_approval_does_not_run_solver(tmp_path: Path) -> None:
+    calls: list[str] = []
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": _COMPLETE_CAE},
+        tool_executor=lambda name, inp: calls.append(name) or {"status": "completed", "deck_path": "cae/sim.inp"},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            dry_run=False,
+            composer_intent=_intent("simulate", "simulate it"),
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cae.prepare_solver_run", "input": {"project_id": "p1"}}},
+                {"action": {"type": "tool_call", "tool_name": "cae.run_solver", "input": {"project_id": "p1"}}},
+                {"action": {"type": "final", "message": "Plan ready; solver not run."}, "done": True},
+            ],
+        )
+    )
+    assert state.status == "awaiting_approval"
+    resumed = engine.continue_run(state.run_id, approved=False)
+    assert resumed.status == "blocked"
+    assert "cae.run_solver" not in calls  # solver never executed
+
+
+def test_approved_run_executes_and_allows_result_final(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def _exec(name, inp):
+        calls.append(name)
+        if name == "cae.prepare_solver_run":
+            return {"status": "completed", "deck_path": "cae/sim.inp"}
+        return {"status": "completed", "result_artifacts": ["results/stress.frd"]}
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": _COMPLETE_CAE},
+        tool_executor=_exec,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            dry_run=False,
+            composer_intent=_intent("simulate", "simulate it"),
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cae.prepare_solver_run", "input": {"project_id": "p1"}}},
+                {"action": {"type": "tool_call", "tool_name": "cae.run_solver", "input": {"project_id": "p1"}}},
+                {"action": {"type": "final", "message": "The results show max stress of 120 MPa."}, "done": True},
+            ],
+        )
+    )
+    assert state.status == "awaiting_approval"
+    resumed = engine.continue_run(state.run_id, approved=True)
+    assert "cae.run_solver" in calls  # solver executed after approval
+    assert resumed.status == "completed"  # result-claiming final allowed now
+    wf = _workflow(resumed)
+    assert wf["solver_executed"] is True
+    assert wf["result_artifacts"] == ["results/stress.frd"]
+
+
+def test_run_failure_is_not_reported_as_success(tmp_path: Path) -> None:
+    def _exec(name, inp):
+        if name == "cae.prepare_solver_run":
+            return {"status": "completed", "deck_path": "cae/sim.inp"}
+        return {"status": "error", "error": "solver diverged"}
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": _COMPLETE_CAE},
+        tool_executor=_exec,
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            dry_run=False,
+            composer_intent=_intent("simulate", "simulate it"),
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cae.prepare_solver_run", "input": {"project_id": "p1"}}},
+                {"action": {"type": "tool_call", "tool_name": "cae.run_solver", "input": {"project_id": "p1"}}},
+                {"action": {"type": "final", "message": "Solver run failed; no results available."}, "done": True},
+            ],
+        )
+    )
+    resumed = engine.continue_run(state.run_id, approved=True)
+    wf = _workflow(resumed)
+    assert wf["solver_executed"] is False
+    assert wf["solver_status"] == "failed"
+
+
+def test_final_cannot_claim_results_without_execution(tmp_path: Path) -> None:
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": _COMPLETE_CAE},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate it",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate it"),
+            max_steps=3,
+            fake_actions=[
+                {"action": {"type": "final", "message": "The max stress is 100 MPa."}, "done": True},
+                {"action": {"type": "ask_user", "question": "Should I prepare and run the solver?"}},
+            ],
+        )
+    )
+    # The fake "results" final is rejected (solver never ran) → guard fires.
+    assert any(s == SIMULATE_RESULT_CLAIM_REPAIR_INSTRUCTION for s in _summaries(state))
+    assert state.final_message is None
+    assert state.status == "blocked"
+
+
+def test_unknown_target_blocks_prepare(tmp_path: Path) -> None:
+    part = {"kind": "part", "raw": "@part:ghost", "value": "ghost"}
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        agent_context={"cae": _COMPLETE_CAE, "cad": {"named_parts": ["bracket"]}},
+        tool_executor=lambda name, inp: {"status": "ok"},
+    )
+    state = engine.start(
+        AutopilotRunRequest(
+            message="simulate @part:ghost",
+            project_id="p1",
+            composer_intent=_intent("simulate", "simulate @part:ghost", [part]),
+            max_steps=3,
+            fake_actions=[
+                {"action": {"type": "tool_call", "tool_name": "cae.prepare_solver_run", "input": {"project_id": "p1"}}},
+                {"action": {"type": "ask_user", "question": "Which valid part?"}},
+            ],
+        )
+    )
+    # Even with a complete setup, an unknown @part target blocks prepare.
+    assert any(s == SIMULATE_TARGET_BLOCK_INSTRUCTION for s in _summaries(state))
+    assert state.status == "blocked"

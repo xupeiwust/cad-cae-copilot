@@ -93,16 +93,28 @@ changing code:
 ### Composer slash commands (metadata only)
 
 The chat composer recognizes leading slash commands (`/build`, `/modify`,
-`/critique`, `/explain`, `/simulate`) and surfaces a suggestion menu. Today these
-are **parsed and recorded as metadata only** — `parseComposerIntent` /
-`toComposerIntentMetadata` (in
+`/critique`, `/explain`, `/simulate`) and surfaces a suggestion menu.
+`parseComposerIntent` / `toComposerIntentMetadata` (in
 [`composerIntent.ts`](aieng-ui/frontend/src/components/chat/composerIntent.ts))
 attach a `composer_intent` blob to the persisted chat message `extra` and to the
 autopilot run create request (echoed back on `AutopilotRunState.composer_intent`).
-There is **no command-specific routing yet**: `/build` does not switch tools,
-`/critique` does not auto-call `cad.critique`, approval logic is unchanged, and the
-raw `/command` text is still sent to the agent verbatim. Command-specific execution
-(mapping intent → tool/prompt) is future work.
+The raw `/command` text is always preserved in the stored user message.
+
+**Backend routing status:**
+- **`/critique` (v1, routed, read-only).** When
+  `AutopilotRunState.composer_intent.command == "critique"`, the engine injects a
+  read-only critique/inspection instruction into the run context (biasing the
+  agent toward `cad.critique` and read-only inspection tools such as
+  `aieng.inspect_package` / `aieng.validate` / `cad.get_source`) and **suppresses
+  the geometry-mutation guard** so a `final` is allowed after a read-only result
+  (or a clear "no CAD available" answer) even if the free text contains words
+  like "add". It does **not** force `cad.critique`, change CAD execution, or
+  bypass approval. Helpers live in
+  [`engine.py`](aieng-ui/backend/app/agent_autopilot/engine.py):
+  `get_composer_command` / `is_critique_command` / `command_intent_label`.
+- **`/build`, `/modify`, `/explain`, `/simulate` (parsed, not routed).** Stored as
+  metadata only — no tool/prompt routing yet. Natural-language intent and the
+  geometry-mutation guard behave exactly as before for these.
 
 ---
 

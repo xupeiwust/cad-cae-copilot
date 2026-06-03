@@ -144,6 +144,48 @@ SIMULATION_PLAN_STEPS = [
 ]
 
 
+# --- Composer slash-command routing (v1: /critique only) -------------------
+# Other commands (build/modify/explain/simulate) are parsed and stored as
+# metadata but NOT routed yet — only /critique influences backend behavior.
+
+CRITIQUE_COMMAND_INSTRUCTION = (
+    "The user explicitly invoked /critique. Treat this as a read-only CAD "
+    "critique/inspection request. Prefer cad.critique or read-only inspection "
+    "tools (e.g. aieng.inspect_package, aieng.validate, cad.get_source, "
+    "aieng.agent_context). Do not modify geometry unless the user explicitly "
+    "asks for edits. If no CAD/geometry is available, say so clearly or ask the "
+    "user — do not invent a mutation."
+)
+
+
+def get_composer_command(obj: Any) -> str | None:
+    """Return the parsed composer slash command from a run/request/state, or None.
+
+    Accepts anything carrying a ``composer_intent`` dict (AutopilotRunState or
+    AutopilotRunRequest). Robust to missing/malformed metadata.
+    """
+    intent = getattr(obj, "composer_intent", None)
+    if not isinstance(intent, dict):
+        return None
+    command = intent.get("command")
+    return command if isinstance(command, str) and command else None
+
+
+def is_critique_command(obj: Any) -> bool:
+    """True when the run was explicitly invoked with /critique."""
+    return get_composer_command(obj) == "critique"
+
+
+def command_intent_label(obj: Any) -> str | None:
+    """Semantic intent label for a routed command, or None when not routed.
+
+    v1 only routes /critique → read-only ``critique_geometry``.
+    """
+    if get_composer_command(obj) == "critique":
+        return "critique_geometry"
+    return None
+
+
 def _geometry_mutation_intent(text: str) -> str | None:
     lowered = text.lower()
     if any(term in lowered for term in _GEOMETRY_MODIFY_TERMS):
@@ -351,6 +393,7 @@ class AutopilotEngine:
                 },
             )
         )
+        self._inject_command_context(state)
         if not request.fake_actions:
             self._bootstrap_project_context(state)
         self._set_plan_step(state, "observe_context", "completed", summary="Initial run context is ready.")
@@ -379,6 +422,28 @@ class AutopilotEngine:
 
     def _new_plan(self, request: AutopilotRunRequest, *, run_id: str) -> AgentPlan:
         return create_default_agent_plan(request.message, plan_id=f"{run_id}-plan")
+
+    def _inject_command_context(self, state: AutopilotRunState) -> None:
+        """Add a routing instruction observation for routed slash commands.
+
+        v1 routes only /critique: a read-only critique/inspection bias delivered
+        as a context observation (prompt-only — no tool ranking change, no CAD
+        execution change). The observation persists in state, so it survives
+        continue/reply/follow-up rebuilds. Unrouted commands are a no-op.
+        """
+        if is_critique_command(state):
+            state.observations.append(
+                _observation(
+                    "context",
+                    CRITIQUE_COMMAND_INSTRUCTION,
+                    {
+                        "composer_command": "critique",
+                        "intent_type": command_intent_label(state),
+                        "mutation_required": False,
+                        "read_only": True,
+                    },
+                )
+            )
 
     def _set_plan_step(
         self,
@@ -919,7 +984,10 @@ class AutopilotEngine:
                 self._emit_event(state, "tool_failed", status="failed", content=state.errors[-1], payload=result.model_dump())
                 return
             action = result.action
-            mutation_intent = _latest_geometry_mutation_intent(state)
+            # /critique is an explicit read-only request: never gate its final on
+            # a geometry mutation, even if the free-text happens to contain words
+            # like "add"/"change". Other commands / natural language are unchanged.
+            mutation_intent = None if is_critique_command(state) else _latest_geometry_mutation_intent(state)
             if (
                 action.action.type == "final"
                 and mutation_intent

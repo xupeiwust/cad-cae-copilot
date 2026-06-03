@@ -3,10 +3,12 @@ import { useRef, type KeyboardEvent } from "react";
 import type { LiveSyncStatus } from "../../appUtils";
 import type { PickedFace } from "../../appTypes";
 import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeConfigSnapshot } from "../../types";
+import type { ComposerCommand } from "./composerIntent";
 import { AutoResizeTextarea } from "./AutoResizeTextarea";
 import { ConnectionHealthBar } from "./ConnectionHealthBar";
 import { ComposerControls, ConnectionSelector, getComposerActionState } from "./ComposerControls";
-import { usePointerAutocomplete } from "./usePointerAutocomplete";
+import { pointerMentionQuery, usePointerAutocomplete } from "./usePointerAutocomplete";
+import { useSlashCommandMenu } from "./useSlashCommandMenu";
 
 type AgentInputBoxProps = {
   chatConnections: ChatConnection[];
@@ -59,6 +61,7 @@ export function AgentInputBox({
 }: AgentInputBoxProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const autocomplete = usePointerAutocomplete(recentPickedFaces);
+  const slash = useSlashCommandMenu();
 
   const inputDisabled = selectedConnectionBlocked || (selectedChatConnectionId === "llm-api" && !llmReady);
   const action = getComposerActionState({
@@ -74,6 +77,19 @@ export function AgentInputBox({
     const el = textareaRef.current;
     if (!el) return;
     const result = autocomplete.accept(message, el.selectionStart, face);
+    if (!result) return;
+    setMessage(result.text);
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.selectionStart = result.cursor;
+        textareaRef.current.selectionEnd = result.cursor;
+        textareaRef.current.focus();
+      }
+    }, 0);
+  }
+
+  function applySlashChoice(command?: ComposerCommand) {
+    const result = slash.accept(message, command);
     if (!result) return;
     setMessage(result.text);
     setTimeout(() => {
@@ -107,6 +123,27 @@ export function AgentInputBox({
         return;
       }
     }
+    if (slash.open && slash.matches.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        slash.moveSelection(1);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        slash.moveSelection(-1);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applySlashChoice();
+        return;
+      }
+      if (e.key === "Escape") {
+        slash.close();
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (message.trim()) void sendUnified();
@@ -116,7 +153,16 @@ export function AgentInputBox({
   function handleInput(value: string) {
     setMessage(value);
     const el = textareaRef.current;
-    autocomplete.onInput(value, el ? el.selectionStart : value.length);
+    const cursor = el ? el.selectionStart : value.length;
+    autocomplete.onInput(value, cursor);
+    // The `@` pointer autocomplete has priority: if a mention is active, keep the
+    // slash menu closed so the two popups never fight over the same anchor.
+    const mentionActive = recentPickedFaces.length > 0 && pointerMentionQuery(value, cursor) !== null;
+    if (mentionActive) {
+      slash.close();
+    } else {
+      slash.onInput(value, cursor);
+    }
   }
 
   return (
@@ -176,6 +222,22 @@ export function AgentInputBox({
                   <span className="chat-autocomplete-badge">{f.surface_type}</span>
                   <code>{f.pointer}</code>
                   <span className="chat-autocomplete-label">{f.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {!autocomplete.open && slash.open && slash.matches.length > 0 ? (
+            <div className="chat-autocomplete" aria-label="Slash commands">
+              {slash.matches.map((c, i) => (
+                <button
+                  key={c.command}
+                  type="button"
+                  className={i === slash.index ? "chat-autocomplete-item active" : "chat-autocomplete-item"}
+                  onClick={() => applySlashChoice(c.command)}
+                >
+                  <span className="chat-autocomplete-badge">cmd</span>
+                  <code>{c.label}</code>
+                  <span className="chat-autocomplete-label">{c.hint}</span>
                 </button>
               ))}
             </div>

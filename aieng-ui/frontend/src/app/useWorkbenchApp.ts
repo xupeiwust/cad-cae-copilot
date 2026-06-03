@@ -34,6 +34,8 @@ import { useEngineeringActions } from "./useEngineeringActions";
 import { useGeometryPointers } from "./useGeometryPointers";
 import { useObjectRegistry } from "./useObjectRegistry";
 import { useEditableParameters } from "./useEditableParameters";
+import { useProjectCritique } from "./useProjectCritique";
+import { useSimulationReadiness } from "./useSimulationReadiness";
 import { useRuntimeSettings } from "./useRuntimeSettings";
 import { useBrowserStorageState } from "./useBrowserStorageState";
 import { useChatSessions } from "./useChatSessions";
@@ -184,6 +186,9 @@ export function useWorkbenchApp() {
   });
   // Editable Parameter Explorer: the read-only "point" surface for point-and-shoot.
   const { editableParameters } = useEditableParameters({ selectedId, geometryVersion });
+  // Read-only quality / readiness surfaces (actionable via composer drafts).
+  const { critiqueFindings } = useProjectCritique({ selectedId, geometryVersion });
+  const { simulationReadiness } = useSimulationReadiness({ selectedId, geometryVersion });
   const [selectedShapeIrNodeId, setSelectedShapeIrNodeId] = useState<string | null>(null);
   useEffect(() => {
     setSelectedShapeIrNodeId(null);
@@ -729,6 +734,8 @@ export function useWorkbenchApp() {
     shapeIrObjects,
     shapeIrVerification,
     editableParameters,
+    critiqueFindings,
+    simulationReadiness,
     engineeringContext,
     selectedShapeIrNodeId,
     selectShapeIrNode,

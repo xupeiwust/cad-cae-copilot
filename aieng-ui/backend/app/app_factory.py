@@ -1357,6 +1357,52 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         parameters = [{k: v for k, v in entry.items() if k != "search_tokens"} for entry in index]
         return {"parameters": parameters, "summary": summarize_parameter_index(index)}
 
+    @app.get("/api/projects/{project_id}/critique")
+    def get_critique_endpoint(project_id: str) -> dict[str, Any]:
+        """Deterministic engineering critique for the Critique panel (read-only).
+
+        Runs the same cad.critique audit (min wall, hole sizes, floating parts, …)
+        and returns its findings + severity summary. Best-effort: any failure /
+        no-geometry project resolves to an empty findings set the panel hides."""
+        from . import cad_generation as _cg
+
+        empty = {"status": "ok", "findings": [], "summary": {"by_severity": {"high": 0, "medium": 0, "low": 0}}}
+        try:
+            result = _cg.critique(active_settings, project_id, {})
+        except Exception:
+            return empty
+        if not isinstance(result, dict) or not isinstance(result.get("findings"), list):
+            # No package / no geometry yet (critique returns an error shape) — the
+            # panel treats an empty findings set as "nothing to show".
+            return empty
+        return result
+
+    @app.get("/api/projects/{project_id}/simulation-readiness")
+    def get_simulation_readiness_endpoint(project_id: str) -> dict[str, Any]:
+        """Deterministic simulation-readiness report for the CAE readiness panel.
+
+        Classifies the six core inputs (analysis_type / material / loads /
+        constraints / mesh / solver) as present / missing / defaultable / unknown,
+        reusing the same builder as /simulate. Read-only; runs no solver. Reads the
+        direct CAE setup artifact (preferred) and the agent-context cae block.
+        Best-effort: failures resolve to a not_found report the panel can hide."""
+        from .agent_autopilot.simulation_readiness import build_simulation_readiness_report
+
+        cae_block: dict[str, Any] | None = None
+        try:
+            from .agent_context import build_agent_context
+
+            context = build_agent_context(active_settings, project_id)
+            if isinstance(context, dict) and isinstance(context.get("cae"), dict):
+                cae_block = context["cae"]
+        except Exception:
+            cae_block = None
+        try:
+            setup_artifact = _load_project_simulation_setup(project_id)
+        except Exception:
+            setup_artifact = None
+        return build_simulation_readiness_report(cae_block, setup_artifact=setup_artifact)
+
     @app.post("/api/projects/{project_id}/shape-ir-patch")
     def apply_shape_ir_patch_endpoint(
         project_id: str,

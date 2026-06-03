@@ -1366,6 +1366,38 @@ export type EditableParametersResponse = {
   summary: { total: number; by_scope: { local: number; global: number; unscoped: number } };
 };
 
+/** One deterministic engineering-critique finding (from cad.critique). */
+export type CritiqueFinding = {
+  severity: "high" | "medium" | "low" | string;
+  category?: string;
+  rule?: string;
+  feature?: string;
+  observation?: string;
+  suggested_fix?: string;
+};
+
+export type CritiqueResponse = {
+  status?: string;
+  findings?: CritiqueFinding[];
+  summary?: { by_severity?: { high?: number; medium?: number; low?: number } };
+  fail_first_objections?: string[];
+};
+
+/** One core simulation input's readiness (from build_simulation_readiness_report). */
+export type SimulationReadinessInput = {
+  status: "present" | "missing" | "defaultable" | "unknown" | string;
+  detail?: string;
+};
+
+export type SimulationReadinessResponse = {
+  ready_for_solver?: boolean;
+  setup_source?: string;
+  inputs?: Record<string, SimulationReadinessInput>;
+  missing_required_inputs?: string[];
+  defaultable_inputs?: string[];
+  summary?: string;
+};
+
 export type ChatConnection = {
   id: "llm-api" | "local-agent" | string;
   label: string;

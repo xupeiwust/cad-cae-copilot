@@ -4,8 +4,10 @@ import { api } from "../api";
 import { NoticeCenter } from "../components/common";
 import { PointerProvider } from "../components/PointerText";
 import { SessionsSidebar } from "../components/SessionsSidebar";
+import { CritiquePanel } from "../components/CritiquePanel";
 import { EditableParametersPanel } from "../components/EditableParametersPanel";
 import { ShapeIrObjectsCard } from "../components/ShapeIrObjectsCard";
+import { SimulationReadinessPanel } from "../components/SimulationReadinessPanel";
 import { ViewerPane } from "../components/ViewerPane";
 import { SelectionInspectorCard } from "../components/agent/SelectionInspectorCard";
 import { ChatPanel } from "../components/panels/ChatPanel";
@@ -115,6 +117,8 @@ export function AppChrome({ app }: AppChromeProps) {
               parameters={app.editableParameters}
               onUseInChat={app.setMessage}
             />
+            <CritiquePanel findings={app.critiqueFindings} onUseInChat={app.setMessage} />
+            <SimulationReadinessPanel readiness={app.simulationReadiness} onUseInChat={app.setMessage} />
             <ChatPanel
               chatConnections={app.chatConnections}
               selectedChatConnectionId={app.selectedChatConnectionId}

@@ -285,6 +285,35 @@ def test_editable_parameters_endpoint_empty(tmp_path: Path) -> None:
     assert body["summary"] == {"total": 0, "by_scope": {"local": 0, "global": 0, "unscoped": 0}}
 
 
+def test_critique_and_readiness_endpoints_smoke(tmp_path: Path) -> None:
+    # The two read-only quality/readiness panel endpoints return well-formed
+    # bodies (200) for a project with no geometry/CAE — best-effort, never 500.
+    from fastapi.testclient import TestClient
+
+    from app.main import Settings, create_app, default_project, save_project
+
+    settings = Settings(
+        platform_root=tmp_path / "platform",
+        workspace_root=tmp_path / "workspace",
+        data_root=tmp_path / "data",
+        aieng_root=tmp_path / "workspace" / "aieng",
+        sample_step=tmp_path / "workspace" / "sample.step",
+    )
+    project = save_project(settings, default_project("quality-panels"))
+    client = TestClient(create_app(settings))
+
+    crit = client.get(f"/api/projects/{project['id']}/critique")
+    assert crit.status_code == 200
+    assert isinstance(crit.json().get("findings"), list)
+
+    readiness = client.get(f"/api/projects/{project['id']}/simulation-readiness")
+    assert readiness.status_code == 200
+    body = readiness.json()
+    assert "inputs" in body and "setup_source" in body
+    # No solver was run building the report.
+    assert body.get("solver_executed") is False
+
+
 def test_engine_skips_for_non_modify(tmp_path: Path) -> None:
     index = build_parameter_index(_FEATURE_GRAPH)
     engine = _engine(tmp_path, lambda _pid: index)

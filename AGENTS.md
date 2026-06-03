@@ -297,6 +297,21 @@ single-part edit.
   shows each parameter's current value + allowed range + editable constant, and a
   click drafts a `/modify set <name> to ` into the composer — so editing still
   flows through the existing approval-gated path (the panel itself never mutates).
+- **Sibling read-only panels (same draft-into-composer pattern).** Two more
+  workbench panels surface backend audits the agent already produces:
+  - **Critique panel** ([`CritiquePanel.tsx`](aieng-ui/frontend/src/components/CritiquePanel.tsx),
+    `useProjectCritique` → `GET /api/projects/{id}/critique`, shaped by
+    [`critiqueFindings.ts`](aieng-ui/frontend/src/app/critiqueFindings.ts)) — the
+    deterministic `cad.critique` findings grouped by severity; each finding's
+    **Fix** button drafts `/modify <suggested_fix>` into the composer.
+  - **Simulation Readiness panel** ([`SimulationReadinessPanel.tsx`](aieng-ui/frontend/src/components/SimulationReadinessPanel.tsx),
+    `useSimulationReadiness` → `GET /api/projects/{id}/simulation-readiness`,
+    shaped by [`simulationReadiness.ts`](aieng-ui/frontend/src/app/simulationReadiness.ts)) —
+    the six core CAE inputs as present / missing / defaultable / unknown; a missing
+    **required** input (material / loads / constraints) gets an **Add** that drafts
+    a `/simulate …`. Hidden for pure-CAD projects (`setup_source == not_found`).
+  Both are read-only (run no solver, mutate nothing); actions flow through the
+  existing approval-gated `/modify` / `/simulate` path.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

@@ -1342,6 +1342,21 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail="object registry not found (not a Shape IR package?)")
         return {"object_registry": registry, "verification": verification}
 
+    @app.get("/api/projects/{project_id}/editable-parameters")
+    def get_editable_parameters_endpoint(project_id: str) -> dict[str, Any]:
+        """Editable-parameter listing for the Editable Parameters panel (read-only).
+
+        Reuses the same package feature-graph read as the /modify slot binding and
+        the cad.list_editable_parameters tool (single source). Returns
+        {parameters, summary}; an empty listing (no feature graph / no editable
+        constants) is a valid 200 state the panel renders as "nothing editable yet"
+        — not a 404."""
+        from .agent_autopilot.parameter_binding import summarize_parameter_index
+
+        index = _load_project_feature_parameters(project_id) or []
+        parameters = [{k: v for k, v in entry.items() if k != "search_tokens"} for entry in index]
+        return {"parameters": parameters, "summary": summarize_parameter_index(index)}
+
     @app.post("/api/projects/{project_id}/shape-ir-patch")
     def apply_shape_ir_patch_endpoint(
         project_id: str,

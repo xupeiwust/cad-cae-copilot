@@ -4,6 +4,7 @@ import { api } from "../api";
 import { NoticeCenter } from "../components/common";
 import { PointerProvider } from "../components/PointerText";
 import { SessionsSidebar } from "../components/SessionsSidebar";
+import { EditableParametersPanel } from "../components/EditableParametersPanel";
 import { ShapeIrObjectsCard } from "../components/ShapeIrObjectsCard";
 import { ViewerPane } from "../components/ViewerPane";
 import { SelectionInspectorCard } from "../components/agent/SelectionInspectorCard";
@@ -110,6 +111,10 @@ export function AppChrome({ app }: AppChromeProps) {
                 onUseInPrompt={app.insertToChat}
               />
             ) : null}
+            <EditableParametersPanel
+              parameters={app.editableParameters}
+              onUseInChat={app.setMessage}
+            />
             <ChatPanel
               chatConnections={app.chatConnections}
               selectedChatConnectionId={app.selectedChatConnectionId}

@@ -1347,6 +1347,25 @@ export type AutopilotRunState = {
   composer_intent?: Record<string, unknown> | null;
 };
 
+/** One CAD parameter editable fast/deterministically via cad.edit_parameter. */
+export type EditableParameter = {
+  feature_id: string | null;
+  feature_name: string;
+  feature_type: string;
+  /** local = one part (safe local edit); global = shared (edits ripple); unscoped. */
+  scope: "local" | "global" | "unscoped" | string;
+  parameter_name: string;
+  cad_parameter_name: string;
+  current_value: number | null;
+  min_value: number | null;
+  max_value: number | null;
+};
+
+export type EditableParametersResponse = {
+  parameters: EditableParameter[];
+  summary: { total: number; by_scope: { local: number; global: number; unscoped: number } };
+};
+
 export type ChatConnection = {
   id: "llm-api" | "local-agent" | string;
   label: string;

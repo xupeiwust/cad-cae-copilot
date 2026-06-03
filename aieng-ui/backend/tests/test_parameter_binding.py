@@ -261,6 +261,30 @@ def test_list_editable_parameters_tool_registered_and_empty(tmp_path: Path) -> N
     assert isinstance(body.get("message"), str) and body["message"]
 
 
+def test_editable_parameters_endpoint_empty(tmp_path: Path) -> None:
+    # The read-only GET endpoint the frontend panel consumes returns a well-formed
+    # empty listing (200, not 404) for a project with no feature graph.
+    from fastapi.testclient import TestClient
+
+    from app.main import Settings, create_app, default_project, save_project
+
+    settings = Settings(
+        platform_root=tmp_path / "platform",
+        workspace_root=tmp_path / "workspace",
+        data_root=tmp_path / "data",
+        aieng_root=tmp_path / "workspace" / "aieng",
+        sample_step=tmp_path / "workspace" / "sample.step",
+    )
+    project = save_project(settings, default_project("param-panel"))
+    client = TestClient(create_app(settings))
+
+    resp = client.get(f"/api/projects/{project['id']}/editable-parameters")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["parameters"] == []
+    assert body["summary"] == {"total": 0, "by_scope": {"local": 0, "global": 0, "unscoped": 0}}
+
+
 def test_engine_skips_for_non_modify(tmp_path: Path) -> None:
     index = build_parameter_index(_FEATURE_GRAPH)
     engine = _engine(tmp_path, lambda _pid: index)

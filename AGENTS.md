@@ -287,12 +287,20 @@ read-only via the `cad.list_editable_parameters` tool so the user and agent can
 see **what can be edited fast** before editing — and pick a precise
 `cad.edit_parameter` target. Same single source the `/modify` slot binding uses;
 `global` parameters are flagged as shared (edits ripple), `local` as the safe
-single-part edit. Backend only so far.
-- **Future work:** a frontend Editable Parameters panel (render the listing with
-  current values + inline edit through the approval-gated `cad.edit_parameter`),
-  re-resolve follow-up / reply messages (currently the initial intent is reused),
-  and consume the LLM classifier's `targets` / `parameters` beyond the
-  deterministic slots.
+single-part edit.
+- **Frontend panel.** The workbench renders an **Editable Parameters** panel
+  ([`EditableParametersPanel.tsx`](aieng-ui/frontend/src/components/EditableParametersPanel.tsx),
+  fed by `useEditableParameters` → `GET /api/projects/{id}/editable-parameters`,
+  shaped by the pure
+  [`editableParameters.ts`](aieng-ui/frontend/src/app/editableParameters.ts)). It
+  groups parameters by scope (local / global-shared / unscoped, color-coded),
+  shows each parameter's current value + allowed range + editable constant, and a
+  click drafts a `/modify set <name> to ` into the composer — so editing still
+  flows through the existing approval-gated path (the panel itself never mutates).
+- **Future work:** inline value editing in the panel (a field that calls the
+  approval-gated `cad.edit_parameter` directly), re-resolve follow-up / reply
+  messages (currently the initial intent is reused), and consume the LLM
+  classifier's `targets` / `parameters` beyond the deterministic slots.
 
 **`@`-mentions (strict binding, v1).** The composer parses lightweight
 `@kind:value` mentions (`extractComposerMentions` in

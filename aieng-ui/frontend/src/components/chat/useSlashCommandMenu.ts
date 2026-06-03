@@ -4,19 +4,53 @@ import { COMPOSER_COMMANDS, type ComposerCommand } from "./composerIntent";
 
 export type SlashCommandDef = {
   command: ComposerCommand;
-  /** The "/name" label shown in the menu and inserted into the textarea. */
+  /** The "/name" token shown in the menu and inserted into the textarea. */
   label: string;
-  /** Short human description shown beside the label. */
-  hint: string;
+  /** Short title-case name (e.g. "Build"). */
+  title: string;
+  /** One-line description of what the command does. */
+  description: string;
+  /** A concrete usage example shown to aid discovery. */
+  example: string;
 };
 
 /** Static catalog of supported slash commands (display order). */
 export const SLASH_COMMANDS: SlashCommandDef[] = [
-  { command: "build", label: "/build", hint: "Create a new CAD model" },
-  { command: "modify", label: "/modify", hint: "Modify the current model" },
-  { command: "critique", label: "/critique", hint: "Inspect / critique the current model" },
-  { command: "explain", label: "/explain", hint: "Explain the current project / model" },
-  { command: "simulate", label: "/simulate", hint: "Prepare or run simulation / CAE" },
+  {
+    command: "build",
+    label: "/build",
+    title: "Build",
+    description: "Create a new CAD model",
+    example: "/build create a quadcopter",
+  },
+  {
+    command: "modify",
+    label: "/modify",
+    title: "Modify",
+    description: "Modify the current CAD model",
+    example: "/modify add rotor guards",
+  },
+  {
+    command: "critique",
+    label: "/critique",
+    title: "Critique",
+    description: "Inspect the current model",
+    example: "/critique check manufacturability",
+  },
+  {
+    command: "explain",
+    label: "/explain",
+    title: "Explain",
+    description: "Explain the current project / model",
+    example: "/explain describe the drone structure",
+  },
+  {
+    command: "simulate",
+    label: "/simulate",
+    title: "Simulate",
+    description: "Prepare or run simulation / CAE",
+    example: "/simulate estimate load response",
+  },
 ];
 
 // Sanity guard: keep SLASH_COMMANDS aligned with the parser's command set.

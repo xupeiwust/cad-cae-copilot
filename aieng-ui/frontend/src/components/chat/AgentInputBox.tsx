@@ -3,7 +3,7 @@ import { useRef, type KeyboardEvent } from "react";
 import type { LiveSyncStatus } from "../../appUtils";
 import type { PickedFace } from "../../appTypes";
 import type { ApprovalMode, AutopilotRunState, ChatConnection, RuntimeConfigSnapshot } from "../../types";
-import type { ComposerCommand } from "./composerIntent";
+import { prefixComposerCommand, suggestComposerCommand, type ComposerCommand } from "./composerIntent";
 import { AutoResizeTextarea } from "./AutoResizeTextarea";
 import { ConnectionHealthBar } from "./ConnectionHealthBar";
 import { ComposerControls, ConnectionSelector, getComposerActionState } from "./ComposerControls";
@@ -72,6 +72,10 @@ export function AgentInputBox({
     activeRunId: activeAutopilotRun ? (activeAutopilotRun.run_id ?? "") : null,
     agentProcessing,
   });
+  // Advisory only: a lightweight command hint for natural-language input. Never
+  // shown while a popup is open and never blocks sending. Suppressed for input
+  // that already starts with "/" (handled inside suggestComposerCommand).
+  const suggestion = !slash.open && !autocomplete.open ? suggestComposerCommand(message) : null;
 
   function applySuggestion(face?: PickedFace) {
     const el = textareaRef.current;
@@ -96,6 +100,23 @@ export function AgentInputBox({
       if (textareaRef.current) {
         textareaRef.current.selectionStart = result.cursor;
         textareaRef.current.selectionEnd = result.cursor;
+        textareaRef.current.focus();
+      }
+    }, 0);
+  }
+
+  // Apply a natural-language suggestion by prefixing "/command " (no-op if the
+  // message already starts with a slash). Slash-menu state is recomputed by the
+  // textarea's onChange, so we drive it through handleInput on the next tick.
+  function applySuggestedCommand(command: ComposerCommand) {
+    const next = prefixComposerCommand(message, command);
+    if (next === message) return;
+    setMessage(next);
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const caret = next.length;
+        textareaRef.current.selectionStart = caret;
+        textareaRef.current.selectionEnd = caret;
         textareaRef.current.focus();
       }
     }, 0);
@@ -196,6 +217,19 @@ export function AgentInputBox({
               {recentPickedFaces.length > 2 ? <span>+{recentPickedFaces.length - 2}</span> : null}
             </div>
           ) : null}
+          {suggestion ? (
+            <div className="composer-suggestion" aria-label="Command suggestion">
+              <span className="composer-suggestion-text">Suggestion:</span>
+              <button
+                type="button"
+                className="composer-suggestion-button"
+                onClick={() => applySuggestedCommand(suggestion.command)}
+                title={`Prefix with /${suggestion.command}`}
+              >
+                /{suggestion.command}
+              </button>
+            </div>
+          ) : null}
           <AutoResizeTextarea
             ref={textareaRef}
             value={message}
@@ -232,12 +266,19 @@ export function AgentInputBox({
                 <button
                   key={c.command}
                   type="button"
-                  className={i === slash.index ? "chat-autocomplete-item active" : "chat-autocomplete-item"}
+                  className={
+                    i === slash.index
+                      ? "chat-autocomplete-item chat-slash-item active"
+                      : "chat-autocomplete-item chat-slash-item"
+                  }
                   onClick={() => applySlashChoice(c.command)}
+                  title={c.example}
                 >
-                  <span className="chat-autocomplete-badge">cmd</span>
                   <code>{c.label}</code>
-                  <span className="chat-autocomplete-label">{c.hint}</span>
+                  <span className="chat-slash-text">
+                    <span className="chat-autocomplete-label">{c.description}</span>
+                    <span className="chat-slash-example">{c.example}</span>
+                  </span>
                 </button>
               ))}
             </div>

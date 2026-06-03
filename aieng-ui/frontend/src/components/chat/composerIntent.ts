@@ -113,6 +113,75 @@ export type ComposerIntentMetadata = {
   errors: string[];
 };
 
+export type ComposerCommandSuggestion = {
+  command: ComposerCommand;
+  /** Conservative 0..1 score; higher when the keyword leads the input. */
+  confidence: number;
+  /** The keyword that triggered the suggestion (for display / debugging). */
+  reason: string;
+};
+
+// Conservative keyword heuristics, English + Chinese. Order = priority: the
+// first matching rule wins, so more specific verbs should not be shadowed.
+const SUGGESTION_RULES: { command: ComposerCommand; keywords: string[] }[] = [
+  {
+    command: "build",
+    keywords: ["build", "create", "generate", "draw", "model a", "画", "创建", "生成", "建模"],
+  },
+  {
+    command: "modify",
+    keywords: ["modify", "change", "add ", "remove", "replace", "optimize", "加", "改", "修改", "删除", "替换", "优化"],
+  },
+  {
+    command: "critique",
+    keywords: ["critique", "check", "inspect", "review", "problem", "manufactur", "检查", "审查", "问题", "可制造"],
+  },
+  {
+    command: "explain",
+    keywords: ["explain", "describe", "what is", "解释", "说明", "介绍"],
+  },
+  {
+    command: "simulate",
+    keywords: ["simulate", "simulation", "analysis", "analyse", "analyz", "load", "stress", "仿真", "模拟", "载荷", "应力"],
+  },
+];
+
+/** Minimum trimmed length before we attempt a natural-language suggestion. */
+const MIN_SUGGESTION_LENGTH = 3;
+
+/**
+ * Suggest a slash command for free-form input, or null. Pure, total, and
+ * conservative — it never fires for input that is already a command, that is
+ * too short, or that matches no keyword. Advisory only: callers must not block
+ * sending on it.
+ */
+export function suggestComposerCommand(input: string, _context?: unknown): ComposerCommandSuggestion | null {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("/")) return null; // already a command — nothing to suggest
+  if (trimmed.length < MIN_SUGGESTION_LENGTH) return null;
+  const lower = trimmed.toLowerCase();
+  for (const rule of SUGGESTION_RULES) {
+    for (const keyword of rule.keywords) {
+      const k = keyword.toLowerCase();
+      const idx = lower.indexOf(k);
+      if (idx === -1) continue;
+      return { command: rule.command, confidence: idx === 0 ? 0.8 : 0.6, reason: keyword.trim() };
+    }
+  }
+  return null;
+}
+
+/**
+ * Prefix a message with "/command " unless it already starts with a slash.
+ * Pure — used to apply a natural-language suggestion. Never strips or rewrites
+ * existing command text.
+ */
+export function prefixComposerCommand(message: string, command: ComposerCommand): string {
+  if ((message ?? "").replace(/^\s+/, "").startsWith("/")) return message;
+  return `/${command} ${message}`;
+}
+
 /** Build the send-pipeline metadata for a raw composer input. Pure and total. */
 export function toComposerIntentMetadata(rawText: string): ComposerIntentMetadata {
   const intent = parseComposerIntent(rawText);

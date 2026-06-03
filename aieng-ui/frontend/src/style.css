@@ -2725,6 +2725,52 @@ input[type="file"] {
   white-space: nowrap;
 }
 
+/* Slash-command menu rows: command token + description + example. */
+.chat-slash-item {
+  align-items: flex-start;
+}
+
+.chat-slash-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.chat-slash-example {
+  color: #64748b;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Lightweight, non-persistent natural-language command hint. */
+.composer-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 2px 2px 4px;
+}
+
+.composer-suggestion-button {
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  cursor: pointer;
+}
+
+.composer-suggestion-button:hover {
+  background: rgba(56, 189, 248, 0.2);
+}
+
 .chat-cad-progress {
   border-color: rgba(168, 85, 247, 0.4);
   background: rgba(88, 28, 135, 0.15);

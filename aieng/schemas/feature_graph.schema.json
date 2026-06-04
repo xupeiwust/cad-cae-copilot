@@ -30,6 +30,8 @@
           },
           "type": {
             "enum": [
+              "named_part",
+              "standard_part",
               "base_plate",
               "mounting_hole",
               "mounting_hole_pattern",
@@ -75,6 +77,9 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "body": {
+                    "type": "string"
                   }
                 },
                 "additionalProperties": false
@@ -178,6 +183,53 @@
             },
             "additionalProperties": true
           },
+          "standard_part": {
+            "type": "boolean",
+            "description": "True when this feature represents a recognized catalogue or standard mechanical part."
+          },
+          "source_library": {
+            "type": "string",
+            "description": "Source library for a recognized standard part, for example bd_warehouse when known."
+          },
+          "source_module": {
+            "type": "string"
+          },
+          "source_class": {
+            "type": "string"
+          },
+          "canonical_type": {
+            "enum": [
+              "fastener",
+              "bearing",
+              "gear",
+              "thread",
+              "flange",
+              "washer",
+              "nut",
+              "screw",
+              "bolt",
+              "unknown_standard_part"
+            ]
+          },
+          "designation": {
+            "type": "string"
+          },
+          "original_label": {
+            "type": "string"
+          },
+          "object_label": {
+            "type": "string"
+          },
+          "detection_method": {
+            "type": "string"
+          },
+          "confidence": {
+            "enum": ["low", "medium", "high"]
+          },
+          "standard_part_metadata": {
+            "type": "object",
+            "additionalProperties": true
+          },
           "children": {
             "type": "array",
             "items": {
@@ -193,6 +245,10 @@
       "type": "object",
       "description": "Recognition provenance, limitations, and non-authoritative metadata for feature candidates.",
       "additionalProperties": true
+    },
+    "model_kind": {
+      "enum": ["auto", "mechanical", "organic"],
+      "description": "Heuristic model kind used to gate mechanical feature extraction."
     }
   },
   "additionalProperties": false,

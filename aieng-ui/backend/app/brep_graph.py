@@ -144,7 +144,16 @@ def build_brep_graph_from_topology(
 
     feature_roles = _feature_roles_by_face(feature_graph)
     bbox = _model_bbox(solids_raw, faces_raw)
-    faces = [_normalise_face(f, feature_roles.get(str(f.get("id"))), bbox) for f in faces_raw]
+    standard_parts_by_body = _standard_parts_by_body(solids_raw, feature_graph)
+    faces = [
+        _normalise_face(
+            f,
+            feature_roles.get(str(f.get("id"))),
+            bbox,
+            standard_parts_by_body.get(str(f.get("body_id"))),
+        )
+        for f in faces_raw
+    ]
     edges = [_normalise_edge(e) for e in edges_raw]
     relations = _explicit_relations(faces, edges) + _inferred_face_adjacency(faces)
     groups = _selection_groups(faces, feature_graph)
@@ -246,15 +255,125 @@ def load_or_build_digest(package_path: Path, *, max_items: int = 30) -> str | No
     return build_brep_graph_from_topology(topo, feature_graph=feature_graph, digest_limit=max_items)["digest"]
 
 
-def _normalise_face(raw: dict[str, Any], feature_roles: list[str] | None, model_bbox: list[float]) -> dict[str, Any]:
+_STANDARD_PART_KEYS = {
+    "standard_part",
+    "source_library",
+    "source_module",
+    "source_class",
+    "canonical_type",
+    "designation",
+    "original_label",
+    "object_label",
+    "detection_method",
+    "confidence",
+}
+
+
+def _standard_part_context(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    nested = raw.get("standard_part_metadata")
+    data: dict[str, Any] = dict(nested) if isinstance(nested, dict) else {}
+    for key in _STANDARD_PART_KEYS:
+        if key == "standard_part" and raw.get(key) is False:
+            continue
+        if raw.get(key) not in (None, ""):
+            data[key] = raw[key]
+    if not data and not raw.get("standard_part"):
+        return None
+    data["standard_part"] = True
+    data.setdefault("canonical_type", "unknown_standard_part")
+    return {k: v for k, v in data.items() if v not in (None, "")}
+
+
+def _standard_parts_by_body(
+    solids_raw: list[dict[str, Any]],
+    feature_graph: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for solid in solids_raw:
+        sid = str(solid.get("id") or "")
+        if not sid:
+            continue
+        context = _standard_part_context(solid)
+        if not context:
+            continue
+        context.setdefault("body_id", sid)
+        if solid.get("name"):
+            context.setdefault("name", solid["name"])
+        if solid.get("bounding_box"):
+            context.setdefault("bounding_box", solid["bounding_box"])
+        out[sid] = context
+
+    for feat in feature_graph.get("features") or []:
+        if not isinstance(feat, dict):
+            continue
+        refs = feat.get("geometry_refs") or {}
+        body_id = refs.get("body") if isinstance(refs, dict) else None
+        if not body_id:
+            continue
+        if feat.get("type") != "standard_part" and not feat.get("standard_part"):
+            continue
+        sid = str(body_id)
+        context = dict(out.get(sid) or {})
+        feature_context = _standard_part_context(feat) or {}
+        context.update(feature_context)
+        context.setdefault("body_id", sid)
+        context.setdefault("feature_id", feat.get("id"))
+        context.setdefault("name", feat.get("name"))
+        out[sid] = {k: v for k, v in context.items() if v not in (None, "")}
+    return out
+
+
+def _standard_part_face_role_hint(
+    face: dict[str, Any],
+    standard_part: dict[str, Any],
+    model_bbox: list[float],
+) -> str:
+    canonical = str(standard_part.get("canonical_type") or "unknown_standard_part")
+    if canonical == "bearing":
+        return "bearing_face"
+    if canonical == "washer":
+        return "washer_face"
+
+    bbox = _bbox(face.get("bounding_box"))
+    part_bbox = _bbox(standard_part.get("bounding_box")) or model_bbox
+    if len(bbox) != 6 or len(part_bbox) != 6:
+        return "unknown_standard_part_face"
+
+    if canonical in {"screw", "bolt", "fastener"}:
+        zmin, zmax = part_bbox[2], part_bbox[5]
+        span = max(zmax - zmin, 1e-9)
+        center = face.get("center") if isinstance(face.get("center"), list) else _center(bbox)
+        normal = face.get("normal") if isinstance(face.get("normal"), list) else None
+        if face.get("surface_type") == "plane" and normal and normal[2] > 0.75:
+            face_top = bbox[5]
+            if abs(face_top - zmax) / span <= 0.12:
+                return "head_top"
+        if face.get("surface_type") == "cylinder":
+            face_span = bbox[5] - bbox[2]
+            center_z = center[2] if center else (bbox[2] + bbox[5]) / 2
+            if face_span / span <= 0.45 and center_z > (zmin + span * 0.45):
+                return "head_side"
+            return "shank_side"
+
+    return "unknown_standard_part_face"
+
+
+def _normalise_face(
+    raw: dict[str, Any],
+    feature_roles: list[str] | None,
+    model_bbox: list[float],
+    standard_part: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     fid = str(raw.get("id") or "face_unknown")
     bbox = _bbox(raw.get("bounding_box"))
     center = raw.get("center") if isinstance(raw.get("center"), list) else _center(bbox)
     normal = _vector(raw.get("normal"))
     surface_type = str(raw.get("surface_type") or "other")
-    roles = _roles_for_face(raw, feature_roles or [], model_bbox)
+    roles = _roles_for_face(raw, feature_roles or [], model_bbox, standard_part)
     signature = _entity_signature(surface_type, bbox, raw.get("area"), normal, raw.get("radius"))
-    return {
+    face = {
         "id": fid,
         "pointer": f"@face:{fid}",
         "kind": "face",
@@ -268,6 +387,19 @@ def _normalise_face(raw: dict[str, Any], feature_roles: list[str] | None, model_
         "roles": roles,
         "entity_signature": signature,
     }
+    if standard_part:
+        context = dict(standard_part)
+        face["standard_part"] = context
+        face["parent_standard_part"] = context.get("name")
+        hint = _standard_part_face_role_hint(face, context, model_bbox)
+        if hint:
+            face["face_role_hint"] = hint
+        canonical = str(context.get("canonical_type") or "unknown_standard_part")
+        extra_roles = ["standard_part_face", f"{canonical}_standard_part"]
+        if hint:
+            extra_roles.append(hint)
+        face["roles"] = sorted(set([*roles, *extra_roles]))
+    return face
 
 
 def _normalise_edge(raw: dict[str, Any]) -> dict[str, Any]:
@@ -334,7 +466,7 @@ def _selection_groups(faces: list[dict[str, Any]], feature_graph: dict[str, Any]
             continue
         ftype = str(feat.get("type") or "feature")
         gid = str(feat.get("id") or _safe_id(ftype))
-        groups.append({
+        group = {
             "id": gid,
             "kind": "group",
             "pointer": f"@group:{gid}",
@@ -342,10 +474,21 @@ def _selection_groups(faces: list[dict[str, Any]], feature_graph: dict[str, Any]
             "role": _feature_type_to_role(ftype),
             "members": face_ids,
             "source": "feature_graph",
-        })
+        }
+        standard_part = _standard_part_context(feat)
+        if standard_part:
+            group["standard_part"] = standard_part
+            group["canonical_type"] = standard_part.get("canonical_type")
+            group["source_library"] = standard_part.get("source_library")
+        groups.append(group)
 
     # Geometry-only cylindrical hole groups.
-    cylinders = [f for f in faces if f.get("surface_type") == "cylinder" and f.get("radius_mm") is not None]
+    cylinders = [
+        f for f in faces
+        if f.get("surface_type") == "cylinder"
+        and f.get("radius_mm") is not None
+        and not f.get("standard_part")
+    ]
     by_radius: list[list[dict[str, Any]]] = []
     for face in cylinders:
         r = float(face["radius_mm"])
@@ -392,6 +535,10 @@ def _build_entity_index(
             "roles": face.get("roles") or [],
             "entity_signature": face.get("entity_signature"),
         }
+        if face.get("standard_part"):
+            index[face["id"]]["standard_part"] = face.get("standard_part")
+        if face.get("face_role_hint"):
+            index[face["id"]]["face_role_hint"] = face.get("face_role_hint")
     for edge in edges:
         index[edge["id"]] = {
             "kind": "edge",
@@ -408,14 +555,27 @@ def _build_entity_index(
             "roles": [group.get("role")] if group.get("role") else [],
             "members": group.get("members") or [],
         }
+        if group.get("standard_part"):
+            index[group["id"]]["standard_part"] = group.get("standard_part")
+        if group.get("canonical_type"):
+            index[group["id"]]["canonical_type"] = group.get("canonical_type")
+        if group.get("source_library"):
+            index[group["id"]]["source_library"] = group.get("source_library")
     return index
 
 
-def _roles_for_face(raw: dict[str, Any], feature_roles: list[str], model_bbox: list[float]) -> list[str]:
+def _roles_for_face(
+    raw: dict[str, Any],
+    feature_roles: list[str],
+    model_bbox: list[float],
+    standard_part: dict[str, Any] | None = None,
+) -> list[str]:
     roles = list(dict.fromkeys(feature_roles))
     surface = str(raw.get("surface_type") or "")
     normal = _vector(raw.get("normal"))
     center = raw.get("center") if isinstance(raw.get("center"), list) else _center(_bbox(raw.get("bounding_box")))
+    if standard_part:
+        return sorted(set(roles))
     if surface == "cylinder":
         roles.append("mounting_candidate")
     if len(model_bbox) == 6 and normal and center:
@@ -439,6 +599,8 @@ def _feature_roles_by_face(feature_graph: dict[str, Any]) -> dict[str, list[str]
 
 
 def _feature_type_to_role(ftype: str) -> str:
+    if ftype == "standard_part":
+        return "standard_part"
     if "hole" in ftype or "mount" in ftype:
         return "mounting_candidate"
     if "base" in ftype:
@@ -452,7 +614,15 @@ def _feature_type_to_role(ftype: str) -> str:
 
 def _face_label(face: dict[str, Any]) -> str:
     roles = face.get("roles") or []
-    prefix = ", ".join(roles) if roles else str(face.get("surface_type") or "face")
+    standard_part = face.get("standard_part") if isinstance(face.get("standard_part"), dict) else None
+    if standard_part:
+        canonical = str(standard_part.get("canonical_type") or "unknown_standard_part")
+        hint = str(face.get("face_role_hint") or "").strip()
+        prefix = f"{canonical} standard part"
+        if hint:
+            prefix += f" {hint}"
+    else:
+        prefix = ", ".join(roles) if roles else str(face.get("surface_type") or "face")
     if face.get("surface_type") == "cylinder" and face.get("radius_mm") is not None:
         return f"{prefix} cylindrical face r={float(face['radius_mm']):.2f} mm"
     if face.get("normal"):
@@ -704,7 +874,7 @@ def pick_face_at_point(
 
     # Build a rich result with pointer, label, and distance context
     label = _face_label(best)
-    return {
+    result = {
         "pointer": best.get("pointer"),
         "face_id": best["id"],
         "surface_type": best.get("surface_type"),
@@ -716,6 +886,16 @@ def pick_face_at_point(
         "label": label,
         "score": round(best_score, 4),
     }
+    if best.get("body_id"):
+        result["parent_body_id"] = best.get("body_id")
+    standard_part = best.get("standard_part") if isinstance(best.get("standard_part"), dict) else None
+    if standard_part:
+        result["standard_part"] = standard_part
+        result["canonical_type"] = standard_part.get("canonical_type")
+        result["source_library"] = standard_part.get("source_library")
+    if best.get("face_role_hint"):
+        result["face_role_hint"] = best.get("face_role_hint")
+    return result
 
 
 __all__ = [

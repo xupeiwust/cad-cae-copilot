@@ -195,6 +195,53 @@ def test_feature_graph_surfaces_named_parts() -> None:
     assert fuselage["geometry_refs"]["faces"] == ["face_001"]
 
 
+def test_feature_graph_surfaces_standard_parts_with_provenance() -> None:
+    from app.cad_generation import _named_parts_from_feature_graph, _topology_to_feature_graph
+
+    topo = {
+        "entities": [
+            {
+                "id": "body_001",
+                "type": "solid",
+                "name": "mounting_bolt_M6",
+                "bounding_box": [-3, -3, 0, 3, 3, 12],
+                "standard_part": True,
+                "source_library": "bd_warehouse",
+                "source_module": "bd_warehouse.fastener",
+                "source_class": "SocketHeadCapScrew",
+                "canonical_type": "screw",
+                "designation": "M6-1",
+                "object_label": "mounting_bolt_M6",
+                "detection_method": "bd_warehouse_type",
+                "confidence": "high",
+            },
+            {
+                "id": "face_001",
+                "type": "face",
+                "surface_type": "cylinder",
+                "radius": 3.0,
+                "body_id": "body_001",
+            },
+        ]
+    }
+
+    fg = _topology_to_feature_graph(topo)
+
+    standard = [f for f in fg["features"] if f["type"] == "standard_part"]
+    assert len(standard) == 1
+    screw = standard[0]
+    assert screw["name"] == "mounting_bolt_M6"
+    assert screw["standard_part"] is True
+    assert screw["source_library"] == "bd_warehouse"
+    assert screw["canonical_type"] == "screw"
+    assert screw["designation"] == "M6-1"
+    assert screw["recognition"] == {"method": "bd_warehouse_type", "confidence": "high"}
+    assert screw["geometry_refs"] == {"body": "body_001", "faces": ["face_001"]}
+    assert _named_parts_from_feature_graph(fg) == ["mounting_bolt_M6"]
+    assert fg["metadata"]["standard_parts"]["count"] == 1
+    assert fg["metadata"]["standard_parts"]["by_canonical_type"] == {"screw": 1}
+
+
 def test_feature_graph_unnamed_solid_has_no_named_part() -> None:
     from app.cad_generation import _topology_to_feature_graph
 
@@ -292,7 +339,7 @@ def test_execute_build123d_code_with_bd_warehouse_fastener() -> None:
     Runs the real subprocess; skipped when build123d/bd_warehouse are absent."""
     pytest.importorskip("build123d")
     pytest.importorskip("bd_warehouse")
-    from app.cad_generation import _execute_build123d_code
+    from app.cad_generation import _execute_build123d_code, _topology_to_feature_graph
 
     code = (
         "screw = fastener.SocketHeadCapScrew('M6-1', length=12, simple=True)\n"
@@ -303,6 +350,22 @@ def test_execute_build123d_code_with_bd_warehouse_fastener() -> None:
     assert step_bytes[:13] == b"ISO-10303-21;"
     assert stl_bytes
     assert isinstance(topo, dict) and topo.get("entities")
+    screw_body = next(
+        entity for entity in topo["entities"]
+        if entity.get("type") == "solid" and entity.get("name") == "mounting_bolt_M6"
+    )
+    assert screw_body["standard_part"] is True
+    assert screw_body["source_library"] == "bd_warehouse"
+    assert screw_body["source_module"] == "bd_warehouse.fastener"
+    assert screw_body["source_class"] == "SocketHeadCapScrew"
+    assert screw_body["canonical_type"] == "screw"
+    assert screw_body["designation"] == "M6-1"
+
+    fg = _topology_to_feature_graph(topo, source_code=code)
+    standard = next(f for f in fg["features"] if f["type"] == "standard_part")
+    assert standard["name"] == "mounting_bolt_M6"
+    assert standard["source_library"] == "bd_warehouse"
+    assert standard["canonical_type"] == "screw"
 
 
 def test_execute_build123d_freeform_faces_get_rich_surface_metadata() -> None:

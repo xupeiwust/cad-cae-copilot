@@ -59,6 +59,7 @@ def _load_agents_md() -> str | None:
 _RUNNER_TEMPLATE = """\
 import sys
 import json
+import re
 from pathlib import Path
 import build123d as _aieng_build123d
 from build123d import *
@@ -97,6 +98,85 @@ for _aieng_bdw_mod in ("fastener", "bearing", "gear", "thread", "pipe", "flange"
         globals()[_aieng_bdw_mod] = _aieng_importlib.import_module("bd_warehouse." + _aieng_bdw_mod)
     except Exception:
         pass
+
+
+def _aieng_designation_from_text(text):
+    if not text:
+        return None
+    match = re.search(r"\\bM\\d+(?:[-xX]\\d+(?:\\.\\d+)?)?\\b", str(text))
+    return match.group(0) if match else None
+
+
+def _aieng_standard_part_canonical(module, class_name, label):
+    class_text = str(class_name or "").lower()
+    for needle, canonical in (
+        ("washer", "washer"),
+        ("nut", "nut"),
+        ("screw", "screw"),
+        ("bolt", "bolt"),
+        ("bearing", "bearing"),
+        ("gear", "gear"),
+        ("thread", "thread"),
+        ("flange", "flange"),
+    ):
+        if needle in class_text:
+            return canonical
+    text = f"{module} {class_name} {label}".lower()
+    if "washer" in text:
+        return "washer"
+    if "nut" in text:
+        return "nut"
+    if "bolt" in text:
+        return "bolt"
+    if "screw" in text:
+        return "screw"
+    if ".fastener" in module or "fastener" in text:
+        return "fastener"
+    if ".bearing" in module or "bearing" in text:
+        return "bearing"
+    if ".gear" in module or "gear" in text:
+        return "gear"
+    if ".thread" in module or "thread" in text:
+        return "thread"
+    if ".flange" in module or "flange" in text:
+        return "flange"
+    return "unknown_standard_part"
+
+
+def _aieng_standard_part_metadata(part, name):
+    module = str(getattr(type(part), "__module__", "") or "")
+    if not module.startswith("bd_warehouse."):
+        return None
+    class_name = str(getattr(type(part), "__name__", "") or "")
+    object_label = str(getattr(part, "label", "") or "")
+    label = object_label or str(name or "")
+    designation = None
+    for attr in (
+        "screw_size", "thread_size", "bearing_size", "gear_size",
+        "part_number", "size", "nominal_size", "fastener_type",
+    ):
+        try:
+            value = getattr(part, attr)
+        except Exception:
+            continue
+        if value not in (None, ""):
+            designation = str(value)
+            break
+    if designation is None:
+        designation = _aieng_designation_from_text(label)
+    metadata = {
+        "standard_part": True,
+        "source_library": "bd_warehouse",
+        "source_module": module,
+        "source_class": class_name,
+        "canonical_type": _aieng_standard_part_canonical(module, class_name, label),
+        "object_label": object_label or None,
+        "original_label": object_label or str(name or "") or None,
+        "designation": designation,
+        "detection_method": "bd_warehouse_type",
+        "confidence": "high",
+    }
+    return {k: v for k, v in metadata.items() if v not in (None, "")}
 
 
 # ── aieng high-level modelling helpers ──────────────────────────────────────
@@ -399,6 +479,10 @@ def _extract_topology(shape):
         body = {"id": body_id, "type": "solid", "bounding_box": _bbox_list(part.bounding_box())}
         if name:
             body["name"] = name
+        standard_part = _aieng_standard_part_metadata(part, name)
+        if standard_part:
+            body.update(standard_part)
+            body["standard_part_metadata"] = dict(standard_part)
         if is_assembly:
             body["assembly"] = True
         entities.append(body)
@@ -958,6 +1042,159 @@ def _infer_model_kind(named_solids: list[dict[str, Any]], source_code: str | Non
     return "mechanical"
 
 
+_STANDARD_PART_CANONICAL_TYPES = {
+    "fastener",
+    "bearing",
+    "gear",
+    "thread",
+    "flange",
+    "washer",
+    "nut",
+    "screw",
+    "bolt",
+    "unknown_standard_part",
+}
+
+_STANDARD_PART_METADATA_FIELDS = (
+    "standard_part",
+    "source_library",
+    "source_module",
+    "source_class",
+    "canonical_type",
+    "designation",
+    "original_label",
+    "object_label",
+    "detection_method",
+    "confidence",
+)
+
+_STANDARD_PART_SOURCE_HINTS = (
+    "bd_warehouse",
+    "fastener.",
+    "bearing.",
+    "gear.",
+    "thread.",
+    "flange.",
+)
+
+
+def _canonical_standard_type_from_text(text: str) -> str | None:
+    lower = text.lower()
+    checks = (
+        ("washer", "washer"),
+        ("nut", "nut"),
+        ("bolt", "bolt"),
+        ("screw", "screw"),
+        ("fastener", "fastener"),
+        ("bearing", "bearing"),
+        ("gear", "gear"),
+        ("thread", "thread"),
+        ("flange", "flange"),
+    )
+    for needle, canonical in checks:
+        if needle in lower:
+            return canonical
+    return None
+
+
+def _designation_from_text(text: str) -> str | None:
+    match = re.search(r"\bM\d+(?:[-xX]\d+(?:\.\d+)?)?\b", text)
+    return match.group(0) if match else None
+
+
+def _clean_standard_part_metadata(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in _STANDARD_PART_METADATA_FIELDS:
+        value = raw.get(key)
+        if key == "standard_part" and value is False:
+            continue
+        if value in (None, ""):
+            continue
+        out[key] = value
+    if not out and not raw.get("standard_part"):
+        return None
+    canonical = str(out.get("canonical_type") or "unknown_standard_part")
+    if canonical not in _STANDARD_PART_CANONICAL_TYPES:
+        canonical = "unknown_standard_part"
+    out["standard_part"] = True
+    out["canonical_type"] = canonical
+    out.setdefault("detection_method", "topology_metadata")
+    out.setdefault("confidence", "medium")
+    return out
+
+
+def _standard_part_metadata_for_body(
+    body: dict[str, Any],
+    source_code: str | None,
+) -> dict[str, Any] | None:
+    raw: dict[str, Any] = {}
+    nested = body.get("standard_part_metadata")
+    if isinstance(nested, dict):
+        raw.update(nested)
+    for field in _STANDARD_PART_METADATA_FIELDS:
+        if field in body:
+            raw[field] = body[field]
+    from_topology = _clean_standard_part_metadata(raw)
+    if from_topology:
+        return from_topology
+
+    name = str(body.get("name") or "")
+    source_text = source_code or ""
+    source_lower = source_text.lower()
+    source_known = any(hint in source_lower for hint in _STANDARD_PART_SOURCE_HINTS)
+    canonical = _canonical_standard_type_from_text(name)
+    if canonical is None and source_known:
+        canonical = _canonical_standard_type_from_text(source_text) or "unknown_standard_part"
+    if canonical is None:
+        return None
+    metadata = {
+        "standard_part": True,
+        "canonical_type": canonical,
+        "designation": _designation_from_text(f"{name} {source_text}"),
+        "original_label": name,
+        "object_label": name,
+        "detection_method": "source_and_label_heuristic" if source_known else "label_heuristic",
+        "confidence": "medium" if source_known else "low",
+    }
+    if source_known:
+        metadata["source_library"] = "bd_warehouse"
+    return {k: v for k, v in metadata.items() if v not in (None, "")}
+
+
+def _standard_part_bom_summary(features: list[dict[str, Any]]) -> dict[str, Any] | None:
+    items: list[dict[str, Any]] = []
+    by_type: dict[str, int] = {}
+    for feat in features:
+        if feat.get("type") != "standard_part" or not feat.get("standard_part"):
+            continue
+        canonical = str(feat.get("canonical_type") or "unknown_standard_part")
+        by_type[canonical] = by_type.get(canonical, 0) + 1
+        item = {
+            "feature_id": feat.get("id"),
+            "name": feat.get("name"),
+            "canonical_type": canonical,
+        }
+        for key in ("designation", "source_library", "confidence"):
+            if feat.get(key):
+                item[key] = feat[key]
+        items.append(item)
+    if not items:
+        return None
+    return {
+        "count": len(items),
+        "by_canonical_type": by_type,
+        "items": items,
+        "source": "feature_graph_standard_part_detection",
+        "limitations": "Best-effort semantic recognition; not a supplier BOM or validation claim.",
+    }
+
+
+def _is_named_part_feature(feature: dict[str, Any]) -> bool:
+    return feature.get("type") in {"named_part", "standard_part"} and bool(feature.get("name"))
+
+
 def _topology_to_feature_graph(
     topo: dict[str, Any],
     source_code: str | None = None,
@@ -992,14 +1229,26 @@ def _topology_to_feature_graph(
     ]
     for body in named_solids:
         body_faces = [f["id"] for f in faces if f.get("body_id") == body["id"]]
-        features.append({
+        standard_part = _standard_part_metadata_for_body(body, source_code)
+        feature = {
             "id": f"feat_{body['id']}",
-            "type": "named_part",
+            "type": "standard_part" if standard_part else "named_part",
             "name": body["name"],
             "geometry_refs": {"body": body["id"], "faces": body_faces},
             "parameters": {},
-            "intent": {"role": "named_component"},
-        })
+            "intent": {"role": "standard_part" if standard_part else "named_component"},
+        }
+        if standard_part:
+            feature.update(standard_part)
+            feature["recognition"] = {
+                "method": standard_part.get("detection_method", "topology_metadata"),
+                "confidence": standard_part.get("confidence", "medium"),
+            }
+            feature["intent"] = {
+                "role": "standard_part",
+                "canonical_type": standard_part.get("canonical_type", "unknown_standard_part"),
+            }
+        features.append(feature)
 
     resolved_kind = model_kind if model_kind in ("organic", "mechanical") else _infer_model_kind(named_solids, source_code)
     run_mechanical_heuristics = resolved_kind != "organic"
@@ -1062,7 +1311,10 @@ def _topology_to_feature_graph(
                 "intent": {"role": "structural_base"},
             })
 
-    feature_graph = {"features": features, "model_kind": resolved_kind}
+    feature_graph = {"format_version": "0.1.0", "features": features, "model_kind": resolved_kind}
+    standard_part_summary = _standard_part_bom_summary(features)
+    if standard_part_summary:
+        feature_graph["metadata"] = {"standard_parts": standard_part_summary}
     if source_code:
         feature_graph = _enrich_feature_graph_with_source_params(source_code, feature_graph)
     return feature_graph
@@ -1073,7 +1325,7 @@ def _named_parts_from_feature_graph(feature_graph: dict[str, Any]) -> list[str]:
     return [
         f["name"]
         for f in (feature_graph or {}).get("features", [])
-        if f.get("type") == "named_part" and f.get("name")
+        if _is_named_part_feature(f)
     ]
 
 
@@ -1615,7 +1867,7 @@ def _enrich_feature_graph_with_source_params(
     #     generic model_params bucket.
     leftover = {k: v for k, v in constants.items() if k not in attached}
     if leftover:
-        named_parts = [f for f in features if f.get("type") == "named_part"]
+        named_parts = [f for f in features if _is_named_part_feature(f)]
         params: dict[str, Any] = {}
         for k, v in leftover.items():
             pname = _infer_param_name(k)
@@ -4318,7 +4570,7 @@ def critique(
     #   - mode == "auto" AND at least one named feature has a canonical
     #     engineering label (rib / base_plate / mounting_hole / ...).
     features = fg.get("features", [])
-    named_features = [f for f in features if f.get("type") == "named_part"]
+    named_features = [f for f in features if _is_named_part_feature(f)]
 
     def _has_canonical_label(feat: dict[str, Any]) -> bool:
         name = (feat.get("name") or "").lower()
@@ -4487,11 +4739,7 @@ def read_cad_source(settings: Any, project_id: str) -> dict[str, Any]:
                 source = zf.read("geometry/source.py").decode("utf-8")
             if "graph/feature_graph.json" in names:
                 fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
-                named_parts = [
-                    f["name"]
-                    for f in fg.get("features", [])
-                    if f.get("type") == "named_part" and f.get("name")
-                ]
+                named_parts = _named_parts_from_feature_graph(fg)
     except Exception as exc:
         return {"status": "error", "code": "read_failed", "message": f"{exc}"}
 

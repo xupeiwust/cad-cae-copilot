@@ -56,8 +56,16 @@ You may also `from bd_warehouse.fastener import SocketHeadCapScrew` explicitly.
 
 - Use `simple=True` on threaded fasteners unless real thread geometry is required
   (real threads add many faces → larger STEP/STL and slower viewer load).
-- Label standard parts with canonical roles (`fastener`, `bearing`, `gear`) so the
-  feature graph and downstream tools (critique, CAE, BOM) can recognize them.
+- Label standard parts with semantic roles (`screw`, `bolt`, `washer`, `bearing`,
+  `gear`, `flange`) even though the runner now records best-effort
+  `bd_warehouse` provenance automatically. Recognized standard parts become
+  `standard_part` feature-graph entries, remain available in `named_parts`, and
+  carry source library, canonical type, designation, detection method, and
+  confidence when known.
+- Standard-part faces are pickable through the B-Rep pointer pipeline. A picked
+  face may include conservative hints such as `head_top`, `head_side`,
+  `shank_side`, `bearing_face`, or `washer_face`; do not treat those hints as
+  preload, contact, thread engagement, or solver evidence.
 - Gears: only spur gears are covered. Springs/cams/worms are not — hand-build those.
 
 ## Hard rules

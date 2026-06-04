@@ -103,6 +103,68 @@ def _feature_graph() -> dict:
     }
 
 
+def _standard_part_topology() -> dict:
+    return {
+        "format_version": "0.1",
+        "entities": [
+            {
+                "id": "body_screw",
+                "type": "solid",
+                "name": "mounting_bolt_M6",
+                "bounding_box": [-4, -4, 0, 4, 4, 12],
+                "standard_part": True,
+                "source_library": "bd_warehouse",
+                "source_module": "bd_warehouse.fastener",
+                "source_class": "SocketHeadCapScrew",
+                "canonical_type": "screw",
+                "designation": "M6-1",
+                "detection_method": "bd_warehouse_type",
+                "confidence": "high",
+            },
+            {
+                "id": "face_screw_top",
+                "type": "face",
+                "surface_type": "plane",
+                "area": 50,
+                "normal": [0, 0, 1],
+                "center": [0, 0, 12],
+                "bounding_box": [-4, -4, 12, 4, 4, 12],
+                "body_id": "body_screw",
+            },
+            {
+                "id": "face_screw_shank",
+                "type": "face",
+                "surface_type": "cylinder",
+                "area": 226,
+                "radius": 3,
+                "center": [0, 0, 4.5],
+                "bounding_box": [-3, -3, 0, 3, 3, 9],
+                "body_id": "body_screw",
+            },
+        ],
+    }
+
+
+def _standard_part_feature_graph() -> dict:
+    return {
+        "features": [
+            {
+                "id": "feat_body_screw",
+                "type": "standard_part",
+                "name": "mounting_bolt_M6",
+                "standard_part": True,
+                "source_library": "bd_warehouse",
+                "canonical_type": "screw",
+                "designation": "M6-1",
+                "geometry_refs": {
+                    "body": "body_screw",
+                    "faces": ["face_screw_top", "face_screw_shank"],
+                },
+            }
+        ]
+    }
+
+
 def _make_project_with_package(settings: Settings, pkg_members: dict[str, bytes]) -> tuple[str, Path]:
     from app.project_io import default_project, project_dir, save_project
 
@@ -131,6 +193,53 @@ def test_build_brep_graph_from_topology_has_pointers_and_roles() -> None:
     assert "feat_holes" in index
     assert "@face:face_001" in digest
     assert "Pointer syntax" in digest
+
+
+def test_brep_graph_preserves_standard_part_face_context() -> None:
+    result = build_brep_graph_from_topology(
+        _standard_part_topology(),
+        feature_graph=_standard_part_feature_graph(),
+    )
+
+    graph = result["brep_graph"]
+    index = result["entity_index"]
+    faces = {face["id"]: face for face in graph["entities"]["faces"]}
+
+    top = faces["face_screw_top"]
+    assert top["standard_part"]["source_library"] == "bd_warehouse"
+    assert top["standard_part"]["canonical_type"] == "screw"
+    assert top["face_role_hint"] == "head_top"
+    assert "standard_part_face" in top["roles"]
+    assert "mounting_candidate" not in faces["face_screw_shank"]["roles"]
+    assert faces["face_screw_shank"]["face_role_hint"] == "shank_side"
+    assert index["face_screw_top"]["standard_part"]["canonical_type"] == "screw"
+    assert index["face_screw_top"]["face_role_hint"] == "head_top"
+    assert index["face_screw_top"]["label"].startswith("screw standard part head_top")
+    group = index["feat_body_screw"]
+    assert group["roles"] == ["standard_part"]
+    assert group["standard_part"]["source_library"] == "bd_warehouse"
+
+
+def test_pick_face_returns_standard_part_context(tmp_path: Path) -> None:
+    from app.brep_graph import pick_face_at_point
+
+    settings = _make_settings(tmp_path)
+    _project_id, pkg_path = _make_project_with_package(
+        settings,
+        {
+            "geometry/topology_map.json": json.dumps(_standard_part_topology()).encode(),
+            "graph/feature_graph.json": json.dumps(_standard_part_feature_graph()).encode(),
+        },
+    )
+
+    picked = pick_face_at_point(pkg_path, 0, 0, 12)
+
+    assert picked is not None
+    assert picked["pointer"] == "@face:face_screw_top"
+    assert picked["standard_part"]["canonical_type"] == "screw"
+    assert picked["source_library"] == "bd_warehouse"
+    assert picked["face_role_hint"] == "head_top"
+    assert picked["parent_body_id"] == "body_screw"
 
 
 def test_build_brep_graph_infers_face_adjacency() -> None:

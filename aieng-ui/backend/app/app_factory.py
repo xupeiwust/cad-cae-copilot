@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 from fastapi import Request
+
+from .logging_utils import configure_backend_logging, error_metrics_snapshot, log_exception
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _sync_main_symbols() -> None:
@@ -22,6 +28,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     _sync_main_symbols()
     active_settings = settings or Settings.from_env()
     ensure_dirs(active_settings)
+    backend_log_path = configure_backend_logging(active_settings.data_root)
     from . import db
 
     db_path = active_settings.data_root / "aieng.db"
@@ -30,6 +37,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     app = FastAPI(title="aieng-platform")
     app.state.settings = active_settings
     app.state.db_path = db_path
+    app.state.backend_log_path = str(backend_log_path)
     import threading
 
     active_autopilot_workers: set[str] = set()
@@ -55,6 +63,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "app_root": str(APP_ROOT),
             "runtime_tool_count": len(tool_names),
             "cad_tool_count": len(cad_tool_names),
+            "backend_log_path": app.state.backend_log_path,
+            "error_metrics": error_metrics_snapshot(limit=20),
         }
 
     @app.get("/api/environment")
@@ -83,6 +93,13 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     @app.get("/api/runtime")
     def runtime() -> dict[str, Any]:
         return runtime_status(active_settings)
+
+    @app.get("/api/diagnostics/error-metrics")
+    def get_error_metrics() -> dict[str, Any]:
+        return {
+            "backend_log_path": app.state.backend_log_path,
+            **error_metrics_snapshot(),
+        }
 
     @app.get("/api/runtime-config")
     def get_runtime_config() -> dict[str, Any]:
@@ -120,7 +137,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             if record and isinstance(record.get("value"), str) and record["value"]:
                 return record["value"]
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to load persisted API key from settings storage.",
+                subsystem="app_factory.runtime.api_key_lookup",
+                context={"db_path": db_path},
+            )
         return None
 
     def _llm_config_from_payload(data: dict[str, Any] | None = None, *, include_api_key: bool = False) -> dict[str, Any]:
@@ -211,7 +233,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     "created_at": run.created_at,
                 })
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to write agent run audit log.",
+                    subsystem="app_factory.audit.agent_run",
+                    context={"project_id": run.project_id, "run_id": run.run_id},
+                )
         return {
             "agent": agent_plan,
             "run": _rt.run_to_dict(run),
@@ -284,13 +311,31 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 )
                 event.setdefault("event_id", event_id)
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to persist live agent event before publish.",
+                    subsystem="app_factory.live_event.persist",
+                    context={
+                        "event_type": event.get("type"),
+                        "project_id": event.get("project_id"),
+                        "run_id": event.get("run_id"),
+                    },
+                )
         try:
             from . import agent_activity
 
             agent_activity.publish(event)
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to publish live agent event to activity stream.",
+                subsystem="app_factory.live_event.publish",
+                context={
+                    "event_type": event.get("type"),
+                    "project_id": event.get("project_id"),
+                    "run_id": event.get("run_id"),
+                },
+            )
 
     def _publish_agent_event(event: dict[str, Any]) -> None:
         from . import db
@@ -317,7 +362,16 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             )
             event = {**event, **{k: row[k] for k in ("event_id", "created_at") if k in row}}
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to persist agent event row.",
+                subsystem="app_factory.agent_event.persist",
+                context={
+                    "event_type": event_type,
+                    "project_id": event.get("project_id"),
+                    "run_id": event.get("run_id"),
+                },
+            )
         _publish_live_event(event)
 
     def _publish_chat_session_event(session: dict[str, Any], action: str = "updated") -> None:
@@ -377,7 +431,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             if session and session.get("project_id") == project_id:
                 _publish_chat_session_event(session)
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to sync autopilot status back into chat session state.",
+                subsystem="app_factory.autopilot.session_sync",
+                context={"project_id": project_id, "run_id": run_id, "session_id": session_id},
+            )
 
     def _add_chat_message_and_publish(
         *,
@@ -418,7 +477,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 "created_at": now_iso(),
             })
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to write autopilot audit log.",
+                subsystem="app_factory.audit.autopilot",
+                context={"project_id": project_id, "event": event},
+            )
 
     def _start_autopilot_worker(target: Callable[[], None], *, run_id: str | None = None) -> None:
         if run_id:
@@ -440,6 +504,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         try:
             loaded = store.load(run_id)
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to load autopilot run state while marking worker failure.",
+                subsystem="app_factory.autopilot.mark_failed_load",
+                context={"run_id": run_id},
+            )
             return
         if getattr(loaded, "status", None) in {"completed", "failed", "cancelled"}:
             return
@@ -478,6 +548,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 engine.cancel_run(state.run_id)
                 cancelled += 1
             except Exception:
+                log_exception(
+                    LOGGER,
+                    "Failed to cancel in-flight autopilot run during session cleanup.",
+                    subsystem="app_factory.autopilot.cancel_session_run",
+                    context={"project_id": project_id, "session_id": session_id, "run_id": state.run_id},
+                )
                 continue
         return cancelled
 
@@ -485,6 +561,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         try:
             return _autopilot_store().delete_runs(project_id=project_id)
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to delete persisted autopilot runs for project cleanup.",
+                subsystem="app_factory.autopilot.delete_project_runs",
+                context={"project_id": project_id},
+            )
             return 0
 
     def _delete_project_everywhere(project_id: str) -> dict[str, Any]:
@@ -497,7 +579,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         try:
             chat_rows = db.delete_project_chat(db_path, project_id)
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to delete project chat rows during project removal.",
+                subsystem="app_factory.project.delete_chat",
+                context={"project_id": project_id, "db_path": db_path},
+            )
         target = project_dir(active_settings, project_id)
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
@@ -537,7 +624,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     agent_context_snapshot = dict(agent_context_snapshot or {})
                     agent_context_snapshot["context_summary"] = session["context_summary"]
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to attach session context summary to agent context snapshot.",
+                    subsystem="app_factory.agent_context.session_summary",
+                    context={"project_id": project_id, "session_id": session_id},
+                )
         return agent_context_snapshot
 
     def _load_project_simulation_setup(project_id: str | None) -> dict[str, Any] | None:
@@ -568,6 +660,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     lambda name: package_inspection.read_package_text(archive, name)
                 )
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to load direct simulation setup artifact; falling back to CAE context.",
+                subsystem="app_factory.simulation.setup_load",
+                context={"project_id": project_id},
+            )
             return None
 
     def _load_project_feature_parameters(project_id: str | None) -> list[dict[str, Any]] | None:
@@ -600,6 +698,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 )
             return build_parameter_index(feature_graph)
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to load editable feature parameter index from package.",
+                subsystem="app_factory.parameter_index.load",
+                context={"project_id": project_id},
+            )
             return None
 
     def _session_approval_mode(session_id: str | None) -> str:
@@ -612,6 +716,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             mode = session.get("approval_mode") if session else None
             return mode if mode in {"balanced", "strict", "manual"} else "balanced"
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to resolve session approval mode; defaulting to balanced.",
+                subsystem="app_factory.session.approval_mode",
+                context={"session_id": session_id},
+            )
             return "balanced"
 
     def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
@@ -955,6 +1065,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except HTTPException:
             return None
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to build structural preflight snapshot for intent planning.",
+                subsystem="app_factory.intent.structural_preflight",
+                context={"project_id": project_id},
+            )
             return None
 
     def _build_intent_plan(data: dict[str, Any]) -> dict[str, Any]:
@@ -1075,7 +1191,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     "cad_observation_status": cad_obs.get("status") if cad_obs else None,
                 })
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to write intent action audit log.",
+                    subsystem="app_factory.audit.intent_action",
+                    context={"project_id": run.project_id, "run_id": run.run_id, "tool_name": tool_name},
+                )
         return {
             "plan_id": plan.get("plan_id"),
             "action": action,
@@ -1370,6 +1491,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         try:
             result = _cg.critique(active_settings, project_id, {})
         except Exception:
+            log_exception(
+                LOGGER,
+                "CAD critique endpoint failed; returning empty findings.",
+                subsystem="app_factory.project_critique",
+                context={"project_id": project_id},
+            )
             return empty
         if not isinstance(result, dict) or not isinstance(result.get("findings"), list):
             # No package / no geometry yet (critique returns an error shape) — the
@@ -1396,10 +1523,22 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             if isinstance(context, dict) and isinstance(context.get("cae"), dict):
                 cae_block = context["cae"]
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to read CAE block for simulation readiness endpoint.",
+                subsystem="app_factory.simulation_readiness.context",
+                context={"project_id": project_id},
+            )
             cae_block = None
         try:
             setup_artifact = _load_project_simulation_setup(project_id)
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to read direct simulation setup artifact for readiness endpoint.",
+                subsystem="app_factory.simulation_readiness.setup_artifact",
+                context={"project_id": project_id},
+            )
             setup_artifact = None
         return build_simulation_readiness_report(cae_block, setup_artifact=setup_artifact)
 
@@ -1437,6 +1576,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         try:
             return write_cae_result_map(package_path)
         except Exception:  # noqa: BLE001 - fall back to a non-persisted build
+            log_exception(
+                LOGGER,
+                "Failed to persist CAE result map; falling back to non-persisted response.",
+                subsystem="app_factory.cae_result_map.persist",
+                context={"project_id": project_id},
+            )
             return build_cae_result_map_for_package(package_path)
 
     @app.post("/api/projects/{project_id}/topology-optimization")
@@ -1976,6 +2121,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 })
         except Exception:
             # Live UI sync must never make a successful backend write fail.
+            log_exception(
+                LOGGER,
+                "Failed to publish project-changed activity update.",
+                subsystem="app_factory.project_changed.publish",
+                context={"project_id": project_id, "source": source, "status": status},
+            )
             return
 
     @app.post("/api/projects/{project_id}/generate-cad")
@@ -3003,6 +3154,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             try:
                 run = _autopilot_store().load(str(run_id))
             except Exception:
+                log_exception(
+                    LOGGER,
+                    "Failed to load autopilot run while building context summary.",
+                    subsystem="app_factory.context_summary.load_run",
+                    context={"project_id": project_id, "run_id": run_id},
+                )
                 run = None
         return build_context_summary(
             project_id=project_id,
@@ -3223,6 +3380,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             try:
                 frd_data = _extract_frd_field_data(pkg, field_name, active_settings.aieng_root)
             except Exception:
+                log_exception(
+                    LOGGER,
+                    "Failed to extract FRD field data; using synthetic field descriptor fallback.",
+                    subsystem="app_factory.field_descriptor.read_frd",
+                    context={"project_id": project_id, "field_name": field_name},
+                )
                 frd_data = None
 
         if frd_data is not None:
@@ -3277,6 +3440,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     import json as _json
                     computed_raw = _json.loads(_zf.read("results/computed_metrics.json"))
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to read computed metrics while building field descriptor.",
+                subsystem="app_factory.field_descriptor.read_computed_metrics",
+                context={"project_id": project_id, "field_name": field_name},
+            )
             warnings.append("Could not read results/computed_metrics.json.")
 
         if computed_raw and isinstance(computed_raw, dict):
@@ -3354,6 +3523,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     }
                     warnings.extend(_raw.get("warnings") or [])
             except Exception:
+                log_exception(
+                    LOGGER,
+                    "Failed to extract FRD statistics for field endpoint.",
+                    subsystem="app_factory.field_descriptor.extract_frd_stats",
+                    context={"project_id": project_id, "field_name": field_name},
+                )
                 warnings.append(f"FRD extraction failed for '{field_name}'.")
 
         cm_max_value: float | None = None
@@ -3370,7 +3545,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                             cm_unit = _m.get("unit") or _fmeta["unit"]
                             break
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to derive field descriptor values from computed metrics.",
+                subsystem="app_factory.field_descriptor.computed_metric_lookup",
+                context={"project_id": project_id, "field_name": field_name},
+            )
 
         if frd_stats is None and cm_max_value is None:
             raise HTTPException(
@@ -3560,7 +3740,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 ),
             )
         except Exception:
-            pass  # audit is non-critical
+            log_exception(
+                LOGGER,
+                "Failed to write claim proposal audit artifact.",
+                subsystem="app_factory.audit.claim_proposal",
+                context={"project_id": project_id},
+            )
 
         return {
             "schema_version": "0.1",
@@ -3850,7 +4035,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     ),
                 )
             except Exception:
-                pass  # audit is non-critical
+                log_exception(
+                    LOGGER,
+                    "Failed to write computed-metrics audit artifact.",
+                    subsystem="app_factory.audit.computed_metrics",
+                    context={"project_id": project_id},
+                )
 
         return result
 
@@ -4757,6 +4947,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                         with _zipfile.ZipFile(package_path, "r") as zf:
                             has_scaffold = "results/evidence_index.json" in zf.namelist()
                     except Exception:
+                        log_exception(
+                            LOGGER,
+                            "Failed to probe existing solver evidence scaffold in package.",
+                            subsystem="app_factory.cae_solver.scaffold_probe",
+                            context={"project_id": project_id, "run_id": run_id},
+                        )
                         has_scaffold = False
                     if not has_scaffold:
                         try:
@@ -4869,7 +5065,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             try:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to clean temporary solver run directory.",
+                    subsystem="app_factory.cae_solver.cleanup_tempdir",
+                    context={"run_id": run_id},
+                )
 
     def _tool_cae_write_mesh_handoff(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import aieng_bridge
@@ -5241,7 +5442,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 if shape_ir_execution and shape_ir_execution.get("status") == "ok":
                     preview_result = convert_asset(active_settings, project_id)
             except Exception:
-                pass  # Don't fail the tool if project update fails
+                log_exception(
+                    LOGGER,
+                    "Failed to persist converted project metadata; keeping tool result.",
+                    subsystem="app_factory.convert_asset.project_update",
+                    context={"project_id": project_id},
+                )
 
         return {
             "ok": True,
@@ -5517,6 +5723,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 with _zipfile.ZipFile(package_path, "r") as zf:
                     has_scaffold = "results/evidence_index.json" in zf.namelist()
             except Exception:
+                log_exception(
+                    LOGGER,
+                    "Failed to probe solver evidence scaffold before import.",
+                    subsystem="app_factory.import_solver_evidence.scaffold_probe",
+                    context={"project_id": project_id, "package_path": package_path},
+                )
                 has_scaffold = False
             if not has_scaffold:
                 try:
@@ -5528,7 +5740,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     )
                     scaffold_created = True
                 except Exception:
-                    pass
+                    log_exception(
+                        LOGGER,
+                        "Failed to create solver evidence scaffold before import.",
+                        subsystem="app_factory.import_solver_evidence.scaffold_create",
+                        context={"project_id": project_id, "package_path": package_path},
+                    )
 
         try:
             result = aieng_bridge.import_solver_evidence(
@@ -5727,7 +5944,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 proj["updated_at"] = now_iso()
                 save_project(active_settings, proj)
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to persist project metadata after Shape IR patch.",
+                    subsystem="app_factory.shape_ir_patch.project_update",
+                    context={"project_id": pid},
+                )
 
         return {
             "status": "ok" if result["ok"] else "rejected",
@@ -5898,6 +6120,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     _topo = json.loads(_z.read("analysis/topology_optimization.json"))
                     _dim3 = _topo.get("dimension") == "3d" or "density_grid_3d" in (_topo.get("result") or {})
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to inspect topology optimization artifact; defaulting to 2D writeback mode.",
+                subsystem="app_factory.topology_writeback.dimension_detect",
+                context={"project_id": pid},
+            )
             _dim3 = False
         # Default to B-Rep for 2D (analytic faces an engineer picks / exports to STEP;
         # manifold_mesh is the robust fallback, auto-used if the B-Rep build fails).
@@ -5971,7 +6199,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             proj["updated_at"] = now_iso()
             save_project(active_settings, proj)
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to persist project metadata after topology optimization writeback.",
+                subsystem="app_factory.topology_writeback.project_update",
+                context={"project_id": pid},
+            )
 
         return {
             "status": "ok",
@@ -6732,7 +6965,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             try:
                 write_audit_log(active_settings, run.project_id, "runtime_run", audit_payload)
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to write runtime run audit log.",
+                    subsystem="app_factory.audit.runtime_run",
+                    context={"project_id": run.project_id, "run_id": run.run_id},
+                )
         return _rt.run_to_dict(run)
 
     @app.get("/api/runtime/runs/{run_id}")
@@ -6785,7 +7023,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     },
                 )
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to write runtime-approval audit log.",
+                    subsystem="app_factory.audit.runtime_run_approved",
+                    context={"project_id": run.project_id, "run_id": run.run_id},
+                )
         return _rt.run_to_dict(run)
 
     @app.post("/api/runtime/runs/{run_id}/reject")
@@ -6815,7 +7058,12 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                     },
                 )
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Failed to write runtime-rejection audit log.",
+                    subsystem="app_factory.audit.runtime_run_rejected",
+                    context={"project_id": run.project_id, "run_id": run.run_id},
+                )
         return _rt.run_to_dict(run)
 
     return app

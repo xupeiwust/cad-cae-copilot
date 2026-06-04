@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -41,6 +42,10 @@ from .schema import (
     now_iso,
 )
 from .store import AutopilotStore
+from ..logging_utils import log_exception
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 # Per-run adapter step counter.  Key = "{effective_adapter_session_id}:{adapter_id}".
@@ -534,15 +539,29 @@ def _publish_autopilot_update(state: AutopilotRunState) -> None:
     try:
         from .. import agent_activity
     except Exception:
+        log_exception(
+            LOGGER,
+            "Failed to import agent activity publisher for autopilot state update.",
+            subsystem="autopilot.activity.import",
+            context={"run_id": state.run_id, "project_id": state.project_id},
+        )
         return
-    agent_activity.publish({
-        "type": "autopilot_update",
-        "project_id": state.project_id,
-        "session_id": state.session_id,
-        "run_id": state.run_id,
-        "status": state.status,
-        "run": state.model_dump(),
-    })
+    try:
+        agent_activity.publish({
+            "type": "autopilot_update",
+            "project_id": state.project_id,
+            "session_id": state.session_id,
+            "run_id": state.run_id,
+            "status": state.status,
+            "run": state.model_dump(),
+        })
+    except Exception:
+        log_exception(
+            LOGGER,
+            "Failed to publish autopilot state update.",
+            subsystem="autopilot.activity.publish",
+            context={"run_id": state.run_id, "project_id": state.project_id},
+        )
 
 
 def _observation(kind: str, summary: str, data: dict[str, Any] | None = None) -> AutopilotObservation:
@@ -946,6 +965,12 @@ class AutopilotEngine:
         try:
             index = self.feature_parameter_loader(state.project_id)
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to load editable feature parameters for modify-intent binding.",
+                subsystem="autopilot.feature_parameter_loader",
+                context={"run_id": state.run_id, "project_id": state.project_id},
+            )
             return None
         return index if isinstance(index, list) else None
 
@@ -1097,6 +1122,12 @@ class AutopilotEngine:
             try:
                 result = self.simulation_setup_loader(state.project_id)
             except Exception:
+                log_exception(
+                    LOGGER,
+                    "Failed to load direct simulation setup artifact during /simulate workflow.",
+                    subsystem="autopilot.simulation_setup_loader",
+                    context={"run_id": state.run_id, "project_id": state.project_id},
+                )
                 result = None
             if isinstance(result, dict) and result.get("data"):
                 return result
@@ -1364,7 +1395,12 @@ class AutopilotEngine:
             try:
                 self.on_state_update(state)
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Autopilot state-update callback failed.",
+                    subsystem="autopilot.state_update_callback",
+                    context={"run_id": state.run_id, "project_id": state.project_id},
+                )
         _publish_autopilot_update(state)
 
     def _emit_event(
@@ -1396,13 +1432,23 @@ class AutopilotEngine:
                 self.on_event(event)
                 return
             except Exception:
-                pass
+                log_exception(
+                    LOGGER,
+                    "Autopilot event callback failed; falling back to shared activity stream.",
+                    subsystem="autopilot.event_callback",
+                    context={"run_id": state.run_id, "event_type": event_type},
+                )
         try:
             from .. import agent_activity
 
             agent_activity.publish(event)
         except Exception:
-            pass
+            log_exception(
+                LOGGER,
+                "Failed to publish autopilot event to shared activity stream.",
+                subsystem="autopilot.event_publish",
+                context={"run_id": state.run_id, "event_type": event_type},
+            )
 
     def _emit_plan_created(self, state: AutopilotRunState) -> None:
         if state.plan is None:
@@ -1464,6 +1510,12 @@ class AutopilotEngine:
         try:
             persisted = self.store.load(state.run_id)
         except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to load persisted run while checking cancel state.",
+                subsystem="autopilot.cancel_state_load",
+                context={"run_id": state.run_id, "project_id": state.project_id},
+            )
             persisted = None
         if persisted is not None and persisted.status == "cancelled":
             # A user/API cancellation already emitted and persisted the terminal

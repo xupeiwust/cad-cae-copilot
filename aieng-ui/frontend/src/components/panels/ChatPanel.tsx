@@ -430,12 +430,7 @@ export function ChatPanel({
 
   return (
     <section className="chat-pane-body">
-      <ContextSummaryPanel
-        projectId={selectedId}
-        sessionId={activeSessionId}
-        engineeringContext={engineeringContext}
-        onSummaryChange={onContextSummaryChange}
-      />
+      {/* ContextSummaryPanel hidden — not essential for end users */}
 
       <div className="chat-stream-shell">
         <div className="chat-stream-header">

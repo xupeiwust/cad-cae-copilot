@@ -27,6 +27,7 @@ const LLM_CONFIG_KEY = "llm_config";
 const LOCAL_AGENT_CONFIG_KEY = "local_agent_config";
 const API_KEY_BACKEND_KEY = "api_key";
 const API_KEY_LOCALSTORAGE_KEY = "aieng_api_key";
+const SETTINGS_RETRY_DELAY_MS = 2000;
 
 type UseRuntimeSettingsArgs = {
   setSummary: Dispatch<SetStateAction<ProjectSummary | null>>;
@@ -76,6 +77,45 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
     return () => { cancelled = true; };
   }, []);
 
+  const hydrateStoredSettings = useCallback(async () => {
+    try {
+      const settings = await api.getSettings();
+      const savedLlm = settings[LLM_CONFIG_KEY];
+      if (savedLlm && typeof savedLlm === "object") {
+        const normalized = normalizeLlmConfig(savedLlm as Record<string, unknown>);
+        setLlmConfigState(normalized);
+        writeLegacyLlmConfig(normalized);
+      } else {
+        const legacyLlm = readLegacyLlmConfig();
+        if (legacyLlm) {
+          setLlmConfigState(legacyLlm);
+          void api.updateSetting(LLM_CONFIG_KEY, legacyLlm).catch(() => {});
+        }
+      }
+
+      const savedLocal = settings[LOCAL_AGENT_CONFIG_KEY];
+      if (savedLocal && typeof savedLocal === "object") {
+        const parsed = savedLocal as Partial<LocalAgentConfig>;
+        const normalized = { preferredAdapterId: parsed.preferredAdapterId ?? null };
+        setLocalAgentConfigState(normalized);
+        writeLegacyLocalAgentConfig(normalized);
+      } else {
+        const legacyLocal = readLegacyLocalAgentConfig();
+        if (legacyLocal) {
+          setLocalAgentConfigState(legacyLocal);
+          void api.updateSetting(LOCAL_AGENT_CONFIG_KEY, legacyLocal).catch(() => {});
+        }
+      }
+      return true;
+    } catch {
+      const legacyLlm = readLegacyLlmConfig();
+      const legacyLocal = readLegacyLocalAgentConfig();
+      if (legacyLlm) setLlmConfigState(legacyLlm);
+      if (legacyLocal) setLocalAgentConfigState(legacyLocal);
+      return false;
+    }
+  }, []);
+
   const setApiKey = useCallback((next: string) => {
     setApiKeyState(next);
     if (next) {
@@ -99,44 +139,26 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const settings = await api.getSettings();
-        if (cancelled) return;
-        const savedLlm = settings[LLM_CONFIG_KEY];
-        if (savedLlm && typeof savedLlm === "object") {
-          setLlmConfigState(normalizeLlmConfig(savedLlm as Record<string, unknown>));
-        } else {
-          const legacyLlm = readLegacyLlmConfig();
-          if (legacyLlm) {
-            setLlmConfigState(legacyLlm);
-            void api.updateSetting(LLM_CONFIG_KEY, legacyLlm).catch(() => {});
-          }
-        }
-        const savedLocal = settings[LOCAL_AGENT_CONFIG_KEY];
-        if (savedLocal && typeof savedLocal === "object") {
-          const parsed = savedLocal as Partial<LocalAgentConfig>;
-          setLocalAgentConfigState({ preferredAdapterId: parsed.preferredAdapterId ?? null });
-        } else {
-          const legacyLocal = readLegacyLocalAgentConfig();
-          if (legacyLocal) {
-            setLocalAgentConfigState(legacyLocal);
-            void api.updateSetting(LOCAL_AGENT_CONFIG_KEY, legacyLocal).catch(() => {});
-          }
-        }
-      } catch {
-        const legacyLlm = readLegacyLlmConfig();
-        const legacyLocal = readLegacyLocalAgentConfig();
-        if (legacyLlm && !cancelled) setLlmConfigState(legacyLlm);
-        if (legacyLocal && !cancelled) setLocalAgentConfigState(legacyLocal);
+    let retryTimer: number | null = null;
+    const attemptHydration = async () => {
+      const hydrated = await hydrateStoredSettings();
+      if (!hydrated && !cancelled) {
+        retryTimer = window.setTimeout(() => {
+          void attemptHydration();
+        }, SETTINGS_RETRY_DELAY_MS);
       }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    };
+    void attemptHydration();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, [hydrateStoredSettings]);
 
   function setLlmConfig(value: LLMConfig | ((prev: LLMConfig) => LLMConfig)) {
     setLlmConfigState((prev) => {
       const next = typeof value === "function" ? value(prev) : value;
+      writeLegacyLlmConfig(next);
       void api.updateSetting(LLM_CONFIG_KEY, next).catch(() => {});
       return next;
     });
@@ -145,6 +167,7 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
   function setLocalAgentConfig(value: LocalAgentConfig | ((prev: LocalAgentConfig) => LocalAgentConfig)) {
     setLocalAgentConfigState((prev) => {
       const next = typeof value === "function" ? value(prev) : value;
+      writeLegacyLocalAgentConfig(next);
       void api.updateSetting(LOCAL_AGENT_CONFIG_KEY, next).catch(() => {});
       return next;
     });
@@ -277,5 +300,21 @@ function readLegacyLocalAgentConfig(): LocalAgentConfig | null {
     return { preferredAdapterId: parsed.preferredAdapterId ?? null };
   } catch {
     return null;
+  }
+}
+
+function writeLegacyLlmConfig(config: LLMConfig) {
+  try {
+    window.localStorage.setItem(LLM_CONFIG_STORAGE_KEY, JSON.stringify(config));
+  } catch {
+    // Storage may be unavailable or full.
+  }
+}
+
+function writeLegacyLocalAgentConfig(config: LocalAgentConfig) {
+  try {
+    window.localStorage.setItem(LOCAL_AGENT_CONFIG_STORAGE_KEY, JSON.stringify(config));
+  } catch {
+    // Storage may be unavailable or full.
   }
 }

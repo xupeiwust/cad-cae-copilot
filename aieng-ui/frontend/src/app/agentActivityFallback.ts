@@ -31,6 +31,13 @@ export function isTerminalAutopilotRun(run: AutopilotRunState | null | undefined
   return isTerminalAutopilotStatus(run?.status);
 }
 
+// Frontend "busy" is narrower than "active": once a run is waiting on the user
+// (awaiting_approval / blocked / chatting), controls should unlock immediately.
+// Only an actually executing run keeps agentBusy true.
+export function shouldKeepAgentBusyForRun(run: AutopilotRunState | null | undefined): boolean {
+  return run?.status === "running";
+}
+
 // A "running" run drives the processing spinner / composer Stop only while a
 // worker is plausibly still alive — i.e. it was updated recently. Grace exceeds
 // the max adapter step timeout (Claude Code: 180s) so a live run mid-step is not

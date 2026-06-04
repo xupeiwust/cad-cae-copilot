@@ -1,4 +1,10 @@
-import { isRunActivelyProcessing, isTerminalAutopilotRun, nextStatusAfterStreamError, shouldPollActivityFallback } from "./agentActivityFallback";
+import {
+  isRunActivelyProcessing,
+  isTerminalAutopilotRun,
+  nextStatusAfterStreamError,
+  shouldKeepAgentBusyForRun,
+  shouldPollActivityFallback,
+} from "./agentActivityFallback";
 import { test } from "vitest";
 
 test("agent activity fallback", () => {
@@ -62,6 +68,17 @@ expectEqual(isRunActivelyProcessing(run("completed", recent), now), false, "comp
 expectEqual(isRunActivelyProcessing(run("failed", recent), now), false, "failed not processing");
 expectEqual(isRunActivelyProcessing(run("cancelled", recent), now), false, "cancelled not processing");
 expectEqual(isRunActivelyProcessing(run("running", "not-a-date"), now), false, "invalid updated_at -> not processing");
+
+// shouldKeepAgentBusyForRun: only true while the agent is actually executing.
+expectEqual(shouldKeepAgentBusyForRun(run("running", recent)), true, "running keeps agentBusy");
+expectEqual(shouldKeepAgentBusyForRun(run("awaiting_approval", recent)), false, "awaiting_approval unlocks controls");
+expectEqual(shouldKeepAgentBusyForRun(run("blocked", recent)), false, "blocked unlocks controls");
+expectEqual(shouldKeepAgentBusyForRun(run("chatting", recent)), false, "chatting unlocks controls");
+expectEqual(shouldKeepAgentBusyForRun(run("completed", recent)), false, "completed clears agentBusy");
+expectEqual(shouldKeepAgentBusyForRun(run("failed", recent)), false, "failed clears agentBusy");
+expectEqual(shouldKeepAgentBusyForRun(run("cancelled", recent)), false, "cancelled clears agentBusy");
+expectEqual(shouldKeepAgentBusyForRun(null), false, "null run clears agentBusy");
+expectEqual(shouldKeepAgentBusyForRun(undefined), false, "undefined run clears agentBusy");
 
 function expectEqual(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) {

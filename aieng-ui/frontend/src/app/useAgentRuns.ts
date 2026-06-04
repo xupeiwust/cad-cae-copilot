@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { api } from "../api";
 import type { ChatHistoryItem, Notice, SelectedGeometryContext } from "../appTypes";
 import { createChatId, isLlmConfigReady, runtimeStatusLabel } from "../appUtils";
+import { shouldKeepAgentBusyForRun } from "./agentActivityFallback";
 import { isTerminalAutopilotStatus } from "./chatTranscript";
 import { upsertAutopilotChatItem } from "./chatStateUtils";
 import { toComposerIntentMetadata, type ComposerIntentMetadata } from "../components/chat/composerIntent";
@@ -251,8 +252,8 @@ export function useAgentRuns({
       // the SSE autopilot_update, and any reload collapse to a single entry for
       // this run instead of racing into duplicate rows with mismatched ids.
       setChatHistory((current) => upsertAutopilotChatItem(current, result));
+      setAgentBusy(shouldKeepAgentBusyForRun(result));
       if (isTerminalAutopilotStatus(result.status)) {
-        setAgentBusy(false);
         setNotice({
           tone: result.status === "completed" ? "success" : result.status === "awaiting_approval" ? "info" : "error",
           title: `${agentLabel} — ${result.status}`,
@@ -284,8 +285,8 @@ export function useAgentRuns({
       // Same canonical run-keyed upsert as the create path: update in place by
       // run_id (or insert if the row was lost), never fork a second entry.
       setChatHistory((current) => upsertAutopilotChatItem(current, result));
+      setAgentBusy(shouldKeepAgentBusyForRun(result));
       if (isTerminalAutopilotStatus(result.status)) {
-        setAgentBusy(false);
         setNotice({
           tone: result.status === "completed" ? "success" : result.status === "cancelled" ? "info" : "error",
           title: `${autopilotAgentLabel(result)} — ${result.status}`,

@@ -7,7 +7,12 @@ import { applyAgentActivityEvent, createChatId } from "../appUtils";
 import type { AutopilotRunState } from "../types";
 import type { ChatSession, PersistedChatMessage } from "../api";
 import type { AgentTranscriptEvent } from "./chatTranscript";
-import { isTerminalAutopilotRun, nextStatusAfterStreamError, shouldPollActivityFallback } from "./agentActivityFallback";
+import {
+  isTerminalAutopilotRun,
+  nextStatusAfterStreamError,
+  shouldKeepAgentBusyForRun,
+  shouldPollActivityFallback,
+} from "./agentActivityFallback";
 import { upsertAutopilotChatItem } from "./chatStateUtils";
 import {
   autopilotAgentLabel,
@@ -137,23 +142,21 @@ export function useAgentActivityStream({
         const run = event.run as AutopilotRunState | undefined;
         if (!run?.run_id) return;
         onAutopilotRunUpdateRef.current(run);
+        const matchesCurrentProject = !run.project_id || !current || run.project_id === current;
+        const matchesCurrentSession = !run.session_id || !currentSession || run.session_id === currentSession;
+        if (!matchesCurrentProject || !matchesCurrentSession) return;
+        setAgentBusy(shouldKeepAgentBusyForRun(run));
         if (isTerminalAutopilotRun(run)) {
           stopAutopilotPoll();
-          setAgentBusy(false);
           clearStreamingState();
         }
-        if (run.project_id && current && run.project_id !== current) return;
-        if (run.session_id && currentSession && run.session_id !== currentSession) return;
         setChatHistory((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
         if (run.status === "chatting") {
           stopAutopilotPoll();
-          setAgentBusy(false);
           clearStreamingState();
           return;
         }
         if (isTerminalAutopilotRun(run)) {
-          stopAutopilotPoll();
-          setAgentBusy(false);
           setNotice({
             tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
             title: `${autopilotAgentLabel(run)} — ${run.status}`,
@@ -247,9 +250,9 @@ export function useAgentActivityStream({
           .then((run) => {
             onAutopilotRunUpdateRef.current(run);
             setChatHistory((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
+            setAgentBusy(shouldKeepAgentBusyForRun(run));
             if (isTerminalAutopilotRun(run)) {
               stopAutopilotPoll();
-              setAgentBusy(false);
               clearStreamingState();
             }
           })

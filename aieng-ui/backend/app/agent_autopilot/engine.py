@@ -661,8 +661,8 @@ class AutopilotEngine:
         self.simulation_setup_loader = simulation_setup_loader
         # Optional app-wired natural-language intent classifier (e.g. LLM-backed).
         # When None, intent resolution falls back to the deterministic keyword
-        # heuristic. Skipped in fake/replay runs (request.fake_actions) so tests
-        # stay deterministic and never make a provider call.
+        # heuristic. Skipped in fake/replay runs so tests stay deterministic and
+        # never make a provider call.
         self.intent_classifier = intent_classifier
         # Optional app-wired loader: project_id -> flattened editable feature-graph
         # parameter index (build_parameter_index output) or None. Used to bind
@@ -777,7 +777,7 @@ class AutopilotEngine:
         if get_composer_command(state) is not None:
             return  # explicit command wins; nothing to infer
 
-        classifier = None if request.fake_actions else self.intent_classifier
+        classifier = None if (request.fake_actions or request.adapter_id == "fake") else self.intent_classifier
         project_summary = (
             self.agent_context.get("project_summary")
             if isinstance(self.agent_context, dict)

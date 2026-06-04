@@ -650,7 +650,10 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         from . import package_inspection, project_io
         from pathlib import Path
 
-        project = project_io.get_project(active_settings, project_id)
+        try:
+            project = project_io.get_project(active_settings, project_id)
+        except HTTPException:
+            return None
         aieng_file = project.get("aieng_file")
         if not aieng_file:
             return None
@@ -953,36 +956,33 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         api_key = _resolve_api_key(data)
         if api_key:
             llm_config["api_key"] = api_key
+        package_reader = _project_package_reader(current.project_id)
+        engine = AutopilotEngine(
+            store=store,
+            runtime_tools=_rt.list_tools_for_mcp(),
+            adapters=_autopilot_adapters(llm_config),
+            agent_context=_agent_context_with_session_summary_cached(
+                current.project_id,
+                current.session_id,
+                package_reader=package_reader,
+            ),
+            on_state_update=_sync_autopilot_session,
+            on_event=_publish_agent_event,
+            approval_mode=_session_approval_mode(current.session_id),
+            simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
+                project_id,
+                package_reader=package_reader,
+            ),
+            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                tool_name,
+                tool_input,
+                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+            ),
+        )
+
         def _run_continue_in_background() -> None:
             try:
-                package_reader = _project_package_reader(current.project_id)
-                try:
-                    engine = AutopilotEngine(
-                        store=store,
-                        runtime_tools=_rt.list_tools_for_mcp(),
-                        adapters=_autopilot_adapters(llm_config),
-                        agent_context=_agent_context_with_session_summary_cached(
-                            current.project_id,
-                            current.session_id,
-                            package_reader=package_reader,
-                        ),
-                        on_state_update=_sync_autopilot_session,
-                        on_event=_publish_agent_event,
-                        approval_mode=_session_approval_mode(current.session_id),
-                        simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
-                            project_id,
-                            package_reader=package_reader,
-                        ),
-                        tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                            tool_name,
-                            tool_input,
-                            {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-                        ),
-                    )
-                    state = engine.continue_run(run_id, approved=approved, user_message=user_message)
-                finally:
-                    if package_reader is not None:
-                        package_reader.close()
+                state = engine.continue_run(run_id, approved=approved, user_message=user_message)
                 _write_autopilot_audit(state.project_id, "agent_autopilot_approval", {
                     "run_id": state.run_id,
                     "approved": approved,
@@ -990,6 +990,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 })
             except Exception as exc:
                 _mark_autopilot_failed(store, run_id, exc)
+            finally:
+                if package_reader is not None:
+                    package_reader.close()
 
         _start_autopilot_worker(_run_continue_in_background, run_id=run_id)
         return _autopilot_run_response(current)
@@ -1021,38 +1024,38 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         api_key = _resolve_api_key(data)
         if api_key:
             llm_config["api_key"] = api_key
+        package_reader = _project_package_reader(current.project_id)
+        engine = AutopilotEngine(
+            store=store,
+            runtime_tools=_rt.list_tools_for_mcp(),
+            adapters=_autopilot_adapters(llm_config),
+            agent_context=_agent_context_with_session_summary_cached(
+                current.project_id,
+                current.session_id,
+                package_reader=package_reader,
+            ),
+            on_state_update=_sync_autopilot_session,
+            on_event=_publish_agent_event,
+            approval_mode=_session_approval_mode(current.session_id),
+            simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
+                project_id,
+                package_reader=package_reader,
+            ),
+            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                tool_name,
+                tool_input,
+                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+            ),
+        )
+
         def _run_reply_in_background() -> None:
             try:
-                package_reader = _project_package_reader(current.project_id)
-                try:
-                    engine = AutopilotEngine(
-                        store=store,
-                        runtime_tools=_rt.list_tools_for_mcp(),
-                        adapters=_autopilot_adapters(llm_config),
-                        agent_context=_agent_context_with_session_summary_cached(
-                            current.project_id,
-                            current.session_id,
-                            package_reader=package_reader,
-                        ),
-                        on_state_update=_sync_autopilot_session,
-                        on_event=_publish_agent_event,
-                        approval_mode=_session_approval_mode(current.session_id),
-                        simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
-                            project_id,
-                            package_reader=package_reader,
-                        ),
-                        tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                            tool_name,
-                            tool_input,
-                            {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-                        ),
-                    )
-                    engine.reply_to_run(run_id, message)
-                finally:
-                    if package_reader is not None:
-                        package_reader.close()
+                engine.reply_to_run(run_id, message)
             except Exception as exc:
                 _mark_autopilot_failed(store, run_id, exc)
+            finally:
+                if package_reader is not None:
+                    package_reader.close()
 
         _start_autopilot_worker(_run_reply_in_background, run_id=run_id)
         return _autopilot_run_response(current)

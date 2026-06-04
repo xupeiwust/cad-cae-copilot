@@ -592,10 +592,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     # ── CAE setup / solver pipeline ──────────────────────────────────────────
     "cae.apply_setup_patch": {
         "type": "object",
-        "anyOf": [
-            {"required": ["project_id", "patches"]},
-            {"required": ["project_id", "patch"]},
-        ],
+        "required": ["project_id"],
         "properties": {
             "project_id": {"type": "string"},
             "patches": {
@@ -605,14 +602,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": (
                     "Preferred input. Array of CAE setup patch operations "
                     "(create_file / replace_json / merge_object / append_array_item) "
-                    "with target path and payload."
+                    "with target path and payload. Either 'patches' or 'patch' must be provided."
                 ),
             },
             "patch": {
                 "type": "object",
                 "description": (
                     "Legacy compatibility input. Either one CAE setup patch object, or "
-                    "a map of operation-name keys to patch objects. Prefer 'patches'."
+                    "a map of operation-name keys to patch objects. Prefer 'patches'. "
+                    "Either 'patches' or 'patch' must be provided."
                 ),
             },
         },

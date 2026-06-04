@@ -503,3 +503,22 @@ stay live.
 The curated-schema approach is intentional: auto-deriving schemas from handler
 signatures gives low-quality output because tool handlers all have the same
 `(inp: dict, ctx: dict)` signature.
+
+### Provider-compatible schema design
+
+Some MCP providers (e.g. OpenAI Codex, Kimi Code CLI) require tool input schemas
+to be a plain object at the top level and reject ``oneOf`` / ``anyOf`` / ``allOf`` /
+``enum`` / ``not`` at the schema root.  Keep every schema in ``TOOL_SCHEMAS`` as:
+
+```json
+{
+  "type": "object",
+  "properties": { ... },
+  "required": [ ... ]
+}
+```
+
+If a parameter has multiple valid shapes (e.g. a legacy alias), prefer explicit
+optional fields and runtime validation over a top-level union.  The regression
+guard is ``pytest tests/test_mcp_server.py::test_all_mcp_tool_schemas_are_provider_compatible``.
+A standalone validator also lives at ``scripts/validate_mcp_schemas.py``.

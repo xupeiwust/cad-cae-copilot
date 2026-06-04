@@ -342,6 +342,42 @@ def test_list_tools_for_mcp_marks_approval_tools() -> None:
     assert entries["aieng.inspect_package"]["requires_approval"] is False
 
 
+# ── provider-compatible schema guards ─────────────────────────────────────────
+
+_FORBIDDEN_TOP_LEVEL = {"oneOf", "anyOf", "allOf", "enum", "not"}
+
+
+def test_cae_apply_setup_patch_schema_has_no_top_level_union(mcp_server) -> None:
+    """Regression: Codex rejects schemas with oneOf/anyOf/allOf/enum/not at the top level."""
+    tools = _tool_dict(mcp_server)
+    params = tools[_mcp_name("cae.apply_setup_patch")].parameters
+    assert params.get("type") == "object"
+    forbidden = _FORBIDDEN_TOP_LEVEL & set(params.keys())
+    assert not forbidden, f"cae.apply_setup_patch schema has forbidden top-level keys: {forbidden}"
+
+
+def test_all_mcp_tool_schemas_are_provider_compatible(mcp_server) -> None:
+    """Every registered MCP tool schema must be a plain object with no top-level unions.
+
+    Providers such as OpenAI Codex and Kimi Code CLI require
+    ``type == 'object'`` and reject ``oneOf`` / ``anyOf`` / ``allOf`` / ``enum`` / ``not``
+    at the schema root.
+    """
+    tools = _tool_dict(mcp_server)
+    failures: list[str] = []
+    for name, tool in tools.items():
+        params = tool.parameters
+        if not isinstance(params, dict):
+            failures.append(f"{name}: parameters is not a dict")
+            continue
+        if params.get("type") != "object":
+            failures.append(f"{name}: top-level type is not 'object' ({params.get('type')})")
+        forbidden = _FORBIDDEN_TOP_LEVEL & set(params.keys())
+        if forbidden:
+            failures.append(f"{name}: forbidden top-level keys {forbidden}")
+    assert not failures, "Provider-incompatible schemas found:\n" + "\n".join(failures)
+
+
 def test_mcp_first_prompts_are_registered(mcp_server) -> None:
     import asyncio
 

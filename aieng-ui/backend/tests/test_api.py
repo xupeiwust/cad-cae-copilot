@@ -1782,6 +1782,39 @@ def test_cae_setup_patch_create_file_success(tmp_path: Path) -> None:
         assert written["id"] == "load_case_001"
 
 
+def test_cae_setup_patch_rejects_missing_patches_and_patch(tmp_path: Path) -> None:
+    """Schema no longer enforces patches/patch at the schema level; runtime must still reject.
+
+    Regression guard for the Codex compatibility fix that removed top-level ``anyOf``.
+    """
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("patch-missing"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "patch-test.aieng"
+    _make_setup_package(pkg_path)
+    project["aieng_file"] = "patch-test.aieng"
+    save_project(settings, project)
+
+    resp = client.post("/api/runtime/runs", json={
+        "message": "apply cae setup patch",
+        "project_id": project_id,
+        "tool_input": {
+            "project_id": project_id,
+            "refresh_preprocessing_summary": False,
+        },
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["status"] == "error"
+    assert result["code"] == "no_patches"
+
+
 def test_cae_setup_patch_accepts_legacy_single_patch_object(tmp_path: Path) -> None:
     """cae.apply_setup_patch accepts the legacy single-object `patch` input."""
     from app.main import create_app, default_project, project_dir, save_project
@@ -8623,12 +8656,44 @@ def _make_copilot_loop_fixture_package(pkg_path: Path) -> None:
                         "min_value": 1.0,
                         "max_value": 40.0,
                         "editability": {"executable": True},
-                        "cad_parameter_name": "Thickness",
+                        "cad_parameter_name": "BACK_WALL_THICKNESS",
                     }
                 ],
             }
         ]
     }
+    topology_map = {
+        "format_version": "0.1",
+        "entities": [
+            {
+                "id": "solid_back_wall",
+                "type": "solid",
+                "name": "back_wall",
+                "bounding_box": [-60.0, -10.0, -30.0, 60.0, 10.0, 30.0],
+            },
+            {
+                "id": "solid_central_rib",
+                "type": "solid",
+                "name": "central_rib",
+                "bounding_box": [-50.0, -14.0, -4.0, 50.0, 14.0, 4.0],
+            },
+        ],
+    }
+    source_py = """from build123d import *
+
+BACK_WALL_THICKNESS = 20.0
+RIB_THICKNESS = 8.0
+
+back_wall = Box(120, BACK_WALL_THICKNESS, 60)
+back_wall.label = "back_wall"
+back_wall.color = Color(0.55, 0.62, 0.70)
+
+central_rib = Box(100, RIB_THICKNESS, 28).moved(Location((0, 0, 18)))
+central_rib.label = "central_rib"
+central_rib.color = Color(0.45, 0.52, 0.60)
+
+result = Compound(children=[back_wall, central_rib])
+"""
     stress = {
         "schema_version": "0.1",
         "load_case_id": "load_case_001",
@@ -8655,6 +8720,8 @@ def _make_copilot_loop_fixture_package(pkg_path: Path) -> None:
     with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps({"model_id": "copilot-loop", "resources": {"geometry": {"source": "geometry/source.step"}}}))
         zf.writestr("geometry/source.step", "ISO-10303-21;\nEND-ISO-10303-21;\n")
+        zf.writestr("geometry/source.py", source_py)
+        zf.writestr("geometry/topology_map.json", json.dumps(topology_map))
         zf.writestr("task/design_targets.yaml", yaml.safe_dump(design_targets, sort_keys=False))
         zf.writestr("simulation/cae_imports/parsed_features.json", json.dumps(parsed_features))
         zf.writestr("graph/feature_graph.json", json.dumps(feature_graph))
@@ -9131,6 +9198,23 @@ def _run_loop_to_report(
     loop = _advance_loop_to_apply_waiting(client, project_id)
     loop_id = loop["loop_id"]
     if decision == "approved":
+        def _fake_edit_parameter(**kwargs: Any) -> dict[str, Any]:
+            return {
+                "status": "ok",
+                "schema_version": "0.1",
+                "project_id": kwargs.get("project_id"),
+                "feature_id": kwargs.get("feature_id"),
+                "parameter_name": kwargs.get("parameter_name"),
+                "cad_parameter_name": "BACK_WALL_THICKNESS",
+                "previous_value": 20.0,
+                "new_value": kwargs.get("new_value"),
+                "message": "Fixture CAD parameter edit applied.",
+                "stale_artifacts": ["results/computed_metrics.json", "results/result_summary.json"],
+                "artifacts": [{"path": "geometry/source.py", "kind": "cad_source"}],
+                "regression_diff": {"verdict": "clean", "changed": [{"part": "back_wall"}]},
+            }
+
+        monkeypatch.setattr("app.cad_generation.edit_build123d_parameter", _fake_edit_parameter)
         approve = client.post(f"/api/projects/{project_id}/copilot-loop/{loop_id}/approve").json()
         assert next(s for s in approve["steps"] if s["id"] == "apply_cad_edit")["status"] == "completed"
     elif decision == "rejected":
@@ -10647,12 +10731,23 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     # 3D writeback default -> smooth marching-cubes surface mesh (manifold), viewer refreshes
     wb = client.post(f"/api/projects/{pid}/topology-optimization/writeback", json={})
     assert wb.status_code == 200 and wb.json()["status"] == "ok"
-    sir = wb.json()["shape_ir"]
+    wb_body = wb.json()
+    sir = wb_body["shape_ir"]
     assert sir["representation"] == "manifold_mesh"          # 3D defaults to mesh, not B-Rep
     node = sir["parts"][0]
     assert node["type"] == "smooth_mesh_proxy" and node["dimension"] == 3   # default = smooth mesh proxy
     assert node["preview_only"] is True and node["cad_editable"] is False
     assert node["triangle_count"] > 0 and "not_production_cad" in node["tags"]
+    recompile = wb_body.get("recompile") or {}
+    if recompile.get("executed") is False:
+        assert "manifold3d" in str(recompile.get("error") or "")
+        ge = _read_geom_exec(pkg)
+        assert ge["executed"] is False
+        assert ge["geometry_kind"] == "none"
+        assert ge["real_geometry"] is False
+        assert (project_dir(settings, pid) / "viewer" / "model.glb").exists() is False
+        return
+    assert recompile.get("executed") is True
     assert (project_dir(settings, pid) / "viewer" / "model.glb").exists()
     # smooth-mesh reconstruction diagnostics + honest mesh evidence (registry + verification)
     from aieng.converters.shape_ir_verification import verify_shape_ir_package
@@ -10780,6 +10875,15 @@ def _read_geom_exec(pkg):
         return _json.loads(zf.read("provenance/conversion_manifest.json")).get("geometry_execution") or {}
 
 
+def _is_missing_manifold3d_execution(record: dict) -> bool:
+    errors = " ".join(str(e) for e in (record.get("errors") or []))
+    return (
+        record.get("executed") is False
+        and record.get("actual_runtime") == "manifold"
+        and "manifold3d" in errors
+    )
+
+
 def test_geometry_execution_manifest_across_paths(tmp_path: Path) -> None:
     """recompile/writeback/patch paths write a normalized geometry_execution manifest;
     verification reads it (no false geometry_kind:none for a real mesh writeback)."""
@@ -10798,29 +10902,46 @@ def test_geometry_execution_manifest_across_paths(tmp_path: Path) -> None:
                      json={"representation": "manifold_mesh", "method": "voxels"})
     assert wb.status_code == 200 and wb.json()["status"] == "ok"
     ge = _read_geom_exec(pkg)
-    assert ge["executed"] is True and ge["geometry_kind"] == "mesh"
-    assert ge["representation_kind"] == "mesh" and ge["actual_runtime"] == "manifold"
-    assert "geometry/preview.glb" in ge["artifacts"] and ge["source_shape_ir"] == "geometry/shape_ir.json"
-    assert "fallback" in ge and isinstance(ge["fallback"]["used"], bool)
-    vr = verify_shape_ir_package(pkg)
-    assert vr["geometry_kind"] == "mesh"          # no longer falsely "none" for a real mesh writeback
+    if _is_missing_manifold3d_execution(ge):
+        assert ge["geometry_kind"] == "none"
+        assert ge["real_geometry"] is False
+        assert ge["representation_kind"] == "mesh"
+        assert "geometry/preview.glb" not in ge["artifacts"]
+        vr = verify_shape_ir_package(pkg)
+        assert vr["geometry_kind"] == "none"
+    else:
+        assert ge["executed"] is True and ge["geometry_kind"] == "mesh"
+        assert ge["representation_kind"] == "mesh" and ge["actual_runtime"] == "manifold"
+        assert "geometry/preview.glb" in ge["artifacts"] and ge["source_shape_ir"] == "geometry/shape_ir.json"
+        assert "fallback" in ge and isinstance(ge["fallback"]["used"], bool)
+        vr = verify_shape_ir_package(pkg)
+        assert vr["geometry_kind"] == "mesh"          # no longer falsely "none" for a real mesh writeback
 
     # (2) brep_build123d writeback -> geometry_kind:brep + generated.step
     wb2 = client.post(f"/api/projects/{pid}/topology-optimization/writeback",
                       json={"representation": "brep_build123d", "method": "contour", "boundary": "polygon"})
     assert wb2.status_code == 200 and wb2.json()["status"] == "ok"
     ge2 = _read_geom_exec(pkg)
-    assert ge2["executed"] is True and ge2["geometry_kind"] == "brep"
-    assert ge2["representation_kind"] == "brep" and "geometry/generated.step" in ge2["artifacts"]
-    assert verify_shape_ir_package(pkg)["geometry_kind"] == "brep"
+    if _is_missing_manifold3d_execution(ge2):
+        assert ge2["geometry_kind"] == "none"
+        assert ge2["real_geometry"] is False
+    else:
+        assert ge2["executed"] is True and ge2["geometry_kind"] == "brep"
+        assert ge2["representation_kind"] == "brep" and "geometry/generated.step" in ge2["artifacts"]
+        assert verify_shape_ir_package(pkg)["geometry_kind"] == "brep"
 
     # (3) the shared recompile path (used by apply_shape_ir_patch AND writeback) writes
     # the manifest — call it directly to prove the patch path is covered too.
     from app import cad_generation
     rec = cad_generation.recompile_shape_ir_package(pkg)
-    assert rec["executed"] is True
     ge3 = _read_geom_exec(pkg)
-    assert ge3["executed"] is True and ge3["geometry_kind"] in ("brep", "mesh")
+    if rec["executed"] is False:
+        assert ge3["executed"] is False
+        assert ge3["geometry_kind"] == "none"
+        assert "manifold3d" in str(rec.get("error") or "")
+    else:
+        assert rec["executed"] is True
+        assert ge3["executed"] is True and ge3["geometry_kind"] in ("brep", "mesh")
 
 
 def test_geometry_execution_manifest_missing_degrades_honestly(tmp_path: Path) -> None:

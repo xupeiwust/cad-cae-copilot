@@ -27,7 +27,7 @@ const LLM_CONFIG_KEY = "llm_config";
 const LOCAL_AGENT_CONFIG_KEY = "local_agent_config";
 const API_KEY_BACKEND_KEY = "api_key";
 const API_KEY_LOCALSTORAGE_KEY = "aieng_api_key";
-const SETTINGS_RETRY_DELAY_MS = 2000;
+const SETTINGS_RETRY_SCHEDULE_MS = [1000, 2000, 4000, 8000] as const;
 
 type UseRuntimeSettingsArgs = {
   setSummary: Dispatch<SetStateAction<ProjectSummary | null>>;
@@ -140,12 +140,13 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
   useEffect(() => {
     let cancelled = false;
     let retryTimer: number | null = null;
-    const attemptHydration = async () => {
+    const attemptHydration = async (attempt = 0) => {
       const hydrated = await hydrateStoredSettings();
-      if (!hydrated && !cancelled) {
+      const nextDelay = SETTINGS_RETRY_SCHEDULE_MS[attempt];
+      if (!hydrated && !cancelled && typeof nextDelay === "number") {
         retryTimer = window.setTimeout(() => {
-          void attemptHydration();
-        }, SETTINGS_RETRY_DELAY_MS);
+          void attemptHydration(attempt + 1);
+        }, nextDelay);
       }
     };
     void attemptHydration();

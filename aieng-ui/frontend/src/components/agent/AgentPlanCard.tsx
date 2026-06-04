@@ -27,11 +27,15 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function AgentPlanCard({ item }: AgentPlanCardProps) {
   const diagnostics = planDiagnostics(item);
+  const completedCount = item.steps.filter((step) => step.status === "completed" || step.status === "done").length;
+  const currentStep = item.steps.find((step) => step.id === item.currentStepId)
+    ?? item.steps.find((step) => step.status === "running" || step.status === "blocked")
+    ?? item.steps[item.steps.length - 1];
   return (
     <section className={`agent-plan-card agent-plan-card-${item.status}`} aria-label="Agent plan">
       <div className="agent-plan-card-header">
         <div>
-          <span className="agent-plan-eyebrow">Agent plan</span>
+          <span className="agent-plan-eyebrow">Workflow</span>
           <strong><PointerText text={item.objective} /></strong>
         </div>
         <span className={`agent-plan-state agent-plan-state-${item.status}`}>
@@ -39,6 +43,12 @@ export function AgentPlanCard({ item }: AgentPlanCardProps) {
           {item.status === "approval" ? "waiting approval" : item.status}
         </span>
       </div>
+      {currentStep ? (
+        <p className="agent-plan-current">
+          <span>Current</span>
+          <PointerText text={currentStep.title || currentStep.summary || currentStep.id} />
+        </p>
+      ) : null}
       {diagnostics.length ? (
         <div className="agent-plan-diagnostics">
           {diagnostics.map((diagnostic) => (
@@ -49,11 +59,17 @@ export function AgentPlanCard({ item }: AgentPlanCardProps) {
           ))}
         </div>
       ) : null}
-      <ol className="agent-plan-steps">
-        {item.steps.map((step) => (
-          <AgentPlanStepRow key={step.id} step={step} current={step.id === item.currentStepId} />
-        ))}
-      </ol>
+      <details className="agent-plan-details">
+        <summary>
+          <span>{completedCount}/{item.steps.length} steps</span>
+          <span>Open sequence</span>
+        </summary>
+        <ol className="agent-plan-steps">
+          {item.steps.map((step) => (
+            <AgentPlanStepRow key={step.id} step={step} current={step.id === item.currentStepId} />
+          ))}
+        </ol>
+      </details>
       <EventDetail detail={item.detail} />
     </section>
   );

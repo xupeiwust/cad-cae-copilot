@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
-import { chatHistoryToTranscriptItems, type AgentTranscriptEvent } from "../../app/chatTranscript";
+import { chatHistoryToTranscriptItems, type AgentTranscriptEvent, type ChatTranscriptItem } from "../../app/chatTranscript";
 import type { StreamingState } from "../../app/useChatTranscript";
 import type { ContextSummary } from "../../api";
 import type { CadGenerationProgress, ChatHistoryItem, PickedFace } from "../../appTypes";
@@ -10,6 +10,7 @@ import type { EngineeringContextSource } from "../../app/engineeringContextSourc
 import { isRunActivelyProcessing } from "../../app/agentActivityFallback";
 import { AgentActivityLine, type AgentActivityTone } from "../agent/AgentActivityLine";
 import { ContextSummaryPanel } from "../agent/ContextSummaryPanel";
+import { PointerText } from "../PointerText";
 import { AgentInputBox } from "../chat/AgentInputBox";
 import { ChatTranscript } from "../chat/ChatTranscript";
 import { ActionIcon } from "../common";
@@ -23,7 +24,8 @@ type CurrentActivity = {
   elapsed?: string;
 };
 
-const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting"]);
+const ACTIVE_AUTOPILOT_STATUSES = new Set(["running", "awaiting_approval", "chatting", "blocked"]);
+const WORKFLOW_DETAIL_KINDS = new Set<ChatTranscriptItem["kind"]>(["tool", "status", "plan", "approval"]);
 
 function formatElapsed(createdAt: string | undefined, nowMs: number): string {
   if (!createdAt) return "0:00";
@@ -85,6 +87,66 @@ function latestActiveAutopilotRun(chatHistory: ChatHistoryItem[]): AutopilotRunS
     .reverse()
     .map((entry) => entry.autopilotRun)
     .find((run): run is AutopilotRunState => Boolean(run && ACTIVE_AUTOPILOT_STATUSES.has(run.status))) ?? null;
+}
+
+function latestAutopilotRun(chatHistory: ChatHistoryItem[]): AutopilotRunState | null {
+  return [...chatHistory]
+    .reverse()
+    .map((entry) => entry.autopilotRun)
+    .find((run): run is AutopilotRunState => Boolean(run)) ?? null;
+}
+
+function isWorkflowDetailItem(item: ChatTranscriptItem): boolean {
+  return WORKFLOW_DETAIL_KINDS.has(item.kind);
+}
+
+function planStepLabel(run: AutopilotRunState): string | null {
+  const plan = run.plan;
+  if (!plan?.steps?.length) return null;
+  const current = plan.steps.find((step) => step.id === plan.current_step_id)
+    ?? plan.steps.find((step) => step.status === "running" || step.status === "blocked")
+    ?? plan.steps[plan.steps.length - 1];
+  return current?.title || current?.summary || current?.tool_name || current?.skill_name || null;
+}
+
+function workflowSummaryText(run: AutopilotRunState): string {
+  if (run.status === "awaiting_approval" && run.pending_approval) return run.pending_approval.explanation;
+  if (run.status === "blocked") {
+    return run.observations[run.observations.length - 1]?.summary || "The agent needs more information before continuing.";
+  }
+  if (run.status === "chatting") {
+    return run.final_message || run.observations[run.observations.length - 1]?.summary || "Ready for your next instruction.";
+  }
+  return planStepLabel(run)
+    || run.observations[run.observations.length - 1]?.summary
+    || run.final_message
+    || run.message;
+}
+
+function workflowStatusLabel(run: AutopilotRunState): string {
+  if (run.status === "awaiting_approval") return "Approval needed";
+  if (run.status === "chatting") return "Awaiting reply";
+  if (run.status === "blocked") return "Needs input";
+  if (run.status === "running") return "Working";
+  if (run.status === "completed") return "Completed";
+  if (run.status === "failed") return "Failed";
+  if (run.status === "cancelled") return "Cancelled";
+  return run.status;
+}
+
+function workflowTone(run: AutopilotRunState): "running" | "approval" | "done" | "error" | "idle" {
+  if (run.status === "awaiting_approval" || run.status === "blocked") return "approval";
+  if (run.status === "completed" || run.status === "chatting") return "done";
+  if (run.status === "failed") return "error";
+  if (run.status === "cancelled") return "idle";
+  return "running";
+}
+
+function visiblePlanProgress(run: AutopilotRunState): string | null {
+  const steps = run.plan?.steps;
+  if (!steps?.length) return null;
+  const completed = steps.filter((step) => step.status === "completed" || step.status === "done").length;
+  return `${completed}/${steps.length} steps`;
 }
 
 function currentAutopilotActivity(run: AutopilotRunState): { title: string; detail: string; tone: AgentActivityTone } {
@@ -289,14 +351,31 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [newActivityAvailable, setNewActivityAvailable] = useState(false);
+  const [showWorkflowDetails, setShowWorkflowDetails] = useState(false);
   const wasNearBottomRef = useRef(true);
 
   const activeAutopilotRun = latestActiveAutopilotRun(chatHistory);
+  const latestRun = useMemo(() => latestAutopilotRun(chatHistory), [chatHistory]);
   const agentProcessing = isRunActivelyProcessing(activeAutopilotRun, nowMs);
   const transcriptItems = useMemo(
     () => chatHistoryToTranscriptItems(chatHistory, agentEvents).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.sourceId.localeCompare(b.sourceId)),
     [agentEvents, chatHistory],
   );
+  const hiddenWorkflowCount = useMemo(
+    () => transcriptItems.filter(isWorkflowDetailItem).length,
+    [transcriptItems],
+  );
+  const displayedTranscriptItems = useMemo(
+    () => showWorkflowDetails ? transcriptItems : transcriptItems.filter((item) => !isWorkflowDetailItem(item)),
+    [showWorkflowDetails, transcriptItems],
+  );
+  const workflowRun = activeAutopilotRun ?? latestRun;
+  const pendingAutopilotApproval = activeAutopilotRun?.status === "awaiting_approval"
+    ? activeAutopilotRun.pending_approval
+    : null;
+  const streamSignature = streamingState
+    ? `${streamingState.runId}:${streamingState.status}:${streamingState.kind ?? ""}:${streamingState.toolName ?? ""}:${streamingState.text}`
+    : "idle";
 
   useEffect(() => {
     // Only tick the elapsed clock while a run is genuinely processing — never
@@ -313,12 +392,16 @@ export function ChatPanel({
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const wasNearBottom = wasNearBottomRef.current || distanceFromBottom < 120;
     if (wasNearBottom) {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      window.requestAnimationFrame(() => {
+        const node = chatLogRef.current;
+        if (!node) return;
+        node.scrollTo({ top: node.scrollHeight, behavior: "auto" });
+      });
       setNewActivityAvailable(false);
     } else {
       setNewActivityAvailable(true);
     }
-  }, [chatHistory, transcriptItems.length, chatLogRef]);
+  }, [chatLogRef, displayedTranscriptItems, streamSignature]);
 
   const activityLine = currentActivityLine({
     cadGenerationProgress,
@@ -354,30 +437,76 @@ export function ChatPanel({
         onSummaryChange={onContextSummaryChange}
       />
 
-      <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>} onScroll={markScrollPosition} data-i18n-skip>
-        {transcriptItems.length ? (
-          <ChatTranscript
-            items={transcriptItems}
-            busy={chatBusy}
-            streamingState={streamingState}
-            onViewArtifact={(path) => void viewArtifact(path)}
-            onApproveAutopilot={approveAutopilot}
-            onRejectAutopilot={rejectAutopilot}
-            onCancelAutopilot={cancelAutopilot}
-            onReviseAutopilot={reviseAutopilot}
-            onReplyAutopilot={reviseAutopilot}
-          />
-        ) : (
-          <div className="summary-note summary-muted chat-empty-state">
-            <strong>Engineering Agent ready</strong>
-            <p>
-              {selectedId
-                ? "Type a description to generate CAD geometry, or ask about the current project."
-                : "Create or select a project, then describe what you want to model or analyse."}
-            </p>
+      <div className="chat-stream-shell">
+        <div className="chat-stream-header">
+          <div className="chat-stream-heading">
+            <span className="chat-stream-eyebrow">Conversation</span>
+            <strong>{selectedId ? "Focused exchange" : "Start a project to begin"}</strong>
           </div>
-        )}
+          {hiddenWorkflowCount ? (
+            <button
+              type="button"
+              className="chat-stream-toggle"
+              onClick={() => setShowWorkflowDetails((value) => !value)}
+            >
+              {showWorkflowDetails ? "Hide workflow details" : "Show workflow details"}
+              <span>{hiddenWorkflowCount}</span>
+            </button>
+          ) : null}
+        </div>
 
+        {workflowRun ? (
+          <section className={`chat-workflow-summary chat-workflow-summary-${workflowTone(workflowRun)}`}>
+            <div className="chat-workflow-copy">
+              <span className="chat-workflow-label">{workflowStatusLabel(workflowRun)}</span>
+              <strong><PointerText text={workflowRun.plan?.objective || workflowRun.message} /></strong>
+              <p><PointerText text={workflowSummaryText(workflowRun)} /></p>
+            </div>
+            <div className="chat-workflow-meta">
+              {visiblePlanProgress(workflowRun) ? <span>{visiblePlanProgress(workflowRun)}</span> : null}
+              {workflowRun.pending_approval?.tool_name ? <code>{workflowRun.pending_approval.tool_name}</code> : null}
+            </div>
+          </section>
+        ) : null}
+
+        <div className="chat-window" ref={chatLogRef as RefObject<HTMLDivElement>} onScroll={markScrollPosition} data-i18n-skip>
+          {displayedTranscriptItems.length ? (
+            <ChatTranscript
+              items={displayedTranscriptItems}
+              busy={chatBusy}
+              streamingState={streamingState}
+              onViewArtifact={(path) => void viewArtifact(path)}
+              onApproveAutopilot={approveAutopilot}
+              onRejectAutopilot={rejectAutopilot}
+              onCancelAutopilot={cancelAutopilot}
+              onReviseAutopilot={reviseAutopilot}
+              onReplyAutopilot={reviseAutopilot}
+            />
+          ) : transcriptItems.length ? (
+            <div className="summary-note summary-muted chat-empty-state">
+              <strong>Workflow details are tucked away</strong>
+              <p>Use the workflow toggle above to inspect tool-by-tool activity when you need it.</p>
+            </div>
+          ) : (
+            <div className="summary-note summary-muted chat-empty-state">
+              <strong>Engineering Agent ready</strong>
+              <p>
+                {selectedId
+                  ? "Type a description to generate CAD geometry, or ask about the current project."
+                  : "Create or select a project, then describe what you want to model or analyse."}
+              </p>
+            </div>
+          )}
+
+          {newActivityAvailable ? (
+            <button type="button" className="new-activity-button" onClick={scrollToBottom}>
+              Jump to latest
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="chat-workbench-footer">
         {activityLine ? (
           <AgentActivityLine
             title={activityLine.title}
@@ -387,15 +516,30 @@ export function ChatPanel({
             elapsed={activityLine.elapsed}
           />
         ) : null}
-        {newActivityAvailable ? (
-          <button type="button" className="new-activity-button" onClick={scrollToBottom}>
-            New activity
-          </button>
-        ) : null}
-      </div>
 
-      {(lastRuntimeRun?.status === "awaiting_approval" || simulationPending) ? (
+        {(pendingAutopilotApproval || lastRuntimeRun?.status === "awaiting_approval" || simulationPending) ? (
         <div className="chat-approval-dock">
+          {pendingAutopilotApproval && activeAutopilotRun ? (
+            <div className="approval-line runtime-approval-line">
+              <div className="approval-line-main">
+                <span className="approval-line-badge">agent</span>
+                <strong>{pendingAutopilotApproval.explanation || "Review pending tool call"}</strong>
+                <span>{pendingAutopilotApproval.tool_name}</span>
+                {pendingAutopilotApproval.risk_summary ? <small>{pendingAutopilotApproval.risk_summary}</small> : null}
+              </div>
+              <div className="approval-line-actions">
+                <button type="button" disabled={chatBusy} onClick={() => approveAutopilot(activeAutopilotRun.run_id)}>
+                  <ActionIcon name="approve" />
+                  Approve
+                </button>
+                <button type="button" className="ghost-button" disabled={chatBusy} onClick={() => rejectAutopilot(activeAutopilotRun.run_id)}>
+                  <ActionIcon name="reject" />
+                  Reject
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {lastRuntimeRun?.status === "awaiting_approval" ? (
             <div className="approval-line runtime-approval-line">
               <div className="approval-line-main">
@@ -441,45 +585,46 @@ export function ChatPanel({
         </div>
       ) : null}
 
-      {activeAutopilotRun?.status === "chatting" ? (
-        <div className="chat-quick-actions">
-          {buildQuickActions(chatHistory).map((action) => (
-            <button
-              key={action.label}
-              type="button"
-              className="chat-quick-action-chip"
-              disabled={chatBusy}
-              onClick={() => void sendUnified(action.prompt)}
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+        {activeAutopilotRun?.status === "chatting" ? (
+          <div className="chat-quick-actions">
+            {buildQuickActions(chatHistory).map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                className="chat-quick-action-chip"
+                disabled={chatBusy}
+                onClick={() => void sendUnified(action.prompt)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
-      <AgentInputBox
-        chatConnections={chatConnections}
-        selectedChatConnectionId={selectedChatConnectionId}
-        approvalMode={approvalMode}
-        approvalModeDisabled={approvalModeDisabled}
-        selectedConnectionBlocked={selectedConnectionBlocked}
-        llmReady={llmReady}
-        liveSyncStatus={liveSyncStatus}
-        liveSyncDetail={liveSyncDetail}
-        runtime={runtime}
-        runtimeReady={runtimeReady}
-        runtimeProvider={runtimeProvider}
-        message={message}
-        activeAutopilotRun={activeAutopilotRun}
-        agentProcessing={agentProcessing}
-        recentPickedFaces={recentPickedFaces}
-        setSelectedChatConnectionId={setSelectedChatConnectionId}
-        setApprovalMode={setApprovalMode}
-        setSettingsOpen={setSettingsOpen}
-        setMessage={setMessage}
-        sendUnified={sendUnified}
-        cancelAutopilot={cancelAutopilot}
-      />
+        <AgentInputBox
+          chatConnections={chatConnections}
+          selectedChatConnectionId={selectedChatConnectionId}
+          approvalMode={approvalMode}
+          approvalModeDisabled={approvalModeDisabled}
+          selectedConnectionBlocked={selectedConnectionBlocked}
+          llmReady={llmReady}
+          liveSyncStatus={liveSyncStatus}
+          liveSyncDetail={liveSyncDetail}
+          runtime={runtime}
+          runtimeReady={runtimeReady}
+          runtimeProvider={runtimeProvider}
+          message={message}
+          activeAutopilotRun={activeAutopilotRun}
+          agentProcessing={agentProcessing}
+          recentPickedFaces={recentPickedFaces}
+          setSelectedChatConnectionId={setSelectedChatConnectionId}
+          setApprovalMode={setApprovalMode}
+          setSettingsOpen={setSettingsOpen}
+          setMessage={setMessage}
+          sendUnified={sendUnified}
+          cancelAutopilot={cancelAutopilot}
+        />
+      </div>
     </section>
   );
 }

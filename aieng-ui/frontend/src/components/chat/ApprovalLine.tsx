@@ -34,20 +34,6 @@ export function ApprovalLine({ item, busy, onApprove, onReject, onCancel, onRevi
         {item.sideEffectSummary ? <span>{item.sideEffectSummary}</span> : null}
         {item.riskSummary ? <small>{item.riskSummary}</small> : null}
       </div>
-      {item.skillPlanBrief || item.skillPlanAssumptions?.length || item.skillPlanWarnings?.length || item.skillPlanVerificationTargets?.length ? (
-        <div className="approval-skill-plan">
-          {item.skillPlanBrief ? <strong>{item.skillPlanBrief}</strong> : null}
-          <ApprovalList label="Assumptions" items={item.skillPlanAssumptions} />
-          <ApprovalList label="Warnings" items={item.skillPlanWarnings} tone="warning" />
-          <ApprovalList label="Verify" items={item.skillPlanVerificationTargets} />
-        </div>
-      ) : null}
-      {item.codePreview ? (
-        <details className="approval-code-preview">
-          <summary>Code preview</summary>
-          <pre>{item.codePreview}</pre>
-        </details>
-      ) : null}
       <div className="approval-line-actions">
         <button type="button" disabled={busy || !runId} onClick={() => onApprove(runId)} title="Approve">
           <Check className="button-icon" />
@@ -93,6 +79,24 @@ export function ApprovalLine({ item, busy, onApprove, onReject, onCancel, onRevi
           </div>
         </div>
       )}
+      {item.skillPlanBrief || item.skillPlanAssumptions?.length || item.skillPlanWarnings?.length || item.skillPlanVerificationTargets?.length || item.codePreview ? (
+        <details className="approval-details">
+          <summary>Review context</summary>
+          {item.skillPlanBrief || item.skillPlanAssumptions?.length || item.skillPlanWarnings?.length || item.skillPlanVerificationTargets?.length ? (
+            <div className="approval-skill-plan">
+              {item.skillPlanBrief ? <strong>{item.skillPlanBrief}</strong> : null}
+              <ApprovalList label="Assumptions" items={item.skillPlanAssumptions} />
+              <ApprovalList label="Warnings" items={item.skillPlanWarnings} tone="warning" />
+              <ApprovalList label="Verify" items={item.skillPlanVerificationTargets} />
+            </div>
+          ) : null}
+          {item.codePreview ? (
+            <div className="approval-code-preview">
+              <pre>{item.codePreview}</pre>
+            </div>
+          ) : null}
+        </details>
+      ) : null}
       <EventDetail detail={item.detail} label="Review payload" />
     </div>
   );

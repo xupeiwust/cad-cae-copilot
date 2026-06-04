@@ -405,6 +405,7 @@ def test_mcp_first_resource_is_registered(mcp_server) -> None:
 
     chunks = list(asyncio.run(mcp_server.read_resource("aieng://guides/mcp-first-discipline")))
     text = "\n".join(str(getattr(chunk, "content", chunk)) for chunk in chunks)
+    assert "AIENG_MCP_MANAGED_APPROVAL=1" in text
     assert "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1" in text
     assert "aieng.agent_readme" in text
     assert "cae.prepare_solver_run" in text

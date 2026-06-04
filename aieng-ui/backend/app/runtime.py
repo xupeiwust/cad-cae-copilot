@@ -358,7 +358,7 @@ _INTENT_MAP: list[tuple[list[str], str, str]] = [
     ),
     (
         [
-            "generate computed metrics", "import computed metrics",
+            "generate computed metrics", "import computed metrics", "normalize metrics",
         ],
         "postprocess.generate_computed_metrics",
         "Import computed metrics from a CSV or JSON file into a .aieng package",

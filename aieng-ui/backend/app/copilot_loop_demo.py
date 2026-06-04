@@ -922,6 +922,7 @@ def run_demo_smoke_check(settings: Settings, payload: dict[str, Any]) -> dict[st
     # 5. Export review
     export_path: str | None = None
     export_text = ""
+    export_result: dict[str, Any] = {}
     if rejected_id and approved_id:
         try:
             export_result = copilot_loop.export_review(
@@ -985,7 +986,11 @@ def run_demo_smoke_check(settings: Settings, payload: dict[str, Any]) -> dict[st
                 _claim_boundary_section = export_text[boundary_start:]
             else:
                 _claim_boundary_section = export_text[boundary_start:next_h2]
-    has_en_boundary = "does not certify" in _claim_boundary_section.lower()
+    claim_boundary_payload = str(export_result.get("claim_boundary") or "")
+    has_en_boundary = (
+        "does not certify" in _claim_boundary_section.lower()
+        and "does not certify" in claim_boundary_payload.lower()
+    )
     # The export review and loop reports share the same core claim-boundary phrase.
     has_zh_boundary = "does not certify" in _claim_boundary_section.lower()
     _check(

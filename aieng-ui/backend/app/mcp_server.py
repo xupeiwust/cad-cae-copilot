@@ -177,10 +177,14 @@ First calls:
 Approval boundary:
 - Tools advertised with [APPROVAL REQUIRED] mutate CAD/packages or execute
   external processes.
-- In normal BYO-agent mode, the MCP client must ask the human before invoking
-  those tools.
+- In workbench-managed approval mode (AIENG_MCP_MANAGED_APPROVAL=1), this server
+  routes gated tools through the backend approval broker so the live viewer's
+  approval card is authoritative; unavailable approval fails safe.
+- In client-managed approval mode, the MCP client must ask the human before
+  invoking those tools.
 - If AIENG_MCP_BLOCK_APPROVAL_TOOLS=1, this server rejects gated tools with
-  code=approval_blocked before backend forwarding or in-process execution.
+  code=approval_blocked before backend forwarding or in-process execution. This
+  hard-block mode takes precedence over managed approval.
 
 CAD discipline:
 - Prefer cad.get_source before edits.
@@ -222,9 +226,10 @@ def _register_mcp_first_prompts_and_resources(mcp: FastMCP) -> None:
             "a live 3D viewer + spatial input surface. Start with "
             "aieng.agent_readme, aieng.list_projects, then aieng.agent_context. "
             "Use @face/@feature/@artifact pointers verbatim. Respect "
-            "[APPROVAL REQUIRED] tools; if AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 is "
-            "enabled they will be refused by the server. Report only evidence "
-            "from tool returns and package artifacts."
+            "[APPROVAL REQUIRED] tools; AIENG_MCP_MANAGED_APPROVAL=1 routes them "
+            "through the workbench viewer approval card, while "
+            "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 refuses them outright. Report only "
+            "evidence from tool returns and package artifacts."
         )
 
     @mcp.prompt(

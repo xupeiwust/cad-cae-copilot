@@ -1401,6 +1401,7 @@ def test_reconcile_shape_ir_provenance_refreshes_registry_and_manifest(tmp_path:
         zf.writestr("objects/object_registry.json", json.dumps(projected_registry))
         zf.writestr("provenance/conversion_manifest.json", json.dumps(manifest))
         zf.writestr("geometry/source.py", "x = 1\n")
+        zf.writestr("geometry/generated.step", "ISO-10303-21;\nEND-ISO-10303-21;\n")
 
     topo = {
         "format_version": "0.1",

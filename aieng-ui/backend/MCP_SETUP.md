@@ -449,25 +449,35 @@ is written to the package and the React workbench viewer updates automatically.
 
 Mutation/execution tools such as `cad.execute_build123d`, `cad.edit_parameter`,
 and `cae.run_solver` are flagged with `requires_approval=true` in the registry.
-The MCP server prepends `[APPROVAL REQUIRED]` to their
-descriptions so Claude Code's approval UX clearly surfaces the side effect to
-the human operator before invocation.
+The MCP server prepends `[APPROVAL REQUIRED]` to their descriptions so an MCP
+client can surface the side effect before invocation.
 
-There are two MCP-first operating modes:
+There are three MCP-first operating modes:
 
-1. **Normal BYO-agent mode** (default): approval-gated tools are advertised as
-   `[APPROVAL REQUIRED]`, and the connecting MCP client is responsible for
-   prompting the human before invocation.
-2. **Hard-block planning/inspection mode**: set
+1. **Workbench-managed approval mode** (recommended local viewer mode): set
+   `AIENG_MCP_MANAGED_APPROVAL=1` and `AIENG_BACKEND_URL` in the MCP server
+   environment. The MCP server routes every approval-gated tool through the
+   backend approval broker before execution, so the viewer's approval card is
+   authoritative even if the connecting client has allow-listed the tool. If the
+   broker/viewer is unavailable, the gated call is denied fail-safe.
+2. **Client-managed approval mode**: leave both approval env flags unset.
+   Approval-gated tools are advertised as `[APPROVAL REQUIRED]`, and the
+   connecting MCP client is responsible for prompting the human before
+   invocation. Use this only with a client permission UX you trust.
+3. **Hard-block planning/inspection mode**: set
    `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` in the MCP server environment. In this
    mode the MCP server rejects every registry tool with `requires_approval=true`
    before forwarding to the backend or invoking the runtime in-process. The
    structured response uses `status="error"` and `code="approval_blocked"`.
 
 Hard-block mode is useful for safe inspection, planning, and prompt/resource
-discovery. It cannot execute CAD mutations, package mutations, or solver runs;
-disable the flag and rely on the MCP client's approval UX when the human wants
-to perform those side effects.
+discovery and takes precedence over managed approval. It cannot execute CAD
+mutations, package mutations, or solver runs. Disable the flag and use
+workbench-managed approval when the human wants to perform those side effects
+with the live viewer in the loop.
+
+For the full constraint migration audit, see
+[`../docs/mcp_constraint_migration_checklist.md`](../docs/mcp_constraint_migration_checklist.md).
 
 ## How tool calls reach the workbench
 

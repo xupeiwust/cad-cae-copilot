@@ -531,21 +531,19 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         })
 
     def _cancel_session_autopilot_runs(project_id: str, session_id: str) -> int:
-        from .agent_autopilot.engine import AutopilotEngine
-
+        # De-engined (autopilot engine retired in the MCP-first cutover): mark any
+        # in-flight persisted runs cancelled directly in the store. No new autopilot
+        # runs are created anymore; this only tidies stale records on session cleanup.
         store = _autopilot_store()
-        engine = AutopilotEngine(
-            store=store,
-            runtime_tools=_rt.list_tools_for_mcp(),
-            on_state_update=_sync_autopilot_session,
-            on_event=_publish_agent_event,
-        )
         cancelled = 0
         for state in store.list_runs(project_id=project_id, session_id=session_id):
             if state.status in {"completed", "failed", "cancelled"}:
                 continue
             try:
-                engine.cancel_run(state.run_id)
+                state.status = "cancelled"
+                state.updated_at = now_iso()
+                store.save(state)
+                _sync_autopilot_session(state)
                 cancelled += 1
             except Exception:
                 log_exception(
@@ -596,15 +594,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "autopilot_runs_removed": runs_removed,
         }
 
-    def _autopilot_adapters(llm_config: dict[str, Any] | None = None) -> dict[str, Any]:
-        from .agent_autopilot.adapters import adapter_registry
-
-        adapters = adapter_registry()
-        if llm_config:
-            from .agent_autopilot.llm_api_adapter import LlmApiAdapter
-
-            adapters["llm-api"] = LlmApiAdapter(active_settings, llm_config)
-        return adapters
 
     def _agent_context_with_session_summary(project_id: str | None, session_id: str | None) -> dict[str, Any] | None:
         return _agent_context_with_session_summary_cached(project_id, session_id, package_reader=None)
@@ -756,204 +745,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             )
             return "balanced"
 
-    def _build_autopilot_engine(request: AutopilotRunRequest, *, package_reader: Any = None) -> AutopilotEngine:
-        from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
-        from .agent_autopilot.intent_resolution import build_llm_intent_classifier
 
-        # Natural-language intent classifier (LLM-backed). Degrades to the
-        # deterministic keyword heuristic when no provider/API key is configured,
-        # and is skipped entirely for fake/replay runs inside the engine.
-        intent_classifier = build_llm_intent_classifier(
-            agent_engine._build_provider, active_settings
-        )
-        return AutopilotEngine(
-            store=_autopilot_store(),
-            runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(request.llm_config),
-            agent_context=_agent_context_with_session_summary_cached(
-                request.project_id,
-                request.session_id,
-                package_reader=package_reader,
-            ),
-            on_state_update=_sync_autopilot_session,
-            on_event=_publish_agent_event,
-            approval_mode=_session_approval_mode(request.session_id),
-            simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
-                project_id,
-                package_reader=package_reader,
-            ),
-            intent_classifier=intent_classifier,
-            feature_parameter_loader=lambda project_id: _load_project_feature_parameters(
-                project_id,
-                package_reader=package_reader,
-            ),
-            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                tool_name,
-                tool_input,
-                {"project_id": request.project_id, "workflow_id": "agent_autopilot"},
-            ),
-        )
-
-    def _run_agentic_session(request: Any, state: Any) -> None:
-        """Background driver for the VSCode-parity agentic path (Approach A).
-
-        Spawns a real agentic claude session (workbench MCP + skills + repo docs)
-        and streams its events into the same transcript contract. Gated mutations
-        pause via the Phase-2 approval bridge. The legacy engine path is untouched.
-        """
-        import uuid as _uuid
-
-        from .agent_autopilot.claude_agent_session import ClaudeAgentSession
-
-        store = _autopilot_store()
-        # Two distinct ids: the CHAT session (state.session_id) tags emitted events
-        # so the UI associates them with the visible transcript; the Claude CLI
-        # needs a valid UUID for --session-id (derived stably from run_id, enables
-        # --resume later). Conflating them tags every event with the wrong session
-        # and the UI silently drops them.
-        claude_session_id = str(_uuid.uuid5(_uuid.NAMESPACE_OID, state.run_id))
-        backend_url = (os.environ.get("AIENG_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
-        captured = {"status": "running"}
-
-        def _on_event(event: dict[str, Any]) -> None:
-            _publish_agent_event(event)
-            if event.get("type") == "run_status_changed" and event.get("status") in {"completed", "failed", "cancelled"}:
-                captured["status"] = str(event.get("status"))
-
-        try:
-            session = ClaudeAgentSession(backend_url=backend_url)
-            result = session.run(
-                prompt=request.message,
-                run_id=state.run_id,
-                project_id=request.project_id,
-                session_id=request.session_id,  # chat session → event association
-                claude_session_id=claude_session_id,  # CLI UUID
-                on_event=_on_event,
-                on_spawn=lambda proc: _agentic_procs.__setitem__(state.run_id, proc),
-            )
-        except Exception as exc:
-            _mark_autopilot_failed(store, state.run_id, exc)
-            return
-        finally:
-            _agentic_procs.pop(state.run_id, None)
-
-        final_status = captured["status"]
-        if final_status == "running":
-            final_status = "completed" if result.get("status") == "completed" else "failed"
-        try:
-            current = store.load(state.run_id)
-            current.status = final_status
-            store.save(current)
-            _sync_autopilot_session(current)
-            _publish_autopilot_state(current)
-            _write_autopilot_audit(current.project_id, "agent_autopilot_finished", {
-                "run_id": current.run_id,
-                "adapter_id": current.adapter_id,
-                "status": current.status,
-                "step_count": len(current.steps),
-            })
-        except Exception:
-            pass
-
-    @app.post("/api/agent/autopilot/runs")
-    def create_agent_autopilot_run(
-        payload: dict[str, Any] = Body(default=None),
-    ) -> dict[str, Any]:
-        from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
-        from .agent_autopilot.schema import AgentWorkingState, AutopilotObservation, AutopilotRunRequest, AutopilotRunState
-
-        data = payload or {}
-        data = {**data, "llm_config": _llm_config_from_payload(data, include_api_key=True)}
-        try:
-            request = AutopilotRunRequest.model_validate(data)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"invalid autopilot request: {exc}") from exc
-
-        # Fast-path: create initial state without building agent_context (that can be slow).
-        store = _autopilot_store()
-        run_id = uuid.uuid4().hex[:12]
-        state = AutopilotRunState(
-            run_id=run_id,
-            status="running",
-            message=request.message,
-            project_id=request.project_id,
-            session_id=request.session_id,
-            adapter_id=request.adapter_id,
-            mode=request.mode,
-            dry_run=request.dry_run,
-            selected_geometry=request.selected_geometry,
-            llm_config=agent_engine.sanitize_llm_config(request.llm_config),
-            plan=create_default_agent_plan(request.message, plan_id=f"{run_id}-plan"),
-            working_state=AgentWorkingState(objective=request.message, current_mode=request.mode),
-            composer_intent=request.composer_intent,
-        )
-        state.observations.append(
-            AutopilotObservation(
-                id=uuid.uuid4().hex[:12],
-                kind="context",
-                summary="Autopilot run started.",
-                data={
-                    "project_id": request.project_id,
-                    "selected_geometry": request.selected_geometry,
-                },
-            )
-        )
-        store.save(state)
-        _sync_autopilot_session(state)
-        _publish_autopilot_state(state)
-        _publish_agent_event({
-            "event_id": f"{state.run_id}-started",
-            "type": "run_status_changed",
-            "project_id": state.project_id,
-            "session_id": state.session_id,
-            "run_id": state.run_id,
-            "status": state.status,
-            "content": "Autopilot run started.",
-            "payload": {"message": state.message, "adapter_id": state.adapter_id},
-            "created_at": state.created_at,
-        })
-        if state.plan is not None:
-            _publish_agent_event({
-                "event_id": f"{state.run_id}-plan-{state.plan.id}-created",
-                "type": "agent_plan_created",
-                "project_id": state.project_id,
-                "session_id": state.session_id,
-                "run_id": state.run_id,
-                "status": state.plan.status,
-                "content": state.plan.objective,
-                "payload": {"plan": state.plan.model_dump()},
-                "created_at": state.plan.created_at,
-            })
-        _write_autopilot_audit(state.project_id, "agent_autopilot_started", {
-            "run_id": state.run_id,
-            "adapter_id": state.adapter_id,
-            "status": state.status,
-            "step_count": 0,
-        })
-
-        def _run_in_background() -> None:
-            if request.adapter_id == "claude-agent":
-                _run_agentic_session(request, state)
-                return
-            try:
-                package_reader = _project_package_reader(request.project_id)
-                try:
-                    full_engine = _build_autopilot_engine(request, package_reader=package_reader)
-                    final_state = full_engine.start(request, run_id=state.run_id)
-                finally:
-                    if package_reader is not None:
-                        package_reader.close()
-                _write_autopilot_audit(final_state.project_id, "agent_autopilot_finished", {
-                    "run_id": final_state.run_id,
-                    "adapter_id": final_state.adapter_id,
-                    "status": final_state.status,
-                    "step_count": len(final_state.steps),
-                })
-            except Exception as exc:
-                _mark_autopilot_failed(store, state.run_id, exc)
-
-        _start_autopilot_worker(_run_in_background, run_id=state.run_id)
-        return _autopilot_run_response(state)
 
     @app.get("/api/agent/autopilot/runs/{run_id}")
     def get_agent_autopilot_run(run_id: str) -> dict[str, Any]:
@@ -985,217 +777,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         except ValueError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    @app.post("/api/agent/autopilot/runs/{run_id}/continue")
-    def continue_agent_autopilot_run(
-        run_id: str,
-        payload: dict[str, Any] = Body(default=None),
-    ) -> dict[str, Any]:
-        from .agent_autopilot.engine import AutopilotEngine
-
-        data = payload or {}
-        approved = bool(data.get("approved", True))
-        user_message = data.get("user_message") if isinstance(data.get("user_message"), str) else None
-        store = _autopilot_store()
-        try:
-            current = store.load(run_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-        if current.status in ("completed", "failed", "cancelled"):
-            return _autopilot_run_response(current)
-        if current.status == "awaiting_approval":
-            _publish_agent_event({
-                "event_id": f"{run_id}-approval-received-{uuid.uuid4().hex[:8]}",
-                "type": "run_status_changed",
-                "project_id": current.project_id,
-                "session_id": current.session_id,
-                "run_id": current.run_id,
-                "status": "running",
-                "content": "Approval response received; resuming local agent run.",
-                "payload": {"approved": approved, "has_revision_request": bool(user_message)},
-                "created_at": now_iso(),
-            })
-
-        llm_config = dict(current.llm_config)
-        api_key = _resolve_api_key(data)
-        if api_key:
-            llm_config["api_key"] = api_key
-        package_reader = _project_package_reader(current.project_id)
-        engine = AutopilotEngine(
-            store=store,
-            runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(llm_config),
-            agent_context=_agent_context_with_session_summary_cached(
-                current.project_id,
-                current.session_id,
-                package_reader=package_reader,
-            ),
-            on_state_update=_sync_autopilot_session,
-            on_event=_publish_agent_event,
-            approval_mode=_session_approval_mode(current.session_id),
-            simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
-                project_id,
-                package_reader=package_reader,
-            ),
-            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                tool_name,
-                tool_input,
-                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-            ),
-        )
-
-        def _run_continue_in_background() -> None:
-            try:
-                state = engine.continue_run(run_id, approved=approved, user_message=user_message)
-                _write_autopilot_audit(state.project_id, "agent_autopilot_approval", {
-                    "run_id": state.run_id,
-                    "approved": approved,
-                    "status": state.status,
-                })
-            except Exception as exc:
-                _mark_autopilot_failed(store, run_id, exc)
-            finally:
-                if package_reader is not None:
-                    package_reader.close()
-
-        _start_autopilot_worker(_run_continue_in_background, run_id=run_id)
-        return _autopilot_run_response(current)
-
-    @app.post("/api/agent/autopilot/runs/{run_id}/reply")
-    def reply_agent_autopilot_run(
-        run_id: str,
-        payload: dict[str, Any] = Body(default=None),
-    ) -> dict[str, Any]:
-        from .agent_autopilot.engine import AutopilotEngine
-
-        data = payload or {}
-        message = str(data.get("message") or "").strip()
-        if not message:
-            raise HTTPException(status_code=400, detail="message is required")
-        store = _autopilot_store()
-        try:
-            current = store.load(run_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if current.status in ("completed", "failed", "cancelled"):
-            return _autopilot_run_response(current)
-        current.status = "running"
-        current.updated_at = now_iso()
-        store.save(current)
-        _sync_autopilot_session(current)
-        _publish_autopilot_state(current)
-        llm_config = dict(current.llm_config)
-        api_key = _resolve_api_key(data)
-        if api_key:
-            llm_config["api_key"] = api_key
-        package_reader = _project_package_reader(current.project_id)
-        engine = AutopilotEngine(
-            store=store,
-            runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(llm_config),
-            agent_context=_agent_context_with_session_summary_cached(
-                current.project_id,
-                current.session_id,
-                package_reader=package_reader,
-            ),
-            on_state_update=_sync_autopilot_session,
-            on_event=_publish_agent_event,
-            approval_mode=_session_approval_mode(current.session_id),
-            simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
-                project_id,
-                package_reader=package_reader,
-            ),
-            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                tool_name,
-                tool_input,
-                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-            ),
-        )
-
-        def _run_reply_in_background() -> None:
-            try:
-                engine.reply_to_run(run_id, message)
-            except Exception as exc:
-                _mark_autopilot_failed(store, run_id, exc)
-            finally:
-                if package_reader is not None:
-                    package_reader.close()
-
-        _start_autopilot_worker(_run_reply_in_background, run_id=run_id)
-        return _autopilot_run_response(current)
-
-    @app.post("/api/agent/autopilot/runs/{run_id}/follow-up")
-    def follow_up_agent_autopilot_run(
-        run_id: str,
-        payload: dict[str, Any] = Body(default=None),
-    ) -> dict[str, Any]:
-        from .agent_autopilot.engine import AutopilotEngine
-
-        message = str((payload or {}).get("message") or "").strip()
-        if not message:
-            raise HTTPException(status_code=400, detail="message is required")
-        store = _autopilot_store()
-        try:
-            current = store.load(run_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        llm_config = dict(current.llm_config)
-        api_key = (payload or {}).get("api_key")
-        if isinstance(api_key, str) and api_key:
-            llm_config["api_key"] = api_key
-        try:
-            package_reader = _project_package_reader(current.project_id)
-            try:
-                engine = AutopilotEngine(
-                    store=store,
-                    runtime_tools=_rt.list_tools_for_mcp(),
-                    adapters=_autopilot_adapters(llm_config),
-                    agent_context=_agent_context_with_session_summary_cached(
-                        current.project_id,
-                        current.session_id,
-                        package_reader=package_reader,
-                    ),
-                    on_state_update=_sync_autopilot_session,
-                    on_event=_publish_agent_event,
-                    approval_mode=_session_approval_mode(current.session_id),
-                    simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
-                        project_id,
-                        package_reader=package_reader,
-                    ),
-                    tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                        tool_name,
-                        tool_input,
-                        {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-                    ),
-                )
-                state = engine.follow_up_run(run_id, message)
-            finally:
-                if package_reader is not None:
-                    package_reader.close()
-            return _autopilot_run_response(state)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    @app.post("/api/agent/autopilot/runs/{run_id}/cancel")
-    def cancel_agent_autopilot_run(run_id: str) -> dict[str, Any]:
-        from .agent_autopilot.engine import AutopilotEngine
-
-        store = _autopilot_store()
-        # Agentic runs: kill the claude + MCP subprocess tree so it stops polling
-        # and doesn't orphan. No-op for engine-path runs.
-        _kill_agentic_run(run_id)
-        engine = AutopilotEngine(store=store, runtime_tools=_rt.list_tools_for_mcp(), on_state_update=_sync_autopilot_session, on_event=_publish_agent_event)
-        try:
-            state = engine.cancel_run(run_id)
-            _write_autopilot_audit(state.project_id, "agent_autopilot_cancelled", {
-                "run_id": state.run_id,
-                "status": state.status,
-            })
-            return _autopilot_run_response(state)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # --- Agentic-session approval bridge (Approach A, Phase 2) ----------------
     # The agentic claude session (adapter_id == "claude-agent") drives the
@@ -3506,11 +3087,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if session is None or session.get("project_id") != project_id:
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
         cancelled_runs = _cancel_session_autopilot_runs(project_id, session_id)
-        # Drop any in-memory adapter step counters for this session (cancel_run
-        # clears active runs; this also sweeps any non-active leftovers).
-        from .agent_autopilot.engine import clear_session_step_counters
-
-        clear_session_step_counters(session_id)
         if not db.delete_chat_session(db_path, project_id, session_id):
             raise HTTPException(status_code=404, detail=f"Chat session not found: {session_id}")
         # Session row is gone — now remove this session's autopilot run files from

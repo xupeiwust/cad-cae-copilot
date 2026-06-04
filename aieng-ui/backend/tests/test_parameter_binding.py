@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_autopilot.engine import AutopilotEngine
 from app.agent_autopilot.parameter_binding import (
     bind_parameter_slots,
     build_parameter_index,
@@ -19,9 +18,6 @@ from app.agent_autopilot.parameter_binding import (
     parameter_scope,
     summarize_parameter_index,
 )
-from app.agent_autopilot.intent_resolution import ParameterSlot, extract_parameter_slots
-from app.agent_autopilot.schema import AutopilotRunRequest
-from app.agent_autopilot.store import AutopilotStore
 
 
 # Mirrors the real feature_graph.json shape produced by cad_generation: features
@@ -114,7 +110,10 @@ def test_summarize_parameter_index() -> None:
 
 
 def _slot(name, value, unit=None):
-    return ParameterSlot(name=name, value=value, unit=unit, raw=f"{name} to {value}")
+    # bind_parameter_slots accepts dicts with name/value/unit (see its docstring),
+    # so use a plain dict — this keeps the binding tests independent of the retired
+    # intent_resolution.ParameterSlot type.
+    return {"name": name, "value": value, "unit": unit, "raw": f"{name} to {value}"}
 
 
 def test_bind_unique_match_is_known_and_in_bounds() -> None:
@@ -180,56 +179,6 @@ def test_format_parameter_bindings_lines() -> None:
     assert "cad.edit_parameter featureId=feat_global_params parameterName=thickness_mm" in text
     assert "AMBIGUOUS" in text
     assert "no matching editable parameter" in text
-
-
-# --------------------------------------------------------------------------- #
-# Engine integration — _inject_parametric_edit_context with a stub loader      #
-# --------------------------------------------------------------------------- #
-
-
-def _engine(tmp_path: Path, loader) -> AutopilotEngine:
-    store = AutopilotStore(tmp_path / "runs")
-    return AutopilotEngine(store=store, runtime_tools=[], feature_parameter_loader=loader)
-
-
-def test_engine_binds_slot_to_concrete_parameter(tmp_path: Path) -> None:
-    index = build_parameter_index(_FEATURE_GRAPH)
-    engine = _engine(tmp_path, lambda _pid: index)
-    request = AutopilotRunRequest(
-        message="change the wall thickness to 5mm",
-        project_id="p1",
-        adapter_id="fake",
-        composer_intent={"command": "modify"},
-    )
-    state = engine._new_state(request)
-
-    engine._inject_parametric_edit_context(state)
-
-    obs = [o for o in state.observations if "cad.edit_parameter" in str(o.summary)]
-    assert obs, "expected a parametric-edit observation with a resolved target"
-    binding = obs[0].data["parameter_bindings"][0]
-    assert binding["known"] is True
-    assert binding["feature_id"] == "feat_global_params"
-    assert binding["parameter_name"] == "thickness_mm"
-
-
-def test_engine_unverified_when_no_loader(tmp_path: Path) -> None:
-    engine = _engine(tmp_path, None)  # no feature_parameter_loader
-    request = AutopilotRunRequest(
-        message="change the wall thickness to 5mm",
-        project_id="p1",
-        adapter_id="fake",
-        composer_intent={"command": "modify"},
-    )
-    state = engine._new_state(request)
-
-    engine._inject_parametric_edit_context(state)
-
-    # Still injects the slot bias, but bindings are honestly "unverified".
-    obs = [o for o in state.observations if o.data.get("parameter_slots")]
-    assert obs
-    binding = obs[0].data["parameter_bindings"][0]
-    assert binding["known"] is None
 
 
 def test_list_editable_parameters_tool_registered_and_empty(tmp_path: Path) -> None:
@@ -312,19 +261,3 @@ def test_critique_and_readiness_endpoints_smoke(tmp_path: Path) -> None:
     assert "inputs" in body and "setup_source" in body
     # No solver was run building the report.
     assert body.get("solver_executed") is False
-
-
-def test_engine_skips_for_non_modify(tmp_path: Path) -> None:
-    index = build_parameter_index(_FEATURE_GRAPH)
-    engine = _engine(tmp_path, lambda _pid: index)
-    request = AutopilotRunRequest(
-        message="change the wall thickness to 5mm",
-        project_id="p1",
-        adapter_id="fake",
-        composer_intent={"command": "explain"},  # not modify
-    )
-    state = engine._new_state(request)
-
-    engine._inject_parametric_edit_context(state)
-
-    assert not any(o.data.get("parameter_slots") for o in state.observations)

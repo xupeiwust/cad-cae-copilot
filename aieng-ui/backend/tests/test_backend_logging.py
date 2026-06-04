@@ -6,9 +6,6 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.agent_autopilot.engine import AutopilotEngine
-from app.agent_autopilot.schema import AutopilotRunRequest
-from app.agent_autopilot.store import AutopilotStore
 from app.logging_utils import (
     configure_backend_logging,
     error_metrics_snapshot,
@@ -114,29 +111,3 @@ def test_critique_endpoint_failure_is_logged_and_nonfatal(monkeypatch, tmp_path:
     snapshot = error_metrics_snapshot()
     critique_bucket = next(item for item in snapshot["buckets"] if item["bucket"] == "app_factory.project_critique")
     assert critique_bucket["count"] >= 1
-
-
-def test_engine_state_callback_failure_is_logged(tmp_path: Path) -> None:
-    reset_error_metrics()
-    configure_backend_logging(tmp_path / "data")
-
-    def _fail_callback(state):  # type: ignore[no-untyped-def]
-        raise RuntimeError(f"callback failed for {state.run_id}")
-
-    engine = AutopilotEngine(
-        store=AutopilotStore(tmp_path / "runs"),
-        runtime_tools=[],
-        on_state_update=_fail_callback,
-    )
-    state = engine.start(
-        AutopilotRunRequest(
-            message="hello",
-            fake_actions=[{"action": {"type": "final", "message": "done"}, "done": True}],
-        ),
-        run_id="run-callback",
-    )
-
-    assert state.status == "completed"
-    snapshot = error_metrics_snapshot()
-    callback_bucket = next(item for item in snapshot["buckets"] if item["bucket"] == "autopilot.state_update_callback")
-    assert callback_bucket["count"] >= 1

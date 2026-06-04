@@ -124,58 +124,7 @@ def test_build_agent_context_uses_single_zip_open_for_direct_reads(monkeypatch, 
     assert open_count == 1
 
 
-def test_autopilot_start_shares_package_reader_between_context_and_loaders(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    settings = _make_settings(tmp_path)
-    project_id, pkg = _make_project(settings, "cache-autopilot", "p.aieng")
-    _write_package(pkg)
-    _patch_nonessential_context_readers(monkeypatch)
-
-    real_zipfile = zipfile.ZipFile
-    open_count = 0
-
-    def _counting_zipfile(*args, **kwargs):  # type: ignore[no-untyped-def]
-        nonlocal open_count
-        open_count += 1
-        return real_zipfile(*args, **kwargs)
-
-    monkeypatch.setattr(zipfile, "ZipFile", _counting_zipfile)
-
-    def _fake_start(self, request, run_id=None):  # type: ignore[no-untyped-def]
-        assert self.agent_context is not None
-        assert self.simulation_setup_loader is not None
-        assert self.feature_parameter_loader is not None
-        setup = self.simulation_setup_loader(request.project_id)
-        params = self.feature_parameter_loader(request.project_id)
-        assert isinstance(setup, dict)
-        assert isinstance(params, list)
-        state = self.store.load(run_id)
-        state.status = "completed"
-        state.updated_at = now_iso()
-        self.store.save(state)
-        return state
-
-    monkeypatch.setattr("app.agent_autopilot.engine.AutopilotEngine.start", _fake_start)
-
-    client = TestClient(create_app(settings))
-    response = client.post(
-        "/api/agent/autopilot/runs",
-        json={"message": "cache test", "project_id": project_id},
-    )
-    assert response.status_code == 200, response.text
-    run_id = response.json()["run_id"]
-
-    deadline = time.time() + 3.0
-    status = None
-    while time.time() < deadline:
-        run_resp = client.get(f"/api/agent/autopilot/runs/{run_id}")
-        assert run_resp.status_code == 200
-        status = run_resp.json()["status"]
-        if status == "completed":
-            break
-        time.sleep(0.05)
-
-    assert status == "completed"
-    assert open_count == 1
+# NOTE: the autopilot-run path that previously also exercised the shared package
+# reader was removed with the engine retirement (#17 B-backend). The core #4
+# guarantee — build_agent_context opens the package zip once — is covered by
+# test_build_agent_context_uses_single_zip_open_for_direct_reads above.

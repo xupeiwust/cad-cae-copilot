@@ -84,6 +84,21 @@ class Compound(_AIENG_ORIGINAL_COMPOUND):
 _aieng_build123d.Compound = Compound
 
 
+# ── bd_warehouse standard parts (ISO/DIN/ANSI fasteners, bearings, gears, …) ──
+# Pre-bind the standard-parts modules so agent code can produce spec-compliant
+# parts — e.g. ``fastener.SocketHeadCapScrew("M6-1", length=10)`` — instead of
+# approximating with primitives, and so the geometry is semantically a screw/
+# bearing/gear rather than an anonymous cylinder. Guarded per-module: a missing
+# or broken submodule is skipped and never breaks a build. Agent code may also
+# ``from bd_warehouse.fastener import SocketHeadCapScrew`` (the package is installed).
+import importlib as _aieng_importlib
+for _aieng_bdw_mod in ("fastener", "bearing", "gear", "thread", "pipe", "flange", "sprocket"):
+    try:
+        globals()[_aieng_bdw_mod] = _aieng_importlib.import_module("bd_warehouse." + _aieng_bdw_mod)
+    except Exception:
+        pass
+
+
 # ── aieng high-level modelling helpers ──────────────────────────────────────
 # Injected into the runner namespace so agent-authored code can produce smooth,
 # designed forms with one call instead of stacking primitives. Each helper wraps

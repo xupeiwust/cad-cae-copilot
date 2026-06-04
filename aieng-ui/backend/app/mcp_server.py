@@ -193,6 +193,11 @@ CAD discipline:
   review before adding more details.
 - For engineering parts, use canonical labels (base_plate, mounting_hole, rib,
   boss, flange, interface_face) and call cad.critique.
+- For standard parts (fasteners, nuts, washers, bearings, gears, threads, pipes,
+  flanges) prefer bd_warehouse over primitive approximations — it is pre-bound in
+  the cad.execute_build123d namespace as the modules fastener / bearing / gear /
+  thread / pipe / flange / sprocket (e.g. fastener.SocketHeadCapScrew("M6-1",
+  length=12, simple=True)); use simple=True unless real thread geometry is needed.
 
 CAE discipline:
 - Never claim the solver ran unless cae.run_solver returned successful solver

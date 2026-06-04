@@ -36,6 +36,30 @@ For solver workflows, use `aieng-cad-cae-copilot`.
 5. For pure dimensional changes, use `cad.edit_parameter` and read `regression_diff` before trusting the result.
 6. For mechanical parts, call `cad.critique` after creation and fix blocking manufacturability findings.
 
+## Standard parts (bd_warehouse)
+
+For standard mechanical parts — fasteners, nuts, washers, bearings, gears, threads,
+pipes, flanges — prefer the **bd_warehouse** library over approximating with
+`Cylinder`/`Box`. It gives ISO/DIN/ANSI-compliant dimensions and semantically real
+parts (a screw, not a cylinder). It is pre-installed and the modules are pre-bound
+in the `cad.execute_build123d` namespace — no import line needed:
+
+```python
+# Pre-bound module aliases: fastener, bearing, gear, thread, pipe, flange, sprocket
+screw = fastener.SocketHeadCapScrew("M6-1", length=12, simple=True)
+screw.label = "mounting_bolt_M6"          # keep labels semantic + canonical
+brg = bearing.SingleRowDeepGrooveBallBearing("608", bearing_type="SKT")
+result = Compound(children=[screw, brg])
+```
+
+You may also `from bd_warehouse.fastener import SocketHeadCapScrew` explicitly.
+
+- Use `simple=True` on threaded fasteners unless real thread geometry is required
+  (real threads add many faces → larger STEP/STL and slower viewer load).
+- Label standard parts with canonical roles (`fastener`, `bearing`, `gear`) so the
+  feature graph and downstream tools (critique, CAE, BOM) can recognize them.
+- Gears: only spur gears are covered. Springs/cams/worms are not — hand-build those.
+
 ## Hard rules
 
 - Respect `[APPROVAL REQUIRED]` tools; never bypass or hide approval boundaries.

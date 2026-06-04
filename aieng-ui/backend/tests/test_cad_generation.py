@@ -285,6 +285,26 @@ def test_execute_build123d_code_failure() -> None:
             _execute_build123d_code("Box(10, 10, 10)  # missing result =")
 
 
+def test_execute_build123d_code_with_bd_warehouse_fastener() -> None:
+    """#3: bd_warehouse standard-parts modules are pre-bound in the runner
+    namespace, so agent code can produce spec-compliant ISO/DIN/ANSI parts
+    (a real M6 socket-head cap screw) instead of approximating with primitives.
+    Runs the real subprocess; skipped when build123d/bd_warehouse are absent."""
+    pytest.importorskip("build123d")
+    pytest.importorskip("bd_warehouse")
+    from app.cad_generation import _execute_build123d_code
+
+    code = (
+        "screw = fastener.SocketHeadCapScrew('M6-1', length=12, simple=True)\n"
+        "screw.label = 'mounting_bolt_M6'\n"
+        "result = screw\n"
+    )
+    step_bytes, stl_bytes, _glb_bytes, topo = _execute_build123d_code(code)
+    assert step_bytes[:13] == b"ISO-10303-21;"
+    assert stl_bytes
+    assert isinstance(topo, dict) and topo.get("entities")
+
+
 def test_execute_build123d_freeform_faces_get_rich_surface_metadata() -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import _execute_build123d_code

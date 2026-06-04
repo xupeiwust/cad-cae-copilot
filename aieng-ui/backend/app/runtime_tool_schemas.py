@@ -592,14 +592,27 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     # ── CAE setup / solver pipeline ──────────────────────────────────────────
     "cae.apply_setup_patch": {
         "type": "object",
-        "required": ["project_id", "patch"],
+        "anyOf": [
+            {"required": ["project_id", "patches"]},
+            {"required": ["project_id", "patch"]},
+        ],
         "properties": {
             "project_id": {"type": "string"},
+            "patches": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "object"},
+                "description": (
+                    "Preferred input. Array of CAE setup patch operations "
+                    "(create_file / replace_json / merge_object / append_array_item) "
+                    "with target path and payload."
+                ),
+            },
             "patch": {
                 "type": "object",
                 "description": (
-                    "CAE setup patch with operation kind (create_file / replace_json / "
-                    "merge_object / append_array_item), target path, and payload."
+                    "Legacy compatibility input. Either one CAE setup patch object, or "
+                    "a map of operation-name keys to patch objects. Prefer 'patches'."
                 ),
             },
         },

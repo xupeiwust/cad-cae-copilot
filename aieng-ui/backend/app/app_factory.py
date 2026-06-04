@@ -3906,6 +3906,56 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise ValueError("patch_json is required for mcp.prepare_execution")
         return prepare_patch_execution(active_settings, pid, inp)
 
+    def _normalize_cae_setup_patches(inp: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
+        raw_patches = inp.get("patches")
+        if raw_patches is not None:
+            if isinstance(raw_patches, dict):
+                raw_patches = [raw_patches]
+            if not isinstance(raw_patches, list):
+                return [], "Input field 'patches' must be a list of patch objects."
+            patches = list(raw_patches)
+        else:
+            legacy_patch = inp.get("patch")
+            if legacy_patch is None:
+                return [], None
+            if isinstance(legacy_patch, list):
+                patches = list(legacy_patch)
+            elif isinstance(legacy_patch, dict):
+                if (
+                    "path" in legacy_patch
+                    or "action_type" in legacy_patch
+                    or "operation" in legacy_patch
+                ):
+                    patches = [dict(legacy_patch)]
+                else:
+                    patches = []
+                    for op_key, op_value in legacy_patch.items():
+                        if not isinstance(op_value, dict):
+                            return [], (
+                                "Legacy input field 'patch' must contain patch objects keyed by "
+                                "operation name."
+                            )
+                        op = dict(op_value)
+                        op.setdefault("action_type", str(op_key).split(":", 1)[0])
+                        patches.append(op)
+            else:
+                return [], "Input field 'patch' must be a patch object or list of patch objects."
+
+        normalized: list[dict[str, Any]] = []
+        for patch in patches:
+            if not isinstance(patch, dict):
+                return [], "Each CAE setup patch must be an object."
+            op = dict(patch)
+            action = op.get("action_type") or op.get("operation")
+            if (
+                action in {"replace_json", "merge_object", "append_array_item"}
+                and "value" not in op
+                and "content" in op
+            ):
+                op["value"] = op.pop("content")
+            normalized.append(op)
+        return normalized, None
+
     def _tool_cae_apply_setup_patch(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import aieng_bridge
         from pathlib import Path as _Path
@@ -3944,7 +3994,13 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 "message": f"Package not found: {package_path}",
             }
 
-        patches: list[dict[str, Any]] = inp.get("patches", [])
+        patches, patch_error = _normalize_cae_setup_patches(inp)
+        if patch_error:
+            return {
+                "status": "error",
+                "code": "invalid_patch_input",
+                "message": patch_error,
+            }
         if not patches:
             return {
                 "status": "error",
@@ -6152,6 +6208,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         _tool_cae_apply_setup_patch,
         description=(
             "Apply a controlled patch to CAE setup artifacts inside a .aieng package. "
+            "Accepts a preferred 'patches' array plus legacy 'patch' compatibility. "
             "Supports create_file, replace_json, merge_object, append_array_item. "
             "Writes only to allowed setup paths; rejects results/ and path traversal."
         ),

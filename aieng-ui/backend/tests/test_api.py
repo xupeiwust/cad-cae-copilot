@@ -1782,6 +1782,92 @@ def test_cae_setup_patch_create_file_success(tmp_path: Path) -> None:
         assert written["id"] == "load_case_001"
 
 
+def test_cae_setup_patch_accepts_legacy_single_patch_object(tmp_path: Path) -> None:
+    """cae.apply_setup_patch accepts the legacy single-object `patch` input."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("patch-legacy-single"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "patch-test.aieng"
+    _make_setup_package(pkg_path)
+    project["aieng_file"] = "patch-test.aieng"
+    save_project(settings, project)
+
+    resp = client.post("/api/runtime/runs", json={
+        "message": "apply cae setup patch",
+        "project_id": project_id,
+        "tool_input": {
+            "project_id": project_id,
+            "patch": {
+                "path": "simulation/load_cases/load_case_legacy.json",
+                "action_type": "create_file",
+                "content": {"id": "load_case_legacy", "loads": []},
+            },
+            "refresh_preprocessing_summary": False,
+        },
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["status"] == "ok"
+
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        written = json.loads(zf.read("simulation/load_cases/load_case_legacy.json"))
+    assert written["id"] == "load_case_legacy"
+
+
+def test_cae_setup_patch_accepts_legacy_operation_map(tmp_path: Path) -> None:
+    """cae.apply_setup_patch expands legacy operation maps into normalized patches."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("patch-legacy-map"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "patch-test.aieng"
+    _make_setup_package(pkg_path)
+    project["aieng_file"] = "patch-test.aieng"
+    save_project(settings, project)
+
+    resp = client.post("/api/runtime/runs", json={
+        "message": "apply cae setup patch",
+        "project_id": project_id,
+        "tool_input": {
+            "project_id": project_id,
+            "patch": {
+                "create_file": {
+                    "path": "simulation/load_cases/load_case_map.json",
+                    "content": {"id": "load_case_map", "loads": []},
+                },
+                "merge_object:solver_settings": {
+                    "path": "simulation/solver_settings.json",
+                    "content": {"new_key": "new_value"},
+                },
+            },
+            "refresh_preprocessing_summary": False,
+        },
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["status"] == "ok"
+    changed = {a["path"] for a in result["changed_artifacts"]}
+    assert "simulation/load_cases/load_case_map.json" in changed
+    assert "simulation/solver_settings.json" in changed
+
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        written_load_case = json.loads(zf.read("simulation/load_cases/load_case_map.json"))
+        solver_settings = json.loads(zf.read("simulation/solver_settings.json"))
+    assert written_load_case["id"] == "load_case_map"
+    assert solver_settings["new_key"] == "new_value"
+
+
 def test_cae_setup_patch_replace_json_mutates_value(tmp_path: Path) -> None:
     """cae.apply_setup_patch replace_json via pointer updates the target field."""
     from app.main import create_app, default_project, project_dir, save_project

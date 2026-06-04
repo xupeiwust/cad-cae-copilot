@@ -69,6 +69,8 @@ class MemoryLayerConfig:
     working_max_tokens: int = 6000
     archive_max_tokens: int = 1500
     system_max_tokens: int = 4000
+    agent_context_max_tokens: int = 2500
+    working_state_max_tokens: int = 1200
 
 
 @dataclass
@@ -173,6 +175,7 @@ class ContextMemoryManager:
         selected_geometry: dict[str, Any] | None = None,
         agent_context: dict[str, Any] | None = None,
         working_state: dict[str, Any] | None = None,
+        include_system_context: bool = True,
     ) -> str:
         """Build a full hierarchical prompt.
 
@@ -183,11 +186,12 @@ class ContextMemoryManager:
         """
         payload: dict[str, Any] = {
             "objective": objective,
-            "system_context": self.system_content,
             "archive_digest": self._archive or "No prior history.",
-            "working_state": working_state or {},
+            "working_state": self._compact_working_state(working_state or {}),
             "working_memory": self._build_working_layer_payload(),
         }
+        if include_system_context:
+            payload["system_context"] = self.system_content
         repair_directive = self._latest_repair_directive()
         if repair_directive:
             payload["repair_directive"] = repair_directive
@@ -196,7 +200,7 @@ class ContextMemoryManager:
         if selected_geometry:
             payload["selected_geometry"] = selected_geometry
         if agent_context:
-            payload["agent_context"] = agent_context
+            payload["agent_context"] = self._compact_agent_context(agent_context)
 
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -233,25 +237,27 @@ class ContextMemoryManager:
         latest_observation: AutopilotObservation | dict[str, Any] | None = None,
         pending_approval: dict[str, Any] | None = None,
         instruction: str = "Resume the run from this compact state. Do not re-ask questions already answered in accepted_assumptions.",
+        include_system_context: bool = True,
     ) -> str:
         payload: dict[str, Any] = {
             "objective": objective,
             "instruction": instruction,
-            "system_context": self.system_content,
             "archive_digest": self._archive or "No prior history.",
             "resume_summary": {
-                "working_state": working_state or {},
+                "working_state": self._compact_working_state(working_state or {}),
                 "current_plan_step": current_plan_step,
                 "pending_approval": pending_approval,
             },
             "working_memory": self._build_working_layer_payload(),
         }
+        if include_system_context:
+            payload["system_context"] = self.system_content
         if project_id is not None:
             payload["active_project_id"] = project_id
         if selected_geometry:
             payload["selected_geometry"] = selected_geometry
         if agent_context:
-            payload["agent_context"] = agent_context
+            payload["agent_context"] = self._compact_agent_context(agent_context)
         if latest_observation is not None:
             payload["resume_summary"]["latest_observation"] = self._compact_single_observation(latest_observation)
         repair_directive = self._latest_repair_directive(latest_observation)
@@ -476,9 +482,7 @@ class ContextMemoryManager:
         output = data.get("output")
         tool_name = data.get("tool_name", "")
 
-        if data.get("error_class") == "cad_build_error" or (
-            tool_name == "cad.execute_build123d" and data.get("error")
-        ):
+        if self._is_cad_build_error_payload(data):
             return self._compact_cad_build_error(data)
 
         if isinstance(output, dict):
@@ -551,7 +555,14 @@ class ContextMemoryManager:
         return data
 
     def _compact_cad_build_error(self, data: dict[str, Any]) -> dict[str, Any]:
-        error = str(data.get("error") or "")
+        output = data.get("output") if isinstance(data.get("output"), dict) else {}
+        error = str(
+            data.get("error")
+            or output.get("message")
+            or output.get("error")
+            or output.get("code")
+            or ""
+        )
         tool_input = data.get("input") if isinstance(data.get("input"), dict) else {}
         code = tool_input.get("code") if isinstance(tool_input, dict) else None
         top_line = self._top_traceback_line(error)
@@ -579,6 +590,21 @@ class ContextMemoryManager:
             "Preserve project_id, mode, model_kind, user intent, labels, and colors unless the error proves they are invalid."
         )
         return compact
+
+    def _is_cad_build_error_payload(self, data: dict[str, Any]) -> bool:
+        tool_name = str(data.get("tool_name") or "")
+        if tool_name != "cad.execute_build123d":
+            return bool(data.get("error_class") == "cad_build_error")
+        if data.get("error_class") == "cad_build_error" or data.get("error"):
+            return True
+        output = data.get("output")
+        if isinstance(output, dict):
+            status = str(output.get("status") or "").lower()
+            if status in {"error", "failed", "failure"}:
+                return True
+            if output.get("error") or output.get("message") or output.get("code"):
+                return True
+        return False
 
     def _latest_repair_directive(
         self,
@@ -638,3 +664,100 @@ class ContextMemoryManager:
         except (TypeError, ValueError):
             text = str(obj)
         return max(1, len(text) // 4)
+
+    def _compact_agent_context(self, agent_context: dict[str, Any]) -> dict[str, Any]:
+        if self._estimate_tokens(agent_context) <= self.config.agent_context_max_tokens:
+            return agent_context
+
+        project = agent_context.get("project") if isinstance(agent_context.get("project"), dict) else {}
+        cad = agent_context.get("cad") if isinstance(agent_context.get("cad"), dict) else {}
+        cae = agent_context.get("cae") if isinstance(agent_context.get("cae"), dict) else {}
+        brep = agent_context.get("brep_graph") if isinstance(agent_context.get("brep_graph"), dict) else {}
+        condensed = {
+            "project": {
+                "id": project.get("id"),
+                "name": project.get("name"),
+            },
+            "agent_brief": agent_context.get("agent_brief"),
+            "context_summary": agent_context.get("context_summary"),
+            "cad": {
+                "status": cad.get("status"),
+                "summary": cad.get("summary"),
+                "geometry_evidence_level": cad.get("geometry_evidence_level"),
+                "topology_references": cad.get("topology_references"),
+                "missing_information": cad.get("missing_information"),
+            },
+            "brep_graph": {
+                "face_count": brep.get("face_count"),
+                "edge_count": brep.get("edge_count"),
+                "selection_group_count": brep.get("selection_group_count"),
+                "digest": brep.get("digest"),
+            },
+            "cae": {
+                "present": cae.get("present"),
+                "materials_count": cae.get("materials_count"),
+                "loads_count": cae.get("loads_count"),
+                "boundary_conditions_count": cae.get("boundary_conditions_count"),
+                "results_available": cae.get("results_available"),
+            },
+            "warnings": agent_context.get("warnings"),
+        }
+        if self._estimate_tokens(condensed) <= self.config.agent_context_max_tokens:
+            return condensed
+
+        text = json.dumps(condensed, ensure_ascii=False, separators=(",", ":"), default=str)
+        max_chars = self.config.agent_context_max_tokens * 4
+        return {
+            "summary": text[:max_chars] + (f"...[truncated {len(text) - max_chars} chars]" if len(text) > max_chars else ""),
+        }
+
+    def _compact_working_state(self, working_state: dict[str, Any]) -> dict[str, Any]:
+        if self._estimate_tokens(working_state) <= self.config.working_state_max_tokens:
+            return working_state
+
+        latest_evidence = working_state.get("latest_evidence")
+        compact_evidence: list[dict[str, Any]] = []
+        if isinstance(latest_evidence, list):
+            for item in latest_evidence[-5:]:
+                if not isinstance(item, dict):
+                    continue
+                compact_evidence.append(
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "tool_name",
+                            "summary",
+                            "followup_for",
+                            "named_parts",
+                            "parts_added",
+                            "brief",
+                            "intent",
+                            "adapter_id",
+                            "phase",
+                            "system_prompt_fingerprint",
+                            "system_prompt_chars",
+                            "user_prompt_chars",
+                            "cache_control_enabled",
+                        )
+                        if item.get(key) is not None
+                    }
+                )
+
+        condensed = {
+            "objective": working_state.get("objective"),
+            "current_mode": working_state.get("current_mode"),
+            "accepted_assumptions": list(working_state.get("accepted_assumptions") or [])[-6:],
+            "open_questions": list(working_state.get("open_questions") or [])[-4:],
+            "current_blockers": list(working_state.get("current_blockers") or [])[-4:],
+            "last_successful_tool": working_state.get("last_successful_tool"),
+            "recommended_next_action": working_state.get("recommended_next_action"),
+            "latest_evidence": compact_evidence,
+        }
+        if self._estimate_tokens(condensed) <= self.config.working_state_max_tokens:
+            return condensed
+
+        text = json.dumps(condensed, ensure_ascii=False, separators=(",", ":"), default=str)
+        max_chars = self.config.working_state_max_tokens * 4
+        return {
+            "summary": text[:max_chars] + (f"...[truncated {len(text) - max_chars} chars]" if len(text) > max_chars else ""),
+        }

@@ -530,6 +530,33 @@ def test_anthropic_provider_passes_temperature():
     assert calls[0]["temperature"] == 0.0
 
 
+def test_anthropic_provider_passes_cache_control_on_system_prompt():
+    calls: list[dict[str, object]] = []
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return type("Response", (), {"text": '{"answers":[]}'} )()
+
+    class _FakeClient:
+        messages = _FakeMessages()
+
+    provider = AnthropicProvider(client=_FakeClient(), model="claude-test", temperature=0.0)
+
+    result = provider.generate(
+        system_prompt="system",
+        user_prompt="user",
+        cache_control={"type": "ephemeral"},
+    )
+
+    assert result == '{"answers":[]}'
+    assert calls[0]["system"] == [{
+        "type": "text",
+        "text": "system",
+        "cache_control": {"type": "ephemeral"},
+    }]
+
+
 def test_build_provider_requires_base_url_for_openai_compatible():
     with pytest.raises(ValueError, match="base_url"):
         build_provider(

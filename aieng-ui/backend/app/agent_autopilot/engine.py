@@ -588,6 +588,31 @@ def _classify_exception(tool_name: str | None, exc: Exception) -> AutopilotError
     return "tool_runtime_error"
 
 
+def _classify_tool_output_failure(
+    tool_name: str,
+    output: Any,
+) -> tuple[AutopilotErrorClass, str] | None:
+    if not isinstance(output, dict):
+        return None
+    status = str(output.get("status") or "").lower()
+    if status not in {"error", "failed", "failure"} and not output.get("error"):
+        return None
+    message = str(
+        output.get("message")
+        or output.get("error")
+        or output.get("code")
+        or f"{tool_name} returned {status or 'error'}"
+    )
+    lowered = message.lower()
+    if tool_name == "cad.execute_build123d":
+        return ("cad_build_error", message)
+    if "timeout" in lowered or "timed out" in lowered:
+        return ("timeout", message)
+    if "project_id" in lowered or "missing" in lowered:
+        return ("missing_context", message)
+    return ("tool_runtime_error", message)
+
+
 class AutopilotEngine:
     def __init__(
         self,
@@ -1228,6 +1253,27 @@ class AutopilotEngine:
         state.working_state.latest_evidence = state.working_state.latest_evidence[-8:]
         state.working_state.updated_at = now_iso()
 
+    def _record_prompt_diagnostics(
+        self,
+        state: AutopilotRunState,
+        *,
+        adapter_id: str,
+        phase: str,
+        diagnostics: dict[str, Any],
+    ) -> None:
+        evidence = {
+            "adapter_id": adapter_id,
+            "phase": phase,
+            "system_prompt_fingerprint": diagnostics.get("system_prompt_fingerprint"),
+            "system_prompt_chars": diagnostics.get("system_prompt_chars"),
+            "user_prompt_chars": diagnostics.get("user_prompt_chars"),
+            "cache_control_enabled": diagnostics.get("cache_control_enabled"),
+            "prompt_kind": diagnostics.get("prompt_kind"),
+            "prompt_tokens_estimate": diagnostics.get("prompt_tokens_estimate"),
+        }
+        if any(value is not None for value in evidence.values()):
+            self._add_working_evidence(state, evidence)
+
     def _update_working_state_for_tool_result(
         self,
         state: AutopilotRunState,
@@ -1557,6 +1603,7 @@ class AutopilotEngine:
                     current_plan_step=self._current_plan_step_payload(state),
                     latest_observation=new_obs[-1] if new_obs else None,
                     pending_approval=state.pending_approval.model_dump() if state.pending_approval else None,
+                    include_system_context=adapter.adapter_id != "llm-api",
                 )
                 prompt_kind = "resume"
             else:
@@ -1566,6 +1613,7 @@ class AutopilotEngine:
                     selected_geometry=state.selected_geometry,
                     agent_context=self.agent_context,
                     working_state=state.working_state.model_dump(),
+                    include_system_context=adapter.adapter_id != "llm-api",
                 )
                 prompt_kind = "full"
 
@@ -1586,6 +1634,15 @@ class AutopilotEngine:
                     "prompt_kind": prompt_kind,
                     "prompt_tokens_estimate": prompt_tokens,
                     "memory": memory_stats,
+                },
+            )
+            self._record_prompt_diagnostics(
+                state,
+                adapter_id=adapter.adapter_id,
+                phase="prompt_prepared",
+                diagnostics={
+                    "prompt_kind": prompt_kind,
+                    "prompt_tokens_estimate": prompt_tokens,
                 },
             )
             self._emit_phase_changed(
@@ -1619,9 +1676,16 @@ class AutopilotEngine:
                     _observation(
                         "agent_activity",
                         message,
-                        {"adapter_id": adapter.adapter_id, "phase": phase, "progress_event": True},
+                        {**evt, "progress_event": True},
                     )
                 )
+                if phase == "prompt_prepared":
+                    self._record_prompt_diagnostics(
+                        state,
+                        adapter_id=adapter.adapter_id,
+                        phase=str(phase),
+                        diagnostics=evt,
+                    )
                 # Emit the event over SSE so the UI updates immediately, but do
                 # NOT call _checkpoint here — store.save() is not thread-safe on
                 # Windows and the main thread will checkpoint after invoke returns.
@@ -1630,7 +1694,7 @@ class AutopilotEngine:
                     "run_status_changed",
                     status=state.status,
                     content=message,
-                    payload={"adapter_id": adapter.adapter_id, "phase": phase, "progress_event": True},
+                    payload={**evt, "progress_event": True},
                     event_id=f"{state.run_id}-progress-{len(state.steps)}-{phase}",
                 )
                 self._emit_phase_changed(
@@ -1663,13 +1727,18 @@ class AutopilotEngine:
             heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
             heartbeat_thread.start()
 
+            invoke_kwargs: dict[str, Any] = {
+                "prompt": prompt,
+                "action_schema": AutopilotAgentAction.json_schema_for_adapter(),
+                "timeout_seconds": DEFAULT_STEP_TIMEOUT_SECONDS,
+                "on_progress": _on_adapter_progress,
+                "session_id": _effective_adapter_session_id(state),
+                "step_index": _session_step_index(_effective_adapter_session_id(state), state.adapter_id),
+            }
+            if adapter.adapter_id == "llm-api":
+                invoke_kwargs["system_context"] = self._system_layer
             result = adapter.invoke(
-                prompt=prompt,
-                action_schema=AutopilotAgentAction.json_schema_for_adapter(),
-                timeout_seconds=DEFAULT_STEP_TIMEOUT_SECONDS,
-                on_progress=_on_adapter_progress,
-                session_id=_effective_adapter_session_id(state),
-                step_index=_session_step_index(_effective_adapter_session_id(state), state.adapter_id),
+                **invoke_kwargs,
             )
 
             invoke_done.set()
@@ -2176,6 +2245,52 @@ class AutopilotEngine:
             self._checkpoint(state)
             return False
         if self._cancel_if_requested(state):
+            return False
+        structured_failure = _classify_tool_output_failure(tool_name, output)
+        if structured_failure is not None:
+            error_class, error_message = structured_failure
+            repair_allowed = self._record_repair_attempt(state, tool_name, error_class, error_message)
+            self._set_plan_step(
+                state,
+                "execute_tool",
+                "failed" if not repair_allowed else "blocked",
+                summary=f"Tool {tool_name} returned an error result: {error_message}",
+                evidence={"tool_name": tool_name, "error": error_message, "tool_output": output},
+                tool_name=tool_name,
+            )
+            state.observations.append(
+                _observation(
+                    "tool_error",
+                    f"Tool {tool_name} returned an error result: {error_message}",
+                    _classified_error_data(
+                        error_class,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        policy=policy_data,
+                        error=error_message,
+                        output=output,
+                    ),
+                )
+            )
+            self._record_working_blocker(
+                state,
+                f"Tool {tool_name} returned an error result: {error_message}",
+                next_action="Repair the failed tool input and retry within the bounded repair loop." if repair_allowed else "Stop and report the failed tool execution.",
+            )
+            self._emit_event(
+                state,
+                "tool_failed",
+                status="failed",
+                content=f"Tool {tool_name} returned an error result: {error_message}",
+                payload={"tool_name": tool_name, "input": tool_input, "policy": policy_data, "output": output},
+            )
+            self._checkpoint(state)
+            if repair_allowed:
+                return True
+            state.status = "failed"
+            state.errors.append(f"Repair attempts exceeded for {tool_name}: {error_message}")
+            self._finish_plan(state, "failed", state.errors[-1])
+            self._checkpoint(state)
             return False
         state.observations.append(
             _observation(

@@ -274,6 +274,47 @@ def test_resume_prompt_includes_compact_state_and_working_memory() -> None:
     assert payload["system_context"]["tools"][0]["name"] == "cad.execute_build123d"
 
 
+def test_resume_prompt_can_omit_system_context_for_stateless_adapter_split() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": [{"name": "cad.execute_build123d"}]})
+    prompt = mgr.build_resume_prompt(
+        objective="continue",
+        working_state={"objective": "continue"},
+        include_system_context=False,
+    )
+    payload = json.loads(prompt)
+
+    assert "system_context" not in payload
+    assert payload["resume_summary"]["working_state"]["objective"] == "continue"
+
+
+def test_resume_prompt_compacts_large_working_state() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": []})
+    prompt = mgr.build_resume_prompt(
+        objective="continue",
+        working_state={
+            "objective": "continue",
+            "latest_evidence": [
+                {
+                    "tool_name": "cad.execute_build123d",
+                    "summary": "x" * 2000,
+                    "system_prompt_fingerprint": "abc123",
+                    "user_prompt_chars": 9999,
+                    "extra": "y" * 2000,
+                }
+                for _ in range(8)
+            ],
+            "current_blockers": ["b" * 1000],
+            "recommended_next_action": "z" * 1000,
+        },
+    )
+    payload = json.loads(prompt)
+    working_state = payload["resume_summary"]["working_state"]
+
+    assert "summary" in working_state or len(json.dumps(working_state)) < 5000
+    if "latest_evidence" in working_state:
+        assert "extra" not in working_state["latest_evidence"][-1]
+
+
 def test_resume_prompt_includes_session_context_summary() -> None:
     mgr = ContextMemoryManager(system_content={"tools": []})
     prompt = mgr.build_resume_prompt(
@@ -334,6 +375,32 @@ def test_compact_agent_context_output() -> None:
     data = working[0].get("data", {})
     assert data.get("feature_count") == 42
     assert data.get("face_count") == 12
+
+
+def test_cad_build_tool_result_error_yields_repair_directive() -> None:
+    mgr = ContextMemoryManager(system_content={"tools": []})
+    mgr.add_observation(
+        {
+            "kind": "tool_result",
+            "summary": "Executed tool call: cad.execute_build123d",
+            "data": {
+                "tool_name": "cad.execute_build123d",
+                "input": {"project_id": "p1", "code": "result = Box(1, 2, 3)"},
+                "output": {
+                    "status": "error",
+                    "code": "execution_failed",
+                    "message": "NameError: name 'Box' is not defined",
+                },
+            },
+        }
+    )
+
+    prompt = mgr.build_resume_prompt(objective="repair build")
+    payload = json.loads(prompt)
+    directive = payload["resume_summary"]["repair_directive"]
+    assert directive["type"] == "cad_build_repair"
+    assert directive["tool_name"] == "cad.execute_build123d"
+    assert "Box" in directive["source_snippet"]
 
 
 def test_compact_critique_output() -> None:

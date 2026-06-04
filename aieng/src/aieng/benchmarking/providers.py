@@ -3,11 +3,21 @@ from __future__ import annotations
 import importlib
 import os
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
+
+
+CacheControl = dict[str, Any]
 
 
 class LLMProvider(Protocol):
-    def generate(self, *, system_prompt: str, user_prompt: str, json_mode: bool = True) -> str:
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        json_mode: bool = True,
+        cache_control: CacheControl | None = None,
+    ) -> str:
         ...
 
 
@@ -112,12 +122,26 @@ class AnthropicProvider:
     max_output_tokens: int = 8192
     temperature: float = 0.0
 
-    def generate(self, *, system_prompt: str, user_prompt: str, json_mode: bool = True) -> str:
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        json_mode: bool = True,
+        cache_control: CacheControl | None = None,
+    ) -> str:
+        system_payload: str | list[dict[str, Any]] = system_prompt
+        if cache_control:
+            system_payload = [{
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": cache_control,
+            }]
         response = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_output_tokens,
             temperature=self.temperature,
-            system=system_prompt,
+            system=system_payload,
             messages=[{"role": "user", "content": user_prompt}],
         )
         return _extract_text_from_anthropic_response(response)
@@ -132,7 +156,14 @@ class OpenAICompatibleProvider:
     top_p: float = 1.0
     seed: Optional[int] = None
 
-    def generate(self, *, system_prompt: str, user_prompt: str, json_mode: bool = True) -> str:
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        json_mode: bool = True,
+        cache_control: CacheControl | None = None,
+    ) -> str:
         request_kwargs = _openai_request_kwargs(
             model=self.model,
             system_prompt=system_prompt,

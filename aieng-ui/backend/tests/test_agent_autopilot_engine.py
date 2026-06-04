@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from app.agent_autopilot.adapters import progress_event
 from app.agent_autopilot.engine import (
     GEOMETRY_MUTATION_REPAIR_INSTRUCTION,
     AutopilotEngine,
@@ -192,6 +193,86 @@ def test_mutation_intent_guard_allows_final_after_cad_mutation(tmp_path: Path) -
         ("cad.execute_build123d", {"project_id": "p1", "code": "result = None"}),
     ]
     assert not any(obs.summary == GEOMETRY_MUTATION_REPAIR_INSTRUCTION for obs in resumed.observations)
+
+
+def test_engine_treats_structured_cad_error_result_as_repairable_failure(tmp_path: Path) -> None:
+    calls: list[tuple[str, dict]] = []
+
+    class RetryAfterStructuredErrorAdapter:
+        adapter_id = "retry-structured-error"
+        label = "Retry Structured Error"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, *, prompt, action_schema, timeout_seconds=300, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            action = (
+                {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = Broken()"},
+                    },
+                }
+                if self.calls == 1
+                else {
+                    "action": {
+                        "type": "tool_call",
+                        "tool_name": "cad.execute_build123d",
+                        "input": {"project_id": "p1", "code": "result = None"},
+                    },
+                }
+            )
+            return AdapterInvocationResult(status="success", action=AutopilotAgentAction.model_validate(action))
+
+    def _tool_executor(name: str, inp: dict) -> dict:
+        calls.append((name, inp))
+        if name == "cad.execute_build123d" and inp["code"] == "result = Broken()":
+            return {
+                "status": "error",
+                "code": "execution_failed",
+                "message": "NameError: Broken is not defined",
+            }
+        return {"status": "ok", "named_parts": ["body"], "parts_added": ["body"]}
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"retry-structured-error": RetryAfterStructuredErrorAdapter()},
+        tool_executor=_tool_executor,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="add a camera pod",
+            project_id="p1",
+            adapter_id="retry-structured-error",
+            dry_run=False,
+            max_steps=2,
+        )
+    )
+
+    assert state.status == "awaiting_approval"
+    resumed = engine.continue_run(state.run_id, approved=True, max_steps=2)
+
+    assert resumed.status == "awaiting_approval"
+    assert resumed.pending_approval is not None
+    assert resumed.pending_approval.tool_name == "cad.execute_build123d"
+    assert calls == [
+        ("aieng.agent_context", {"project_id": "p1"}),
+        ("cad.execute_build123d", {"project_id": "p1", "code": "result = Broken()"}),
+    ]
+    errors = [obs for obs in resumed.observations if obs.kind == "tool_error"]
+    assert any("returned an error result" in obs.summary for obs in errors)
+    assert resumed.repair_attempts["cad.execute_build123d:cad_build_error"] == 1
+    assert not any(
+        obs.kind == "tool_result"
+        and obs.data.get("tool_name") == "cad.execute_build123d"
+        and isinstance(obs.data.get("output"), dict)
+        and obs.data["output"].get("status") == "error"
+        for obs in resumed.observations
+    )
 
 
 def test_simulation_objective_uses_cae_plan_template() -> None:
@@ -393,6 +474,61 @@ def test_engine_emits_typed_phase_events(tmp_path: Path) -> None:
     assert phases
     assert any(event["payload"]["phase"] == "prompt_prepared" for event in phases)
     assert all(event["payload"].get("adapter_id") for event in phases)
+
+
+def test_engine_persists_llm_prompt_fingerprint_diagnostics(tmp_path: Path) -> None:
+    events = []
+
+    class FingerprintAdapter:
+        adapter_id = "llm-api"
+        label = "LLM API"
+
+        def invoke(self, *, prompt, action_schema, on_progress=None, **kwargs):  # type: ignore[no-untyped-def]
+            if on_progress is not None:
+                on_progress(
+                    progress_event(
+                        self.adapter_id,
+                        "prompt_prepared",
+                        "LLM API prompt prepared.",
+                        system_prompt_fingerprint="fp1234567890abcd",
+                        system_prompt_chars=3200,
+                        user_prompt_chars=900,
+                        cache_control_enabled=True,
+                    )
+                )
+            return AdapterInvocationResult(
+                status="success",
+                action=AutopilotAgentAction.model_validate(
+                    {"action": {"type": "final", "message": "Done."}, "done": True}
+                ),
+            )
+
+    engine = AutopilotEngine(
+        store=AutopilotStore(tmp_path / "runs"),
+        runtime_tools=RUNTIME_TOOLS,
+        adapters={"llm-api": FingerprintAdapter()},
+        on_event=events.append,
+    )
+
+    state = engine.start(
+        AutopilotRunRequest(
+            message="hello",
+            adapter_id="llm-api",
+        )
+    )
+
+    assert state.status == "completed"
+    progress_events = [
+        event for event in events
+        if event["type"] == "run_status_changed"
+        and event.get("payload", {}).get("phase") == "prompt_prepared"
+        and event.get("payload", {}).get("system_prompt_fingerprint") == "fp1234567890abcd"
+    ]
+    assert progress_events
+    assert any(
+        item.get("system_prompt_fingerprint") == "fp1234567890abcd"
+        for item in state.working_state.latest_evidence
+    )
 
 
 def test_engine_executes_auto_allowed_tool_when_not_dry_run(tmp_path: Path) -> None:
@@ -679,7 +815,10 @@ def test_engine_updates_working_state_from_skill_plan(tmp_path: Path) -> None:
     assert state.working_state.current_mode == "autopilot"
     assert state.working_state.last_successful_tool == "cad.plan_build123d_skill"
     assert state.working_state.recommended_next_action == "Review skill plan, then call cad.execute_build123d if it matches the user intent."
-    assert state.working_state.latest_evidence[-1]["brief"] == "Mechanical flange: OD 40mm."
+    assert any(
+        item.get("brief") == "Mechanical flange: OD 40mm."
+        for item in state.working_state.latest_evidence
+    )
 
 
 def test_engine_persists_approved_skill_assumptions_in_next_prompt(tmp_path: Path) -> None:

@@ -327,7 +327,12 @@ def cad_specific_recommendations(observation: dict[str, Any]) -> list[dict[str, 
 # ── main entry ───────────────────────────────────────────────────────────────
 
 
-def observe_cad_state(settings: Any, project_id: str | None) -> dict[str, Any]:
+def observe_cad_state(
+    settings: Any,
+    project_id: str | None,
+    *,
+    package_reader: _pi.PackageReadCache | None = None,
+) -> dict[str, Any]:
     """Build a :class:`CADObservation` for the project's current CAD state.
 
     The function is pure and read-only. It never executes CAD tools and
@@ -371,8 +376,9 @@ def observe_cad_state(settings: Any, project_id: str | None) -> dict[str, Any]:
             "claim_boundary": CLAIM_BOUNDARY,
         }
 
+    owns_reader = package_reader is None
     try:
-        archive = zipfile.ZipFile(package_path, "r")
+        zf = package_reader or _pi.PackageReadCache(package_path)
     except (zipfile.BadZipFile, OSError) as exc:
         return {
             "schema_version": SCHEMA_VERSION,
@@ -400,7 +406,7 @@ def observe_cad_state(settings: Any, project_id: str | None) -> dict[str, Any]:
             "claim_boundary": CLAIM_BOUNDARY,
         }
 
-    with archive as zf:
+    try:
         names = set(zf.namelist())
 
         binary_cad = _binary_cad_members(names)
@@ -660,6 +666,9 @@ def observe_cad_state(settings: Any, project_id: str | None) -> dict[str, Any]:
         }
         observation["next_recommended_actions"] = cad_specific_recommendations(observation)
         return observation
+    finally:
+        if owns_reader:
+            zf.close()
 
 
 __all__ = [

@@ -607,12 +607,24 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         return adapters
 
     def _agent_context_with_session_summary(project_id: str | None, session_id: str | None) -> dict[str, Any] | None:
+        return _agent_context_with_session_summary_cached(project_id, session_id, package_reader=None)
+
+    def _agent_context_with_session_summary_cached(
+        project_id: str | None,
+        session_id: str | None,
+        *,
+        package_reader: Any = None,
+    ) -> dict[str, Any] | None:
         agent_context_snapshot: dict[str, Any] | None = None
         if project_id:
             try:
                 from . import agent_context
 
-                agent_context_snapshot = agent_context.build_agent_context(active_settings, project_id)
+                agent_context_snapshot = agent_context.build_agent_context(
+                    active_settings,
+                    project_id,
+                    package_reader=package_reader,
+                )
             except Exception as exc:
                 agent_context_snapshot = {"error": str(exc)}
         if session_id:
@@ -632,7 +644,26 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
                 )
         return agent_context_snapshot
 
-    def _load_project_simulation_setup(project_id: str | None) -> dict[str, Any] | None:
+    def _project_package_reader(project_id: str | None) -> Any:
+        if not project_id:
+            return None
+        from . import package_inspection, project_io
+        from pathlib import Path
+
+        project = project_io.get_project(active_settings, project_id)
+        aieng_file = project.get("aieng_file")
+        if not aieng_file:
+            return None
+        package_path = project_io.resolve_project_path(active_settings, project_id, str(Path(aieng_file)))
+        if package_path is None or not package_path.exists():
+            return None
+        return package_inspection.PackageReadCache(package_path)
+
+    def _load_project_simulation_setup(
+        project_id: str | None,
+        *,
+        package_reader: Any = None,
+    ) -> dict[str, Any] | None:
         """Read a project's direct CAE setup artifact for /simulate readiness.
 
         Opens the .aieng package and reads simulation/setup.* / cae/setup.* via the
@@ -642,23 +673,20 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if not project_id:
             return None
         try:
-            import zipfile
-            from pathlib import Path
-
             from . import package_inspection, project_io
             from .agent_autopilot.simulation_readiness import load_simulation_setup
 
-            project = project_io.get_project(active_settings, project_id)
-            aieng_file = project.get("aieng_file")
-            if not aieng_file:
+            owns_reader = package_reader is None
+            reader = package_reader or _project_package_reader(project_id)
+            if reader is None:
                 return None
-            package_path = Path(aieng_file)
-            if not package_path.exists():
-                return None
-            with zipfile.ZipFile(package_path) as archive:
+            try:
                 return load_simulation_setup(
-                    lambda name: package_inspection.read_package_text(archive, name)
+                    lambda name: package_inspection.read_package_text(reader, name)
                 )
+            finally:
+                if owns_reader:
+                    reader.close()
         except Exception:
             log_exception(
                 LOGGER,
@@ -668,7 +696,11 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             )
             return None
 
-    def _load_project_feature_parameters(project_id: str | None) -> list[dict[str, Any]] | None:
+    def _load_project_feature_parameters(
+        project_id: str | None,
+        *,
+        package_reader: Any = None,
+    ) -> list[dict[str, Any]] | None:
         """Read a project's editable feature-graph parameter index for slot binding.
 
         Opens the .aieng package, reads graph/feature_graph.json, and flattens it via
@@ -679,24 +711,21 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         if not project_id:
             return None
         try:
-            import zipfile
-            from pathlib import Path
-
             from . import package_inspection, project_io
             from .agent_autopilot.parameter_binding import build_parameter_index
 
-            project = project_io.get_project(active_settings, project_id)
-            aieng_file = project.get("aieng_file")
-            if not aieng_file:
+            owns_reader = package_reader is None
+            reader = package_reader or _project_package_reader(project_id)
+            if reader is None:
                 return None
-            package_path = Path(aieng_file)
-            if not package_path.exists():
-                return None
-            with zipfile.ZipFile(package_path) as archive:
+            try:
                 feature_graph = package_inspection.read_package_json(
-                    archive, "graph/feature_graph.json"
+                    reader, "graph/feature_graph.json"
                 )
-            return build_parameter_index(feature_graph)
+                return build_parameter_index(feature_graph)
+            finally:
+                if owns_reader:
+                    reader.close()
         except Exception:
             log_exception(
                 LOGGER,
@@ -724,7 +753,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             )
             return "balanced"
 
-    def _build_autopilot_engine(request: AutopilotRunRequest) -> AutopilotEngine:
+    def _build_autopilot_engine(request: AutopilotRunRequest, *, package_reader: Any = None) -> AutopilotEngine:
         from .agent_autopilot.engine import AutopilotEngine, create_default_agent_plan
         from .agent_autopilot.intent_resolution import build_llm_intent_classifier
 
@@ -738,13 +767,23 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             store=_autopilot_store(),
             runtime_tools=_rt.list_tools_for_mcp(),
             adapters=_autopilot_adapters(request.llm_config),
-            agent_context=_agent_context_with_session_summary(request.project_id, request.session_id),
+            agent_context=_agent_context_with_session_summary_cached(
+                request.project_id,
+                request.session_id,
+                package_reader=package_reader,
+            ),
             on_state_update=_sync_autopilot_session,
             on_event=_publish_agent_event,
             approval_mode=_session_approval_mode(request.session_id),
-            simulation_setup_loader=_load_project_simulation_setup,
+            simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
+                project_id,
+                package_reader=package_reader,
+            ),
             intent_classifier=intent_classifier,
-            feature_parameter_loader=_load_project_feature_parameters,
+            feature_parameter_loader=lambda project_id: _load_project_feature_parameters(
+                project_id,
+                package_reader=package_reader,
+            ),
             tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
                 tool_name,
                 tool_input,
@@ -830,8 +869,13 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
 
         def _run_in_background() -> None:
             try:
-                full_engine = _build_autopilot_engine(request)
-                final_state = full_engine.start(request, run_id=state.run_id)
+                package_reader = _project_package_reader(request.project_id)
+                try:
+                    full_engine = _build_autopilot_engine(request, package_reader=package_reader)
+                    final_state = full_engine.start(request, run_id=state.run_id)
+                finally:
+                    if package_reader is not None:
+                        package_reader.close()
                 _write_autopilot_audit(final_state.project_id, "agent_autopilot_finished", {
                     "run_id": final_state.run_id,
                     "adapter_id": final_state.adapter_id,
@@ -909,25 +953,36 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         api_key = _resolve_api_key(data)
         if api_key:
             llm_config["api_key"] = api_key
-        engine = AutopilotEngine(
-            store=store,
-            runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(llm_config),
-            agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
-            on_state_update=_sync_autopilot_session,
-            on_event=_publish_agent_event,
-            approval_mode=_session_approval_mode(current.session_id),
-            simulation_setup_loader=_load_project_simulation_setup,
-            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                tool_name,
-                tool_input,
-                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-            ),
-        )
-
         def _run_continue_in_background() -> None:
             try:
-                state = engine.continue_run(run_id, approved=approved, user_message=user_message)
+                package_reader = _project_package_reader(current.project_id)
+                try:
+                    engine = AutopilotEngine(
+                        store=store,
+                        runtime_tools=_rt.list_tools_for_mcp(),
+                        adapters=_autopilot_adapters(llm_config),
+                        agent_context=_agent_context_with_session_summary_cached(
+                            current.project_id,
+                            current.session_id,
+                            package_reader=package_reader,
+                        ),
+                        on_state_update=_sync_autopilot_session,
+                        on_event=_publish_agent_event,
+                        approval_mode=_session_approval_mode(current.session_id),
+                        simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
+                            project_id,
+                            package_reader=package_reader,
+                        ),
+                        tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                            tool_name,
+                            tool_input,
+                            {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+                        ),
+                    )
+                    state = engine.continue_run(run_id, approved=approved, user_message=user_message)
+                finally:
+                    if package_reader is not None:
+                        package_reader.close()
                 _write_autopilot_audit(state.project_id, "agent_autopilot_approval", {
                     "run_id": state.run_id,
                     "approved": approved,
@@ -966,25 +1021,36 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         api_key = _resolve_api_key(data)
         if api_key:
             llm_config["api_key"] = api_key
-        engine = AutopilotEngine(
-            store=store,
-            runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(llm_config),
-            agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
-            on_state_update=_sync_autopilot_session,
-            on_event=_publish_agent_event,
-            approval_mode=_session_approval_mode(current.session_id),
-            simulation_setup_loader=_load_project_simulation_setup,
-            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                tool_name,
-                tool_input,
-                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-            ),
-        )
-
         def _run_reply_in_background() -> None:
             try:
-                engine.reply_to_run(run_id, message)
+                package_reader = _project_package_reader(current.project_id)
+                try:
+                    engine = AutopilotEngine(
+                        store=store,
+                        runtime_tools=_rt.list_tools_for_mcp(),
+                        adapters=_autopilot_adapters(llm_config),
+                        agent_context=_agent_context_with_session_summary_cached(
+                            current.project_id,
+                            current.session_id,
+                            package_reader=package_reader,
+                        ),
+                        on_state_update=_sync_autopilot_session,
+                        on_event=_publish_agent_event,
+                        approval_mode=_session_approval_mode(current.session_id),
+                        simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
+                            project_id,
+                            package_reader=package_reader,
+                        ),
+                        tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                            tool_name,
+                            tool_input,
+                            {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+                        ),
+                    )
+                    engine.reply_to_run(run_id, message)
+                finally:
+                    if package_reader is not None:
+                        package_reader.close()
             except Exception as exc:
                 _mark_autopilot_failed(store, run_id, exc)
 
@@ -1010,23 +1076,35 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         api_key = (payload or {}).get("api_key")
         if isinstance(api_key, str) and api_key:
             llm_config["api_key"] = api_key
-        engine = AutopilotEngine(
-            store=store,
-            runtime_tools=_rt.list_tools_for_mcp(),
-            adapters=_autopilot_adapters(llm_config),
-            agent_context=_agent_context_with_session_summary(current.project_id, current.session_id),
-            on_state_update=_sync_autopilot_session,
-            on_event=_publish_agent_event,
-            approval_mode=_session_approval_mode(current.session_id),
-            simulation_setup_loader=_load_project_simulation_setup,
-            tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
-                tool_name,
-                tool_input,
-                {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
-            ),
-        )
         try:
-            state = engine.follow_up_run(run_id, message)
+            package_reader = _project_package_reader(current.project_id)
+            try:
+                engine = AutopilotEngine(
+                    store=store,
+                    runtime_tools=_rt.list_tools_for_mcp(),
+                    adapters=_autopilot_adapters(llm_config),
+                    agent_context=_agent_context_with_session_summary_cached(
+                        current.project_id,
+                        current.session_id,
+                        package_reader=package_reader,
+                    ),
+                    on_state_update=_sync_autopilot_session,
+                    on_event=_publish_agent_event,
+                    approval_mode=_session_approval_mode(current.session_id),
+                    simulation_setup_loader=lambda project_id: _load_project_simulation_setup(
+                        project_id,
+                        package_reader=package_reader,
+                    ),
+                    tool_executor=lambda tool_name, tool_input: _rt.invoke_tool(
+                        tool_name,
+                        tool_input,
+                        {"project_id": current.project_id, "workflow_id": "agent_autopilot"},
+                    ),
+                )
+                state = engine.follow_up_run(run_id, message)
+            finally:
+                if package_reader is not None:
+                    package_reader.close()
             return _autopilot_run_response(state)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

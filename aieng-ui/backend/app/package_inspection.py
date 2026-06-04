@@ -12,6 +12,39 @@ import yaml
 
 from .config import Settings
 
+PackageArchiveLike = Any
+
+
+class PackageReadCache:
+    """Single-open read cache for a `.aieng` package during one workflow step."""
+
+    def __init__(self, package_path: Path) -> None:
+        self.package_path = Path(package_path)
+        self._archive = zipfile.ZipFile(self.package_path, "r")
+        self._bytes_cache: dict[str, bytes] = {}
+        self._names = tuple(self._archive.namelist())
+
+    def close(self) -> None:
+        self._archive.close()
+
+    def __enter__(self) -> "PackageReadCache":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        self.close()
+
+    def namelist(self) -> list[str]:
+        return list(self._names)
+
+    def has_member(self, member_name: str) -> bool:
+        return member_name in self._bytes_cache or member_name in self._names
+
+    def read(self, member_name: str) -> bytes:
+        if member_name not in self._bytes_cache:
+            self._bytes_cache[member_name] = self._archive.read(member_name)
+        return self._bytes_cache[member_name]
+
+
 def package_member_count(value: Any, preferred_keys: tuple[str, ...] = ()) -> int | None:
     if isinstance(value, list):
         return len(value)
@@ -29,30 +62,36 @@ def package_member_count(value: Any, preferred_keys: tuple[str, ...] = ()) -> in
     return None
 
 
-def read_package_json(archive: zipfile.ZipFile, member_name: str) -> Any:
+def _read_package_bytes(archive: PackageArchiveLike, member_name: str) -> bytes:
+    if isinstance(archive, PackageReadCache):
+        return archive.read(member_name)
+    return archive.read(member_name)
+
+
+def read_package_json(archive: PackageArchiveLike, member_name: str) -> Any:
     try:
-        return json.loads(archive.read(member_name).decode("utf-8"))
+        return json.loads(_read_package_bytes(archive, member_name).decode("utf-8"))
     except KeyError:
         return None
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
 
 
-def read_package_text(archive: zipfile.ZipFile, member_name: str) -> str | None:
+def read_package_text(archive: PackageArchiveLike, member_name: str) -> str | None:
     try:
-        return archive.read(member_name).decode("utf-8", errors="replace")
+        return _read_package_bytes(archive, member_name).decode("utf-8", errors="replace")
     except KeyError:
         return None
 
 
-def read_package_yaml(archive: zipfile.ZipFile, member_name: str) -> Any:
+def read_package_yaml(archive: PackageArchiveLike, member_name: str) -> Any:
     try:
-        return yaml.safe_load(archive.read(member_name).decode("utf-8", errors="replace"))
+        return yaml.safe_load(_read_package_bytes(archive, member_name).decode("utf-8", errors="replace"))
     except KeyError:
         return None
 
 
-def read_package_json_candidates(archive: zipfile.ZipFile, member_names: tuple[str, ...]) -> Any:
+def read_package_json_candidates(archive: PackageArchiveLike, member_names: tuple[str, ...]) -> Any:
     for member_name in member_names:
         value = read_package_json(archive, member_name)
         if value is not None:
@@ -60,7 +99,7 @@ def read_package_json_candidates(archive: zipfile.ZipFile, member_names: tuple[s
     return None
 
 
-def read_package_yaml_candidates(archive: zipfile.ZipFile, member_names: tuple[str, ...]) -> Any:
+def read_package_yaml_candidates(archive: PackageArchiveLike, member_names: tuple[str, ...]) -> Any:
     for member_name in member_names:
         value = read_package_yaml(archive, member_name)
         if value is not None:
@@ -197,8 +236,14 @@ def summarize_cae_payload(
     }
 
 
-def package_summary_fallback(package_path: Path) -> dict[str, Any]:
-    with zipfile.ZipFile(package_path) as archive:
+def package_summary_fallback(
+    package_path: Path,
+    *,
+    archive: PackageArchiveLike | None = None,
+) -> dict[str, Any]:
+    owns_archive = archive is None
+    archive = archive or PackageReadCache(package_path)
+    try:
         members = sorted(archive.namelist())
         manifest = read_package_json(archive, "manifest.json")
         feature_graph = read_package_json(archive, "graph/feature_graph.json")
@@ -223,6 +268,9 @@ def package_summary_fallback(package_path: Path) -> dict[str, Any]:
         cae_mapping = read_package_json(archive, "simulation/cae_mapping.json")
         validation_status = read_package_yaml(archive, "validation/status.yaml")
         ai_summary = read_package_text(archive, "ai/summary.md")
+    finally:
+        if owns_archive and isinstance(archive, PackageReadCache):
+            archive.close()
 
     derived: dict[str, Any] = {}
     feature_count = package_member_count(feature_graph, ("features", "nodes", "items", "elements"))

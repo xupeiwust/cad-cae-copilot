@@ -19,6 +19,7 @@ from . import design_targets as design_targets_module
 from . import target_comparison as target_comparison_module
 from .config import Settings, now_iso
 from .package_inspection import (
+    PackageReadCache,
     _detect_cae_artifacts,
     _generate_cae_preprocessing_summary,
     _generate_cae_result_summary,
@@ -37,89 +38,118 @@ CLAIM_BOUNDARY = (
 )
 
 
-def build_agent_context(settings: Settings, project_id: str) -> dict[str, Any]:
+def build_agent_context(
+    settings: Settings,
+    project_id: str,
+    *,
+    package_reader: PackageReadCache | None = None,
+) -> dict[str, Any]:
     """Build a compact CAD/CAE semantic context for connected AI agents."""
 
     project = get_project(settings, project_id)
     package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
     package_exists = bool(package_path and package_path.exists())
     warnings: list[str] = []
-
-    fallback: dict[str, Any] | None = None
     package_error: str | None = None
-    if package_exists and package_path is not None:
+
+    owns_reader = package_reader is None and package_exists and package_path is not None
+    reader = package_reader
+    if owns_reader and package_path is not None:
         try:
-            fallback = package_summary_fallback(package_path)
+            reader = PackageReadCache(package_path)
         except Exception as exc:  # pragma: no cover - exercised by corrupt packages
             package_error = f"{type(exc).__name__}: {exc}"
             warnings.append(f"Could not inspect package zip members: {package_error}")
-    else:
-        warnings.append("Project has no readable .aieng package.")
+            reader = None
+    try:
+        fallback: dict[str, Any] | None = None
+        if package_exists and package_path is not None and reader is not None:
+            try:
+                fallback = package_summary_fallback(package_path, archive=reader)
+            except Exception as exc:  # pragma: no cover - exercised by corrupt packages
+                package_error = f"{type(exc).__name__}: {exc}"
+                warnings.append(f"Could not inspect package zip members: {package_error}")
+        elif package_exists and package_path is not None and package_error is None:
+            try:
+                fallback = package_summary_fallback(package_path)
+            except Exception as exc:  # pragma: no cover - exercised by corrupt packages
+                package_error = f"{type(exc).__name__}: {exc}"
+                warnings.append(f"Could not inspect package zip members: {package_error}")
+        else:
+            warnings.append("Project has no readable .aieng package.")
 
-    cad = cad_observation.observe_cad_state(settings, project_id)
-    design_targets = _safe_call(
-        lambda: design_targets_module.get_design_targets(settings, project_id),
-        warnings,
-        "design_targets",
-        default={"ok": False, "targets": [], "document": None, "warnings": []},
-    )
-    computed_metrics = _safe_call(
-        lambda: computed_metrics_module.get_computed_metrics(settings, project_id),
-        warnings,
-        "computed_metrics",
-        default={"ok": False, "document": None, "metrics_count": 0, "load_case_count": 0},
-    )
-    comparison = _safe_call(
-        lambda: target_comparison_module.compare_package_targets(settings, project_id),
-        warnings,
-        "target_comparison",
-        default=None,
-    )
+        cad = cad_observation.observe_cad_state(settings, project_id, package_reader=reader)
+        design_targets = _safe_call(
+            lambda: design_targets_module.get_design_targets(settings, project_id),
+            warnings,
+            "design_targets",
+            default={"ok": False, "targets": [], "document": None, "warnings": []},
+        )
+        computed_metrics = _safe_call(
+            lambda: computed_metrics_module.get_computed_metrics(settings, project_id),
+            warnings,
+            "computed_metrics",
+            default={"ok": False, "document": None, "metrics_count": 0, "load_case_count": 0},
+        )
+        comparison = _safe_call(
+            lambda: target_comparison_module.compare_package_targets(settings, project_id),
+            warnings,
+            "target_comparison",
+            default=None,
+        )
 
-    cae_summaries = _build_cae_summaries(settings, package_path if package_exists else None, warnings)
-    loops = _safe_call(
-        lambda: copilot_loop.list_loops(settings, project_id),
-        warnings,
-        "copilot_loops",
-        default={"loops": []},
-    )
-    raw_members = fallback.get("members", []) if isinstance(fallback, dict) else []
+        cae_summaries = _build_cae_summaries(
+            settings,
+            package_path if package_exists else None,
+            warnings,
+            package_reader=reader,
+        )
+        loops = _safe_call(
+            lambda: copilot_loop.list_loops(settings, project_id),
+            warnings,
+            "copilot_loops",
+            default={"loops": []},
+        )
+        raw_members = fallback.get("members", []) if isinstance(fallback, dict) else []
 
-    context = {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at": now_iso(),
-        "project_id": project_id,
-        "purpose": (
-            "Give a connected AI agent enough CAD/CAE state to understand the part, "
-            "physics, evidence gaps, target failures, and useful next actions."
-        ),
-        "project": _project_block(project),
-        "package": {
-            "path": project.get("aieng_file"),
-            "exists": package_exists,
-            "member_count": len(raw_members),
-            "summary_error": package_error,
-        },
-        "cad": cad,
-        "brep_graph": _brep_graph_block(package_path if package_exists else None),
-        "cae": _cae_block(fallback, cae_summaries),
-        "design_targets": _design_targets_block(design_targets),
-        "computed_metrics": _computed_metrics_block(computed_metrics),
-        "target_comparison": _target_comparison_block(comparison),
-        "loop_history": {
-            "count": len(loops.get("loops") or []) if isinstance(loops, dict) else 0,
-            "recent": (loops.get("loops") or [])[:5] if isinstance(loops, dict) else [],
-        },
-        "agent_brief": {},
-        "available_actions": action_selector.annotate_available_actions(
-            _available_actions(cad, computed_metrics, comparison)
-        ),
-        "warnings": _dedupe_keep_order(warnings),
-        "claim_advancement": "none",
-        "claim_boundary": CLAIM_BOUNDARY,
-    }
-    context["agent_brief"] = _agent_brief(context)
-    return context
+        context = {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at": now_iso(),
+            "project_id": project_id,
+            "purpose": (
+                "Give a connected AI agent enough CAD/CAE state to understand the part, "
+                "physics, evidence gaps, target failures, and useful next actions."
+            ),
+            "project": _project_block(project),
+            "package": {
+                "path": project.get("aieng_file"),
+                "exists": package_exists,
+                "member_count": len(raw_members),
+                "summary_error": package_error,
+            },
+            "cad": cad,
+            "brep_graph": _brep_graph_block(package_path if package_exists else None, package_reader=reader),
+            "cae": _cae_block(fallback, cae_summaries),
+            "design_targets": _design_targets_block(design_targets),
+            "computed_metrics": _computed_metrics_block(computed_metrics),
+            "target_comparison": _target_comparison_block(comparison),
+            "loop_history": {
+                "count": len(loops.get("loops") or []) if isinstance(loops, dict) else 0,
+                "recent": (loops.get("loops") or [])[:5] if isinstance(loops, dict) else [],
+            },
+            "agent_brief": {},
+            "available_actions": action_selector.annotate_available_actions(
+                _available_actions(cad, computed_metrics, comparison)
+            ),
+            "warnings": _dedupe_keep_order(warnings),
+            "claim_advancement": "none",
+            "claim_boundary": CLAIM_BOUNDARY,
+        }
+        context["agent_brief"] = _agent_brief(context)
+        return context
+    finally:
+        if owns_reader and reader is not None:
+            reader.close()
 
 
 def _safe_call(
@@ -143,6 +173,8 @@ def _build_cae_summaries(
     settings: Settings,
     package_path: Any,
     warnings: list[str],
+    *,
+    package_reader: PackageReadCache | None = None,
 ) -> dict[str, Any]:
     if package_path is None:
         return {
@@ -156,30 +188,41 @@ def _build_cae_summaries(
         "preprocessing": _generate_cae_preprocessing_summary(settings, package_path),
         "simulation_run": _generate_cae_simulation_run_summary(settings, package_path),
         "result": _generate_cae_result_summary(settings, package_path),
-        "fea_setup_draft": _read_package_member(package_path, "task/fea_setup_draft.json"),
-        "template_fixture": _read_package_member(package_path, "geometry/template_cad_fixture.json"),
+        "fea_setup_draft": _read_package_member(package_path, "task/fea_setup_draft.json", package_reader=package_reader),
+        "template_fixture": _read_package_member(package_path, "geometry/template_cad_fixture.json", package_reader=package_reader),
     }
     if summaries["artifact_detection"] is None:
         warnings.append("CAE artifact detector unavailable or no artifact-detection summary could be generated.")
     return summaries
 
 
-def _read_package_member(package_path: Any, member: str) -> Any:
+def _read_package_member(
+    package_path: Any,
+    member: str,
+    *,
+    package_reader: PackageReadCache | None = None,
+) -> Any:
     try:
+        if package_reader is not None:
+            return read_package_json(package_reader, member)
         with zipfile.ZipFile(package_path, "r") as zf:
             return read_package_json(zf, member)
     except Exception:
         return None
 
 
-def _brep_graph_block(package_path: Any) -> dict[str, Any]:
+def _brep_graph_block(
+    package_path: Any,
+    *,
+    package_reader: PackageReadCache | None = None,
+) -> dict[str, Any]:
     if package_path is None:
         return {"present": False}
     try:
         from . import brep_graph
 
-        graph = _read_package_member(package_path, brep_graph.BREP_GRAPH_MEMBER)
-        index = _read_package_member(package_path, brep_graph.ENTITY_INDEX_MEMBER)
+        graph = _read_package_member(package_path, brep_graph.BREP_GRAPH_MEMBER, package_reader=package_reader)
+        index = _read_package_member(package_path, brep_graph.ENTITY_INDEX_MEMBER, package_reader=package_reader)
         digest = brep_graph.load_or_build_digest(package_path, max_items=16)
         faces = ((graph or {}).get("entities") or {}).get("faces") or []
         edges = ((graph or {}).get("entities") or {}).get("edges") or []

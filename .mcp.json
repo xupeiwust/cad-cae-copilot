@@ -5,7 +5,8 @@
       "args": ["run", "-n", "aieng311", "--no-capture-output", "python", "-m", "app.mcp_server"],
       "cwd": "aieng-ui/backend",
       "env": {
-        "AIENG_BACKEND_URL": "http://127.0.0.1:8000"
+        "AIENG_BACKEND_URL": "http://127.0.0.1:8000",
+        "AIENG_MCP_MANAGED_APPROVAL": "1"
       }
     }
   }

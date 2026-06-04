@@ -34,24 +34,43 @@ def _tool_dict(mcp) -> dict[str, Any]:
     return dict(mcp._tool_manager._tools)
 
 
+def _mcp_name(tool_name: str) -> str:
+    """External FastMCP tool name; internal runtime names stay dotted."""
+    return tool_name.replace(".", "_")
+
+
+def _tool_text(call_result: Any) -> str:
+    """Extract the text payload returned by FastMCP call_tool."""
+    if isinstance(call_result, list) and call_result:
+        first = call_result[0]
+        return getattr(first, "text", str(first))
+    return str(call_result)
+
+
 def test_mcp_server_registers_runtime_tools(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
     assert len(tools) >= 10
-    assert "aieng.inspect_package" in tools
-    assert "cae.run_solver" in tools
-    assert "postprocess.generate_computed_metrics" in tools
+    assert _mcp_name("aieng.inspect_package") in tools
+    assert _mcp_name("cae.run_solver") in tools
+    assert _mcp_name("postprocess.generate_computed_metrics") in tools
 
 
 def test_high_frequency_tools_carry_curated_schema(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
     for name in TOOL_SCHEMAS.keys():
-        assert name in tools, f"curated-schema tool {name} not in MCP registry"
-        params = tools[name].parameters
+        external_name = _mcp_name(name)
+        assert external_name in tools, f"curated-schema tool {name} not in MCP registry"
+        params = tools[external_name].parameters
         assert isinstance(params, dict)
         assert params.get("type") == "object"
         # Most curated schemas require project_id.
         # Exceptions: tools with no required parameters (list/readme) and aieng.convert.
-        _no_project_id = {"aieng.list_projects", "aieng.agent_readme", "aieng.convert"}
+        _no_project_id = {
+            "aieng.list_projects",
+            "aieng.agent_readme",
+            "aieng.convert",
+            "aieng.find_projects_by_part",
+        }
         props = params.get("properties") or {}
         if name not in _no_project_id:
             assert "project_id" in props, f"{name}: expected project_id in schema properties"
@@ -74,13 +93,14 @@ def test_approval_gated_tools_advertise_in_description(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
     # cae.run_solver and cad.edit_parameter both require approval.
     for approval_tool in ("cae.run_solver", "cad.edit_parameter"):
-        assert approval_tool in tools, f"{approval_tool} missing from MCP server"
-        assert "[APPROVAL REQUIRED]" in tools[approval_tool].description
+        external_name = _mcp_name(approval_tool)
+        assert external_name in tools, f"{approval_tool} missing from MCP server"
+        assert "[APPROVAL REQUIRED]" in tools[external_name].description
 
 
 def test_non_approval_tool_has_no_approval_marker(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
-    assert "[APPROVAL REQUIRED]" not in tools["aieng.inspect_package"].description
+    assert "[APPROVAL REQUIRED]" not in tools[_mcp_name("aieng.inspect_package")].description
 
 
 # ── FastMCP call_tool dispatch (real client path) ─────────────────────────────
@@ -112,10 +132,158 @@ def test_mcp_call_tool_forwards_all_fields(monkeypatch) -> None:
     try:
         monkeypatch.setattr(ms, "_BACKEND_URL", "")  # force in-process dispatch
         mcp = ms._build_mcp_server()
-        asyncio.run(mcp.call_tool("test.echo_args", {"project_id": "p1", "mode": "append", "custom": 42}))
+        asyncio.run(mcp.call_tool("test_echo_args", {"project_id": "p1", "mode": "append", "custom": 42}))
         assert captured == {"project_id": "p1", "mode": "append", "custom": 42}
     finally:
         _rt._REGISTRY.pop("test.echo_args", None)
+
+
+def test_mcp_hard_block_refuses_gated_tool_before_dispatch(monkeypatch) -> None:
+    """AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 rejects gated tools before any execution path."""
+    import asyncio
+
+    import app.mcp_server as ms
+
+    def _should_not_forward(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("blocked gated tool must not forward to backend")
+
+    def _should_not_invoke(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("blocked gated tool must not invoke runtime")
+
+    monkeypatch.setenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", "1")
+    monkeypatch.setenv("AIENG_AGENTIC_PERMISSION_TOOL", "1")
+    monkeypatch.setattr(ms, "_BACKEND_URL", "http://127.0.0.1:8000")
+    monkeypatch.setattr(ms, "_forward_to_backend", _should_not_forward)
+    monkeypatch.setattr(_rt, "invoke_tool", _should_not_invoke)
+
+    mcp = ms._build_mcp_server()
+    out = asyncio.run(mcp.call_tool("cad_execute_build123d", {"project_id": "p1", "code": "result = None"}))
+    payload = json.loads(_tool_text(out))
+    assert payload["status"] == "error"
+    assert payload["code"] == "approval_blocked"
+    assert payload["tool"] == "cad.execute_build123d"
+
+
+def test_mcp_hard_block_refuses_solver_too(monkeypatch) -> None:
+    import asyncio
+
+    import app.mcp_server as ms
+
+    monkeypatch.setenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", "1")
+    monkeypatch.setattr(ms, "_BACKEND_URL", "")
+
+    mcp = ms._build_mcp_server()
+    out = asyncio.run(mcp.call_tool("cae_run_solver", {"project_id": "p1"}))
+    payload = json.loads(_tool_text(out))
+    assert payload["code"] == "approval_blocked"
+    assert payload["tool"] == "cae.run_solver"
+
+
+def test_mcp_hard_block_does_not_block_safe_tools(monkeypatch) -> None:
+    import asyncio
+
+    import app.mcp_server as ms
+
+    captured: dict[str, Any] = {}
+
+    def _safe(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        captured.update(inp)
+        return {"status": "ok", "project_id": inp.get("project_id")}
+
+    _rt.register_tool(
+        "test.safe_read",
+        _safe,
+        requires_approval=False,
+        description="safe read",
+        input_schema={"type": "object", "additionalProperties": True},
+    )
+    try:
+        monkeypatch.setenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", "1")
+        monkeypatch.setattr(ms, "_BACKEND_URL", "")
+        mcp = ms._build_mcp_server()
+        out = asyncio.run(mcp.call_tool("test_safe_read", {"project_id": "p1"}))
+        payload = json.loads(_tool_text(out))
+        assert payload == {"status": "ok", "project_id": "p1"}
+        assert captured == {"project_id": "p1"}
+    finally:
+        _rt._REGISTRY.pop("test.safe_read", None)
+
+
+def test_gated_tools_execute_normally_when_hard_block_unset(monkeypatch) -> None:
+    import asyncio
+
+    import app.mcp_server as ms
+
+    captured: dict[str, Any] = {}
+
+    def _gated(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        captured.update(inp)
+        return {"status": "ok", "allowed": True}
+
+    _rt.register_tool(
+        "test.gated_write",
+        _gated,
+        requires_approval=True,
+        description="gated write",
+        input_schema={"type": "object", "additionalProperties": True},
+    )
+    try:
+        monkeypatch.delenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", raising=False)
+        monkeypatch.delenv("AIENG_AGENTIC_PERMISSION_TOOL", raising=False)
+        monkeypatch.delenv("AIENG_MCP_MANAGED_APPROVAL", raising=False)
+        monkeypatch.setattr(ms, "_BACKEND_URL", "")
+        mcp = ms._build_mcp_server()
+        out = asyncio.run(mcp.call_tool("test_gated_write", {"project_id": "p1"}))
+        payload = json.loads(_tool_text(out))
+        assert payload == {"status": "ok", "allowed": True}
+        assert captured == {"project_id": "p1"}
+    finally:
+        _rt._REGISTRY.pop("test.gated_write", None)
+
+
+def test_managed_approval_routes_gated_tool_through_broker(monkeypatch) -> None:
+    """AIENG_MCP_MANAGED_APPROVAL=1: a gated tool must pass through the workbench
+    approval broker; approve → executes, deny → never executes."""
+    import asyncio
+
+    import app.mcp_server as ms
+
+    captured: dict[str, Any] = {}
+
+    def _gated(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        captured.update(inp)
+        return {"status": "ok", "allowed": True}
+
+    _rt.register_tool(
+        "test.gated_managed",
+        _gated,
+        requires_approval=True,
+        description="gated write",
+        input_schema={"type": "object", "additionalProperties": True},
+    )
+    try:
+        monkeypatch.delenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", raising=False)
+        monkeypatch.delenv("AIENG_AGENTIC_PERMISSION_TOOL", raising=False)
+        monkeypatch.setenv("AIENG_MCP_MANAGED_APPROVAL", "1")
+        monkeypatch.setattr(ms, "_BACKEND_URL", "")
+
+        # Approve path: broker says allow → tool executes.
+        monkeypatch.setattr(ms, "_agentic_permission_decision", lambda name, args: {"behavior": "allow", "updatedInput": args})
+        mcp = ms._build_mcp_server()
+        out = asyncio.run(mcp.call_tool("test_gated_managed", {"project_id": "p1"}))
+        assert json.loads(_tool_text(out)) == {"status": "ok", "allowed": True}
+        assert captured == {"project_id": "p1"}
+
+        # Deny path: broker says deny → tool must NOT execute.
+        captured.clear()
+        monkeypatch.setattr(ms, "_agentic_permission_decision", lambda name, args: {"behavior": "deny", "message": "user denied"})
+        mcp = ms._build_mcp_server()
+        out = asyncio.run(mcp.call_tool("test_gated_managed", {"project_id": "p1"}))
+        payload = json.loads(_tool_text(out))
+        assert payload["code"] == "approval_denied"
+        assert captured == {}
+    finally:
+        _rt._REGISTRY.pop("test.gated_managed", None)
 
 
 # ── invoke_tool dispatch ──────────────────────────────────────────────────────
@@ -172,6 +340,39 @@ def test_list_tools_for_mcp_marks_approval_tools() -> None:
     assert entries["cae.run_solver"]["requires_approval"] is True
     assert entries["cad.edit_parameter"]["requires_approval"] is True
     assert entries["aieng.inspect_package"]["requires_approval"] is False
+
+
+def test_mcp_first_prompts_are_registered(mcp_server) -> None:
+    import asyncio
+
+    prompts = asyncio.run(mcp_server.list_prompts())
+    names = {prompt.name for prompt in prompts}
+    assert {
+        "aieng_mcp_first_onboarding",
+        "aieng_cad_build_workflow",
+        "aieng_cae_simulation_workflow",
+    }.issubset(names)
+
+    prompt = asyncio.run(mcp_server.get_prompt("aieng_cad_build_workflow"))
+    rendered = "\n".join(str(message.content) for message in prompt.messages)
+    assert "cad.execute_build123d" in rendered
+    assert "cad.get_source" in rendered
+    assert "4-view" in rendered
+
+
+def test_mcp_first_resource_is_registered(mcp_server) -> None:
+    import asyncio
+
+    resources = asyncio.run(mcp_server.list_resources())
+    uris = {str(resource.uri) for resource in resources}
+    assert "aieng://guides/mcp-first-discipline" in uris
+
+    chunks = list(asyncio.run(mcp_server.read_resource("aieng://guides/mcp-first-discipline")))
+    text = "\n".join(str(getattr(chunk, "content", chunk)) for chunk in chunks)
+    assert "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1" in text
+    assert "aieng.agent_readme" in text
+    assert "cae.prepare_solver_run" in text
+    assert "cad.execute_build123d" in text
 
 
 # ── coerce_result serialisation ───────────────────────────────────────────────

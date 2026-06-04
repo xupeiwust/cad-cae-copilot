@@ -3,14 +3,9 @@ import { Settings } from "lucide-react";
 import { api } from "../api";
 import { NoticeCenter } from "../components/common";
 import { PointerProvider } from "../components/PointerText";
+import { PendingApprovals } from "../components/PendingApprovals";
 import { SessionsSidebar } from "../components/SessionsSidebar";
-import { CritiquePanel } from "../components/CritiquePanel";
-import { EditableParametersPanel } from "../components/EditableParametersPanel";
-import { ShapeIrObjectsCard } from "../components/ShapeIrObjectsCard";
-import { SimulationReadinessPanel } from "../components/SimulationReadinessPanel";
 import { ViewerPane } from "../components/ViewerPane";
-import { SelectionInspectorCard } from "../components/agent/SelectionInspectorCard";
-import { ChatPanel } from "../components/panels/ChatPanel";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
 import type { useWorkbenchApp } from "./useWorkbenchApp";
@@ -38,6 +33,7 @@ export function AppChrome({ app }: AppChromeProps) {
             <span className="app-logo">AIDE</span>
             <span className="app-topbar-divider" />
             <span className="app-topbar-project">{app.selectedProject?.name || "Workbench"}</span>
+            <span className="app-topbar-mcp">Live CAD/CAE workbench + MCP server</span>
           </div>
           <div className="app-topbar-actions">
             <button
@@ -63,11 +59,6 @@ export function AppChrome({ app }: AppChromeProps) {
             selectedId={app.selectedId}
             selectedProject={app.selectedProject}
             projects={app.projects}
-            chatSessions={app.chatSessions}
-            activeSessionId={app.activeSessionId}
-            onSelectSession={app.selectChatSession}
-            onCreateSession={() => void app.createChatSession()}
-            onDeleteSession={(sessionId) => void app.deleteChatSession(sessionId)}
             stages={app.stages}
             runBusyTask={app.runBusyTask}
             refreshProjects={app.refreshProjects}
@@ -85,84 +76,19 @@ export function AppChrome({ app }: AppChromeProps) {
             pickedFaces={app.pickedFaces}
             onAddPickedFace={app.addPickedFace}
             onClearPickedFaces={app.clearPickedFaces}
-            onInsertToChat={app.insertToChat}
-            onRunPreprocess={app.runPreprocessFromPointer}
+            onCopyPointer={app.copyPointerText}
             cadGenerationProgress={app.cadGenerationProgress}
             highlightedFaceIds={app.highlightedFaceIds}
             brepSnapshot={app.brepSnapshot}
             onClearHighlightedFaces={app.clearHighlightedFaces}
           />
 
-          <div className="chat-pane">
-            {app.shapeIrObjects.length > 0 ? (
-              <ShapeIrObjectsCard
-                objects={app.shapeIrObjects}
-                verification={app.shapeIrVerification}
-                activeNodeId={app.selectedShapeIrNodeId}
-                onSelectNode={app.selectShapeIrNode}
-                pickedFaceIds={app.pickedFaces.map((face) =>
-                  face.pointer.startsWith("@face:") ? face.pointer.slice("@face:".length) : face.pointer,
-                )}
-              />
-            ) : null}
-            {app.pickedFaces.length > 0 ? (
-              <SelectionInspectorCard
-                pickedFaces={app.pickedFaces}
-                onClear={app.clearPickedFaces}
-                onSetPrompt={app.setMessage}
-                onUseInPrompt={app.insertToChat}
-              />
-            ) : null}
-            <EditableParametersPanel
-              parameters={app.editableParameters}
-              onUseInChat={app.setMessage}
-            />
-            <CritiquePanel findings={app.critiqueFindings} onUseInChat={app.setMessage} />
-            <SimulationReadinessPanel readiness={app.simulationReadiness} onUseInChat={app.setMessage} />
-            <ChatPanel
-              chatConnections={app.chatConnections}
-              selectedChatConnectionId={app.selectedChatConnectionId}
-              approvalMode={app.approvalMode}
-              approvalModeDisabled={!app.activeSessionId}
-              selectedConnectionBlocked={app.selectedConnectionBlocked}
-              selectedId={app.selectedId}
-              activeSessionId={app.activeSessionId}
-              engineeringContext={app.engineeringContext}
-              onContextSummaryChange={app.updateActiveSessionContextSummary}
-              chatBusy={app.chatBusy}
-              cadGenerating={app.cadGenerating}
-              cadGenerationProgress={app.cadGenerationProgress}
-              llmReady={app.llmReady}
-              liveSyncStatus={app.liveSyncStatus}
-              liveSyncDetail={app.liveSyncDetail}
-              runtime={app.runtime}
-              runtimeReady={app.runtimeReady}
-              runtimeProvider={app.runtimeProvider}
-              chatHistory={app.chatHistory}
-              agentEvents={app.agentEvents}
-              streamingState={app.streamingState}
-              chatLogRef={app.chatLogRef}
-              message={app.message}
-              lastRuntimeRun={app.lastRuntimeRun}
-              simulationPending={app.simulationPending}
-              simulationProgress={app.simulationProgress}
-              setSelectedChatConnectionId={app.setSelectedChatConnectionId}
-              setApprovalMode={app.setActiveSessionApprovalMode}
-              setSettingsOpen={app.setSettingsOpen}
-              setMessage={app.setMessage}
-              sendUnified={app.sendUnified}
-              viewArtifact={app.viewArtifact}
-              approveRun={app.approveRun}
-              rejectRun={app.rejectRun}
-              approveAutopilot={(runId) => void app.updateAutopilotRun(runId, "approve")}
-              rejectAutopilot={(runId) => void app.updateAutopilotRun(runId, "reject")}
-              cancelAutopilot={(runId) => void app.updateAutopilotRun(runId, "cancel")}
-              reviseAutopilot={(runId, message) => void app.updateAutopilotRun(runId, "reply", message)}
-              approveSimulation={() => void app.executeSimulation()}
-              rejectSimulation={() => app.setSimulationPending(false)}
-              recentPickedFaces={app.pickedFaces}
-            />
-          </div>
+          <PendingApprovals
+            approvals={app.pendingApprovals.filter(
+              (item) => !item.projectId || item.projectId === app.selectedId,
+            )}
+            onResolve={app.resolveApproval}
+          />
         </div>
       </div>
 
@@ -188,9 +114,9 @@ export function AppChrome({ app }: AppChromeProps) {
         onSave={() => void app.runRuntimeTask("save", () => api.updateRuntimeConfig(app.runtimeDraft!))}
         onRestore={app.restoreRuntimeDefaults}
         localAgentConfig={app.localAgentConfig}
-        localAdapters={app.selectedChatConnection.adapters ?? []}
+        localAdapters={[]}
         onLocalAgentChange={(key, value) => app.setLocalAgentConfig((prev) => ({ ...prev, [key]: value }))}
-        onProbeLocalAgents={() => void app.probeLocalAgents()}
+        onProbeLocalAgents={() => undefined}
       />
       <GlobalSettingsDrawer open={app.globalSettingsOpen} onClose={() => app.setGlobalSettingsOpen(false)} />
     </PointerProvider>

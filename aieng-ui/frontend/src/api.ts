@@ -227,6 +227,17 @@ export const api = {
     }),
   getAutopilotRun: (runId: string) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}`),
+  // Approach A: resolve a gated-tool approval for an agentic Claude session.
+  resolveAgenticPermission: (permissionId: string, approved: boolean, message?: string) =>
+    request<{ status: string; approved: boolean; decision: Record<string, unknown> }>(
+      `/api/agent/agentic/permission/${permissionId}/resolve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved, message: message || undefined }),
+        timeoutMs: 60000,
+      },
+    ),
   cancelAutopilot: (runId: string) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/cancel`, {
       method: "POST",

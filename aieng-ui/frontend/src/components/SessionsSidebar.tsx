@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { ChevronsLeft, ChevronsRight, Folder, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Folder, Plus, Trash2 } from "lucide-react";
 
 import { api } from "../api";
 import { ConfirmDialog } from "./common";
 import type { Notice, StageItem } from "../appTypes";
 import type { ProjectRecord } from "../types";
-import type { ChatSession } from "../api";
 
 type SessionsSidebarProps = {
   collapsed: boolean;
@@ -18,11 +17,6 @@ type SessionsSidebarProps = {
   selectedId: string | null;
   selectedProject: ProjectRecord | null;
   projects: ProjectRecord[];
-  chatSessions: ChatSession[];
-  activeSessionId: string | null;
-  onSelectSession(sessionId: string): void;
-  onCreateSession(): void;
-  onDeleteSession(sessionId: string): void;
   stages: StageItem[];
   runBusyTask(task: () => Promise<void>): Promise<void>;
   refreshProjects(nextSelectedId?: string | null): Promise<void>;
@@ -41,11 +35,6 @@ export function SessionsSidebar({
   selectedId,
   selectedProject,
   projects,
-  chatSessions,
-  activeSessionId,
-  onSelectSession,
-  onCreateSession,
-  onDeleteSession,
   runBusyTask,
   refreshProjects,
   setNotice,
@@ -83,15 +72,6 @@ export function SessionsSidebar({
           title="New project"
         >
           <Plus className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          className="sessions-icon-btn"
-          disabled={!selectedId}
-          onClick={onCreateSession}
-          title="New session"
-        >
-          <MessageSquarePlus className="h-4 w-4" />
         </button>
       </aside>
     );
@@ -154,7 +134,7 @@ export function SessionsSidebar({
                 setConfirmDialog({
                   open: true,
                   title: `Delete project "${project.name}"?`,
-                  message: "This removes its geometry and chat history and cannot be undone.",
+                  message: "This removes its geometry, package artifacts, and project records and cannot be undone.",
                   onConfirm: () => {
                     setConfirmDialog(null);
                     void runBusyTask(async () => {
@@ -170,61 +150,6 @@ export function SessionsSidebar({
             </button>
           </div>
         ))}
-      </div>
-
-      <div className="sessions-thread-panel">
-        <div className="sessions-thread-header">
-          <strong>Sessions</strong>
-          <button
-            type="button"
-            className="sessions-mini-btn"
-            disabled={!selectedId}
-            onClick={onCreateSession}
-            title="New session"
-          >
-            <MessageSquarePlus className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="sessions-thread-list">
-          {chatSessions.map((session) => (
-            <div key={session.id} className="thread-item-wrap">
-              <button
-                type="button"
-                className={session.id === activeSessionId ? "thread-item active" : "thread-item"}
-                onClick={() => onSelectSession(session.id)}
-              >
-                <span className="thread-title">{session.title}</span>
-                <span className={`thread-status status-${session.status}`}>{session.status}</span>
-              </button>
-              <button
-                type="button"
-                className="thread-item-delete"
-                title="Delete session"
-                aria-label={`Delete session ${session.title}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setConfirmDialog({
-                    open: true,
-                    title: `Delete session "${session.title}"?`,
-                    message: "This cannot be undone.",
-                    onConfirm: () => {
-                      setConfirmDialog(null);
-                      void runBusyTask(async () => {
-                        await onDeleteSession(session.id);
-                        setNotice({ tone: "success", title: "Session deleted", detail: `Deleted ${session.title}.` });
-                      });
-                    },
-                  });
-                }}
-              >
-                <Trash2 style={{ width: 12, height: 12 }} />
-              </button>
-            </div>
-          ))}
-          {!chatSessions.length ? (
-            <span className="thread-empty">No sessions yet</span>
-          ) : null}
-        </div>
       </div>
 
       <div className="sessions-import">

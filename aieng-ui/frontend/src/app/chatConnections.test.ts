@@ -1,7 +1,7 @@
 import { DEFAULT_CHAT_CONNECTIONS } from "../appConstants";
 import { test } from "vitest";
 
-test("default chat connections", () => {
+test("compatibility default chat connections remain available for retired embedded chat", () => {
 
 function expect(condition: unknown, message: string) {
   if (!condition) throw new Error(message);

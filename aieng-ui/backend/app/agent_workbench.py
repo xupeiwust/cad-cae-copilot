@@ -391,11 +391,12 @@ def list_workflows() -> list[dict[str, Any]]:
 
 
 def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
-    """Return UI-facing chat connection options.
+    """Return compatibility-only embedded chat connection options.
 
-    The workbench is allowed to orchestrate agents and external tools, while
-    the `.aieng` core remains a package/evidence format. This catalog keeps
-    those transport choices explicit for the frontend chat window.
+    The active Workbench UI is MCP-first and no longer renders an embedded chat
+    window. This catalog remains available for old clients/tests that still use
+    the backend chat/autopilot routes, but new user flows should connect an
+    external MCP agent to the workbench MCP server instead.
     """
     runtime_tools = _rt.registered_tools_info()
     try:
@@ -408,6 +409,10 @@ def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
         cap for cap in local_agent_caps
         if cap.get("status") == "available"
     ]
+    claude_available = any(
+        cap.get("adapter_id") == "claude-code" and cap.get("status") == "available"
+        for cap in local_agent_caps
+    )
 
     return [
         {
@@ -415,7 +420,9 @@ def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
             "label": "LLM API",
             "transport": "provider-api",
             "status": "configurable",
-            "detail": "Uses the configured model provider for planning, then routes executable steps through the local approval-gated runtime.",
+            "detail": "Compatibility-only embedded chat route. Active Workbench UI is MCP-first; use an external MCP agent for new CAD/CAE flows.",
+            "compatibility_only": True,
+            "retired_from_active_ui": True,
             "requires_project": False,
             "supports_llm": True,
             "supports_execution": True,
@@ -427,13 +434,33 @@ def list_chat_connections(settings: Any) -> list[dict[str, Any]]:
             "label": "Local Agent",
             "transport": "agent-cli-bridge",
             "status": "ready" if local_agent_available else "blocked",
-            "detail": "Uses a local Claude Code or Codex CLI agent as an autonomous planner/executor through Workbench approvals.",
+            "detail": "Compatibility-only embedded local-agent route. Active Workbench UI is MCP-first; use the MCP server from Claude Code, Codex, or another BYO agent.",
+            "compatibility_only": True,
+            "retired_from_active_ui": True,
             "requires_project": False,
             "supports_llm": True,
             "supports_execution": True,
             "approval_gated": True,
             "tool_count": len(runtime_tools),
             "adapters": local_agent_caps,
+        },
+        {
+            # Approach A: a full agentic Claude Code session — Claude itself
+            # orchestrates with the workbench MCP tools, repo docs (AGENTS.md /
+            # CLAUDE.md) and skills, multi-step reasoning, and the approval
+            # bridge for gated mutations. This is the VSCode-parity path.
+            "id": "claude-agent",
+            "label": "Claude Agent (full)",
+            "transport": "agent-cli-bridge",
+            "status": "ready" if claude_available else "blocked",
+            "detail": "Compatibility-only embedded Claude route. Preferred path is Claude Code connected directly to the Workbench MCP server.",
+            "compatibility_only": True,
+            "retired_from_active_ui": True,
+            "requires_project": False,
+            "supports_llm": True,
+            "supports_execution": True,
+            "approval_gated": True,
+            "tool_count": len(runtime_tools),
         },
     ]
 

@@ -92,4 +92,16 @@ export const DEFAULT_CHAT_CONNECTIONS: ChatConnection[] = [
     tool_count: 0,
     adapters: [],
   },
+  {
+    id: "claude-agent",
+    label: "Claude Agent (full)",
+    transport: "agent-cli-bridge",
+    status: "blocked",
+    detail: "Full agentic Claude Code session: workbench MCP tools + repo docs + skills + multi-step. Gated mutations still pause for approval.",
+    requires_project: false,
+    supports_llm: true,
+    supports_execution: true,
+    approval_gated: true,
+    tool_count: 0,
+  },
 ];

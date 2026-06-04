@@ -34,6 +34,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
@@ -162,6 +163,355 @@ hole sizes, floating components).
 """
 
 
+_MCP_DISCIPLINE_TEXT = """\
+AIENG MCP-first workbench discipline
+
+Use the workbench as a live CAD/CAE capability layer. Your agent is the brain;
+the UI is the 3D viewer, spatial input surface, and audit/approval mirror.
+
+First calls:
+1. aieng.agent_readme
+2. aieng.list_projects
+3. aieng.agent_context { project_id }
+
+Approval boundary:
+- Tools advertised with [APPROVAL REQUIRED] mutate CAD/packages or execute
+  external processes.
+- In normal BYO-agent mode, the MCP client must ask the human before invoking
+  those tools.
+- If AIENG_MCP_BLOCK_APPROVAL_TOOLS=1, this server rejects gated tools with
+  code=approval_blocked before backend forwarding or in-process execution.
+
+CAD discipline:
+- Prefer cad.get_source before edits.
+- Use cad.execute_build123d for create/add/remove geometry; declare dimensions
+  as UPPER_SNAKE_CASE constants, set .label and .color on parts, bind final
+  geometry to result, and omit exports.
+- Use cad.edit_parameter for pure dimension changes when editable parameters
+  exist; read regression_diff after the edit.
+- Inspect the returned 4-view thumbnail and geometry_report; do fail-first
+  review before adding more details.
+- For engineering parts, use canonical labels (base_plate, mounting_hole, rib,
+  boss, flange, interface_face) and call cad.critique.
+
+CAE discipline:
+- Never claim the solver ran unless cae.run_solver returned successful solver
+  evidence.
+- Inspect context/readiness first, patch setup only when needed, then call
+  cae.prepare_solver_run, cae.generate_solver_input when the deck is missing,
+  and only then cae.run_solver through the approval boundary.
+- Report only evidence-backed stress/displacement values and state limitations.
+"""
+
+
+def _register_mcp_first_prompts_and_resources(mcp: FastMCP) -> None:
+    """Expose portable MCP-first guidance for clients without local skills."""
+
+    @mcp.prompt(
+        name="aieng_mcp_first_onboarding",
+        description="Start here: operate AIENG as a BYO-agent MCP-first CAD/CAE workbench.",
+    )
+    def aieng_mcp_first_onboarding() -> str:
+        return (
+            "You are driving the AIENG Workbench through MCP. Treat the UI as "
+            "a live 3D viewer + spatial input surface. Start with "
+            "aieng.agent_readme, aieng.list_projects, then aieng.agent_context. "
+            "Use @face/@feature/@artifact pointers verbatim. Respect "
+            "[APPROVAL REQUIRED] tools; if AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 is "
+            "enabled they will be refused by the server. Report only evidence "
+            "from tool returns and package artifacts."
+        )
+
+    @mcp.prompt(
+        name="aieng_cad_build_workflow",
+        description="CAD build/edit workflow using the active cad.* MCP tools.",
+    )
+    def aieng_cad_build_workflow() -> str:
+        return (
+            "CAD workflow: call aieng.agent_context, then cad.get_source. For "
+            "new or additive geometry call cad.execute_build123d with build123d "
+            "code that binds result, sets .label/.color, uses UPPER_SNAKE_CASE "
+            "dimension constants, and omits exports. Use mode='append' only "
+            "when cad.get_source reports has_base. Inspect the 4-view thumbnail, "
+            "geometry_report, named_parts, parts_added, symmetry, and gaps. For "
+            "pure dimension changes prefer cad.edit_parameter and check "
+            "regression_diff. For engineering parts, run cad.critique before "
+            "claiming manufacturability."
+        )
+
+    @mcp.prompt(
+        name="aieng_cae_simulation_workflow",
+        description="CAE simulation workflow with preflight, approval, and evidence honesty.",
+    )
+    def aieng_cae_simulation_workflow() -> str:
+        return (
+            "CAE workflow: inspect aieng.agent_context/readiness first. Ensure "
+            "material, loads, and constraints are explicit before solver work. "
+            "Use cae.apply_setup_patch only for setup artifacts, then "
+            "cae.prepare_solver_run. If the input deck is missing, call "
+            "cae.generate_solver_input. Run cae.run_solver only after a "
+            "successful preflight and only through the approval boundary. After "
+            "solver execution, call cae.extract_solver_results, optionally "
+            "cae.extract_field_regions, and postprocess.refresh_cae_summary. "
+            "Never claim solver results unless solver evidence exists."
+        )
+
+    @mcp.resource(
+        "aieng://guides/mcp-first-discipline",
+        name="aieng_mcp_first_discipline",
+        title="AIENG MCP-first discipline",
+        description="Condensed CAD/CAE operating rules for BYO MCP agents.",
+        mime_type="text/plain",
+    )
+    def aieng_mcp_first_discipline() -> str:
+        return _MCP_DISCIPLINE_TEXT
+
+
+_PERMISSION_TOOL_NAME = "request_approval"
+
+
+def _permission_decision_deny(message: str) -> str:
+    return json.dumps({"behavior": "deny", "message": message}, ensure_ascii=False)
+
+
+def _mcp_hard_blocks_approval_tools() -> bool:
+    """True when raw MCP calls to approval-gated tools must be rejected."""
+    return os.environ.get("AIENG_MCP_BLOCK_APPROVAL_TOOLS") == "1"
+
+
+def _approval_blocked_result(tool_name: str) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "code": "approval_blocked",
+        "tool": tool_name,
+        "message": (
+            f"{tool_name} requires human approval. "
+            "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 is enabled, so this MCP server "
+            "refuses approval-gated CAD/CAE mutations instead of executing them."
+        ),
+    }
+
+
+def _agentic_mode() -> bool:
+    """True when this MCP server was spawned for an agentic session (Approach A).
+
+    Set via the per-run MCP config env injected by ``claude_agent_session``. When
+    off (e.g. the normal VSCode MCP client), gated tools are NOT intercepted here —
+    that client uses its own approval UX.
+    """
+    return os.environ.get("AIENG_AGENTIC_PERMISSION_TOOL") == "1"
+
+
+def _managed_approval_mode() -> bool:
+    """True when a plain external MCP agent should route gated mutations through
+    the **workbench** approval surface (server-enforced, shown in the live viewer)
+    instead of relying on the connecting client's own permission UX.
+
+    Opt-in per connection via ``AIENG_MCP_MANAGED_APPROVAL=1`` (set in the repo
+    ``.mcp.json`` env, where a backend + viewer are expected). This is what makes
+    the workbench the approval authority for any MCP agent — a user allow-listing
+    the workbench tools in their client cannot bypass it. Requires the backend
+    (broker + viewer) to be reachable; if not, the gated tool is denied (fail-safe).
+    """
+    return os.environ.get("AIENG_MCP_MANAGED_APPROVAL") == "1"
+
+
+def _broker_approval_mode() -> bool:
+    """Either approval mode that routes a gated tool through the backend broker."""
+    return _agentic_mode() or _managed_approval_mode()
+
+
+def _agentic_permission_decision(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Block on the backend approval broker for a gated tool; return the decision.
+
+    Returns the Claude permission contract dict:
+        {"behavior": "allow", "updatedInput": {...}} | {"behavior": "deny", "message": "..."}
+    Fail-safe: any backend/transport error returns DENY — a gated mutation is never
+    auto-allowed when the approval UI is unreachable.
+    """
+    import time as _time
+
+    deny = {"behavior": "deny", "message": "approval unavailable; refusing to auto-allow."}
+    if not _BACKEND_URL:
+        return deny
+    # Managed-approval mode (plain external MCP agent): the agent has no autopilot
+    # run/session, so scope the approval to the project named in the tool input —
+    # that is what the workbench viewer filters on to render the prompt.
+    project_id = tool_input.get("project_id") if isinstance(tool_input, dict) else None
+    body = {
+        "tool_name": tool_name,
+        "input": tool_input,
+        "run_id": os.environ.get("AIENG_AUTOPILOT_RUN_ID"),
+        "project_id": project_id or os.environ.get("AIENG_AUTOPILOT_PROJECT_ID"),
+        "session_id": os.environ.get("AIENG_AUTOPILOT_SESSION_ID"),
+    }
+
+    def _post(path: str, data: dict[str, Any]) -> dict[str, Any]:
+        req = urllib.request.Request(
+            f"{_BACKEND_URL}{path}",
+            data=json.dumps(data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _get(path: str, timeout: int = 30) -> dict[str, Any]:
+        with urllib.request.urlopen(f"{_BACKEND_URL}{path}", timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        created = _post("/api/agent/agentic/permission", body)
+    except Exception as exc:  # backend unreachable / error → fail safe
+        logger.warning("approval bridge create failed for %s: %s", tool_name, exc)
+        return deny
+    if created.get("status") == "resolved":
+        return created.get("decision") or deny
+    permission_id = created.get("permission_id")
+    if not permission_id:
+        return deny
+    try:
+        total_timeout = int(os.environ.get("AIENG_AGENTIC_APPROVAL_TIMEOUT_SECONDS", "900"))
+    except ValueError:
+        total_timeout = 900
+    # Long-poll: each GET blocks up to ~20s server-side, so we wait quietly for
+    # the user instead of spamming the endpoint every 1.5s.
+    deadline = _time.monotonic() + max(30, total_timeout)
+    while _time.monotonic() < deadline:
+        try:
+            status = _get(f"/api/agent/agentic/permission/{permission_id}?wait=20", timeout=25)
+        except Exception as exc:
+            logger.warning("approval bridge poll failed for %s: %s", tool_name, exc)
+            _time.sleep(2.0)
+            continue
+        if status.get("status") == "resolved":
+            return status.get("decision") or deny
+    return {"behavior": "deny", "message": "approval timed out waiting for the user."}
+
+
+def _request_approval_handler(**kwargs: Any) -> Any:
+    """Optional ``--permission-prompt-tool`` bridge (kept for completeness).
+
+    The PRIMARY enforcement is in the per-tool handler (see ``_make_handler``),
+    which is independent of Claude's permission settings. This tool is no longer
+    registered by default.
+    """
+    tool_name = str(kwargs.get("tool_name") or "")
+    tool_input = kwargs.get("input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    if not tool_name:
+        return _permission_decision_deny("permission bridge: missing tool_name")
+    return json.dumps(_agentic_permission_decision(tool_name, tool_input), ensure_ascii=False)
+
+
+def _agent_skill_dirs() -> list[Path]:
+    """Modeling/CAE *agent* skill dirs (aieng-agent-skills/skills/*/SKILL.md).
+
+    Deliberately NOT the repo `.claude/skills/` (dev skills such as superpowers) —
+    dev skills must not leak to connecting modeling/CAE agents. mcp_server.py lives
+    at aieng-ui/backend/app/, so the repo root is parents[3].
+    """
+    root = Path(__file__).resolve().parents[3]
+    skills_root = root / "aieng-agent-skills" / "skills"
+    if not skills_root.is_dir():
+        return []
+    return sorted(d for d in skills_root.iterdir() if (d / "SKILL.md").is_file())
+
+
+def _parse_skill_frontmatter(text: str) -> tuple[str | None, str | None, str]:
+    """Best-effort parse of a SKILL.md: return (name, description, body).
+
+    Avoids a YAML dependency — reads the leading ``---`` frontmatter block for
+    ``name:`` / ``description:`` and returns the remaining markdown as the body.
+    """
+    name: str | None = None
+    description: str | None = None
+    body = text
+    if text.lstrip().startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter, body = parts[1], parts[2]
+            for line in frontmatter.splitlines():
+                stripped = line.strip()
+                lowered = stripped.lower()
+                if name is None and lowered.startswith("name:"):
+                    name = stripped.split(":", 1)[1].strip().strip("\"'")
+                elif description is None and lowered.startswith("description:"):
+                    description = stripped.split(":", 1)[1].strip().strip("\"'")
+    return name, description, body.strip()
+
+
+def _register_agent_skill_prompts(mcp: FastMCP) -> None:
+    """Expose the modeling/CAE agent skills as MCP **prompts**.
+
+    This is how the workbench's CAD/CAE discipline reaches ANY connecting MCP
+    client (portable, client-agnostic) — the MCP-first answer to "skill discovery"
+    that keeps *agent* skills separate from *dev* skills (the latter stay in
+    `.claude/skills/` and are never registered here). A connecting agent can list
+    and pull e.g. ``aieng-cad-authoring`` to load the authoring playbook on demand.
+    Read-only; always registered.
+    """
+    try:
+        from mcp.server.fastmcp.prompts import Prompt
+    except Exception:  # pragma: no cover - prompts API unavailable
+        try:
+            from mcp.server.fastmcp.prompts.base import Prompt  # type: ignore
+        except Exception:
+            return
+    for skill_dir in _agent_skill_dirs():
+        try:
+            text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        except Exception:  # pragma: no cover - unreadable skill file
+            continue
+        fm_name, fm_desc, body = _parse_skill_frontmatter(text)
+        prompt_name = fm_name or skill_dir.name
+        description = fm_desc or f"aieng workbench skill: {prompt_name}"
+        content = body or text
+
+        def _make_skill_fn(payload: str):
+            def _skill_prompt() -> str:
+                return payload
+            return _skill_prompt
+
+        try:
+            mcp.add_prompt(Prompt.from_function(_make_skill_fn(content), name=prompt_name, description=description))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("failed to register agent skill prompt %s: %s", prompt_name, exc)
+
+
+def _register_permission_tool(mcp: FastMCP) -> None:
+    """Register the agentic-session permission bridge tool.
+
+    Gated behind ``AIENG_AGENTIC_PERMISSION_TOOL=1`` (set by the session driver)
+    so normal MCP usage (e.g. the VSCode client) never sees this internal tool.
+    """
+    if os.environ.get("AIENG_AGENTIC_PERMISSION_TOOL") != "1":
+        return
+    schema = {
+        "type": "object",
+        "properties": {
+            "tool_name": {"type": "string", "description": "Name of the tool the agent wants to run."},
+            "input": {"type": "object", "description": "Proposed tool input.", "additionalProperties": True},
+            "tool_use_id": {"type": "string"},
+        },
+        "required": ["tool_name", "input"],
+        "additionalProperties": True,
+    }
+    description = (
+        "Approval bridge: decides whether a gated workbench tool may run. Returns "
+        "{\"behavior\":\"allow\"|\"deny\"}. Used as Claude Code's permission-prompt-tool."
+    )
+    handler = _request_approval_handler
+    handler.__name__ = _PERMISSION_TOOL_NAME
+    handler.__doc__ = description
+    mcp.add_tool(handler, name=_PERMISSION_TOOL_NAME, description=description, structured_output=False, annotations=None)
+    tool_obj = mcp._tool_manager._tools.get(_PERMISSION_TOOL_NAME)  # type: ignore[attr-defined]
+    if tool_obj is not None:
+        tool_obj.parameters = schema
+        tool_obj.fn_metadata = FuncMetadata(arg_model=_PassthroughArgModel)
+
+
 def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
     """Instantiate FastMCP and register every runtime tool from the workbench.
 
@@ -177,6 +527,7 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
     tool_defs = _rt.list_tools_for_mcp()
 
     mcp = FastMCP(name, instructions=_SERVER_DESCRIPTION)
+    _register_mcp_first_prompts_and_resources(mcp)
 
     # Onboarding tools first — agents see these at the top of the tool list
     # and are more likely to call them before attempting other operations.
@@ -188,6 +539,10 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
 
     for tool_def in tool_defs:
         tool_name = tool_def["name"]
+        # MCP protocol name: dots are not valid in function names for many API
+        # providers (e.g. Kimi, OpenAI). Replace with underscores for the
+        # external-facing name; internal routing still uses the dotted name.
+        mcp_name = tool_name.replace(".", "_")
         description = tool_def.get("description") or tool_name
         if tool_def.get("requires_approval"):
             description = (
@@ -201,9 +556,28 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
             "additionalProperties": True,
         }
 
-        def _make_handler(name_: str):
+        def _make_handler(name_: str, requires_approval: bool = False):
             def _handler(**kwargs: Any) -> Any:
                 args = dict(kwargs)
+                # Approach A approval gate: in an agentic session, a gated tool
+                # must pause for UI approval BEFORE executing. This is enforced
+                # here (server-side), independent of Claude's own permission
+                # settings — so a user allow-listing the workbench tools cannot
+                # bypass the workbench's own approval policy. Denied/timed-out
+                # requests never execute.
+                if requires_approval and _mcp_hard_blocks_approval_tools():
+                    return _coerce_result(_approval_blocked_result(name_))
+                if requires_approval and _broker_approval_mode():
+                    decision = _agentic_permission_decision(name_, args)
+                    if decision.get("behavior") != "allow":
+                        return _coerce_result({
+                            "status": "error",
+                            "code": "approval_denied",
+                            "message": decision.get("message") or "Approval was denied in the workbench UI.",
+                        })
+                    updated = decision.get("updatedInput")
+                    if isinstance(updated, dict) and updated:
+                        args = updated
                 # Prefer forwarding to the running backend so the UI sees live
                 # activity; fall back to in-process execution if it's down.
                 if _BACKEND_URL:
@@ -230,8 +604,8 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
             return _handler
 
         mcp.add_tool(
-            _make_handler(tool_name),
-            name=tool_name,
+            _make_handler(tool_name, bool(tool_def.get("requires_approval"))),
+            name=mcp_name,
             description=description,
             structured_output=False,
             annotations=None,
@@ -242,11 +616,20 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
         #  - fn_metadata: validate/dispatch through a passthrough arg model so the
         #    real fields actually reach the handler. Without this, FastMCP validates
         #    against the ``**kwargs``-derived model and rejects every real call.
-        tool_obj = mcp._tool_manager._tools.get(tool_name)  # type: ignore[attr-defined]
+        tool_obj = mcp._tool_manager._tools.get(mcp_name)  # type: ignore[attr-defined]
         if tool_obj is not None:
             tool_obj.parameters = input_schema
             tool_obj.fn_metadata = FuncMetadata(arg_model=_PassthroughArgModel)
 
+    # Expose the modeling/CAE agent skills as MCP prompts so any connecting client
+    # can pull the workbench discipline (dev skills in `.claude/skills/` are NOT
+    # exposed). See `_register_agent_skill_prompts`.
+    _register_agent_skill_prompts(mcp)
+    # NOTE: the standalone `request_approval` permission-prompt tool is no longer
+    # registered — approval is enforced per-tool in `_make_handler`, which cannot
+    # be bypassed by a user's Claude permission allow-list. `_register_permission_tool`
+    # / `_request_approval_handler` are retained for an optional future
+    # `--permission-prompt-tool` path.
     return mcp
 
 

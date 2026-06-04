@@ -87,9 +87,9 @@ wiring **if you have a conda env named `aieng311`** with build123d installed. It
 > instead of executing in-process. This lets the React workbench show **live
 > agent activity**. CAD builds stream progress, `project_changed` refreshes
 > project metadata, and `viewer_asset_changed` refreshes the GLB/STL viewer URL
-> with a cache-busting version token. The Chat header shows `Live`,
-> `Reconnecting`, or `Polling`; during stream failure the frontend polls the
-> selected project until SSE reconnects. If the backend is down, the MCP server
+> with a cache-busting version token. The UI live-activity status may show
+> `Live`, `Reconnecting`, or `Polling`; during stream failure the frontend polls
+> the selected project until SSE reconnects. If the backend is down, the MCP server
 > falls back to in-process execution (no live UI, but the call still works).
 > Omit this var only for headless use where the UI does not need to track agent
 > actions.
@@ -175,8 +175,11 @@ curl http://127.0.0.1:8000/api/local-agents/preflight
 curl "http://127.0.0.1:8000/api/local-agents/preflight?adapter=claude-code"
 ```
 
-`/api/local-agents/capabilities` is the backward-compatible selector summary.
-`/api/local-agents/preflight` is the maintainer/debug contract. Each adapter
+`/api/local-agents/capabilities` is the backward-compatible embedded-chat selector
+summary. New UI flows should use an external MCP agent connected to this server;
+these local-agent/autopilot endpoints are retained for compatibility and
+maintainer diagnostics. `/api/local-agents/preflight` is the maintainer/debug
+contract. Each adapter
 entry includes `available`, normalized `status` (`ready`, `missing_binary`,
 `auth_error`, `timeout`, `session_not_found`, `unsupported_flag`,
 `unknown_error`), feature flags, an `actionable_fix`, and safe diagnostics
@@ -444,15 +447,27 @@ is written to the package and the React workbench viewer updates automatically.
 
 ## Approval-gated tools
 
-`cae.run_solver` and `cad.edit_parameter` are flagged with `requires_approval=true`
-in the registry. The MCP server prepends `[APPROVAL REQUIRED]` to their
+Mutation/execution tools such as `cad.execute_build123d`, `cad.edit_parameter`,
+and `cae.run_solver` are flagged with `requires_approval=true` in the registry.
+The MCP server prepends `[APPROVAL REQUIRED]` to their
 descriptions so Claude Code's approval UX clearly surfaces the side effect to
 the human operator before invocation.
 
-These tools do **not** currently block at the MCP-server level — the agent
-client is responsible for asking the human first. If you need the server to
-hard-block, set the env var `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` (not yet
-implemented; tracked as a follow-up).
+There are two MCP-first operating modes:
+
+1. **Normal BYO-agent mode** (default): approval-gated tools are advertised as
+   `[APPROVAL REQUIRED]`, and the connecting MCP client is responsible for
+   prompting the human before invocation.
+2. **Hard-block planning/inspection mode**: set
+   `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` in the MCP server environment. In this
+   mode the MCP server rejects every registry tool with `requires_approval=true`
+   before forwarding to the backend or invoking the runtime in-process. The
+   structured response uses `status="error"` and `code="approval_blocked"`.
+
+Hard-block mode is useful for safe inspection, planning, and prompt/resource
+discovery. It cannot execute CAD mutations, package mutations, or solver runs;
+disable the flag and rely on the MCP client's approval UX when the human wants
+to perform those side effects.
 
 ## How tool calls reach the workbench
 

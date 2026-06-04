@@ -591,8 +591,7 @@ export function ModelViewer({
   pickedFaces,
   onAddPickedFace,
   onClearPickedFaces,
-  onInsertToChat,
-  onRunPreprocess,
+  onCopyPointer,
   cadGenerationProgress,
   highlightedFaceIds,
   brepSnapshot,
@@ -605,8 +604,7 @@ export function ModelViewer({
   pickedFaces: PickedFace[];
   onAddPickedFace(face: PickedFace): void;
   onClearPickedFaces(): void;
-  onInsertToChat(text: string): void;
-  onRunPreprocess(prompt: string): Promise<void>;
+  onCopyPointer(text: string): void;
   cadGenerationProgress: CadGenerationProgress | null;
   highlightedFaceIds: Set<string>;
   brepSnapshot: BrepGraphSnapshot | null;
@@ -623,7 +621,6 @@ export function ModelViewer({
     detail: "Waiting for preview asset",
   });
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
-  const [preprocessBusy, setPreprocessBusy] = useState(false);
   // Viewer↔model coordinate transform (see DisplayTransform). Held in a ref so
   // the click handler always reads the current value without re-binding.
   const displayTransformRef = useRef<DisplayTransform>(IDENTITY_TRANSFORM);
@@ -954,33 +951,25 @@ export function ModelViewer({
             <button
               type="button"
               className="viewer-face-action-btn"
-              disabled={preprocessBusy}
-              onClick={() => {
-                setPreprocessBusy(true);
-                void onRunPreprocess(`Apply a 500 N load on ${tooltipFace.pointer}`).finally(() => setPreprocessBusy(false));
-              }}
-              title="AI-preprocess: 500 N load"
+              onClick={() => onCopyPointer(`Apply a 500 N load on ${tooltipFace.pointer}`)}
+              title="Copy MCP-agent instruction for a 500 N load"
             >
-              {preprocessBusy ? "…" : "Apply load here"}
+              Copy load instruction
             </button>
             <button
               type="button"
               className="viewer-face-action-btn"
-              disabled={preprocessBusy}
-              onClick={() => {
-                setPreprocessBusy(true);
-                void onRunPreprocess(`Set ${tooltipFace.pointer} as fixed support`).finally(() => setPreprocessBusy(false));
-              }}
-              title="AI-preprocess: fixed support"
+              onClick={() => onCopyPointer(`Set ${tooltipFace.pointer} as fixed support`)}
+              title="Copy MCP-agent instruction for a fixed support"
             >
-              {preprocessBusy ? "…" : "Set as support"}
+              Copy support instruction
             </button>
             <button
               type="button"
               className="viewer-face-action-btn secondary"
-              onClick={() => onInsertToChat(tooltipFace.pointer)}
+              onClick={() => onCopyPointer(tooltipFace.pointer)}
             >
-              Use in chat
+              Copy pointer
             </button>
           </div>
           <small>Shift+Click to multi-select</small>
@@ -1002,10 +991,10 @@ export function ModelViewer({
                 <button
                   type="button"
                   className="viewer-face-multisel-use"
-                  onClick={() => onInsertToChat(f.pointer)}
-                  title="Insert into chat"
+                  onClick={() => onCopyPointer(f.pointer)}
+                  title="Copy pointer"
                 >
-                  ↵
+                  Copy
                 </button>
               </div>
             ))}

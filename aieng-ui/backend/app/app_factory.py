@@ -794,6 +794,67 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             ),
         )
 
+    def _run_agentic_session(request: Any, state: Any) -> None:
+        """Background driver for the VSCode-parity agentic path (Approach A).
+
+        Spawns a real agentic claude session (workbench MCP + skills + repo docs)
+        and streams its events into the same transcript contract. Gated mutations
+        pause via the Phase-2 approval bridge. The legacy engine path is untouched.
+        """
+        import uuid as _uuid
+
+        from .agent_autopilot.claude_agent_session import ClaudeAgentSession
+
+        store = _autopilot_store()
+        # Two distinct ids: the CHAT session (state.session_id) tags emitted events
+        # so the UI associates them with the visible transcript; the Claude CLI
+        # needs a valid UUID for --session-id (derived stably from run_id, enables
+        # --resume later). Conflating them tags every event with the wrong session
+        # and the UI silently drops them.
+        claude_session_id = str(_uuid.uuid5(_uuid.NAMESPACE_OID, state.run_id))
+        backend_url = (os.environ.get("AIENG_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
+        captured = {"status": "running"}
+
+        def _on_event(event: dict[str, Any]) -> None:
+            _publish_agent_event(event)
+            if event.get("type") == "run_status_changed" and event.get("status") in {"completed", "failed", "cancelled"}:
+                captured["status"] = str(event.get("status"))
+
+        try:
+            session = ClaudeAgentSession(backend_url=backend_url)
+            result = session.run(
+                prompt=request.message,
+                run_id=state.run_id,
+                project_id=request.project_id,
+                session_id=request.session_id,  # chat session → event association
+                claude_session_id=claude_session_id,  # CLI UUID
+                on_event=_on_event,
+                on_spawn=lambda proc: _agentic_procs.__setitem__(state.run_id, proc),
+            )
+        except Exception as exc:
+            _mark_autopilot_failed(store, state.run_id, exc)
+            return
+        finally:
+            _agentic_procs.pop(state.run_id, None)
+
+        final_status = captured["status"]
+        if final_status == "running":
+            final_status = "completed" if result.get("status") == "completed" else "failed"
+        try:
+            current = store.load(state.run_id)
+            current.status = final_status
+            store.save(current)
+            _sync_autopilot_session(current)
+            _publish_autopilot_state(current)
+            _write_autopilot_audit(current.project_id, "agent_autopilot_finished", {
+                "run_id": current.run_id,
+                "adapter_id": current.adapter_id,
+                "status": current.status,
+                "step_count": len(current.steps),
+            })
+        except Exception:
+            pass
+
     @app.post("/api/agent/autopilot/runs")
     def create_agent_autopilot_run(
         payload: dict[str, Any] = Body(default=None),
@@ -871,6 +932,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         })
 
         def _run_in_background() -> None:
+            if request.adapter_id == "claude-agent":
+                _run_agentic_session(request, state)
+                return
             try:
                 package_reader = _project_package_reader(request.project_id)
                 try:
@@ -1117,6 +1181,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         from .agent_autopilot.engine import AutopilotEngine
 
         store = _autopilot_store()
+        # Agentic runs: kill the claude + MCP subprocess tree so it stops polling
+        # and doesn't orphan. No-op for engine-path runs.
+        _kill_agentic_run(run_id)
         engine = AutopilotEngine(store=store, runtime_tools=_rt.list_tools_for_mcp(), on_state_update=_sync_autopilot_session, on_event=_publish_agent_event)
         try:
             state = engine.cancel_run(run_id)
@@ -1129,6 +1196,127 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # --- Agentic-session approval bridge (Approach A, Phase 2) ----------------
+    # The agentic claude session (adapter_id == "claude-agent") drives the
+    # workbench MCP tools directly. Gated mutations are routed here via the
+    # `--permission-prompt-tool` MCP bridge so they still pause for UI approval —
+    # the agentic path never bypasses approval. See
+    # aieng-ui/docs/web-chat-agentic-parity-plan.md.
+    from .agent_autopilot.agentic_approval import (
+        PermissionBroker,
+        build_approval_name_set,
+        format_decision,
+        requires_approval as _agentic_requires_approval,
+        resolve_registry_name as _agentic_resolve_name,
+    )
+
+    _agentic_permission_broker = PermissionBroker()
+    # Track live agentic-session subprocesses by run_id so Stop/cancel can kill the
+    # whole tree (claude + the spawned MCP server) — otherwise they orphan and keep
+    # polling. Best-effort; entries are cleared when the run finishes.
+    _agentic_procs: dict[str, Any] = {}
+
+    def _kill_agentic_run(run_id: str) -> None:
+        proc = _agentic_procs.get(run_id)
+        if proc is None:
+            return
+        try:
+            import subprocess as _sp
+
+            if os.name == "nt":
+                _sp.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        capture_output=True, text=True, check=False)
+            else:
+                proc.kill()
+        except Exception:
+            pass
+
+    def _agentic_approval_names() -> set[str]:
+        return build_approval_name_set(_rt.list_tools_for_mcp())
+
+    @app.post("/api/agent/agentic/permission")
+    def create_agentic_permission(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+        """Called (over HTTP) by the MCP `request_approval` permission tool.
+
+        Non-gated tools auto-resolve to allow (no UI prompt). Gated tools create a
+        pending rendezvous, surface an approval card in the run transcript, and the
+        caller polls GET until the user resolves it.
+        """
+        data = payload or {}
+        tool_name = str(data.get("tool_name") or "").strip()
+        if not tool_name:
+            raise HTTPException(status_code=400, detail="tool_name is required")
+        tool_input = data.get("input") if isinstance(data.get("input"), dict) else {}
+        run_id = data.get("run_id") or None
+        if not _agentic_requires_approval(tool_name, _agentic_approval_names()):
+            return {"status": "resolved", "decision": format_decision(allowed=True, tool_input=tool_input)}
+        entry = _agentic_permission_broker.create(run_id=run_id, tool_name=tool_name, tool_input=tool_input)
+        dotted = _agentic_resolve_name(tool_name, _rt.list_tools_for_mcp())
+        approval_payload = {
+            "id": entry.permission_id,
+            "agentic_permission_id": entry.permission_id,
+            "tool_name": dotted,
+            "input": tool_input,
+            "level": "mutation",
+            "explanation": f"The agent wants to run {dotted}. Approve to let it proceed.",
+            "code_preview": tool_input.get("code") if isinstance(tool_input.get("code"), str) else None,
+            "target_project_id": data.get("project_id"),
+        }
+        _publish_agent_event({
+            "event_id": f"{run_id or 'agentic'}-approval-{entry.permission_id}",
+            "type": "approval_requested",
+            "run_id": run_id,
+            "project_id": data.get("project_id"),
+            "session_id": data.get("session_id"),
+            "status": "awaiting_approval",
+            "content": approval_payload["explanation"],
+            "payload": approval_payload,
+        })
+        return {"status": "pending", "permission_id": entry.permission_id}
+
+    @app.get("/api/agent/agentic/permission/{permission_id}")
+    def get_agentic_permission(permission_id: str, wait: float = 0.0) -> dict[str, Any]:
+        # Optional long-poll: block up to `wait` seconds for resolution so the MCP
+        # bridge polls every ~20s instead of hammering every 1.5s (readable logs,
+        # instant approval). Clamp to a sane ceiling.
+        if wait and wait > 0:
+            entry = _agentic_permission_broker.wait(permission_id, min(float(wait), 30.0))
+        else:
+            entry = _agentic_permission_broker.get(permission_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="unknown permission_id")
+        if entry.status == "pending":
+            return {"status": "pending", "permission_id": permission_id}
+        return {"status": "resolved", "decision": _agentic_permission_broker.decision_for(entry)}
+
+    @app.post("/api/agent/agentic/permission/{permission_id}/resolve")
+    def resolve_agentic_permission(permission_id: str, payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+        """UI approve/deny for an agentic-session gated tool."""
+        data = payload or {}
+        approved = bool(data.get("approved", False))
+        message = data.get("message")
+        updated_input = data.get("updated_input") if isinstance(data.get("updated_input"), dict) else None
+        entry = _agentic_permission_broker.resolve(
+            permission_id, approved=approved, message=message, updated_input=updated_input
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="unknown permission_id")
+        _publish_agent_event({
+            "event_id": f"{entry.run_id or 'agentic'}-approval-resolved-{permission_id}",
+            "type": "approval_resolved",
+            "run_id": entry.run_id,
+            "project_id": data.get("project_id"),
+            "session_id": data.get("session_id"),
+            "status": "running" if approved else "blocked",
+            "content": ("Approved." if approved else "Denied.") + f" ({entry.tool_name})",
+            "payload": {
+                "agentic_permission_id": permission_id,
+                "approved": approved,
+                "tool_name": entry.tool_name,
+            },
+        })
+        return {"status": "resolved", "approved": approved, "decision": _agentic_permission_broker.decision_for(entry)}
 
     @app.get("/api/agent/connections")
     def list_agent_connections() -> list[dict[str, Any]]:

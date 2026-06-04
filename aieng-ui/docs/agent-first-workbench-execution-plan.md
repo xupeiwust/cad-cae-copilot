@@ -1,8 +1,15 @@
 # Agent-First Workbench Simplification Execution Plan
 
-Status: **Draft for implementation**
-Last updated: **2026-05-27**
+Status: **Superseded by MCP-first #17 product cutover**
+Last updated: **2026-06-04**
 Owner: **AIENG workbench maintainers + handoff LLM agents**
+
+> **2026-06-04 update:** this older "right rail Agent workbench" direction has
+> been superseded. The active product surface is now a full-width live CAD/CAE
+> viewer plus the Workbench MCP server. The in-UI chat/composer/right rail is
+> retired from active frontend wiring; backend chat/autopilot endpoints remain
+> compatibility-only. External MCP agents are the primary CAD/CAE orchestration
+> path.
 
 ## Purpose
 

@@ -13,8 +13,7 @@ type ViewerPaneProps = {
   pickedFaces: PickedFace[];
   onAddPickedFace(face: PickedFace): void;
   onClearPickedFaces(): void;
-  onInsertToChat(text: string): void;
-  onRunPreprocess(prompt: string): Promise<void>;
+  onCopyPointer(text: string): void;
   cadGenerationProgress: CadGenerationProgress | null;
   highlightedFaceIds: Set<string>;
   brepSnapshot: BrepGraphSnapshot | null;
@@ -31,8 +30,7 @@ export function ViewerPane({
   pickedFaces,
   onAddPickedFace,
   onClearPickedFaces,
-  onInsertToChat,
-  onRunPreprocess,
+  onCopyPointer,
   cadGenerationProgress,
   highlightedFaceIds,
   brepSnapshot,
@@ -72,8 +70,7 @@ export function ViewerPane({
           pickedFaces={pickedFaces}
           onAddPickedFace={onAddPickedFace}
           onClearPickedFaces={onClearPickedFaces}
-          onInsertToChat={onInsertToChat}
-          onRunPreprocess={onRunPreprocess}
+          onCopyPointer={onCopyPointer}
           cadGenerationProgress={cadGenerationProgress}
           highlightedFaceIds={highlightedFaceIds}
           brepSnapshot={brepSnapshot}

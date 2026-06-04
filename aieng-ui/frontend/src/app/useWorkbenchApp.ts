@@ -1,45 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
 import { api } from "../api";
 import {
   BASE_STAGES,
-  CHAT_CONNECTION_ID_STORAGE_KEY,
-  DEFAULT_CHAT_CONNECTIONS,
   EMPTY_CAE_FIELDS,
 } from "../appConstants";
-import type { Notice, ShapeIrObject, StageItem, StageState } from "../appTypes";
+import type { ChatHistoryItem, Notice, StageItem, StageState } from "../appTypes";
 import {
-  createChatId,
   projectViewerUrl,
   resolveAssetFormat,
   withAssetVersion,
 } from "../appUtils";
 import type {
-  ApprovalMode,
-  ArtifactResponse,
-  ChatConnection,
   ProjectRecord,
   ProjectSummary,
   RuntimeConfigSnapshot,
   SolverFieldDescriptor,
 } from "../types";
-import type { EngineeringContextSource } from "./engineeringContextSource";
-import { toComposerIntentMetadata } from "../components/chat/composerIntent";
 import { useAgentActivityStream } from "./useAgentActivityStream";
-import { useAgentRuns } from "./useAgentRuns";
-import { mergeLocalAgentCapabilities } from "./workbenchHelpers";
-import { resolveEngineeringIntent } from "./engineeringIntent";
+import type { AgentTranscriptEvent } from "./chatTranscript";
+import type { PendingApproval } from "./pendingApprovals";
+import { applyApprovalEvent } from "./pendingApprovals";
 import { buildFallbackSummary } from "./projectSummary";
 import { useEngineeringActions } from "./useEngineeringActions";
 import { useGeometryPointers } from "./useGeometryPointers";
-import { useObjectRegistry } from "./useObjectRegistry";
-import { useEditableParameters } from "./useEditableParameters";
-import { useProjectCritique } from "./useProjectCritique";
-import { useSimulationReadiness } from "./useSimulationReadiness";
+
 import { useRuntimeSettings } from "./useRuntimeSettings";
-import { useBrowserStorageState } from "./useBrowserStorageState";
-import { useChatSessions } from "./useChatSessions";
-import { useChatTranscript } from "./useChatTranscript";
+
 
 export function useWorkbenchApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -49,57 +36,12 @@ export function useWorkbenchApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [projectName, setProjectName] = useState("STEP workbench project");
-  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [stages, setStages] = useState<StageItem[]>(BASE_STAGES);
   const [selectedCaeField, setSelectedCaeField] = useState("stress");
   const [fieldDescriptor, setFieldDescriptor] = useState<SolverFieldDescriptor | null>(null);
-  const [chatConnections, setChatConnections] = useState<ChatConnection[]>(DEFAULT_CHAT_CONNECTIONS);
-  const [selectedChatConnectionId, setSelectedChatConnectionId] = useBrowserStorageState<string>(
-    CHAT_CONNECTION_ID_STORAGE_KEY,
-    "llm-api",
-    { storage: "local" },
-  );
-  const [artifactViewerPath, setArtifactViewerPath] = useState("");
-  const [artifactViewerData, setArtifactViewerData] = useState<ArtifactResponse | null>(null);
-  const [artifactViewerBusy, setArtifactViewerBusy] = useState(false);
-  const chatLogRef = useRef<HTMLDivElement | null>(null);
-  const llmReadyRef = useRef(false);
-  const {
-    chatSessions,
-    activeSessionId,
-    activeSession,
-    sessionsReady,
-    createChatSession,
-    selectChatSession,
-    deleteChatSession,
-    updateActiveSessionFromRun,
-    handleLiveChatSessionChange,
-    handleLiveChatSessionDelete,
-    renameActiveSessionForPrompt,
-    updateActiveSessionApprovalMode,
-    updateActiveSessionContextSummary,
-  } = useChatSessions({ selectedId });
-  const {
-    chatHistory,
-    agentEvents,
-    setChatHistory,
-    setPersistentChatHistory,
-    handleLiveChatMessage,
-    handleLiveAgentEvent,
-    appendRunToChatHistory,
-    clearAgentEvents,
-    streamingState,
-    clearStreamingState,
-  } = useChatTranscript({
-    selectedId,
-    activeSessionId,
-    activeRunId: activeSession?.active_run_id,
-    sessionsReady,
-    onAutopilotRunUpdate: updateActiveSessionFromRun,
-  });
   const runtimeSettings = useRuntimeSettings({ setSummary });
   const {
     runtime,
@@ -125,33 +67,21 @@ export function useWorkbenchApp() {
     applyLlmProviderPreset,
     restoreDefaultLlmConfig,
   } = runtimeSettings;
-  llmReadyRef.current = llmReady;
-
   const {
     cadPreviewUrl,
     cadPreviewFormat,
-    cadGenerating,
-    cadGenResult,
     cadGenerationProgress,
     setCadGenerationProgress,
-    simulationPending,
-    simulationProgress,
-    setSimulationPending,
     heatmapActive,
-    heatmapRange,
     refreshViewerAsset,
     resetProjectDerivedState,
-    executePreprocessFromPrompt,
-    executeCadFromPrompt,
-    executeSimulation,
-    viewStressHeatmap,
   } = useEngineeringActions({
     selectedId,
     apiKey,
     llmConfig,
     refreshProjects,
     setBusy,
-    setChatHistory: setPersistentChatHistory,
+    setChatHistory: (() => undefined) as Dispatch<SetStateAction<ChatHistoryItem[]>>,
   });
   const {
     pickedFaces,
@@ -159,13 +89,7 @@ export function useWorkbenchApp() {
     brepSnapshot,
     addPickedFace,
     clearPickedFaces,
-    insertToChat,
-    runPreprocessFromPointer,
     clearHighlightedFaces,
-    setHighlightedFacesExact,
-    selectedGeometryContext,
-    withSelectedGeometryPrompt,
-    agentPayloadGeometry,
     pointerContextValue,
   } = useGeometryPointers({
     selectedId,
@@ -173,33 +97,10 @@ export function useWorkbenchApp() {
     // cad.execute_build123d). Forces the B-Rep snapshot to re-fetch so the
     // face highlight + pick work on freshly-built geometry without re-selecting.
     geometryVersion: projects.find((item) => item.id === selectedId)?.updated_at ?? null,
-    setMessage,
+    setMessage: (() => undefined) as Dispatch<SetStateAction<string>>,
     setNotice,
-    executePreprocessFromPrompt,
+    executePreprocessFromPrompt: async () => undefined,
   });
-
-  // Shape IR object registry: maps Shape IR nodes <-> viewer-selectable entities.
-  const geometryVersion = projects.find((item) => item.id === selectedId)?.updated_at ?? null;
-  const { objects: shapeIrObjects, verification: shapeIrVerification } = useObjectRegistry({
-    selectedId,
-    geometryVersion,
-  });
-  // Editable Parameter Explorer: the read-only "point" surface for point-and-shoot.
-  const { editableParameters } = useEditableParameters({ selectedId, geometryVersion });
-  // Read-only quality / readiness surfaces (actionable via composer drafts).
-  const { critiqueFindings } = useProjectCritique({ selectedId, geometryVersion });
-  const { simulationReadiness } = useSimulationReadiness({ selectedId, geometryVersion });
-  const [selectedShapeIrNodeId, setSelectedShapeIrNodeId] = useState<string | null>(null);
-  useEffect(() => {
-    setSelectedShapeIrNodeId(null);
-  }, [selectedId]);
-  const selectShapeIrNode = useCallback(
-    (node: ShapeIrObject) => {
-      setSelectedShapeIrNodeId(node.node_id);
-      setHighlightedFacesExact(node.viewer_selectable_ids ?? []);
-    },
-    [setHighlightedFacesExact],
-  );
 
   const selectedProject = useMemo(
     () => projects.find((item) => item.id === selectedId) ?? null,
@@ -217,69 +118,50 @@ export function useWorkbenchApp() {
   const effectiveViewerFormat = heatmapActive
     ? "glb"
     : (cadPreviewUrl ? cadPreviewFormat : null) ?? resolveAssetFormat(rawViewerUrl, summaryViewerFormat ?? selectedProject?.web_asset_format ?? null);
-  const selectedChatConnection = useMemo(
-    () => chatConnections.find((item) => item.id === selectedChatConnectionId) ?? chatConnections[0] ?? DEFAULT_CHAT_CONNECTIONS[0],
-    [chatConnections, selectedChatConnectionId],
-  );
-  useEffect(() => {
-    if (!chatConnections.length) return;
-    if (chatConnections.some((item) => item.id === selectedChatConnectionId)) return;
-    setSelectedChatConnectionId(chatConnections[0].id);
-  }, [chatConnections, selectedChatConnectionId, setSelectedChatConnectionId]);
-  const selectedConnectionBlocked = selectedChatConnection.requires_project && !selectedId;
-  const {
-    agentBusy,
-    lastRuntimeRun,
-    setAgentBusy,
-    stopAutopilotPoll,
-    createAgentPlanFromPrompt,
-    runAgentChat,
-    probeLocalAgents,
-    runAutopilotAgent,
-    updateAutopilotRun,
-    approveRun,
-    rejectRun,
-  } = useAgentRuns({
-    selectedId,
-    activeSessionId,
-    message,
-    selectedChatConnection,
-    localAgentConfig,
-    llmConfig,
-    apiKey,
-    agentPayloadGeometry,
-    appendRunToChatHistory,
-    runBusyTask,
-    setNotice,
-    setChatHistory: setPersistentChatHistory,
-    setChatConnections,
-    onAutopilotRunUpdate: updateActiveSessionFromRun,
-  });
+  // MCP-first approval surface (#17): pending gated-tool approvals raised by an
+  // external MCP agent, shown in the viewer for the human to approve/deny.
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  const handleAgentEvent = useCallback((event: AgentTranscriptEvent) => {
+    setPendingApprovals((current) => applyApprovalEvent(current, event));
+  }, []);
+  const resolveApproval = useCallback(async (permissionId: string, approved: boolean) => {
+    // Optimistically drop it; the approval_resolved event also clears it.
+    setPendingApprovals((current) => current.filter((item) => item.permissionId !== permissionId));
+    try {
+      await api.resolveAgenticPermission(permissionId, approved);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        title: "Approval action failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [setNotice]);
+
   const {
     liveSyncStatus,
     liveSyncDetail,
     liveSyncLastEventAt,
   } = useAgentActivityStream({
     selectedId,
-    activeSessionId,
-    activeRunId: activeSession?.active_run_id,
-    agentBusy,
+    activeSessionId: null,
+    activeRunId: null,
+    agentBusy: false,
     cadGenerationProgress,
     refreshProjects,
     refreshViewerAsset,
-    stopAutopilotPoll,
-    onAutopilotRunUpdate: updateActiveSessionFromRun,
-    onChatMessage: handleLiveChatMessage,
-    onChatSessionChange: handleLiveChatSessionChange,
-    onChatSessionDelete: handleLiveChatSessionDelete,
-    onAgentEvent: handleLiveAgentEvent,
-    setAgentBusy,
+    stopAutopilotPoll: () => undefined,
+    onAutopilotRunUpdate: () => undefined,
+    onChatMessage: () => undefined,
+    onChatSessionChange: () => undefined,
+    onChatSessionDelete: () => undefined,
+    onAgentEvent: handleAgentEvent,
+    setAgentBusy: (() => undefined) as Dispatch<SetStateAction<boolean>>,
     setNotice,
-    setChatHistory: setPersistentChatHistory,
+    setChatHistory: (() => undefined) as Dispatch<SetStateAction<ChatHistoryItem[]>>,
     setCadGenerationProgress,
-    clearStreamingState,
+    clearStreamingState: () => undefined,
   });
-  const chatBusy = agentBusy || busy;
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 5000);
@@ -316,16 +198,6 @@ export function useWorkbenchApp() {
       const runtimeSnapshot = await api.runtime();
       if (cancelled) return;
       applyRuntimeSnapshot(runtimeSnapshot);
-      const [nextConnections, localAgents] = await Promise.all([
-        api.listAgentConnections().catch(() => DEFAULT_CHAT_CONNECTIONS),
-        api.listLocalAgentCapabilities().catch(() => ({ adapters: [], available: [] })),
-      ]);
-      if (cancelled) return;
-      setChatConnections(mergeLocalAgentCapabilities(
-        nextConnections.length ? nextConnections : DEFAULT_CHAT_CONNECTIONS,
-        localAgents.adapters,
-        llmReadyRef.current,
-      ));
       const list = await api.listProjects();
       if (cancelled) return;
       setProjects(list);
@@ -349,10 +221,6 @@ export function useWorkbenchApp() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    setChatConnections((current) => mergeLocalAgentCapabilities(current, undefined, llmReady));
-  }, [llmReady]);
 
   useEffect(() => {
     resetProjectDerivedState();
@@ -466,98 +334,8 @@ export function useWorkbenchApp() {
     });
   }
 
-  async function sendUnified(promptOverride?: string) {
-    clearAgentEvents();
-    clearStreamingState();
-    const prompt = (promptOverride ?? message).trim();
-    if (!prompt) return;
-    renameActiveSessionForPrompt(prompt);
-    // Parse slash-command intent once and carry it as metadata on the persisted
-    // user message and (for autopilot) the run request. Metadata only — it does
-    // not change routing, tool selection, or how the prompt is executed.
-    const composerIntent = toComposerIntentMetadata(prompt);
-    if (selectedChatConnection.id === "local-agent" || selectedChatConnection.id === "llm-api") {
-      const activeAutopilotRun = chatHistory
-        .slice()
-        .reverse()
-        .find((item) => item.autopilotRun && ["running", "awaiting_approval", "chatting", "blocked"].includes(item.autopilotRun.status))?.autopilotRun;
-      if (activeAutopilotRun) {
-        setPersistentChatHistory((current) => [
-          ...current,
-          {
-            id: createChatId(),
-            role: "user",
-            body: prompt,
-            createdAt: new Date().toISOString(),
-            mode: "runtime",
-            composerIntent,
-          },
-        ]);
-        setMessage("");
-        const action = activeAutopilotRun.status === "running"
-          ? "follow-up"
-          : "reply";
-        await updateAutopilotRun(activeAutopilotRun.run_id, action, prompt);
-        return;
-      }
-      setPersistentChatHistory((current) => [
-        ...current,
-        { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), mode: "runtime", composerIntent },
-      ]);
-      setMessage("");
-      await runAutopilotAgent(prompt, true, composerIntent);
-      return;
-    }
-    const agentPrompt = withSelectedGeometryPrompt(prompt);
-
-    setPersistentChatHistory((current) => [
-      ...current,
-      { id: createChatId(), role: "user", body: prompt, createdAt: new Date().toISOString(), composerIntent },
-    ]);
-    setMessage("");
-
-    const plannedAction = await resolveEngineeringIntent({
-      selectedId,
-      prompt: agentPrompt,
-      hasCadResult: Boolean(cadGenResult),
-    });
-    const cadIntent = plannedAction?.intent ?? null;
-    if (cadIntent === "simulate") {
-      setSimulationPending(true);
-      setPersistentChatHistory((current) => [
-        ...current,
-        {
-          id: createChatId(),
-          role: "assistant",
-          body: "Ready to mesh and solve. This will run Gmsh + CalculiX on your geometry — approve to proceed.",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      return;
-    }
-    if (cadIntent === "preprocess") {
-      await createAgentPlanFromPrompt(prompt, true);
-      return;
-    }
-    if (cadIntent === "generate" || cadIntent === "refine") {
-      await executeCadFromPrompt(agentPrompt, cadIntent);
-      return;
-    }
-    if (cadIntent === "change_material" || cadIntent === "refine_mesh") {
-      await createAgentPlanFromPrompt(prompt, true);
-      return;
-    }
-    if (cadIntent === "set_target") {
-      await createAgentPlanFromPrompt(prompt, true);
-      return;
-    }
-
-    await runAgentChat(prompt);
-  }
-
   const caeSummary = summary?.cae ?? null;
   const caeFields = caeSummary?.available_fields ?? EMPTY_CAE_FIELDS;
-  const hasCaeContext = caeSummary?.present ?? false;
   const hasCaeResultArtifacts = Boolean(
     caeSummary?.results_available ||
       (caeSummary?.result_evidence_count ?? 0) > 0 ||
@@ -572,42 +350,7 @@ export function useWorkbenchApp() {
     [caeFields, hasCaeResultArtifacts],
   );
   const activeFieldDescriptor = hasCaeResultArtifacts ? fieldDescriptor : null;
-  const engineeringContext = useMemo<EngineeringContextSource>(() => ({
-    projectId: selectedId,
-    projectName: selectedProject?.name ?? null,
-    selectedFaces: pickedFaces.map((face) => ({
-      pointer: face.pointer,
-      label: face.label,
-      surface_type: face.surface_type,
-    })),
-    highlightedFaceCount: highlightedFaceIds.size,
-    viewerAsset: effectiveViewerUrl
-      ? { url: effectiveViewerUrl, format: effectiveViewerFormat }
-      : selectedProject?.web_asset
-        ? { url: selectedProject.web_asset, format: selectedProject.web_asset_format ?? null }
-        : null,
-    shapeIrObjectCount: shapeIrObjects.length,
-    shapeIrVerificationStatus: shapeIrVerification?.status ?? null,
-    cae: {
-      hasContext: hasCaeContext,
-      hasResults: hasCaeResultArtifacts,
-      availableFields: renderableCaeFields,
-      activeField: activeFieldDescriptor?.field_name ?? null,
-    },
-  }), [
-    activeFieldDescriptor,
-    effectiveViewerFormat,
-    effectiveViewerUrl,
-    hasCaeContext,
-    hasCaeResultArtifacts,
-    highlightedFaceIds,
-    pickedFaces,
-    renderableCaeFields,
-    selectedId,
-    selectedProject,
-    shapeIrObjects,
-    shapeIrVerification,
-  ]);
+
 
   useEffect(() => {
     if (!renderableCaeFields.length) return;
@@ -647,45 +390,12 @@ export function useWorkbenchApp() {
     return () => { cancelled = true; };
   }, [selectedId, selectedCaeField, hasCaeResultArtifacts, renderableCaeFields]);
 
-  useEffect(() => {
-    const el = chatLogRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [chatHistory]);
 
-  async function setActiveSessionApprovalMode(approvalMode: ApprovalMode) {
-    try {
-      await updateActiveSessionApprovalMode(approvalMode);
-    } catch (error) {
-      setNotice({
-        tone: "error",
-        title: "Approval mode update failed",
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  async function viewArtifact(path: string) {
-    if (!selectedId || !path.trim()) return;
-    setArtifactViewerPath(path.trim());
-    setArtifactViewerBusy(true);
-    setArtifactViewerData(null);
-    try {
-      const data = await api.getProjectArtifact(selectedId, path.trim());
-      setArtifactViewerData(data);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setArtifactViewerData({
-        path: path.trim(),
-        exists: false,
-        media_type: "unknown",
-        warnings: [detail],
-      });
-    } finally {
-      setArtifactViewerBusy(false);
-    }
-  }
+  const copyPointerText = useCallback((text: string) => {
+    if (!text.trim()) return;
+    void navigator.clipboard?.writeText(text).catch(() => undefined);
+    setNotice({ tone: "success", title: "Copied for MCP agent", detail: text });
+  }, []);
 
   return {
     pointerContextValue,
@@ -694,14 +404,8 @@ export function useWorkbenchApp() {
     setNotice,
     setRuntimeNotice,
     selectedProject,
-    chatSessions,
-    activeSessionId,
-    activeSession,
     sidebarCollapsed,
     setSidebarCollapsed,
-    createChatSession,
-    selectChatSession,
-    deleteChatSession,
     setSettingsOpen,
     projectName,
     setProjectName,
@@ -719,59 +423,20 @@ export function useWorkbenchApp() {
     liveSyncStatus,
     liveSyncDetail,
     liveSyncLastEventAt,
+    pendingApprovals,
+    resolveApproval,
     effectiveViewerFormat,
     activeFieldDescriptor,
     effectiveViewerUrl,
     pickedFaces,
     addPickedFace,
     clearPickedFaces,
-    insertToChat,
-    runPreprocessFromPointer,
+    copyPointerText,
     cadGenerationProgress,
     highlightedFaceIds,
     brepSnapshot,
     clearHighlightedFaces,
-    shapeIrObjects,
-    shapeIrVerification,
-    editableParameters,
-    critiqueFindings,
-    simulationReadiness,
-    engineeringContext,
-    selectedShapeIrNodeId,
-    selectShapeIrNode,
-    chatConnections,
-    selectedChatConnectionId,
-    approvalMode: (
-      activeSession?.approval_mode === "strict" ||
-      activeSession?.approval_mode === "manual" ||
-      activeSession?.approval_mode === "balanced"
-        ? activeSession.approval_mode
-        : "balanced"
-    ) as ApprovalMode,
-    setActiveSessionApprovalMode,
-    updateActiveSessionContextSummary,
-    selectedConnectionBlocked,
-    chatBusy,
-    cadGenerating,
-    chatHistory,
-    agentEvents,
-    chatLogRef,
-    message,
-    lastRuntimeRun,
-    simulationPending,
-    simulationProgress,
-    setSelectedChatConnectionId,
-    setMessage,
-    sendUnified,
-    viewArtifact,
-    approveRun,
-    rejectRun,
-    updateAutopilotRun,
-    executeSimulation,
-    setSimulationPending,
     heatmapActive,
-    heatmapRange,
-    viewStressHeatmap,
     settingsOpen,
     runtime,
     runtimeDraft,
@@ -789,11 +454,8 @@ export function useWorkbenchApp() {
     runRuntimeTask,
     restoreRuntimeDefaults,
     localAgentConfig,
-    selectedChatConnection,
-    probeLocalAgents,
     setLocalAgentConfig,
     globalSettingsOpen,
     setGlobalSettingsOpen,
-    streamingState,
   };
 }

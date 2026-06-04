@@ -57,6 +57,9 @@ export type TranscriptApprovalLine = TranscriptBase & {
   skillPlanAssumptions?: string[];
   skillPlanWarnings?: string[];
   skillPlanVerificationTargets?: string[];
+  // Approach A: when set, approve/reject resolves the agentic permission bridge
+  // (POST …/permission/{id}/resolve) instead of the engine /continue loop.
+  agenticPermissionId?: string | null;
 };
 
 export type TranscriptAskUserLine = TranscriptBase & {
@@ -415,6 +418,7 @@ export function agentEventToTranscriptItems(event: AgentTranscriptEvent, occurre
         skillPlanAssumptions: stringArray(payload.skill_plan_assumptions),
         skillPlanWarnings: stringArray(payload.skill_plan_warnings),
         skillPlanVerificationTargets: stringArray(payload.skill_plan_verification_targets),
+        agenticPermissionId: stringValue(payload.agentic_permission_id),
       }];
     case "ask_user_requested":
       return [{

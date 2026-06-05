@@ -119,7 +119,7 @@ def quickstart_result() -> dict[str, Any]:
         "path": str(path),
         "mode": "quickstart",
         "available_topics": available_topics(),
-        "detail_hint": "Call aieng.guide {topic} for detail or aieng.agent_readme {detail:'full'} for the canonical full guide.",
+        "detail_hint": "MANDATORY: Call aieng.guide {topic} once per session before the first action of that category. Topic map — cad: geometry creation/edit, cae: simulation/solver, workflows: multi-step pipelines, approvals: gated tools, operators: admin actions, pointers: entity selection, package: import/export/lifecycle, fallback: non-MCP mode, frontend: UI development, tools: tool taxonomy, full: complete rules. Re-read only if session context was lost or the guide changed. Full reference: aieng.agent_readme {detail:'full'}."
     }
 
 

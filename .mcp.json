@@ -6,7 +6,7 @@
       "cwd": "aieng-ui/backend",
       "env": {
         "AIENG_BACKEND_URL": "http://127.0.0.1:8000",
-        "AIENG_MCP_MANAGED_APPROVAL": "1"
+        "AIENG_MCP_MANAGED_APPROVAL": "0"
       }
     }
   }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
 import { api } from "../api";
 import type { BrepGraphSnapshot, Notice, PickedFace, SelectedGeometryContext } from "../appTypes";
@@ -106,23 +106,23 @@ export function useGeometryPointers({
     await executePreprocessFromPrompt(prompt);
   }
 
-  function toggleHighlightedFace(faceId: string) {
+  const toggleHighlightedFace = useCallback((faceId: string) => {
     setHighlightedFaceIds((prev) => {
       const next = new Set(prev);
       if (next.has(faceId)) next.delete(faceId);
       else next.add(faceId);
       return next;
     });
-  }
+  }, []);
 
-  function addHighlightedFaces(faceIds: string[]) {
+  const addHighlightedFaces = useCallback((faceIds: string[]) => {
     if (!faceIds.length) return;
     setHighlightedFaceIds((prev) => {
       const next = new Set(prev);
       faceIds.forEach((faceId) => next.add(faceId));
       return next;
     });
-  }
+  }, []);
 
   function clearHighlightedFaces() {
     setHighlightedFaceIds(new Set());
@@ -134,7 +134,7 @@ export function useGeometryPointers({
     setHighlightedFaceIds(new Set(faceIds));
   }
 
-  function handlePointerClick(token: PointerToken) {
+  const handlePointerClick = useCallback((token: PointerToken) => {
     if (token.kind === "face") {
       toggleHighlightedFace(token.id);
       return;
@@ -169,11 +169,11 @@ export function useGeometryPointers({
       return;
     }
     setNotice({ tone: "info", title: `@${token.kind}:${token.id}`, detail: "No viewer action wired for this pointer kind yet." });
-  }
+  }, [brepSnapshot, setNotice, toggleHighlightedFace, addHighlightedFaces]);
 
   const pointerContextValue = useMemo(
     () => ({ highlightedFaceIds, onClickPointer: handlePointerClick }),
-    [highlightedFaceIds, brepSnapshot], // eslint-disable-line react-hooks/exhaustive-deps
+    [highlightedFaceIds, handlePointerClick],
   );
 
   return {

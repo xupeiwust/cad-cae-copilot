@@ -226,7 +226,7 @@ export function useWorkbenchApp() {
 
   useEffect(() => {
     resetProjectDerivedState();
-  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedId, resetProjectDerivedState]);
 
   useEffect(() => {
     if (!settingsOpen) return;

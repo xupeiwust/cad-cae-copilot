@@ -71,6 +71,21 @@ export function useAgentActivityStream({
   const onChatSessionChangeRef = useRef(onChatSessionChange);
   const onChatSessionDeleteRef = useRef(onChatSessionDelete);
   const onAgentEventRef = useRef(onAgentEvent);
+  // The SSE connection below is created once (deps []) and lives for the hook's
+  // whole lifetime, so it must invoke the LATEST props — not the ones captured
+  // on mount. Route every externally-supplied callback/setter through a ref that
+  // the assignment effect keeps current. This is what the exhaustive-deps
+  // suppression on the connection effect used to paper over (a long-lived stream
+  // calling stale callbacks: e.g. refreshProjects closing over the first render's
+  // runtime snapshot).
+  const refreshProjectsRef = useRef(refreshProjects);
+  const refreshViewerAssetRef = useRef(refreshViewerAsset);
+  const stopAutopilotPollRef = useRef(stopAutopilotPoll);
+  const clearStreamingStateRef = useRef(clearStreamingState);
+  const setAgentBusyRef = useRef(setAgentBusy);
+  const setNoticeRef = useRef(setNotice);
+  const setChatHistoryRef = useRef(setChatHistory);
+  const setCadGenerationProgressRef = useRef(setCadGenerationProgress);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -90,7 +105,29 @@ export function useAgentActivityStream({
     onChatSessionChangeRef.current = onChatSessionChange;
     onChatSessionDeleteRef.current = onChatSessionDelete;
     onAgentEventRef.current = onAgentEvent;
-  }, [onAutopilotRunUpdate, onChatMessage, onChatSessionChange, onChatSessionDelete, onAgentEvent]);
+    refreshProjectsRef.current = refreshProjects;
+    refreshViewerAssetRef.current = refreshViewerAsset;
+    stopAutopilotPollRef.current = stopAutopilotPoll;
+    clearStreamingStateRef.current = clearStreamingState;
+    setAgentBusyRef.current = setAgentBusy;
+    setNoticeRef.current = setNotice;
+    setChatHistoryRef.current = setChatHistory;
+    setCadGenerationProgressRef.current = setCadGenerationProgress;
+  }, [
+    onAutopilotRunUpdate,
+    onChatMessage,
+    onChatSessionChange,
+    onChatSessionDelete,
+    onAgentEvent,
+    refreshProjects,
+    refreshViewerAsset,
+    stopAutopilotPoll,
+    clearStreamingState,
+    setAgentBusy,
+    setNotice,
+    setChatHistory,
+    setCadGenerationProgress,
+  ]);
 
   useEffect(() => {
     const url = `${api.base}/api/agent-activity/stream`;
@@ -125,8 +162,8 @@ export function useAgentActivityStream({
       const isForCurrent = !event.project_id || !current || event.project_id === current;
 
       if (isBuildDone && !isForCurrent) {
-        void refreshProjects(selectedIdRef.current);
-        setChatHistory((curr) => [
+        void refreshProjectsRef.current(selectedIdRef.current);
+        setChatHistoryRef.current((curr) => [
           ...curr,
           {
             id: createChatId(),
@@ -145,19 +182,19 @@ export function useAgentActivityStream({
         const matchesCurrentProject = !run.project_id || !current || run.project_id === current;
         const matchesCurrentSession = !run.session_id || !currentSession || run.session_id === currentSession;
         if (!matchesCurrentProject || !matchesCurrentSession) return;
-        setAgentBusy(shouldKeepAgentBusyForRun(run));
+        setAgentBusyRef.current(shouldKeepAgentBusyForRun(run));
         if (isTerminalAutopilotRun(run)) {
-          stopAutopilotPoll();
-          clearStreamingState();
+          stopAutopilotPollRef.current();
+          clearStreamingStateRef.current();
         }
-        setChatHistory((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
+        setChatHistoryRef.current((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
         if (run.status === "chatting") {
-          stopAutopilotPoll();
-          clearStreamingState();
+          stopAutopilotPollRef.current();
+          clearStreamingStateRef.current();
           return;
         }
         if (isTerminalAutopilotRun(run)) {
-          setNotice({
+          setNoticeRef.current({
             tone: run.status === "completed" ? "success" : run.status === "awaiting_approval" ? "info" : "error",
             title: `${autopilotAgentLabel(run)} — ${run.status}`,
             detail: summarizeAutopilotRun(run),
@@ -212,20 +249,20 @@ export function useAgentActivityStream({
 
       if (!isForCurrent) return;
 
-      setCadGenerationProgress((prev) => applyAgentActivityEvent(prev, event));
+      setCadGenerationProgressRef.current((prev) => applyAgentActivityEvent(prev, event));
 
       if (isViewerAssetChange && event.project_id) {
-        refreshViewerAsset(event.project_id, event.preview_url, event.preview_format);
+        refreshViewerAssetRef.current(event.project_id, event.preview_url, event.preview_format);
       }
 
       if ((isProjectChange || isViewerAssetChange) && event.project_id) {
-        void refreshProjects(event.project_id);
+        void refreshProjectsRef.current(event.project_id);
       }
 
       if (isBuildDone && event.project_id) {
-        refreshViewerAsset(event.project_id, event.preview_url, event.preview_format);
-        void refreshProjects(event.project_id);
-        window.setTimeout(() => setCadGenerationProgress(null), 1500);
+        refreshViewerAssetRef.current(event.project_id, event.preview_url, event.preview_format);
+        void refreshProjectsRef.current(event.project_id);
+        window.setTimeout(() => setCadGenerationProgressRef.current(null), 1500);
       }
     };
     source.onerror = () => {
@@ -233,7 +270,7 @@ export function useAgentActivityStream({
       setLiveSyncDetail("Live stream disconnected; browser will auto-reconnect and polling fallback is active.");
     };
     return () => source.close();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -243,24 +280,24 @@ export function useAgentActivityStream({
     setLiveSyncDetail("Live stream unavailable; polling project state every 2.5s.");
     const timer = window.setInterval(() => {
       const current = selectedIdRef.current;
-      if (current) void refreshProjects(current);
+      if (current) void refreshProjectsRef.current(current);
       const runId = activeRunIdRef.current;
       if (runId) {
         void api.getAutopilotRun(runId)
           .then((run) => {
             onAutopilotRunUpdateRef.current(run);
-            setChatHistory((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
-            setAgentBusy(shouldKeepAgentBusyForRun(run));
+            setChatHistoryRef.current((currentHistory) => upsertAutopilotChatItem(currentHistory, run));
+            setAgentBusyRef.current(shouldKeepAgentBusyForRun(run));
             if (isTerminalAutopilotRun(run)) {
-              stopAutopilotPoll();
-              clearStreamingState();
+              stopAutopilotPollRef.current();
+              clearStreamingStateRef.current();
             }
           })
           .catch(() => {});
       }
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [agentBusy, cadGenerationProgress, liveSyncStatus, selectedId, refreshProjects]);
+  }, [agentBusy, cadGenerationProgress, liveSyncStatus, selectedId]);
 
   return {
     liveSyncStatus,

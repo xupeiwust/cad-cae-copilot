@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
 
 import { api } from "../api";
 import type { CadGenerationProgress, ChatHistoryItem } from "../appTypes";
@@ -39,11 +39,14 @@ export function useEngineeringActions({
   const [heatmapActive, setHeatmapActive] = useState(false);
   const [heatmapRange, setHeatmapRange] = useState<{ min: number; max: number } | null>(null);
 
-  function resetProjectDerivedState() {
+  // Stable identity: a useEffect in useWorkbenchApp depends on this to reset
+  // derived preview state on project switch. It only calls stable setters, so
+  // an empty dep list is correct and keeps that effect from over-firing.
+  const resetProjectDerivedState = useCallback(() => {
     setCadPreviewUrl(null);
     setCadPreviewFormat(null);
     setCadGenResult(null);
-  }
+  }, []);
 
   function refreshViewerAsset(projectId: string, previewUrl?: string | null, previewFormat?: string | null) {
     setCadPreviewUrl(`${previewUrl || `/api/projects/${projectId}/cad-preview`}${previewUrl?.includes("?") ? "&" : "?"}ts=${Date.now()}`);

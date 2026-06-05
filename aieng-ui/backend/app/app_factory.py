@@ -51,6 +51,22 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     )
     app.mount("/assets", StaticFiles(directory=str(active_settings.data_root)), name="assets")
 
+    # Serve the built React workbench SPA at /app/ — the single UI source of truth
+    # for both the browser and the VS Code extension's embedded webview. Mounted
+    # only when the production build exists, so dev (Vite on :5173) and unbuilt
+    # checkouts are unaffected. Assets resolve under /app/assets/ (base="/app/"),
+    # which does not collide with the /assets project-data mount above.
+    frontend_dist = active_settings.platform_root / "frontend" / "dist"
+    if frontend_dist.is_dir():
+        app.mount("/app", StaticFiles(directory=str(frontend_dist), html=True), name="workbench")
+
+        from fastapi.responses import RedirectResponse
+
+        @app.get("/")
+        def _workbench_root_redirect() -> Any:
+            # The SPA is served under /app/; keep the bare root usable.
+            return RedirectResponse(url="/app/")
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         tool_names = _rt.registered_tool_names()

@@ -19,11 +19,18 @@
   ],
   "activationEvents": [
     "onCustomEditor:aieng.cadPreview",
-    "onCommand:aieng.openLivePreview"
+    "onCommand:aieng.openHome",
+    "onCommand:aieng.openLivePreview",
+    "onCommand:aieng.openPackagePreview"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "aieng.openHome",
+        "title": "AIENG: Open AIENG Home",
+        "category": "AIENG"
+      },
       {
         "command": "aieng.openLivePreview",
         "title": "AIENG: Open Live CAD Preview",
@@ -59,6 +66,37 @@
           "type": "string",
           "default": "",
           "description": "Optional fixed Workbench project ID. When empty, Live CAD Preview prompts for a project."
+        },
+        "aieng.backendCwd": {
+          "type": "string",
+          "default": "",
+          "description": "Optional backend working directory. When empty, the extension looks for aieng-ui/backend in the open workspace."
+        },
+        "aieng.backendStartCommand": {
+          "type": "string",
+          "default": "conda",
+          "description": "Command used when AIENG CAD Preview starts a managed backend."
+        },
+        "aieng.backendStartArgs": {
+          "type": "array",
+          "default": [
+            "run",
+            "-n",
+            "aieng311",
+            "--no-capture-output",
+            "python",
+            "-m",
+            "uvicorn",
+            "app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8000"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments used when AIENG CAD Preview starts a managed backend."
         }
       }
     }

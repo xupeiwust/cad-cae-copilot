@@ -1,9 +1,12 @@
 import * as vscode from "vscode";
 
-import { chooseLiveProject, loadLivePreview, watchLiveProject } from "./livePreview";
+import { BackendManager } from "./backendManager";
+import { HomePanel } from "./homePanel";
+import { backendUrl, chooseLiveProject } from "./livePreview";
 import { readAiengPackage } from "./packageReader";
-import type { PreviewPayload } from "./protocol";
-import { bindWebviewMessages, configureWebview, postMessage } from "./webview";
+import { modifyPrompt, projectContextPrompt, starterPrompt } from "./prompts";
+import type { WebviewToHostMessage } from "./protocol";
+import { bindWebviewMessages, configureLiveWorkbenchWebview, configureWebview, postMessage } from "./webview";
 
 class AiengDocument implements vscode.CustomDocument {
   constructor(readonly uri: vscode.Uri) {}
@@ -51,71 +54,106 @@ class AiengPreviewProvider implements vscode.CustomReadonlyEditorProvider<AiengD
 class LivePreviewPanel {
   private static current: LivePreviewPanel | undefined;
 
-  static async open(extensionUri: vscode.Uri): Promise<void> {
+  static async open(
+    extensionUri: vscode.Uri,
+    backend: BackendManager,
+    project?: { id: string; name?: string; status?: string; updated_at?: string; named_parts?: string[] },
+  ): Promise<void> {
+    const selectedProject = project ?? await chooseLiveProject();
+    if (!selectedProject) return;
     if (LivePreviewPanel.current) {
-      LivePreviewPanel.current.panel.reveal(vscode.ViewColumn.Beside);
-      return;
+      if (LivePreviewPanel.current.projectId !== selectedProject.id) {
+        LivePreviewPanel.current.panel.dispose();
+      } else {
+        LivePreviewPanel.current.panel.reveal(vscode.ViewColumn.Beside);
+        return;
+      }
     }
-    const project = await chooseLiveProject();
-    if (!project) return;
     const panel = vscode.window.createWebviewPanel(
       "aieng.liveCadPreview",
-      `AIENG: ${project.name || project.id}`,
+      `AIENG: ${selectedProject.name || selectedProject.id}`,
       vscode.ViewColumn.Beside,
       { enableScripts: true, retainContextWhenHidden: true },
     );
-    LivePreviewPanel.current = new LivePreviewPanel(panel, extensionUri, project.id, project.name || project.id);
+    LivePreviewPanel.current = new LivePreviewPanel(panel, extensionUri, backend, selectedProject.id, selectedProject.name || selectedProject.id);
   }
 
   private readonly subscriptions: vscode.Disposable[] = [];
-  private loading = false;
 
   private constructor(
     readonly panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
+    private readonly backend: BackendManager,
     private readonly projectId: string,
     private readonly projectName: string,
   ) {
-    configureWebview(panel.webview, extensionUri);
-    bindWebviewMessages(panel.webview, this.subscriptions, () => this.refresh(), () => this.refresh());
-    this.subscriptions.push(watchLiveProject(projectId, () => void this.refresh()));
+    // The live panel embeds the backend-served React workbench in an iframe, so
+    // the model, panels, face-picking, and live refresh come from the single SPA
+    // (no bespoke viewer, no payload plumbing). The shell only relays handoff.
+    configureLiveWorkbenchWebview(panel.webview, backendUrl(), projectId, projectName);
+    bindWebviewMessages(
+      panel.webview,
+      this.subscriptions,
+      () => undefined,
+      () => undefined,
+      (message) => this.handlePreviewAction(message, extensionUri),
+    );
     this.subscriptions.push(panel.onDidDispose(() => {
       this.subscriptions.splice(0).forEach((item) => item.dispose());
       LivePreviewPanel.current = undefined;
     }));
   }
 
-  private async refresh(): Promise<void> {
-    if (this.loading) return;
-    this.loading = true;
-    try {
-      const payload: PreviewPayload = await loadLivePreview({ id: this.projectId, name: this.projectName });
-      await postMessage(this.panel.webview, payload);
-    } catch (error) {
-      await postMessage(this.panel.webview, {
-        kind: "status",
-        tone: "error",
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      this.loading = false;
+  private async handlePreviewAction(message: WebviewToHostMessage, extensionUri: vscode.Uri): Promise<void> {
+    if (message.kind === "copyStarterPrompt") {
+      await this.copyPrompt(starterPrompt({ projectId: this.projectId, projectName: this.projectName }));
+      return;
     }
+    if (message.kind === "copyModifyPrompt") {
+      await this.copyPrompt(modifyPrompt({ projectId: this.projectId, projectName: this.projectName, pointers: message.pointers }));
+      return;
+    }
+    if (message.kind === "copyProjectContext") {
+      await this.copyPrompt(projectContextPrompt({ projectId: this.projectId, projectName: this.projectName }));
+      return;
+    }
+    if (message.kind === "openHome") {
+      HomePanel.open(extensionUri, {
+        openLiveProject: (project) => LivePreviewPanel.open(extensionUri, this.backend, project),
+        openPackage,
+        backend: this.backend,
+      });
+    }
+  }
+
+  private async copyPrompt(text: string): Promise<void> {
+    await vscode.env.clipboard.writeText(text);
+    vscode.window.setStatusBarMessage("AIENG: Copied agent handoff prompt", 2500);
   }
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  const backend = new BackendManager();
+  context.subscriptions.push(backend);
   const provider = new AiengPreviewProvider(context.extensionUri);
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("aieng.cadPreview", provider, {
     supportsMultipleEditorsPerDocument: false,
   }));
-  context.subscriptions.push(vscode.commands.registerCommand("aieng.openLivePreview", () => LivePreviewPanel.open(context.extensionUri)));
-  context.subscriptions.push(vscode.commands.registerCommand("aieng.openPackagePreview", async () => {
-    const selected = await vscode.window.showOpenDialog({
-      canSelectMany: false,
-      filters: { "AIENG package": ["aieng"] },
-    });
-    if (selected?.[0]) await vscode.commands.executeCommand("vscode.openWith", selected[0], "aieng.cadPreview");
-  }));
+  context.subscriptions.push(vscode.commands.registerCommand("aieng.openLivePreview", () => LivePreviewPanel.open(context.extensionUri, backend)));
+  context.subscriptions.push(vscode.commands.registerCommand("aieng.openPackagePreview", openPackage));
+  context.subscriptions.push(vscode.commands.registerCommand("aieng.openHome", () => HomePanel.open(context.extensionUri, {
+    openLiveProject: (project) => LivePreviewPanel.open(context.extensionUri, backend, project),
+    openPackage,
+    backend,
+  })));
 }
 
 export function deactivate(): void {}
+
+async function openPackage(): Promise<void> {
+  const selected = await vscode.window.showOpenDialog({
+    canSelectMany: false,
+    filters: { "AIENG package": ["aieng"] },
+  });
+  if (selected?.[0]) await vscode.commands.executeCommand("vscode.openWith", selected[0], "aieng.cadPreview");
+}

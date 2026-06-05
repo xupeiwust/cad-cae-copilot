@@ -10,36 +10,49 @@ const vscode = acquireVsCodeApi();
 
 const style = document.createElement("style");
 style.textContent = `
-:root { color-scheme: dark; --ink:#eef5ef; --muted:#91a095; --line:#2c3930; --panel:#101612e8; --accent:#d7ff55; --hot:#ffb35c; }
+:root {
+  color-scheme: light dark;
+  --ink: var(--vscode-foreground);
+  --muted: var(--vscode-descriptionForeground);
+  --line: var(--vscode-panel-border, rgba(128,128,128,0.28));
+  --panel: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  --panel-strong: var(--vscode-sideBar-background, var(--vscode-editorWidget-background));
+  --accent: var(--vscode-focusBorder, var(--vscode-button-background));
+  --hot: var(--vscode-editorWarning-foreground, var(--vscode-charts-orange));
+  --button-bg: var(--vscode-button-secondaryBackground, rgba(128,128,128,0.16));
+  --button-fg: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  --button-hover: var(--vscode-button-secondaryHoverBackground, rgba(128,128,128,0.24));
+}
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
 html,body,#app { width:100%; height:100%; margin:0; overflow:hidden; }
-body { font-family:"Bahnschrift","DIN Alternate","Segoe UI",sans-serif; color:var(--ink); background:#070b08; }
+body { font-family:var(--vscode-font-family); font-size:var(--vscode-font-size,13px); color:var(--ink); background:var(--vscode-editor-background); }
 button { font:inherit; color:inherit; }
-.shell { position:relative; width:100%; height:100%; background:radial-gradient(circle at 65% 20%,#26352a 0,#0b110d 36%,#050806 78%); }
+.shell { position:relative; width:100%; height:100%; background:var(--vscode-editor-background); }
 .canvas { position:absolute; inset:0; }
 .topbar { position:absolute; z-index:3; top:14px; left:14px; right:14px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; pointer-events:none; }
-.identity,.selection { pointer-events:auto; border:1px solid var(--line); background:var(--panel); box-shadow:0 20px 60px #0009; backdrop-filter:blur(14px); }
-.identity { padding:12px 14px; max-width:min(560px,70vw); border-left:3px solid var(--accent); }
-.eyebrow { font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--accent); }
+.identity,.selection { pointer-events:auto; border:1px solid var(--line); background:var(--panel); box-shadow:0 8px 24px rgba(0,0,0,0.22); }
+.identity { padding:12px 14px; max-width:min(560px,70vw); }
+.eyebrow { font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
 h1 { font-size:16px; margin:4px 0 2px; font-weight:650; }
 .detail { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tools { display:flex; gap:7px; pointer-events:auto; }
-.tool { border:1px solid var(--line); background:#101612dd; padding:8px 10px; cursor:pointer; }
-.tool:hover { border-color:var(--accent); color:var(--accent); }
+.tool { border:1px solid var(--line); border-radius:3px; background:var(--button-bg); color:var(--button-fg); padding:7px 10px; cursor:pointer; }
+.tool:hover { background:var(--button-hover); border-color:var(--accent); }
 .reliability { position:absolute; z-index:3; left:14px; bottom:14px; padding:7px 10px; border:1px solid var(--line); background:var(--panel); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
-.reliability.ok { color:var(--accent); border-color:#748a37; }
+.reliability.ok { color:var(--ink); border-color:var(--accent); }
 .selection { position:absolute; z-index:3; right:14px; bottom:14px; width:min(350px,calc(100vw - 28px)); max-height:42vh; overflow:auto; }
-.selection-head { position:sticky; top:0; display:flex; justify-content:space-between; align-items:center; gap:10px; padding:11px 12px; background:#111813f5; border-bottom:1px solid var(--line); }
+.selection-head { position:sticky; top:0; display:flex; justify-content:space-between; align-items:center; gap:10px; padding:11px 12px; background:var(--panel-strong); border-bottom:1px solid var(--line); }
 .selection-list { padding:5px; }
-.face { display:grid; grid-template-columns:1fr auto; gap:8px; padding:9px; border-bottom:1px solid #202a23; }
-.face code { color:var(--accent); font-size:11px; }
+.face { display:grid; grid-template-columns:1fr auto; gap:8px; padding:9px; border-bottom:1px solid var(--line); }
+.face code { color:var(--vscode-textLink-foreground, var(--ink)); font-size:11px; }
 .meta { color:var(--muted); font-size:10px; margin-top:4px; }
-.copy { border:1px solid var(--line); background:#19221c; cursor:pointer; padding:5px 8px; }
-.copy:hover { border-color:var(--accent); }
+.copy { border:1px solid var(--line); border-radius:3px; background:var(--button-bg); color:var(--button-fg); cursor:pointer; padding:5px 8px; }
+.copy:hover { background:var(--button-hover); border-color:var(--accent); }
 .empty { position:absolute; inset:0; display:grid; place-content:center; text-align:center; padding:40px; color:var(--muted); }
 .empty strong { display:block; color:var(--ink); font-size:20px; margin-bottom:6px; }
-.toast { position:absolute; z-index:5; top:84px; left:50%; transform:translateX(-50%); background:var(--accent); color:#111; padding:7px 12px; font-size:11px; font-weight:700; opacity:0; transition:opacity .18s; }
+.row-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin-top:14px; }
+.toast { position:absolute; z-index:5; top:84px; left:50%; transform:translateX(-50%); background:var(--vscode-notifications-background,var(--panel)); color:var(--vscode-notifications-foreground,var(--ink)); border:1px solid var(--vscode-notifications-border,var(--line)); border-radius:4px; padding:7px 12px; font-size:11px; font-weight:600; opacity:0; transition:opacity .18s; }
 .toast.show { opacity:1; }
 `;
 document.head.appendChild(style);
@@ -47,7 +60,7 @@ document.head.appendChild(style);
 const app = document.querySelector<HTMLElement>("#app")!;
 app.innerHTML = `<div class="shell">
   <div class="canvas"></div>
-  <div class="topbar"><div class="identity"><div class="eyebrow">AIENG · CAD Context Sidecar</div><h1>Waiting for model</h1><div class="detail">Open an .aieng package or connect to a live project.</div></div>
+  <div class="topbar"><div class="identity"><div class="eyebrow">AIENG CAD Preview</div><h1>Waiting for model</h1><div class="detail">Open an .aieng package or connect to a live project.</div></div>
     <div class="tools"><button class="tool refresh">Refresh</button><button class="tool clear">Clear</button><button class="tool copy-all">Copy selected</button></div></div>
   <div class="reliability">Face pointers unavailable</div>
   <div class="selection" hidden><div class="selection-head"><strong>Selected faces</strong><span class="count">0</span></div><div class="selection-list"></div></div>
@@ -64,9 +77,35 @@ const selection = app.querySelector<HTMLElement>(".selection")!;
 const selectionList = app.querySelector<HTMLElement>(".selection-list")!;
 const count = app.querySelector<HTMLElement>(".count")!;
 const toast = app.querySelector<HTMLElement>(".toast")!;
+const tools = app.querySelector<HTMLElement>(".tools")!;
+
+function cssColor(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function colorNumber(name: string, fallback: string): number {
+  return new THREE.Color(cssColor(name, fallback)).getHex();
+}
+
+title.textContent = "Open a project";
+detail.textContent = "Use AIENG Home, open an .aieng package, or connect to a live project.";
+const eyebrow = app.querySelector<HTMLElement>(".eyebrow");
+if (eyebrow) eyebrow.textContent = "AIENG CAD Preview";
+for (const [className, label] of [
+  ["home", "Home"],
+  ["copy-build", "Copy build"],
+  ["copy-modify", "Copy modify"],
+  ["copy-context", "Copy context"],
+] as const) {
+  const button = document.createElement("button");
+  button.className = `tool ${className}`;
+  button.textContent = label;
+  tools.appendChild(button);
+}
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color("#070b08");
+scene.background = new THREE.Color(cssColor("--vscode-editor-background", "#1e1e1e"));
 const camera = new THREE.PerspectiveCamera(42, 1, 0.0001, 10000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -74,10 +113,10 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 host.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-scene.add(new THREE.HemisphereLight(0xe5ffe9, 0x19231b, 2.1));
-const key = new THREE.DirectionalLight(0xffffff, 2.6); key.position.set(5, 10, 7); scene.add(key);
-const rim = new THREE.DirectionalLight(0xd7ff55, 1.2); rim.position.set(-8, 2, -5); scene.add(rim);
-const grid = new THREE.GridHelper(10, 20, 0x52645a, 0x1c2820); scene.add(grid);
+scene.add(new THREE.HemisphereLight(colorNumber("--vscode-editor-foreground", "#d4d4d4"), colorNumber("--vscode-editor-background", "#1e1e1e"), 1.8));
+const key = new THREE.DirectionalLight(0xffffff, 2.3); key.position.set(5, 10, 7); scene.add(key);
+const rim = new THREE.DirectionalLight(colorNumber("--vscode-focusBorder", "#007fd4"), 0.55); rim.position.set(-8, 2, -5); scene.add(rim);
+const grid = new THREE.GridHelper(10, 20, colorNumber("--vscode-panel-border", "#3c3c3c"), colorNumber("--vscode-editorIndentGuide-background1", "#2a2a2a")); scene.add(grid);
 
 let object: THREE.Object3D | null = null;
 let primitiveFaces = new Map<THREE.Object3D, FaceEntity>();
@@ -101,6 +140,8 @@ function copy(text: string): void {
 function renderSelection(): void {
   selection.hidden = selected.size === 0;
   count.textContent = String(selected.size);
+  const modifyButton = app.querySelector<HTMLElement>(".copy-modify");
+  if (modifyButton) modifyButton.textContent = selected.size ? `Copy modify (${selected.size})` : "Copy modify";
   selectionList.innerHTML = "";
   for (const face of selected.values()) {
     const row = document.createElement("div");
@@ -110,7 +151,7 @@ function renderSelection(): void {
     pointerCode.textContent = face.pointer;
     const metadata = document.createElement("div");
     metadata.className = "meta";
-    metadata.textContent = `${face.surfaceType}${face.bodyId ? ` · ${face.bodyId}` : ""}${face.roles.length ? ` · ${face.roles.join(", ")}` : ""}`;
+    metadata.textContent = `${face.surfaceType}${face.bodyId ? ` - ${face.bodyId}` : ""}${face.roles.length ? ` - ${face.roles.join(", ")}` : ""}`;
     description.append(pointerCode, metadata);
     const copyButton = document.createElement("button");
     copyButton.className = "copy";
@@ -122,7 +163,7 @@ function renderSelection(): void {
   renderHighlights();
 }
 
-function showEmpty(heading: string, message: string): void {
+function showEmpty(heading: string, message: string, actions: Array<{ label: string; kind: WebviewToHostMessage["kind"] }> = []): void {
   empty.hidden = false;
   empty.innerHTML = "";
   const strong = document.createElement("strong");
@@ -130,6 +171,18 @@ function showEmpty(heading: string, message: string): void {
   const description = document.createElement("span");
   description.textContent = message;
   empty.append(strong, description);
+  if (actions.length) {
+    const row = document.createElement("div");
+    row.className = "row-actions";
+    for (const action of actions) {
+      const button = document.createElement("button");
+      button.className = "tool";
+      button.textContent = action.label;
+      button.addEventListener("click", () => vscode.postMessage({ kind: action.kind } as WebviewToHostMessage));
+      row.appendChild(button);
+    }
+    empty.appendChild(row);
+  }
 }
 
 function clearHighlights(): void {
@@ -147,10 +200,12 @@ function renderHighlights(): void {
   clearHighlights();
   const highlighted = new Map(selected);
   if (hovered) highlighted.set(hovered.id, hovered);
+  const selectedColor = colorNumber("--vscode-focusBorder", "#007fd4");
+  const hoveredColor = colorNumber("--vscode-editorWarning-foreground", "#cca700");
   for (const face of highlighted.values()) {
     for (const mesh of faceMeshes.get(face.id) ?? []) {
       const overlay = new THREE.Mesh(mesh.geometry.clone(), new THREE.MeshBasicMaterial({
-        color: selected.has(face.id) ? 0xd7ff55 : 0xffb35c, transparent: true, opacity: 0.64, depthWrite: false, polygonOffset: true,
+        color: selected.has(face.id) ? selectedColor : hoveredColor, transparent: true, opacity: 0.58, depthWrite: false, polygonOffset: true,
         polygonOffsetFactor: -5, side: THREE.DoubleSide,
       }));
       mesh.updateMatrixWorld(true);
@@ -160,6 +215,18 @@ function renderHighlights(): void {
       overlays.add(overlay);
     }
   }
+}
+
+function applyThemeToScene(): void {
+  scene.background = new THREE.Color(cssColor("--vscode-editor-background", "#1e1e1e"));
+  const gridMaterial = Array.isArray(grid.material) ? grid.material : [grid.material];
+  gridMaterial.forEach((material) => {
+    if (material instanceof THREE.Material && "color" in material) {
+      (material as THREE.Material & { color: THREE.Color }).color.set(cssColor("--vscode-panel-border", "#3c3c3c"));
+    }
+  });
+  rim.color.set(cssColor("--vscode-focusBorder", "#007fd4"));
+  renderHighlights();
 }
 
 type Transform = { isGlb: boolean; scale: number };
@@ -270,11 +337,23 @@ async function loadPreview(next: PreviewPayload): Promise<void> {
   payload = next; selected.clear(); renderSelection(); clearHighlights();
   title.textContent = next.title; detail.textContent = next.detail;
   reliable = next.facePicking === "reliable";
-  reliability.textContent = reliable ? "Stable face pointers available" : "Preview only · face pointers unavailable";
+  reliability.textContent = reliable ? "Stable face pointers available" : "Preview only - face pointers unavailable";
   reliability.classList.toggle("ok", reliable);
   if (object) { scene.remove(object); disposeObject(object); object = null; }
   if (!next.assetBase64 || !next.format) {
-    showEmpty("Preview unavailable", next.detail); return;
+    if (next.emptyReason === "no_preview") {
+      showEmpty("Project created", next.detail, [
+        { label: "Copy starter prompt", kind: "copyStarterPrompt" },
+        { label: "Refresh", kind: "refresh" },
+        { label: "Back to AIENG Home", kind: "openHome" },
+      ]);
+    } else {
+      showEmpty("Preview unavailable", next.detail, [
+        { label: "Refresh", kind: "refresh" },
+        { label: "Back to AIENG Home", kind: "openHome" },
+      ]);
+    }
+    return;
   }
   empty.hidden = true;
   const bytes = Uint8Array.from(atob(next.assetBase64), (char) => char.charCodeAt(0)).buffer;
@@ -290,7 +369,7 @@ async function loadPreview(next: PreviewPayload): Promise<void> {
   scene.add(object); fit(object);
   mapFaces(object, Object.values(next.faces), next.format === "glb");
   if (reliable && primitiveFaces.size === 0) {
-    reliable = false; reliability.textContent = "Topology present · face mapping could not be verified"; reliability.classList.remove("ok");
+    reliable = false; reliability.textContent = "Topology present - face mapping could not be verified"; reliability.classList.remove("ok");
   }
 }
 
@@ -335,12 +414,21 @@ app.querySelector(".clear")!.addEventListener("click", () => { selected.clear();
 app.querySelector(".copy-all")!.addEventListener("click", () => {
   if (selected.size) copy([...selected.values()].map((face) => face.pointer).join(" "));
 });
+app.querySelector(".home")!.addEventListener("click", () => vscode.postMessage({ kind: "openHome" }));
+app.querySelector(".copy-build")!.addEventListener("click", () => vscode.postMessage({ kind: "copyStarterPrompt" }));
+app.querySelector(".copy-modify")!.addEventListener("click", () => {
+  const pointers = [...selected.values()].map((face) => face.pointer);
+  vscode.postMessage({ kind: "copyModifyPrompt", pointers });
+  showToast(pointers.length ? `Copied modify prompt - ${pointers.length} face${pointers.length > 1 ? "s" : ""}` : "Copied modify prompt");
+});
+app.querySelector(".copy-context")!.addEventListener("click", () => vscode.postMessage({ kind: "copyProjectContext" }));
 
 function resize(): void {
   const width = Math.max(host.clientWidth, 1), height = Math.max(host.clientHeight, 1);
   renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix();
 }
 new ResizeObserver(resize).observe(host); resize();
+new MutationObserver(() => applyThemeToScene()).observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
 (function animate() { controls.update(); renderer.render(scene, camera); requestAnimationFrame(animate); })();
 
 window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) => {

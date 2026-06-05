@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Settings } from "lucide-react";
 
 import { api } from "../api";
@@ -8,6 +9,7 @@ import { SessionsSidebar } from "../components/SessionsSidebar";
 import { ViewerPane } from "../components/ViewerPane";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
+import { isEmbedMode } from "./embed";
 import type { useWorkbenchApp } from "./useWorkbenchApp";
 
 type AppChromeProps = {
@@ -15,6 +17,18 @@ type AppChromeProps = {
 };
 
 export function AppChrome({ app }: AppChromeProps) {
+  const embed = isEmbedMode();
+
+  // In embed mode (VS Code webview iframe), relay the picked faces to the host
+  // shell so its "Copy modify" handoff can target the selected @face: pointers.
+  useEffect(() => {
+    if (!embed || typeof window === "undefined" || window.parent === window) return;
+    window.parent.postMessage(
+      { kind: "selectionChanged", pointers: app.pickedFaces.map((face) => face.pointer) },
+      "*",
+    );
+  }, [embed, app.pickedFaces]);
+
   return (
     <PointerProvider value={app.pointerContextValue}>
       <NoticeCenter
@@ -28,9 +42,10 @@ export function AppChrome({ app }: AppChromeProps) {
         }}
       />
       <div className="app-shell">
+        {!embed && (
         <header className="app-topbar">
           <div className="app-topbar-brand">
-            <span className="app-logo">AIDE</span>
+            <span className="app-logo">AIENG</span>
             <span className="app-topbar-divider" />
             <span className="app-topbar-project">{app.selectedProject?.name || "Workbench"}</span>
             <span className="app-topbar-mcp">Live CAD/CAE workbench + MCP server</span>
@@ -46,6 +61,7 @@ export function AppChrome({ app }: AppChromeProps) {
             </button>
           </div>
         </header>
+        )}
 
         <div className={app.sidebarCollapsed ? "app-main sidebar-collapsed" : "app-main"}>
           <SessionsSidebar

@@ -21,6 +21,7 @@ import { useAgentActivityStream } from "./useAgentActivityStream";
 import type { AgentTranscriptEvent } from "./chatTranscript";
 import type { PendingApproval } from "./pendingApprovals";
 import { applyApprovalEvent } from "./pendingApprovals";
+import { isEmbedMode, requestedProjectId } from "./embed";
 import { buildFallbackSummary } from "./projectSummary";
 import { useEngineeringActions } from "./useEngineeringActions";
 import { useGeometryPointers } from "./useGeometryPointers";
@@ -33,7 +34,7 @@ export function useWorkbenchApp() {
   const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(isEmbedMode());
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [projectName, setProjectName] = useState("STEP workbench project");
   const [busy, setBusy] = useState(false);
@@ -201,7 +202,8 @@ export function useWorkbenchApp() {
       const list = await api.listProjects();
       if (cancelled) return;
       setProjects(list);
-      const candidate = list[0]?.id ?? null;
+      const requested = requestedProjectId();
+      const candidate = (requested && list.some((item) => item.id === requested) ? requested : list[0]?.id) ?? null;
       setSelectedId(candidate);
       if (candidate) {
         try {

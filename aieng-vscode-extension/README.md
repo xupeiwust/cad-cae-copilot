@@ -1,43 +1,157 @@
 # AIENG CAD Preview for VS Code
 
-A lightweight CAD context sidecar for AIENG. It does not host chat or orchestrate MCP tools. It previews models, lets you select authoritative B-Rep faces, and copies stable `@face:id` pointers for pasting into Claude Code, Codex, Copilot Chat, or any other chat surface.
+AIENG CAD Preview is the VS Code entry point for `aieng`: create or open an
+AIENG project, inspect generated CAD, and copy agent-ready prompts or `@face:id`
+pointers back into your existing VS Code agent chat.
 
-## Features
+You do **not** need an existing CAD file to begin. You can start from a blank
+AIENG project and ask your agent to generate the first model.
 
-- Open a local `.aieng` package directly as a read-only custom editor.
-- Open a live AIENG Workbench project with `AIENG: Open Live CAD Preview`.
-- Refresh live geometry automatically after `viewer_asset_changed` events.
-- Orbit, zoom, hover, select, and multi-select mapped faces.
-- Copy one face pointer or all selected pointers.
-- Clearly disables pointer selection when an authoritative topology mapping is unavailable.
+## Quick start in 3 minutes
 
-## Local `.aieng` mode
+1. Install the extension from a local `.vsix` or build it from this folder.
+2. In VS Code, run `AIENG: Open AIENG Home`.
+3. If the backend is not running, click `Start AIENG Backend`.
+4. Click `Start New Project`.
+5. Click `Copy starter prompt` and paste it into your existing agent chat
+   (Codex, Copilot Chat, Claude Code, or another MCP-capable agent).
+6. When the agent generates CAD, the live preview refreshes.
 
-Double-click an `.aieng` file. The extension reads the ZIP package without modifying it and prefers:
+You can also start the backend yourself before opening AIENG Home. If the
+extension connects to an existing backend, it will not try to stop that process.
 
-1. `geometry/preview.glb`
-2. `preview.glb`
-3. `viewer/model.glb`
-4. corresponding STL fallbacks
+## Backend lifecycle
 
-Stable face picking requires a GLB preview plus `graph/brep_graph.json` or `geometry/topology_map.json`. STL and packages without topology remain preview-only.
+AIENG CAD Preview can start a managed backend for the current workspace.
 
-## Live Workbench mode
+1. Run `AIENG: Open AIENG Home`.
+2. Click `Start AIENG Backend` when the panel says the backend is not reachable.
+3. Use `Stop Managed Backend` when you want to stop the process started by the
+   extension.
 
-1. Start the existing AIENG backend.
-2. Run `AIENG: Open Live CAD Preview` from the Command Palette.
-3. Choose a project.
+The extension only stops the backend process it started itself. If you started
+the backend manually, the extension treats it as an existing backend and leaves
+it running.
 
-The default backend URL is `http://127.0.0.1:8000`. Override `aieng.backendUrl` in VS Code settings when needed. Set `aieng.liveProjectId` to skip the project picker.
+The default managed-backend command is:
 
-Live mode uses:
+```powershell
+conda run -n aieng311 --no-capture-output python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
 
-- `GET /api/projects`
-- `GET /api/projects/{id}/cad-preview`
-- `GET /api/projects/{id}/brep-graph`
-- `GET /api/agent-activity/stream`
+It runs from `aieng-ui/backend` in the open workspace. If your environment is
+different, change these VS Code settings:
 
-Backend communication stays in the Extension Host, so the Webview does not depend on permissive CORS configuration.
+- `aieng.backendCwd`
+- `aieng.backendStartCommand`
+- `aieng.backendStartArgs`
+
+The default backend URL is:
+
+```text
+http://127.0.0.1:8000
+```
+
+Change `aieng.backendUrl` in VS Code settings if your backend runs elsewhere.
+
+## Install it
+
+### Option 1: Install from a local `.vsix`
+
+If you already have a file such as `aieng-cad-preview-0.1.1.vsix`:
+
+1. Open the Extensions view in VS Code.
+2. Click the `...` menu in the Extensions panel.
+3. Choose `Install from VSIX...`.
+4. Select the `.vsix` file.
+5. Reload VS Code if prompted.
+
+### Option 2: Build and install from this repo
+
+From `workspace_aieng/aieng-vscode-extension`:
+
+```powershell
+npm install
+npm run vsix
+code --install-extension .\aieng-cad-preview-0.1.1.vsix
+```
+
+Confirm installation by searching for `AIENG CAD Preview` in the Extensions
+view. The extension ID is:
+
+```text
+aieng.aieng-cad-preview
+```
+
+## Start a new project
+
+Run:
+
+```text
+AIENG: Open AIENG Home
+```
+
+Then click `Start New Project`. The extension will:
+
+1. call the backend `POST /api/projects`,
+2. create a blank AIENG project,
+3. open a live CAD preview for that project,
+4. show a blank-project state until the first model exists,
+5. offer `Copy starter prompt` so your existing agent can generate the first
+   model through the `aieng-workbench` MCP tools.
+
+This is the normal zero-to-first-model flow. A blank preview is not an error.
+
+## Open an existing `.aieng` package
+
+Use either path:
+
+- run `AIENG: Open .aieng CAD Preview`, or
+- open a `.aieng` file in VS Code Explorer.
+
+If VS Code opens it as a binary file, right-click the file and choose:
+
+```text
+Open With... -> AIENG CAD Preview
+```
+
+Local package mode reads the package without modifying it.
+
+## Use it with your VS Code agent
+
+This extension does not embed its own chat UI. It hands context to the agent you
+already use in VS Code.
+
+Available handoff actions:
+
+- `Copy starter prompt` - ask an agent to generate the first model.
+- `Copy modify prompt` - ask an agent to inspect and modify the current model.
+- `Copy context` - copy the project id and backend URL.
+- `Copy selected` - copy selected `@face:id` pointers after picking faces in
+  the 3D preview.
+
+Paste the copied text into Codex, Copilot Chat, Claude Code, or any other
+MCP-capable agent configured for `aieng-workbench`.
+
+## What you should expect to see
+
+- GLB-backed projects show an interactive 3D model.
+- If authoritative topology is available, clicking faces gives stable
+  `@face:id` pointers.
+- STL-only or topology-light previews still render, but face picking is disabled
+  on purpose.
+- Blank projects show `Project created` and prompt handoff actions until CAD is
+  generated.
+
+## Troubleshooting
+
+- `Backend not reachable`: start the AIENG backend, then click retry in AIENG
+  Home, or click `Start AIENG Backend`.
+- `No projects yet`: click `Start New Project`.
+- `No CAD preview yet`: paste the starter prompt into your agent chat and let
+  the agent generate the first model.
+- `Face pointers unavailable`: the preview is STL-only or the package does not
+  include authoritative topology.
 
 ## Development
 
@@ -48,4 +162,8 @@ npm run check
 npm run build
 ```
 
-Run `npm run vsix` to produce an installable `.vsix`.
+To produce an installable package:
+
+```powershell
+npm run vsix
+```

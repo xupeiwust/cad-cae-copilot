@@ -23,6 +23,14 @@ const configs = [
     format: "iife",
     sourcemap: true,
   },
+  {
+    entryPoints: ["webview-src/home.ts"],
+    outfile: "media/home.js",
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    sourcemap: true,
+  },
 ];
 
 if (watch) {

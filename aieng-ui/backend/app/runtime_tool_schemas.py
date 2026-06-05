@@ -45,6 +45,17 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
         "description": "No parameters required. Returns all known projects.",
     },
+    "aieng.create_project": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Human-readable project name (optional). Defaults to 'Untitled project' if omitted or empty.",
+            },
+        },
+        "additionalProperties": False,
+        "description": "Create a new empty project and return its id, name, and status. Use this when the user wants to start modeling from scratch and no suitable project exists yet.",
+    },
     "aieng.agent_readme": {
         "type": "object",
         "properties": {

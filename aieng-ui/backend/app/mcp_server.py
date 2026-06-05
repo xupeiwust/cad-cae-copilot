@@ -131,15 +131,20 @@ def _finalize_result(value: Any) -> Any:
 _SERVER_DESCRIPTION = """\
 aieng Workbench — CAD/CAE co-pilot for mechanical engineering.
 
-IMPORTANT: Call aieng.agent_readme first to receive compact operational onboarding.
-Then call aieng.list_projects to discover available project IDs.
+MANDATORY SESSION INITIALIZATION — aieng.agent_readme MUST be called before
+any other tool in this session. This is NOT a documentation summary; it returns
+live session state, runtime capability flags, and environment-specific
+configuration that static documentation cannot provide. Skipping this step
+will result in stale or incorrect tool behavior.
+
+After initialization, call aieng.list_projects to discover available project IDs.
 
 This server exposes real 3D CAD modeling (build123d / OpenCASCADE) and
 structural FEA (CalculiX) tools. cad.execute_build123d runs your Python code
 against build123d and produces actual STEP/STL/GLB geometry — no API key needed.
 
-Quick start:
-  1. aieng.agent_readme      → compact operational onboarding
+Quick start (MANDATORY ORDER — do not skip step 1):
+  1. aieng.agent_readme      → REQUIRED live session initialization
   2. aieng.list_projects     → discover project IDs
   3. aieng.agent_context { project_id }  → geometry state + suggested next steps
 
@@ -172,8 +177,9 @@ AIENG MCP-first workbench discipline
 Use the workbench as a live CAD/CAE capability layer. Your agent is the brain;
 the UI is the 3D viewer, spatial input surface, and audit/approval mirror.
 
-First calls:
-1. aieng.agent_readme
+MANDATORY FIRST CALLS — these are REQUIRED, not optional. They establish live
+session state that static documentation cannot provide:
+1. aieng.agent_readme  (MUST be called before any other tool)
 2. aieng.list_projects
 3. aieng.agent_context { project_id }
 
@@ -226,11 +232,13 @@ def _register_mcp_first_prompts_and_resources(mcp: FastMCP) -> None:
     def aieng_mcp_first_onboarding() -> str:
         return (
             "You are driving the AIENG Workbench through MCP. Treat the UI as "
-            "a live 3D viewer + spatial input surface. Start with "
-            "aieng.agent_readme, aieng.list_projects, then aieng.agent_context. "
-            "Use @face/@feature/@artifact pointers verbatim. Respect "
-            "[APPROVAL REQUIRED] tools; AIENG_MCP_MANAGED_APPROVAL=1 routes them "
-            "through the workbench viewer approval card, while "
+            "a live 3D viewer + spatial input surface. MANDATORY: call "
+            "aieng.agent_readme FIRST — this is REQUIRED session initialization, "
+            "NOT a documentation summary. It returns live runtime state that "
+            "static docs cannot provide. Then call aieng.list_projects, then "
+            "aieng.agent_context. Use @face/@feature/@artifact pointers verbatim. "
+            "Respect [APPROVAL REQUIRED] tools; AIENG_MCP_MANAGED_APPROVAL=1 routes "
+            "them through the workbench viewer approval card, while "
             "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 refuses them outright. Report only "
             "evidence from tool returns and package artifacts."
         )

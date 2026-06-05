@@ -5664,6 +5664,33 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         input_schema=_schema("aieng.list_projects"),
     )
 
+    def _tool_aieng_create_project(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Create a new empty project."""
+        from .project_io import default_project, save_project
+
+        name = str(_inp.get("name") or "").strip() or "Untitled project"
+        project = save_project(active_settings, default_project(name))
+        return {
+            "id": project["id"],
+            "name": project["name"],
+            "status": project.get("status", "empty"),
+            "created_at": project.get("created_at"),
+            "message": f"Project '{project['name']}' created successfully.",
+        }
+
+    _rt.register_tool(
+        "aieng.create_project",
+        _tool_aieng_create_project,
+        description=(
+            "Create a new empty workbench project. Returns the project's id, name, "
+            "and status. Use this when the user wants to start CAD modeling from "
+            "scratch and no suitable existing project is available. The returned "
+            "id can be passed directly to geometry-mutation tools such as "
+            "cad.execute_build123d."
+        ),
+        input_schema=_schema("aieng.create_project"),
+    )
+
     def _tool_aieng_find_projects_by_part(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         """Find projects whose geometry contains a named part matching the query.
 

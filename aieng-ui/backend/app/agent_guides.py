@@ -59,6 +59,11 @@ Before the first CAD modeling or geometry-edit action in a session, read
 action, read `aieng.guide {topic:"cae"}` once. Re-read a guide only if the session
 lost that context or the guide changed. This preserves detailed discipline
 without repeatedly spending tokens on unchanged guidance.
+
+The MCP server enforces these category reads before CAD, CAE/post-processing/
+topology-optimization, and package-lifecycle tools. If a read was skipped, the
+tool returns `code: "guide_required"` with the exact `next_call` and does not
+execute or request approval. Reading the `full` guide unlocks all categories.
 """
 
 
@@ -69,27 +74,67 @@ TOPIC_SECTIONS: dict[str, tuple[str, ...]] = {
         "High-level helpers — prefer these over hand-rolled boilerplate",
         "Curve patterns — copy + adapt (when a helper doesn't fit)",
         "Engineering Mode — well-formed mechanical parts",
+        "Pointer syntax — `@kind:id`",
+        "B — CAD generation from scratch",
+        "B2 — Incremental modeling (the sustainable loop)",
+        "E — Parametric modification (design iteration)",
+        "Approval-gated tools",
+        "Stale-artifact warnings",
+        "Common mistakes to avoid",
     ),
     "cae": (
         "Structural FEA (CalculiX)",
+        "Pointer syntax — `@kind:id`",
         "CAE setup (no approval)",
         "Simulation execution (requires approval — runs external CalculiX)",
         "Post-processing (no approval)",
         "C — CAD → CAE simulation pipeline",
+        "D — Inspect results and explain findings",
+        "Approval-gated tools",
         "Stale-artifact warnings",
+        "Assembly IR v0 (optional, multi-part)",
     ),
     "pointers": ("Pointer syntax — `@kind:id`",),
-    "tools": ("Tool taxonomy",),
-    "workflows": ("Recommended workflows", "Stale-artifact warnings"),
-    "package": (".aieng package structure (reference)",),
+    "tools": (
+        "STOP — read this first",
+        "First three calls every session",
+        "Tool taxonomy",
+        "Approval-gated tools",
+    ),
+    "workflows": (
+        "Pointer syntax — `@kind:id`",
+        "Recommended workflows",
+        "Approval-gated tools",
+        "Stale-artifact warnings",
+    ),
+    "package": (
+        "Package lifecycle",
+        "Approval-gated tools",
+        "Stale-artifact warnings",
+        ".aieng package structure (reference)",
+    ),
     "fallback": (
         "If the backend (port 8000) is unreachable",
         "Fallback mode — when you do not have MCP tools",
         "Common mistakes to avoid",
     ),
-    "frontend": ("Development path rules", "Agent run display state"),
-    "approvals": ("Approval-gated tools",),
-    "operators": ("Environment variables (for MCP server operators)",),
+    "frontend": (
+        "Workspace layout",
+        "Development path rules",
+        "Frontend maintainability rules",
+    ),
+    "approvals": (
+        "Tool taxonomy",
+        "Approval-gated tools",
+        "If the backend (port 8000) is unreachable",
+        "Environment variables (for MCP server operators)",
+    ),
+    "operators": (
+        "Workspace layout",
+        "Approval-gated tools",
+        "If the backend (port 8000) is unreachable",
+        "Environment variables (for MCP server operators)",
+    ),
 }
 
 
@@ -162,8 +207,18 @@ def _extract_sections(markdown: str, requested: tuple[str, ...]) -> str:
     selected: list[str] = []
     requested_set = set(requested)
     active_level: int | None = None
+    fence_marker: str | None = None
     for line in lines:
-        heading = _heading(line)
+        stripped = line.lstrip()
+        if fence_marker is not None:
+            heading = None
+            if stripped.startswith(fence_marker):
+                fence_marker = None
+        elif stripped.startswith("```") or stripped.startswith("~~~"):
+            fence_marker = stripped[:3]
+            heading = None
+        else:
+            heading = _heading(line)
         if heading:
             level, title = heading
             if active_level is not None and level <= active_level:

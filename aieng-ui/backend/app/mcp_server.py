@@ -69,6 +69,53 @@ class _PassthroughArgModel(ArgModelBase):
 # Claude Code mcp.json env block: AIENG_BACKEND_URL=http://127.0.0.1:8000
 _BACKEND_URL = (os.environ.get("AIENG_BACKEND_URL") or "").rstrip("/")
 
+_GUIDE_REQUIRED_PREFIXES = {
+    "cad.": "cad",
+    "cae.": "cae",
+    "postprocess.": "cae",
+    "opt.": "cae",
+}
+_PACKAGE_GUIDE_TOOLS = {
+    "aieng.apply_shape_ir_patch",
+    "aieng.convert",
+    "aieng.delete_project",
+    "aieng.generate_preview",
+    "aieng.refresh_semantics",
+    "aieng.update_validation_status",
+    "aieng.validate",
+    "aieng.write_completeness_report",
+    "aieng.write_evidence_scaffold",
+}
+
+
+def _guide_guard_enabled() -> bool:
+    """Require task-specific guide reads before category tool calls by default."""
+    return os.environ.get("AIENG_MCP_REQUIRE_GUIDES", "1") != "0"
+
+
+def _required_guide_topic(tool_name: str) -> str | None:
+    if tool_name in _PACKAGE_GUIDE_TOOLS:
+        return "package"
+    for prefix, topic in _GUIDE_REQUIRED_PREFIXES.items():
+        if tool_name.startswith(prefix):
+            return topic
+    return None
+
+
+def _guide_required_result(tool_name: str, topic: str, read_topics: set[str]) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "code": "guide_required",
+        "tool": tool_name,
+        "required_topic": topic,
+        "read_topics": sorted(read_topics),
+        "message": (
+            f"Read aieng.guide with topic={topic!r} once in this MCP session "
+            f"before calling {tool_name}. The tool was not executed."
+        ),
+        "next_call": {"tool": "aieng.guide", "input": {"topic": topic}},
+    }
+
 
 def _forward_to_backend(tool_name: str, args: dict[str, Any]) -> Any:
     """POST the tool call to the running backend; return its JSON result.
@@ -131,25 +178,26 @@ def _finalize_result(value: Any) -> Any:
 _SERVER_DESCRIPTION = """\
 aieng Workbench — CAD/CAE co-pilot for mechanical engineering.
 
-MANDATORY SESSION INITIALIZATION — aieng.agent_readme MUST be called before
-any other tool in this session. This is NOT a documentation summary; it returns
-live session state, runtime capability flags, and environment-specific
-configuration that static documentation cannot provide. Skipping this step
-will result in stale or incorrect tool behavior.
+MANDATORY SESSION ONBOARDING — aieng.agent_readme MUST be called before any
+other tool in this session. It returns the current operational contract and
+available task-specific guide topics. Skipping it risks stale or incomplete
+tool behavior.
 
-After initialization, call aieng.list_projects to discover available project IDs.
+After onboarding, call aieng.list_projects to discover available project IDs.
 
 This server exposes real 3D CAD modeling (build123d / OpenCASCADE) and
 structural FEA (CalculiX) tools. cad.execute_build123d runs your Python code
 against build123d and produces actual STEP/STL/GLB geometry — no API key needed.
 
 Quick start (MANDATORY ORDER — do not skip step 1):
-  1. aieng.agent_readme      → REQUIRED live session initialization
+  1. aieng.agent_readme      → REQUIRED operational onboarding
   2. aieng.list_projects     → discover project IDs
   3. aieng.agent_context { project_id }  → geometry state + suggested next steps
 
-Use aieng.guide { topic } only when a task needs detailed CAD, CAE, pointer,
-package, fallback, workflow, approval, frontend, or operator guidance.
+Before the first CAD modeling/edit action, call aieng.guide { topic: "cad" }.
+Before the first simulation/solver action, call aieng.guide { topic: "cae" }.
+Use other guide topics when their task category applies.
+The server enforces these reads before CAD, CAE, and package-lifecycle tools.
 
 Sustainable modeling loop: cad.get_source (read state) → cad.execute_build123d
 with mode=append (build onto `previous_result`; set `.label` and
@@ -177,11 +225,18 @@ AIENG MCP-first workbench discipline
 Use the workbench as a live CAD/CAE capability layer. Your agent is the brain;
 the UI is the 3D viewer, spatial input surface, and audit/approval mirror.
 
-MANDATORY FIRST CALLS — these are REQUIRED, not optional. They establish live
-session state that static documentation cannot provide:
+MANDATORY FIRST CALLS — these are REQUIRED, not optional. They establish the
+operational contract and current project state:
 1. aieng.agent_readme  (MUST be called before any other tool)
 2. aieng.list_projects
 3. aieng.agent_context { project_id }
+
+Guide-read enforcement:
+- CAD tools require aieng.guide {topic:"cad"} once per MCP server instance.
+- CAE, post-processing, and topology-optimization tools require topic "cae".
+- Package-lifecycle tools require topic "package".
+- Skipping a required read returns code=guide_required before approval/execution.
+- Reading topic "full" (or agent_readme detail="full") unlocks all categories.
 
 Approval boundary:
 - Tools advertised with [APPROVAL REQUIRED] mutate CAD/packages or execute
@@ -233,10 +288,11 @@ def _register_mcp_first_prompts_and_resources(mcp: FastMCP) -> None:
         return (
             "You are driving the AIENG Workbench through MCP. Treat the UI as "
             "a live 3D viewer + spatial input surface. MANDATORY: call "
-            "aieng.agent_readme FIRST — this is REQUIRED session initialization, "
-            "NOT a documentation summary. It returns live runtime state that "
-            "static docs cannot provide. Then call aieng.list_projects, then "
-            "aieng.agent_context. Use @face/@feature/@artifact pointers verbatim. "
+            "aieng.agent_readme FIRST for the current operational contract. Then "
+            "call aieng.list_projects, then aieng.agent_context. Before the first "
+            "CAD modeling/edit action call aieng.guide with topic='cad'; before "
+            "simulation/solver work call it with topic='cae'. Use "
+            "@face/@feature/@artifact pointers verbatim. "
             "Respect [APPROVAL REQUIRED] tools; AIENG_MCP_MANAGED_APPROVAL=1 routes "
             "them through the workbench viewer approval card, while "
             "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 refuses them outright. Report only "
@@ -549,6 +605,7 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
 
     mcp = FastMCP(name, instructions=_SERVER_DESCRIPTION)
     _register_mcp_first_prompts_and_resources(mcp)
+    read_guide_topics: set[str] = set()
 
     # Onboarding tools first — agents see these at the top of the tool list
     # and are more likely to call them before attempting other operations.
@@ -580,6 +637,27 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
         def _make_handler(name_: str, requires_approval: bool = False):
             def _handler(**kwargs: Any) -> Any:
                 args = dict(kwargs)
+                if name_ == "aieng.guide":
+                    topic = str(args.get("topic") or "").strip().lower()
+                    if topic == "full":
+                        from . import agent_guides
+
+                        read_guide_topics.update(agent_guides.TOPIC_SECTIONS)
+                    elif topic:
+                        read_guide_topics.add(topic)
+                elif name_ == "aieng.agent_readme" and str(args.get("detail") or "").lower() == "full":
+                    from . import agent_guides
+
+                    read_guide_topics.update(agent_guides.TOPIC_SECTIONS)
+
+                required_topic = _required_guide_topic(name_)
+                if (
+                    _guide_guard_enabled()
+                    and required_topic is not None
+                    and required_topic not in read_guide_topics
+                ):
+                    return _coerce_result(_guide_required_result(name_, required_topic, read_guide_topics))
+
                 # Approach A approval gate: in an agentic session, a gated tool
                 # must pause for UI approval BEFORE executing. This is enforced
                 # here (server-side), independent of Claude's own permission

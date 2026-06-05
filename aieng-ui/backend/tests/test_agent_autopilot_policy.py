@@ -3,6 +3,7 @@ from app.agent_autopilot.policy import classify_known_tool, evaluate_tool_call
 
 RUNTIME_TOOLS = [
     {"name": "aieng.agent_context"},
+    {"name": "aieng.create_project"},
     {"name": "cad.plan_build123d_skill"},
     {"name": "cad.execute_build123d"},
     {"name": "cad.critique"},
@@ -13,6 +14,7 @@ RUNTIME_TOOLS = [
 
 def test_policy_classifies_expected_permission_levels() -> None:
     assert classify_known_tool("aieng.agent_context") == "auto_read"
+    assert classify_known_tool("aieng.create_project") == "auto_write_safe"
     assert classify_known_tool("cad.plan_build123d_skill") == "auto_read"
     assert classify_known_tool("cad.execute_build123d") == "approval_mutation"
     assert classify_known_tool("cad.critique") == "auto_read"
@@ -29,6 +31,19 @@ def test_policy_enforces_active_project_scope() -> None:
     )
     assert decision.level == "blocked"
     assert not decision.allowed
+
+
+def test_policy_allows_project_creation_without_an_existing_project_id() -> None:
+    decision = evaluate_tool_call(
+        tool_name="aieng.create_project",
+        tool_input={"name": "New model"},
+        active_project_id="active",
+        registered_tools=RUNTIME_TOOLS,
+    )
+
+    assert decision.allowed
+    assert not decision.requires_approval
+    assert decision.level == "auto_write_safe"
 
 
 def test_policy_allows_safe_write_and_requires_approval_for_mutation() -> None:

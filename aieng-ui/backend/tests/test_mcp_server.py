@@ -47,6 +47,14 @@ def _tool_text(call_result: Any) -> str:
     return str(call_result)
 
 
+def _read_guide(mcp, topic: str) -> None:
+    import asyncio
+
+    result = asyncio.run(mcp.call_tool(_mcp_name("aieng.guide"), {"topic": topic}))
+    payload = json.loads(_tool_text(result))
+    assert payload["mode"] in {"topic", "full"}
+
+
 def test_mcp_server_registers_runtime_tools(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
     assert len(tools) >= 10
@@ -69,6 +77,7 @@ def test_high_frequency_tools_carry_curated_schema(mcp_server) -> None:
         _no_project_id = {
             "aieng.list_projects",
             "aieng.agent_readme",
+            "aieng.create_project",
             "aieng.guide",
             "aieng.convert",
             "aieng.find_projects_by_part",
@@ -114,6 +123,87 @@ def test_topic_guide_is_available_through_mcp(mcp_server) -> None:
     assert result["mode"] == "topic"
     assert result["topic"] == "pointers"
     assert "## Pointer syntax" in result["content"]
+
+
+def test_category_tool_is_blocked_until_required_guide_is_read(monkeypatch) -> None:
+    import asyncio
+
+    import app.mcp_server as ms
+
+    captured: dict[str, Any] = {}
+
+    def _probe(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        captured.update(inp)
+        return {"status": "ok"}
+
+    _rt.register_tool("cad.guarded_probe", _probe, description="guide guard probe")
+    try:
+        monkeypatch.delenv("AIENG_MCP_REQUIRE_GUIDES", raising=False)
+        monkeypatch.setattr(ms, "_BACKEND_URL", "")
+        mcp = ms._build_mcp_server()
+
+        blocked = asyncio.run(mcp.call_tool("cad_guarded_probe", {"project_id": "p1"}))
+        payload = json.loads(_tool_text(blocked))
+        assert payload["code"] == "guide_required"
+        assert payload["required_topic"] == "cad"
+        assert payload["next_call"] == {"tool": "aieng.guide", "input": {"topic": "cad"}}
+        assert captured == {}
+
+        _read_guide(mcp, "cad")
+        allowed = asyncio.run(mcp.call_tool("cad_guarded_probe", {"project_id": "p1"}))
+        assert json.loads(_tool_text(allowed)) == {"status": "ok"}
+        assert captured == {"project_id": "p1"}
+    finally:
+        _rt._REGISTRY.pop("cad.guarded_probe", None)
+
+
+def test_full_guide_unlocks_all_guarded_categories(monkeypatch) -> None:
+    import asyncio
+
+    import app.mcp_server as ms
+
+    called: list[str] = []
+
+    def _probe(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        called.append("cae")
+        return {"status": "ok"}
+
+    _rt.register_tool("cae.guarded_probe", _probe, description="full guide guard probe")
+    try:
+        monkeypatch.delenv("AIENG_MCP_REQUIRE_GUIDES", raising=False)
+        monkeypatch.setattr(ms, "_BACKEND_URL", "")
+        mcp = ms._build_mcp_server()
+        asyncio.run(mcp.call_tool(_mcp_name("aieng.agent_readme"), {"detail": "full"}))
+
+        allowed = asyncio.run(mcp.call_tool("cae_guarded_probe", {"project_id": "p1"}))
+        assert json.loads(_tool_text(allowed)) == {"status": "ok"}
+        assert called == ["cae"]
+    finally:
+        _rt._REGISTRY.pop("cae.guarded_probe", None)
+
+
+def test_guide_guard_can_be_explicitly_disabled(monkeypatch) -> None:
+    import asyncio
+
+    import app.mcp_server as ms
+
+    called: list[str] = []
+
+    def _probe(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        called.append("cad")
+        return {"status": "ok"}
+
+    _rt.register_tool("cad.unguarded_probe", _probe, description="disabled guide guard probe")
+    try:
+        monkeypatch.setenv("AIENG_MCP_REQUIRE_GUIDES", "0")
+        monkeypatch.setattr(ms, "_BACKEND_URL", "")
+        mcp = ms._build_mcp_server()
+
+        allowed = asyncio.run(mcp.call_tool("cad_unguarded_probe", {"project_id": "p1"}))
+        assert json.loads(_tool_text(allowed)) == {"status": "ok"}
+        assert called == ["cad"]
+    finally:
+        _rt._REGISTRY.pop("cad.unguarded_probe", None)
 
 
 def test_approval_gated_tools_advertise_in_description(mcp_server) -> None:
@@ -178,6 +268,7 @@ def test_mcp_hard_block_refuses_gated_tool_before_dispatch(monkeypatch) -> None:
         raise AssertionError("blocked gated tool must not invoke runtime")
 
     monkeypatch.setenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", "1")
+    monkeypatch.setenv("AIENG_MCP_REQUIRE_GUIDES", "0")
     monkeypatch.setenv("AIENG_AGENTIC_PERMISSION_TOOL", "1")
     monkeypatch.setattr(ms, "_BACKEND_URL", "http://127.0.0.1:8000")
     monkeypatch.setattr(ms, "_forward_to_backend", _should_not_forward)
@@ -197,6 +288,7 @@ def test_mcp_hard_block_refuses_solver_too(monkeypatch) -> None:
     import app.mcp_server as ms
 
     monkeypatch.setenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", "1")
+    monkeypatch.setenv("AIENG_MCP_REQUIRE_GUIDES", "0")
     monkeypatch.setattr(ms, "_BACKEND_URL", "")
 
     mcp = ms._build_mcp_server()

@@ -48,6 +48,7 @@ AUTO_PREVIEW_TOOLS = {
 }
 
 AUTO_WRITE_SAFE_TOOLS = {
+    "aieng.create_project",
     "cae.apply_setup_patch",
     "cae.generate_solver_input",
     "cae.write_mesh_handoff",
@@ -74,6 +75,7 @@ EXPLICIT_CONFIRM_TOOLS = {
 
 NO_PROJECT_REQUIRED = {
     "aieng.agent_readme",
+    "aieng.create_project",
     "aieng.guide",
     "aieng.list_projects",
 }

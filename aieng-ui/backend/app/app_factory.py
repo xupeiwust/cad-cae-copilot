@@ -5522,11 +5522,21 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     # ── agent onboarding tools ────────────────────────────────────────────────
 
     def _tool_aieng_list_projects(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
-        """List all .aieng projects the workbench knows about."""
-        projects = [
-            normalize_project(read_json(path, {}))
-            for path in active_settings.projects_root.glob("*/metadata.json")
-        ]
+        """List all .aieng projects the workbench knows about.
+
+        Broken projects (missing or unreadable metadata) are filtered out so the
+        agent never receives a project_id that would later return 404.
+        """
+        projects: list[dict[str, Any]] = []
+        for path in active_settings.projects_root.glob("*/metadata.json"):
+            metadata = read_json(path, None)
+            if metadata is None:
+                continue  # unreadable / broken metadata
+            if not isinstance(metadata, dict):
+                continue
+            if not metadata.get("id"):
+                continue  # missing project_id — would cause 404 downstream
+            projects.append(normalize_project(metadata))
         projects.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
         return {"projects": projects, "count": len(projects)}
 

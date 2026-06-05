@@ -1,5 +1,6 @@
 # aieng - AI-native CAD/CAE engineering workbench
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/armpro24-blip/workspace_aieng)
 ![CAD](https://img.shields.io/badge/CAD-build123d%20%2F%20OpenCASCADE-1f6feb)
 ![FEA](https://img.shields.io/badge/FEA-CalculiX-e36209)
 ![Agent](https://img.shields.io/badge/agent-MCP%20server-8957e5)
@@ -64,6 +65,15 @@ focuses on package preview, CAD inspection, and stable face-pointer copying.
   build123d / OpenCASCADE.
 
 ## Quick start
+
+### Option 1: GitHub Codespaces (fastest, zero install)
+
+Click the **"Open in GitHub Codespaces"** button at the top of this README.
+The environment will be fully set up automatically; just run `make dev` when
+it finishes loading. If `make` is unavailable, run `python3 scripts/dev.py`
+instead.
+
+### Option 2: Local install
 
 Prerequisites: a conda env named **`aieng311`** (Python >= 3.11) with
 **build123d** installed - the MCP config and run scripts assume this name.

@@ -623,16 +623,35 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "cae.apply_setup_patch": {
         "type": "object",
         "required": ["project_id"],
+        "description": (
+            "Apply incremental patches to the project's CAE setup artifacts "
+            "(materials, boundary conditions, loads, mesh settings). Each patch "
+            "specifies an action_type and a target path within the package."
+        ),
         "properties": {
             "project_id": {"type": "string"},
             "patches": {
                 "type": "array",
                 "minItems": 1,
-                "items": {"type": "object"},
+                "items": {
+                    "type": "object",
+                    "description": (
+                        "A single patch operation. Required fields: "
+                        "action_type (create_file|replace_json|merge_object|append_array_item), "
+                        "path (allowed target file path in the package, e.g. "
+                        "'simulation/cae_imports/parsed_materials.json'), and payload "
+                        "(content for create_file; value or content for JSON operations). "
+                        "Example: "
+                        '{"action_type": "merge_object", '
+                        '"path": "simulation/cae_imports/parsed_materials.json", '
+                        '"content": {"materials": [{"name": "aluminum_6061", '
+                        '"density_kg_m3": 2700, "youngs_modulus_pa": 69e9, '
+                        '"poisson_ratio": 0.33, "yield_strength_pa": 276e6}]}}'
+                    ),
+                },
                 "description": (
-                    "Preferred input. Array of CAE setup patch operations "
-                    "(create_file / replace_json / merge_object / append_array_item) "
-                    "with target path and payload. Either 'patches' or 'patch' must be provided."
+                    "Preferred input. Array of CAE setup patch operations. "
+                    "Either 'patches' or 'patch' must be provided."
                 ),
             },
             "patch": {

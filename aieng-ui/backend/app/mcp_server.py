@@ -463,7 +463,15 @@ def _agentic_permission_decision(tool_name: str, tool_input: dict[str, Any]) -> 
             continue
         if status.get("status") == "resolved":
             return status.get("decision") or deny
-    return {"behavior": "deny", "message": "approval timed out waiting for the user."}
+    return {
+        "behavior": "deny",
+        "message": (
+            "Approval timed out (the user did not respond within the timeout window). "
+            "The tool was NOT executed. To try again, simply re-run the same tool call — "
+            "a new approval request will be surfaced in the workbench UI."
+        ),
+        "recoverable": True,
+    }
 
 
 def _request_approval_handler(**kwargs: Any) -> Any:

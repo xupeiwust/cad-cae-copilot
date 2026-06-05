@@ -12,6 +12,7 @@ const style = document.createElement("style");
 style.textContent = `
 :root { color-scheme: dark; --ink:#eef5ef; --muted:#91a095; --line:#2c3930; --panel:#101612e8; --accent:#d7ff55; --hot:#ffb35c; }
 * { box-sizing:border-box; }
+[hidden] { display:none !important; }
 html,body,#app { width:100%; height:100%; margin:0; overflow:hidden; }
 body { font-family:"Bahnschrift","DIN Alternate","Segoe UI",sans-serif; color:var(--ink); background:#070b08; }
 button { font:inherit; color:inherit; }

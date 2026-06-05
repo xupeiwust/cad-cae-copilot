@@ -27,6 +27,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 def register_runtime_routes(app: FastAPI, *, active_settings: Any) -> None:
+    @app.get("/api/runtime/workflows")
+    def list_runtime_workflows() -> list[dict[str, Any]]:
+        return agent_workbench.list_workflows()
+
     @app.get("/api/runtime/tools")
     def list_runtime_tools() -> list[dict[str, Any]]:
         return _rt.registered_tools_info()

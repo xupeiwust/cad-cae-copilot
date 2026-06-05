@@ -6,6 +6,7 @@ from typing import Callable
 from fastapi import Request
 
 from .logging_utils import configure_backend_logging, error_metrics_snapshot, log_exception
+from .routers.discovery import register_discovery_routes
 from .routers.runtime import register_runtime_routes
 from .routers.settings import register_settings_routes
 from .routers.system import register_system_routes
@@ -71,6 +72,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             return RedirectResponse(url="/app/")
 
     register_system_routes(app, active_settings=active_settings, server_started_at=server_started_at)
+    register_discovery_routes(app, active_settings=active_settings)
 
     @app.post("/api/llm/test")
     def test_llm_provider_endpoint(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
@@ -111,18 +113,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             if api_key:
                 llm_config = {**llm_config, "api_key": api_key}
         return llm_config
-
-    @app.get("/api/capabilities")
-    def list_capabilities() -> list[dict[str, Any]]:
-        return agent_workbench.list_capabilities(active_settings)
-
-    @app.post("/api/capabilities/preview")
-    def preview_capability(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        return agent_workbench.preview_capability(active_settings, payload or {})
-
-    @app.get("/api/runtime/workflows")
-    def list_runtime_workflows() -> list[dict[str, Any]]:
-        return agent_workbench.list_workflows()
 
     def _build_agent_response(data: dict[str, Any]) -> dict[str, Any]:
         message = str(data.get("message") or "").strip()
@@ -202,22 +192,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "agent": agent_plan,
             "run": _rt.run_to_dict(run),
         }
-
-    @app.get("/api/local-agents/capabilities")
-    def get_local_agent_capabilities() -> dict[str, Any]:
-        from .agent_autopilot.adapters import probe_local_agent_capabilities
-
-        adapters = probe_local_agent_capabilities()
-        return {
-            "adapters": adapters,
-            "available": [item for item in adapters if item.get("status") == "available"],
-        }
-
-    @app.get("/api/local-agents/preflight")
-    def get_local_agent_preflight(adapter: str | None = None) -> dict[str, Any]:
-        from .agent_autopilot.local_agent_preflight import local_agent_preflight
-
-        return local_agent_preflight(adapter=adapter)
 
     def _autopilot_store():
         from .agent_autopilot.store import AutopilotStore
@@ -1080,20 +1054,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "observation": observation,
         }
 
-    @app.get("/api/benchmarks/scenarios")
-    def list_benchmark_scenarios() -> list[dict[str, Any]]:
-        return agent_workbench.list_benchmark_scenarios(active_settings)
-
-    @app.post("/api/benchmarks/runs")
-    def create_benchmark_run(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        return agent_workbench.run_benchmark_from_payload(active_settings, payload or {})
-
-    @app.get("/api/benchmarks/runs/{run_id}")
-    def get_benchmark_run(run_id: str) -> dict[str, Any]:
-        run = agent_workbench.get_benchmark_run(active_settings, run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="benchmark run not found")
-        return run
 
     @app.get("/api/adapters/structural/preflight")
     def structural_adapter_preflight() -> dict[str, Any]:

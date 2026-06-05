@@ -1,5 +1,5 @@
 import type { ObjectRegistryResponse, SelectedGeometryContext } from "./appTypes";
-import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactResponse, AutopilotAgentPlan, AutopilotRunState, BenchmarkRun, BenchmarkScenario, CadRecommendationsResponse, CaeArtifactDetection, CaePreprocessingSummary, CaeReviewReport, CaeSimulationRunSummary, CapabilityDescriptor, CapabilityPreview, ChatConnection, ChatResponse, ComputedMetricsDocument, ComputedMetricsImportPayload, ComputedMetricsResponse, CopilotLoop, CopilotLoopDemoSeedResponse, CopilotLoopDemoSmokeCheckResponse, CopilotLoopExportRequest, CopilotLoopExportResponse, CopilotLoopList, CopilotLoopReport, CopilotLoopReportDiff, CritiqueResponse, DesignTarget, DesignTargetsDocument, DesignTargetsResponse, EditableParametersResponse, EngineeringTemplateAdoptTargetsResponse, SimulationReadinessResponse, EngineeringTemplateCadFixtureResponse, EngineeringTemplateDetail, EngineeringTemplatePreviewResponse, EngineeringTemplateSaveDraftResponse, EngineeringTemplateSummary, FreeCadAdapterPreflightResponse, FreeCadEditParameterRequest, FreeCadEditParameterResponse, FreeCadInspectionEvidenceResponse, FreeCadInspectFeaturesRequest, FreeCadInspectFeaturesResponse, IntentActionExecuteResponse, IntentObserveResponse, IntentPlan, LLMConfig, LocalAgentCapability, ProjectHealthCheckResponse, ProjectRecord, ProjectSummary, ReviewSupportPacketResponse, RuntimeConfig, RuntimeConfigSnapshot, RuntimeEvent, RuntimeRun, RuntimeRunSummary, RuntimeToolInfo, SolverFieldDescriptor, StructuralAdapterPreflightResponse, StructuralPreparePreviewResponse, StructuralSolverInputImportResponse, TargetComparisonResponse, WorkflowDefinition, WorkflowStep } from "./types";
+import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactResponse, AutopilotRunState, BenchmarkRun, BenchmarkScenario, CadRecommendationsResponse, CaeArtifactDetection, CaePreprocessingSummary, CaeReviewReport, CaeSimulationRunSummary, CapabilityDescriptor, CapabilityPreview, ChatConnection, ChatResponse, ComputedMetricsDocument, ComputedMetricsImportPayload, ComputedMetricsResponse, CopilotLoop, CopilotLoopDemoSeedResponse, CopilotLoopDemoSmokeCheckResponse, CopilotLoopExportRequest, CopilotLoopExportResponse, CopilotLoopList, CopilotLoopReport, CopilotLoopReportDiff, CritiqueResponse, DesignTarget, DesignTargetsDocument, DesignTargetsResponse, EditableParametersResponse, EngineeringTemplateAdoptTargetsResponse, SimulationReadinessResponse, EngineeringTemplateCadFixtureResponse, EngineeringTemplateDetail, EngineeringTemplatePreviewResponse, EngineeringTemplateSaveDraftResponse, EngineeringTemplateSummary, FreeCadAdapterPreflightResponse, FreeCadEditParameterRequest, FreeCadEditParameterResponse, FreeCadInspectionEvidenceResponse, FreeCadInspectFeaturesRequest, FreeCadInspectFeaturesResponse, IntentActionExecuteResponse, IntentObserveResponse, IntentPlan, LLMConfig, LocalAgentCapability, ProjectHealthCheckResponse, ProjectRecord, ProjectSummary, ReviewSupportPacketResponse, RuntimeConfig, RuntimeConfigSnapshot, RuntimeEvent, RuntimeRun, RuntimeRunSummary, RuntimeToolInfo, SolverFieldDescriptor, StructuralAdapterPreflightResponse, StructuralPreparePreviewResponse, StructuralSolverInputImportResponse, TargetComparisonResponse, WorkflowDefinition, WorkflowStep } from "./types";
 
 const API = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
@@ -28,15 +28,6 @@ export type ChatSession = {
   updated_at: string;
 };
 
-export type AgentPlanSnapshot = {
-  run_id?: string | null;
-  project_id?: string | null;
-  session_id?: string | null;
-  plan?: AutopilotAgentPlan | null;
-  run_status?: string | null;
-  updated_at?: string | null;
-};
-
 export type ContextSummary = {
   schema_version: 1;
   session_id: string;
@@ -51,13 +42,6 @@ export type ContextSummary = {
   risks: string[];
   next_action: string;
   updated_at: string;
-};
-
-export type ContextSummaryResponse = {
-  project_id: string;
-  session_id: string;
-  context_summary?: ContextSummary | null;
-  context_summary_updated_at?: string | null;
 };
 
 export type PersistedAgentEvent = {
@@ -186,45 +170,6 @@ export const api = {
   listAgentConnections: () => request<ChatConnection[]>("/api/agent/connections"),
   listLocalAgentCapabilities: () =>
     request<{ adapters: LocalAgentCapability[]; available: LocalAgentCapability[] }>("/api/local-agents/capabilities"),
-  runAutopilot: (payload: {
-    message: string;
-    project_id?: string | null;
-    session_id?: string | null;
-    adapter_id?: string;
-    selected_geometry?: SelectedGeometryContext | null;
-    llm_config?: LLMConfig;
-    api_key?: string;
-    mode?: "assist" | "autopilot" | "full_agent";
-    dry_run?: boolean;
-    composer_intent?: Record<string, unknown> | null;
-  }) =>
-    request<AutopilotRunState>("/api/agent/autopilot/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      timeoutMs: 300000,
-    }),
-  continueAutopilot: (runId: string, approved: boolean, userMessage?: string | null, apiKey?: string) =>
-    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/continue`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved, user_message: userMessage ?? undefined, api_key: apiKey || undefined }),
-      timeoutMs: 300000,
-    }),
-  replyAutopilot: (runId: string, message: string, apiKey?: string) =>
-    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/reply`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, api_key: apiKey || undefined }),
-      timeoutMs: 300000,
-    }),
-  followUpAutopilot: (runId: string, message: string, apiKey?: string) =>
-    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/follow-up`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, api_key: apiKey || undefined }),
-      timeoutMs: 300000,
-    }),
   getAutopilotRun: (runId: string) =>
     request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}`),
   // Approach A: resolve a gated-tool approval for an agentic Claude session.
@@ -238,10 +183,6 @@ export const api = {
         timeoutMs: 60000,
       },
     ),
-  cancelAutopilot: (runId: string) =>
-    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}/cancel`, {
-      method: "POST",
-    }),
   planIntent: (payload: { message: string; project_id?: string | null }) =>
     request<IntentPlan>("/api/intent-planner/plan", {
       method: "POST",
@@ -606,21 +547,6 @@ export const api = {
     ),
   getChatSessions: (projectId: string) =>
     request<ChatSession[]>(`/api/projects/${projectId}/chat-sessions`),
-  getChatSessionAgentPlan: (projectId: string, sessionId: string) =>
-    request<AgentPlanSnapshot>(`/api/projects/${projectId}/chat-sessions/${sessionId}/agent-plan`),
-  getChatSessionContextSummary: (projectId: string, sessionId: string) =>
-    request<ContextSummaryResponse>(`/api/projects/${projectId}/chat-sessions/${sessionId}/context-summary`),
-  updateChatSessionContextSummary: (projectId: string, sessionId: string, contextSummary: ContextSummary | null) =>
-    request<ContextSummaryResponse>(`/api/projects/${projectId}/chat-sessions/${sessionId}/context-summary`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_summary: contextSummary }),
-    }),
-  refreshChatSessionContextSummary: (projectId: string, sessionId: string) =>
-    request<ContextSummaryResponse>(`/api/projects/${projectId}/chat-sessions/${sessionId}/context-summary/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    }),
   createChatSession: (projectId: string, title?: string) =>
     request<ChatSession>(`/api/projects/${projectId}/chat-sessions`, {
       method: "POST",
@@ -642,8 +568,6 @@ export const api = {
       `/api/projects/${projectId}/chat-sessions/${sessionId}`,
       { method: "DELETE" },
     ),
-  getAutopilotRunPlan: (runId: string) =>
-    request<AgentPlanSnapshot>(`/api/agent/autopilot/runs/${runId}/plan`),
   getChatMessages: (projectId: string, sessionId?: string | null) =>
     request<PersistedChatMessage[]>(
       `/api/projects/${projectId}/chat-messages${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,

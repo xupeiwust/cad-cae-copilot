@@ -104,23 +104,16 @@ changing code:
 
 ### Agent run display state
 
-- **Terminal runs must look stopped.** `completed` / `failed` / `cancelled` are
-  terminal (`isTerminalAutopilotStatus` in
-  [`chatTranscript.ts`](aieng-ui/frontend/src/app/chatTranscript.ts)). A terminal
-  run must never render an active spinner, a pending/glowing plan step, or a
-  "waiting approval" badge after reload.
-- **Cancelled is distinct from blocked.** A cancelled run projects to the
-  `cancelled` transcript tone (stopped/neutral, no spinner), *not* `blocked`
-  (which stays amber "waiting approval" for genuinely paused runs). The run's own
-  status is authoritative over a stale `plan.status`: `planToTranscriptItem` /
-  `normalizeTerminalPlanSteps` rewrite any not-yet-finished step of a cancelled
-  run to `cancelled` so nothing reads as in-flight. Completed keeps its
-  pending→`skipped` normalization; failed is left untouched.
-- Active-run restore / processing indicators key off the active set
-  (`running` / `awaiting_approval` / `chatting` / `blocked`) — never the terminal
-  set — so a reloaded cancelled run does not re-arm the composer Stop button or
-  the elapsed-time spinner. Raw event/run detail stays available via the
-  per-row Details disclosure.
+> **Post-cutover note (#17, #8).** The in-UI chat and its run→transcript
+> rendering were removed in the MCP-first cutover, so the former display-state
+> contract here (terminal-run transcript tones, `planToTranscriptItem` /
+> `normalizeTerminalPlanSteps`, the per-row transcript items) no longer applies —
+> those projection helpers and `chatTranscript.ts`'s `Transcript*` types were
+> deleted. What survives is `isTerminalAutopilotStatus` (in
+> [`chatTranscript.ts`](aieng-ui/frontend/src/app/chatTranscript.ts)), used by the
+> activity-stream fallback to tell terminal (`completed` / `failed` / `cancelled`)
+> runs apart from active ones. If an in-UI run transcript ever returns, restore a
+> display-state contract along with it.
 
 ### Composer slash commands and @-mentions
 
@@ -277,19 +270,13 @@ path instead of regenerating the whole model.
   binding only *proposes* a target, and out-of-range / ambiguous edits are routed
   to user confirmation.
 
-**Frontend echo (intent chip).** The resolved intent is surfaced in the chat
-transcript as a compact chip instead of the raw agent-facing instruction text.
-`resolvedIntentFromRun` ([`resolvedIntent.ts`](aieng-ui/frontend/src/app/resolvedIntent.ts))
-reads `composer_intent.resolved_intent` (+ the `parameter_bindings` observation)
-into a render-ready summary; `runToTranscriptItems`
-([`chatTranscript.ts`](aieng-ui/frontend/src/app/chatTranscript.ts)) projects a
-single `intent`-kind item per run and **suppresses** the intent-bearing context
-observations (`isIntentResolutionObservation`) so they are not duplicated as
-status lines. [`IntentChip.tsx`](aieng-ui/frontend/src/components/chat/IntentChip.tsx)
-renders "Understood as `/modify`" (with source + confidence and per-slot binding
-pills: bound / out-of-range / ambiguous / unverified) or, for a low-confidence /
-ambiguous intent, an amber "confirming before acting" variant. Explicit
-slash-command runs record no `resolved_intent`, so they show no chip.
+**Frontend echo (intent chip).** The resolved intent still rides on
+`composer_intent.resolved_intent` (+ the `parameter_bindings` observation) on the
+run state. The former in-UI rendering of it — `resolvedIntentFromRun`,
+`runToTranscriptItems`'s `intent`-kind item, and the `IntentChip.tsx` chip — was
+removed in the MCP-first cutover (#17, #8) along with the chat transcript; the
+backend signal is unchanged and available to any agent/UI that consumes the run
+state. Explicit slash-command runs record no `resolved_intent`.
 **Editable Parameter Explorer (discovery surface).** The "point" half of
 point-and-shoot: the editable-parameter index (`build_parameter_index` +
 `summarize_parameter_index` in
@@ -531,14 +518,13 @@ shouldn't have. Read its `verdict` before trusting the result:
 (For edits to a `Global Parameters` constant, collateral is not judged — shared
 dims are *meant* to move many parts.)
 
-The workbench **surfaces this verdict in the chat transcript** as a verification
-line right after the edit tool (the "see what happened" half of point-and-shoot):
-green for `clean`, amber for `collateral_change` / `topology_changed`, neutral for
-`identical`, with the changed parts (and collateral ones highlighted) shown as
-chips. Pure projection in
-[`editVerification.ts`](aieng-ui/frontend/src/app/editVerification.ts) →
-`runToTranscriptItems` emits a `verification`-kind item rendered by
-[`EditVerificationLine.tsx`](aieng-ui/frontend/src/components/chat/EditVerificationLine.tsx).
+The `regression_diff` verdict (`clean` / `collateral_change` / `topology_changed`
+/ `identical`, with changed and collateral parts named) is returned in the
+`cad.edit_parameter` tool response for the driving agent to read. The former in-UI
+"verification line" rendering of it (`editVerification.ts` →
+`runToTranscriptItems` → `EditVerificationLine.tsx`) was removed in the MCP-first
+cutover (#17, #8) along with the chat transcript; the verdict itself is unchanged
+in the tool output.
 
 **Part-level edits — `cad.replace_part` / `cad.remove_part` (the visible loop).**
 `append` only ADDS geometry; when you need to fix or drop ONE part of a

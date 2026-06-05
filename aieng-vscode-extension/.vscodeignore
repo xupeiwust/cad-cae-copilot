@@ -1,0 +1,7 @@
+node_modules/**
+src/**
+webview-src/**
+scripts/**
+tsconfig.json
+package-lock.json
+**/*.map

@@ -1,0 +1,86 @@
+{
+  "name": "aieng-cad-preview",
+  "displayName": "AIENG CAD Preview",
+  "description": "Preview AIENG CAD packages and copy stable face pointers into any chat.",
+  "version": "0.1.0",
+  "publisher": "aieng",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/armpro24-blip/workspace_aieng.git",
+    "directory": "aieng-vscode-extension"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:aieng.cadPreview",
+    "onCommand:aieng.openLivePreview"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aieng.openLivePreview",
+        "title": "AIENG: Open Live CAD Preview",
+        "category": "AIENG"
+      },
+      {
+        "command": "aieng.openPackagePreview",
+        "title": "AIENG: Open .aieng CAD Preview",
+        "category": "AIENG"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "aieng.cadPreview",
+        "displayName": "AIENG CAD Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.aieng"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "configuration": {
+      "title": "AIENG CAD Preview",
+      "properties": {
+        "aieng.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "AIENG Workbench backend URL used by Live CAD Preview."
+        },
+        "aieng.liveProjectId": {
+          "type": "string",
+          "default": "",
+          "description": "Optional fixed Workbench project ID. When empty, Live CAD Preview prompts for a project."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "check": "tsc --noEmit",
+    "package": "npm run check && npm run build",
+    "vsix": "npm run package && npx @vscode/vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "eventsource": "^4.0.0",
+    "jszip": "^3.10.1",
+    "three": "^0.177.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/three": "^0.177.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.2"
+  }
+}

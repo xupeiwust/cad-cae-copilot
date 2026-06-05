@@ -27,6 +27,7 @@ class PolicyDecision(BaseModel):
 
 AUTO_READ_TOOLS = {
     "aieng.agent_readme",
+    "aieng.guide",
     "aieng.list_projects",
     "aieng.agent_context",
     "aieng.inspect_package",
@@ -73,6 +74,7 @@ EXPLICIT_CONFIRM_TOOLS = {
 
 NO_PROJECT_REQUIRED = {
     "aieng.agent_readme",
+    "aieng.guide",
     "aieng.list_projects",
 }
 

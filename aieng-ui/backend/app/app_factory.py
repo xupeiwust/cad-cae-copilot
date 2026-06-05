@@ -6128,34 +6128,40 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         input_schema=_schema("cae.map_results"),
     )
 
-    def _tool_aieng_agent_readme(_inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
-        """Return the canonical AGENTS.md guide as text so agents can read it in-band.
+    def _tool_aieng_agent_readme(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Return compact onboarding by default, with a full-guide compatibility mode."""
+        from . import agent_guides
 
-        Single source of truth is the workspace-root AGENTS.md. Falls back to the
-        backend-local copy if the root one is missing (e.g. relocated checkout).
-        """
-        import pathlib
-        parents = pathlib.Path(__file__).resolve().parents
-        backend_root = parents[1]      # aieng-ui/backend
-        workspace_root = parents[3]    # workspace root
-        candidates = [
-            workspace_root / "AGENTS.md",
-            backend_root / "AGENTS.md",
-        ]
-        for readme_path in candidates:
-            if readme_path.exists():
-                return {"content": readme_path.read_text(encoding="utf-8"), "path": str(readme_path)}
-        return {"content": "AGENTS.md not found.", "path": str(candidates[0])}
+        if str(inp.get("detail") or "quickstart").lower() == "full":
+            return agent_guides.full_result()
+        return agent_guides.quickstart_result()
 
     _rt.register_tool(
         "aieng.agent_readme",
         _tool_aieng_agent_readme,
         description=(
-            "Return the full AGENTS.md onboarding guide as text. "
-            "Read this once at the start of a session to understand the workbench tools, "
-            "workflow patterns, pointer syntax, and approval-gated operations."
+            "Return compact operational onboarding. Read this once at the start of a session, "
+            "then use aieng.guide only for task-specific detail. detail=full preserves access "
+            "to the canonical complete AGENTS.md."
         ),
         input_schema=_schema("aieng.agent_readme"),
+    )
+
+    def _tool_aieng_guide(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Return one detailed guide topic extracted from canonical AGENTS.md."""
+        from . import agent_guides
+
+        return agent_guides.guide_result(str(inp.get("topic") or ""))
+
+    _rt.register_tool(
+        "aieng.guide",
+        _tool_aieng_guide,
+        description=(
+            "Return task-specific detail extracted from the canonical AGENTS.md without "
+            "loading the full guide. Topics include cad, cae, pointers, tools, workflows, "
+            "package, fallback, frontend, approvals, operators, and full."
+        ),
+        input_schema=_schema("aieng.guide"),
     )
 
     _rt.register_tool(

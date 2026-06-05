@@ -1,9 +1,11 @@
 # aieng Workbench — Agent Guide
 
-Canonical onboarding doc for any AI agent (Claude Code, GitHub Copilot, OpenAI
+Canonical detailed guide for any AI agent (Claude Code, GitHub Copilot, OpenAI
 Codex, Cursor, Cline, …) working in this workspace. This is the single source of
-truth — `CLAUDE.md`, `.github/copilot-instructions.md`, and the MCP tool
-`aieng.agent_readme` all point here.
+truth for detailed guidance — `CLAUDE.md` and `.github/copilot-instructions.md`
+point here. The MCP tool `aieng.agent_readme` returns a compact operational
+quickstart by default; `aieng.guide {topic}` extracts detailed sections from this
+file, and `aieng.agent_readme {detail: "full"}` returns the complete document.
 
 ---
 
@@ -32,14 +34,16 @@ see MCP_SETUP for Codex, and see **Kimi Code CLI** notes in the Fallback section
 ## First three calls every session
 
 ```
-1. aieng.agent_readme                   → this guide, served at runtime
+1. aieng.agent_readme                   → compact operational quickstart
 2. aieng.list_projects                  → discover available project IDs
 3. aieng.agent_context { project_id }   → geometry state, pointers, next steps
 ```
 
 Call these **before** reading files or running code. `aieng.agent_context` gives
 you the current geometry state, stale-artifact warnings, and the pointer IDs you
-need to construct valid tool calls.
+need to construct valid tool calls. Call `aieng.guide {topic}` only when the
+current task needs detailed guidance; use `aieng.agent_readme {detail: "full"}`
+only when the complete canonical guide is genuinely required.
 
 ---
 
@@ -820,7 +824,8 @@ fixture and load on flat interfaces.
 
 | Tool | Purpose |
 |------|---------|
-| `aieng.agent_readme` | This guide, served at runtime |
+| `aieng.agent_readme` | Compact operational quickstart by default; `detail: "full"` returns this complete guide |
+| `aieng.guide` | Task-specific detailed sections from this canonical guide (`cad`, `cae`, `pointers`, `workflows`, etc.) |
 | `aieng.list_projects` | All known projects with id, name, status, and (for agent-built geometry) `named_parts` + `part_count` |
 | `aieng.find_projects_by_part` | Locate a project by a part label (case-insensitive substring on `named_parts`) |
 | `aieng.agent_context` | Compact context: pointers, stale warnings, next steps |

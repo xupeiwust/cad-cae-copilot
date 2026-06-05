@@ -47,9 +47,28 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "aieng.agent_readme": {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "detail": {
+                "type": "string",
+                "enum": ["quickstart", "full"],
+                "description": "Return compact onboarding by default; use full only when the canonical complete guide is required.",
+            },
+        },
         "additionalProperties": False,
-        "description": "No parameters required. Returns AGENTS.md content.",
+        "description": "No parameters required. Returns compact onboarding; detail=full returns canonical AGENTS.md.",
+    },
+    "aieng.guide": {
+        "type": "object",
+        "required": ["topic"],
+        "properties": {
+            "topic": {
+                "type": "string",
+                "enum": ["cad", "cae", "pointers", "tools", "workflows", "package", "fallback", "frontend", "approvals", "operators", "full"],
+                "description": "Detailed guide topic to read from the canonical AGENTS.md.",
+            },
+        },
+        "additionalProperties": False,
+        "description": "Return one detailed guide topic without loading the full AGENTS.md.",
     },
     "aieng.delete_project": {
         "type": "object",

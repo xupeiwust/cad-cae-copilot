@@ -131,7 +131,7 @@ def _finalize_result(value: Any) -> Any:
 _SERVER_DESCRIPTION = """\
 aieng Workbench — CAD/CAE co-pilot for mechanical engineering.
 
-IMPORTANT: Call aieng.agent_readme first to receive the full capability guide.
+IMPORTANT: Call aieng.agent_readme first to receive compact operational onboarding.
 Then call aieng.list_projects to discover available project IDs.
 
 This server exposes real 3D CAD modeling (build123d / OpenCASCADE) and
@@ -139,9 +139,12 @@ structural FEA (CalculiX) tools. cad.execute_build123d runs your Python code
 against build123d and produces actual STEP/STL/GLB geometry — no API key needed.
 
 Quick start:
-  1. aieng.agent_readme      → full guide (workflows, pointer syntax, approvals)
+  1. aieng.agent_readme      → compact operational onboarding
   2. aieng.list_projects     → discover project IDs
   3. aieng.agent_context { project_id }  → geometry state + suggested next steps
+
+Use aieng.guide { topic } only when a task needs detailed CAD, CAE, pointer,
+package, fallback, workflow, approval, frontend, or operator guidance.
 
 Sustainable modeling loop: cad.get_source (read state) → cad.execute_build123d
 with mode=append (build onto `previous_result`; set `.label` and
@@ -541,7 +544,7 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
 
     # Onboarding tools first — agents see these at the top of the tool list
     # and are more likely to call them before attempting other operations.
-    _ONBOARDING_FIRST = ("aieng.agent_readme", "aieng.list_projects", "aieng.agent_context")
+    _ONBOARDING_FIRST = ("aieng.agent_readme", "aieng.guide", "aieng.list_projects", "aieng.agent_context")
     tool_defs = sorted(
         tool_defs,
         key=lambda t: (0 if t["name"] in _ONBOARDING_FIRST else 1, t["name"]),

@@ -50,6 +50,7 @@ def _tool_text(call_result: Any) -> str:
 def test_mcp_server_registers_runtime_tools(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
     assert len(tools) >= 10
+    assert _mcp_name("aieng.guide") in tools
     assert _mcp_name("aieng.inspect_package") in tools
     assert _mcp_name("cae.run_solver") in tools
     assert _mcp_name("postprocess.generate_computed_metrics") in tools
@@ -68,6 +69,7 @@ def test_high_frequency_tools_carry_curated_schema(mcp_server) -> None:
         _no_project_id = {
             "aieng.list_projects",
             "aieng.agent_readme",
+            "aieng.guide",
             "aieng.convert",
             "aieng.find_projects_by_part",
         }
@@ -87,6 +89,31 @@ def test_tools_without_curated_schema_get_permissive_default(mcp_server) -> None
         assert tool.parameters == permissive or tool.parameters.get("type") == "object", (
             f"{name} has no schema and no permissive default"
         )
+
+
+def test_agent_readme_defaults_to_compact_and_full_mode_remains_available(mcp_server) -> None:
+    import asyncio
+
+    quick_raw = _tool_text(asyncio.run(mcp_server.call_tool(_mcp_name("aieng.agent_readme"), {})))
+    full_raw = _tool_text(asyncio.run(mcp_server.call_tool(_mcp_name("aieng.agent_readme"), {"detail": "full"})))
+    quick = json.loads(quick_raw)
+    full = json.loads(full_raw)
+
+    assert quick["mode"] == "quickstart"
+    assert len(quick["content"]) < 8_000
+    assert full["mode"] == "full"
+    assert len(full["content"]) > 50_000
+
+
+def test_topic_guide_is_available_through_mcp(mcp_server) -> None:
+    import asyncio
+
+    raw = _tool_text(asyncio.run(mcp_server.call_tool(_mcp_name("aieng.guide"), {"topic": "pointers"})))
+    result = json.loads(raw)
+
+    assert result["mode"] == "topic"
+    assert result["topic"] == "pointers"
+    assert "## Pointer syntax" in result["content"]
 
 
 def test_approval_gated_tools_advertise_in_description(mcp_server) -> None:

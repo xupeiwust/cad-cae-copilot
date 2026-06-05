@@ -212,10 +212,14 @@ Connection configs are **already committed** and load automatically for a fresh 
 
 **First three calls every session:**
 ```
-1. aieng.agent_readme                  → full agent guide (AGENTS.md, in-band)
+1. aieng.agent_readme                  → compact operational onboarding
 2. aieng.list_projects                 → discover project IDs
 3. aieng.agent_context { project_id }  → geometry state, pointers, next steps
 ```
+
+Use `aieng.guide { topic }` for task-specific detail, or
+`aieng.agent_readme { detail: "full" }` when the complete canonical
+[`AGENTS.md`](AGENTS.md) is genuinely required.
 
 **The sustainable modeling loop:**
 ```

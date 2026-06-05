@@ -6,6 +6,8 @@ from typing import Callable
 from fastapi import Request
 
 from .logging_utils import configure_backend_logging, error_metrics_snapshot, log_exception
+from .routers.settings import register_settings_routes
+from .routers.system import register_system_routes
 
 
 LOGGER = logging.getLogger(__name__)
@@ -67,67 +69,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             # The SPA is served under /app/; keep the bare root usable.
             return RedirectResponse(url="/app/")
 
-    @app.get("/api/health")
-    def health() -> dict[str, Any]:
-        tool_names = _rt.registered_tool_names()
-        cad_tool_names = [name for name in tool_names if name.startswith("cad.")]
-        return {
-            "status": "ok",
-            "pid": os.getpid(),
-            "started_at": server_started_at,
-            "python_executable": sys.executable,
-            "app_root": str(APP_ROOT),
-            "runtime_tool_count": len(tool_names),
-            "cad_tool_count": len(cad_tool_names),
-            "backend_log_path": app.state.backend_log_path,
-            "error_metrics": error_metrics_snapshot(limit=20),
-        }
-
-    @app.get("/api/environment")
-    def environment() -> dict[str, Any]:
-        """Return environment topology so agents can discover ports, paths, and formats."""
-        tool_names = _rt.registered_tool_names()
-        cad_tool_names = [name for name in tool_names if name.startswith("cad.")]
-        cae_tool_names = [name for name in tool_names if name.startswith("cae.")]
-        return {
-            "ui_url": "http://localhost:5173",
-            "api_url": "http://localhost:8000",
-            "data_root": str(active_settings.data_root),
-            "projects_root": str(active_settings.projects_root),
-            "aieng_root": str(active_settings.aieng_root),
-            "app_root": str(APP_ROOT),
-            "platform_root": str(active_settings.platform_root),
-            "conda_env": "aieng311",
-            "python_executable": sys.executable,
-            "supported_preview_formats": ["glb", "stl"],
-            "cad_tool_count": len(cad_tool_names),
-            "cae_tool_count": len(cae_tool_names),
-            "total_tool_count": len(tool_names),
-            "sample_tools": tool_names[:10],
-        }
-
-    @app.get("/api/runtime")
-    def runtime() -> dict[str, Any]:
-        return runtime_status(active_settings)
-
-    @app.get("/api/diagnostics/error-metrics")
-    def get_error_metrics() -> dict[str, Any]:
-        return {
-            "backend_log_path": app.state.backend_log_path,
-            **error_metrics_snapshot(),
-        }
-
-    @app.get("/api/runtime-config")
-    def get_runtime_config() -> dict[str, Any]:
-        return runtime_config_snapshot(active_settings)
-
-    @app.put("/api/runtime-config")
-    def update_runtime_config(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        return persist_runtime_config(active_settings, payload or {})
-
-    @app.post("/api/runtime-config/test")
-    def test_runtime_config(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        return runtime_config_snapshot(active_settings, payload or {})
+    register_system_routes(app, active_settings=active_settings, server_started_at=server_started_at)
 
     @app.post("/api/llm/test")
     def test_llm_provider_endpoint(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
@@ -3183,47 +3125,7 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
         deleted = db.clear_chat_messages(db_path, project_id, session_id=session_id)
         return {"deleted": deleted, "project_id": project_id}
 
-    @app.get("/api/settings")
-    def list_settings() -> dict[str, Any]:
-        from . import db
-
-        all_settings = db.get_all_settings(db_path)
-        all_settings.pop("api_key", None)
-        return all_settings
-
-    @app.get("/api/settings/{key}")
-    def get_setting_endpoint(key: str) -> dict[str, Any]:
-        from . import db
-
-        record = db.get_setting_record(db_path, key)
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"Setting not found: {key}")
-        return record
-
-    @app.put("/api/settings/{key}")
-    def put_setting_endpoint(
-        key: str,
-        payload: dict[str, Any] = Body(default=None),
-    ) -> dict[str, Any]:
-        from . import db
-
-        p = payload or {}
-        try:
-            return db.set_setting(db_path, key, p.get("value"))
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @app.delete("/api/settings/{key}")
-    def delete_setting_endpoint(key: str) -> dict[str, Any]:
-        from . import db
-
-        try:
-            deleted = db.delete_setting(db_path, key)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if not deleted:
-            raise HTTPException(status_code=404, detail=f"Setting not found: {key}")
-        return {"deleted": True, "key": key}
+    register_settings_routes(app, db_path=db_path)
 
     @app.get("/api/projects/{project_id}/fields/{field_name}")
     def get_field_descriptor(project_id: str, field_name: str) -> dict[str, Any]:

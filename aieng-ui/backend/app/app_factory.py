@@ -6,6 +6,7 @@ from typing import Callable
 from fastapi import Request
 
 from .logging_utils import configure_backend_logging, error_metrics_snapshot, log_exception
+from .routers.agent import register_agent_routes
 from .routers.discovery import register_discovery_routes
 from .routers.intent_planner import register_intent_planner_routes
 from .routers.runtime import register_runtime_routes
@@ -75,18 +76,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
     register_system_routes(app, active_settings=active_settings, server_started_at=server_started_at)
     register_discovery_routes(app, active_settings=active_settings)
 
-    @app.post("/api/llm/test")
-    def test_llm_provider_endpoint(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        data = payload or {}
-        llm_config = agent_engine.sanitize_llm_config(data.get("llm_config"))
-        if not llm_config:
-            raise HTTPException(status_code=400, detail="llm_config is required")
-        api_key = _resolve_api_key(data)
-        verify = bool(data.get("verify_connection", False))
-        return agent_engine.test_llm_provider(
-            active_settings, llm_config, api_key=api_key, verify_connection=verify
-        )
-
     def _resolve_api_key(data: dict[str, Any] | None = None) -> str | None:
         """Return API key from request payload, falling back to persisted settings."""
         payload = data or {}
@@ -139,60 +128,6 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             patch_json=patch_json,
             dry_run=bool(data.get("dry_run", False)),
         )
-
-    @app.post("/api/agent/plan")
-    def create_agent_plan(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        return _build_agent_response(payload or {})
-
-    @app.post("/api/agent/runs")
-    def create_agent_run(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        data = payload or {}
-        agent_plan = data.get("plan") if isinstance(data.get("plan"), dict) else _build_agent_response(data)
-        steps = agent_plan.get("steps") if isinstance(agent_plan.get("steps"), list) else []
-        message = str(agent_plan.get("message") or data.get("message") or "agent run").strip()
-        project_id = agent_plan.get("project_id") or data.get("project_id") or None
-        run = _rt.RunRecord(
-            run_id=uuid.uuid4().hex[:12],
-            message=message,
-            created_at=now_iso(),
-            status="pending",
-            project_id=str(project_id) if project_id else None,
-        )
-        ctx: dict[str, Any] = {
-            "project_id": run.project_id,
-            "workflow_id": "agent_chat",
-            "agent_plan": {
-                "mode": agent_plan.get("mode"),
-                "warnings": agent_plan.get("warnings") or [],
-                "errors": agent_plan.get("errors") or [],
-                "selected_geometry": agent_plan.get("selected_geometry"),
-            },
-        }
-        if isinstance(data.get("llm_config"), dict):
-            ctx["llm_config"] = _llm_config_from_payload(data)
-        _rt.execute_run_with_plan(run, steps, ctx)
-        if run.project_id:
-            try:
-                write_audit_log(active_settings, run.project_id, "agent_run", {
-                    "kind": "agent_run",
-                    "run_id": run.run_id,
-                    "message": run.message,
-                    "agent_plan": agent_plan,
-                    "status": run.status,
-                    "errors": run.errors,
-                    "created_at": run.created_at,
-                })
-            except Exception:
-                log_exception(
-                    LOGGER,
-                    "Failed to write agent run audit log.",
-                    subsystem="app_factory.audit.agent_run",
-                    context={"project_id": run.project_id, "run_id": run.run_id},
-                )
-        return {
-            "agent": agent_plan,
-            "run": _rt.run_to_dict(run),
-        }
 
     def _autopilot_store():
         from .agent_autopilot.store import AutopilotStore
@@ -679,164 +614,16 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             )
             return "balanced"
 
-
-
-    @app.get("/api/agent/autopilot/runs/{run_id}")
-    def get_agent_autopilot_run(run_id: str) -> dict[str, Any]:
-        store = _autopilot_store()
-        try:
-            return _autopilot_run_response(store.load(run_id))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    def _agent_plan_response_from_run(state: Any) -> dict[str, Any]:
-        return {
-            "run_id": state.run_id,
-            "project_id": state.project_id,
-            "session_id": state.session_id,
-            "plan": state.plan.model_dump() if state.plan is not None else None,
-            "run_status": state.status,
-            "updated_at": state.updated_at,
-        }
-
-    @app.get("/api/agent/autopilot/runs/{run_id}/plan")
-    def get_agent_autopilot_run_plan(run_id: str) -> dict[str, Any]:
-        store = _autopilot_store()
-        try:
-            return _agent_plan_response_from_run(store.load(run_id))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-    # --- Agentic-session approval bridge (Approach A, Phase 2) ----------------
-    # The agentic claude session (adapter_id == "claude-agent") drives the
-    # workbench MCP tools directly. Gated mutations are routed here via the
-    # `--permission-prompt-tool` MCP bridge so they still pause for UI approval —
-    # the agentic path never bypasses approval. See
-    # aieng-ui/docs/web-chat-agentic-parity-plan.md.
-    from .agent_autopilot.agentic_approval import (
-        PermissionBroker,
-        build_approval_name_set,
-        format_decision,
-        requires_approval as _agentic_requires_approval,
-        resolve_registry_name as _agentic_resolve_name,
+    register_agent_routes(
+        app,
+        active_settings=active_settings,
+        resolve_api_key=_resolve_api_key,
+        llm_config_from_payload=_llm_config_from_payload,
+        build_agent_response=_build_agent_response,
+        autopilot_store=_autopilot_store,
+        autopilot_run_response=_autopilot_run_response,
+        publish_agent_event=_publish_agent_event,
     )
-
-    _agentic_permission_broker = PermissionBroker()
-    # Track live agentic-session subprocesses by run_id so Stop/cancel can kill the
-    # whole tree (claude + the spawned MCP server) — otherwise they orphan and keep
-    # polling. Best-effort; entries are cleared when the run finishes.
-    _agentic_procs: dict[str, Any] = {}
-
-    def _kill_agentic_run(run_id: str) -> None:
-        proc = _agentic_procs.get(run_id)
-        if proc is None:
-            return
-        try:
-            import subprocess as _sp
-
-            if os.name == "nt":
-                _sp.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                        capture_output=True, text=True, check=False)
-            else:
-                proc.kill()
-        except Exception:
-            pass
-
-    def _agentic_approval_names() -> set[str]:
-        return build_approval_name_set(_rt.list_tools_for_mcp())
-
-    @app.post("/api/agent/agentic/permission")
-    def create_agentic_permission(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        """Called (over HTTP) by the MCP `request_approval` permission tool.
-
-        Non-gated tools auto-resolve to allow (no UI prompt). Gated tools create a
-        pending rendezvous, surface an approval card in the run transcript, and the
-        caller polls GET until the user resolves it.
-        """
-        data = payload or {}
-        tool_name = str(data.get("tool_name") or "").strip()
-        if not tool_name:
-            raise HTTPException(status_code=400, detail="tool_name is required")
-        tool_input = data.get("input") if isinstance(data.get("input"), dict) else {}
-        run_id = data.get("run_id") or None
-        if not _agentic_requires_approval(tool_name, _agentic_approval_names()):
-            return {"status": "resolved", "decision": format_decision(allowed=True, tool_input=tool_input)}
-        entry = _agentic_permission_broker.create(run_id=run_id, tool_name=tool_name, tool_input=tool_input)
-        dotted = _agentic_resolve_name(tool_name, _rt.list_tools_for_mcp())
-        approval_payload = {
-            "id": entry.permission_id,
-            "agentic_permission_id": entry.permission_id,
-            "tool_name": dotted,
-            "input": tool_input,
-            "level": "mutation",
-            "explanation": f"The agent wants to run {dotted}. Approve to let it proceed.",
-            "code_preview": tool_input.get("code") if isinstance(tool_input.get("code"), str) else None,
-            "target_project_id": data.get("project_id"),
-        }
-        _publish_agent_event({
-            "event_id": f"{run_id or 'agentic'}-approval-{entry.permission_id}",
-            "type": "approval_requested",
-            "run_id": run_id,
-            "project_id": data.get("project_id"),
-            "session_id": data.get("session_id"),
-            "status": "awaiting_approval",
-            "content": approval_payload["explanation"],
-            "payload": approval_payload,
-        })
-        return {"status": "pending", "permission_id": entry.permission_id}
-
-    @app.get("/api/agent/agentic/permission/{permission_id}")
-    def get_agentic_permission(permission_id: str, wait: float = 0.0) -> dict[str, Any]:
-        # Optional long-poll: block up to `wait` seconds for resolution so the MCP
-        # bridge polls every ~20s instead of hammering every 1.5s (readable logs,
-        # instant approval). Clamp to a sane ceiling.
-        if wait and wait > 0:
-            entry = _agentic_permission_broker.wait(permission_id, min(float(wait), 30.0))
-        else:
-            entry = _agentic_permission_broker.get(permission_id)
-        if entry is None:
-            raise HTTPException(status_code=404, detail="unknown permission_id")
-        if entry.status == "pending":
-            return {"status": "pending", "permission_id": permission_id}
-        return {"status": "resolved", "decision": _agentic_permission_broker.decision_for(entry)}
-
-    @app.post("/api/agent/agentic/permission/{permission_id}/resolve")
-    def resolve_agentic_permission(permission_id: str, payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
-        """UI approve/deny for an agentic-session gated tool."""
-        data = payload or {}
-        approved = bool(data.get("approved", False))
-        message = data.get("message")
-        updated_input = data.get("updated_input") if isinstance(data.get("updated_input"), dict) else None
-        entry = _agentic_permission_broker.resolve(
-            permission_id, approved=approved, message=message, updated_input=updated_input
-        )
-        if entry is None:
-            raise HTTPException(status_code=404, detail="unknown permission_id")
-        _publish_agent_event({
-            "event_id": f"{entry.run_id or 'agentic'}-approval-resolved-{permission_id}",
-            "type": "approval_resolved",
-            "run_id": entry.run_id,
-            "project_id": data.get("project_id"),
-            "session_id": data.get("session_id"),
-            "status": "running" if approved else "blocked",
-            "content": ("Approved." if approved else "Denied.") + f" ({entry.tool_name})",
-            "payload": {
-                "agentic_permission_id": permission_id,
-                "approved": approved,
-                "tool_name": entry.tool_name,
-            },
-        })
-        return {"status": "resolved", "approved": approved, "decision": _agentic_permission_broker.decision_for(entry)}
-
-    @app.get("/api/agent/connections")
-    def list_agent_connections() -> list[dict[str, Any]]:
-        return agent_workbench.list_chat_connections(active_settings)
-
     register_intent_planner_routes(app, active_settings=active_settings)
 
 

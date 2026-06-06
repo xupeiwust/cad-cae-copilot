@@ -10,7 +10,9 @@ An AI-native CAD/CAE/CAX workbench. An MCP-capable agent writes real
 build123d / OpenCASCADE geometry, exports STEP/STL/GLB, names the parts,
 exposes stable topology pointers, runs a deterministic critique, and can
 continue into CAE — all preserved in one reproducible `.aieng` package.
-**No API key needed on our side.**
+
+**You bring your own MCP client** (e.g. Claude Code, Codex, Copilot, Cursor),
+which carries its own model access. The aieng backend itself needs no API key.
 
 <a href="docs/assets/images/hero.webp">
   <img src="docs/assets/images/hero.webp" width="100%" alt="A fully specified industrial motor mounting fixture modeled and inspected with aieng"/>
@@ -36,8 +38,16 @@ continue into CAE — all preserved in one reproducible `.aieng` package.
 
 ## Quick start
 
-Three ways in — pick one and you're modeling in minutes. No API key needed on
-our side; an MCP-capable agent drives the workbench through its own harness.
+Three ways in — pick one and you're modeling in minutes.
+
+> **Before you start:** you need your own MCP client (Claude Code, OpenAI
+> Codex, GitHub Copilot, Cursor, …) with its own model access. The aieng
+> backend itself needs no API key — your agent connects to it over MCP and
+> drives the workbench through its own harness.
+
+For a first try, **Docker (Option 2) is the most reliable** — it pins the
+build123d / OpenCASCADE / CalculiX stack so nothing has to compile on your
+machine. The local dev install is best once you intend to hack on the code.
 
 ### Option 1: GitHub Codespaces (fastest, zero install)
 
@@ -74,8 +84,11 @@ default, so approval-gated CAD/CAE tools surface through the workbench UI.
 
 ### Option 3: Local developer install
 
-Prerequisite: a conda env named **`aieng311`** (Python ≥ 3.11) with
-**build123d** — the MCP configs and run scripts assume this name.
+Best when you intend to modify the code. Prerequisite: a conda env named
+**exactly `aieng311`** (Python ≥ 3.11) with **build123d** — the MCP configs
+and run scripts assume this name. The `build123d` / OpenCASCADE (OCP) install
+can be slow or fail on some platforms; if it does, prefer the Docker path
+above.
 
 ```bash
 conda create -n aieng311 python=3.11 -y

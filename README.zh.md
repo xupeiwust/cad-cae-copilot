@@ -9,7 +9,10 @@
 一个 AI 原生 CAD/CAE/CAX 工作台。支持 MCP 的 Agent 编写真实的
 build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
 暴露稳定拓扑指针,运行确定性评审,并可继续进入 CAE —— 全部保存在
-一个可复现的 `.aieng` 包中。**我们这边无需 API 密钥。**
+一个可复现的 `.aieng` 包中。
+
+**你需要自带 MCP 客户端**(如 Claude Code、Codex、Copilot、Cursor),
+它自带模型访问权限。aieng 后端本身无需 API 密钥。
 
 <a href="docs/assets/images/hero.webp">
   <img src="docs/assets/images/hero.webp" width="100%" alt="使用 aieng 建模并检验的工业电机安装夹具全规格模型">
@@ -35,8 +38,15 @@ build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
 
 ## 快速开始
 
-三种入口 —— 任选其一,几分钟即可开始建模。我们这边无需 API 密钥;
-支持 MCP 的 Agent 通过自己的工具驱动工作台。
+三种入口 —— 任选其一,几分钟即可开始建模。
+
+> **开始前:** 你需要自带 MCP 客户端(Claude Code、OpenAI Codex、GitHub
+> Copilot、Cursor……),它自带模型访问权限。aieng 后端本身无需 API 密钥 ——
+> 你的 Agent 通过 MCP 连接它,并用自己的工具驱动工作台。
+
+第一次尝试,**Docker(选项 2)最稳妥** —— 它固定了 build123d / OpenCASCADE /
+CalculiX 整套依赖,你的机器上无需编译任何东西。本地开发安装更适合你打算
+改代码时使用。
 
 ### 选项 1:GitHub Codespaces(最快,零安装)
 
@@ -69,8 +79,10 @@ docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data aieng/workbenc
 
 ### 选项 3:本地开发者安装
 
-前提条件:一个名为 **`aieng311`** 的 conda 环境(Python ≥ 3.11)并安装了
-**build123d** —— MCP 配置和运行脚本假设此名称。
+适合你打算改代码时使用。前提条件:一个**恰好命名为 `aieng311`** 的 conda
+环境(Python ≥ 3.11)并安装了 **build123d** —— MCP 配置和运行脚本假设此名称。
+`build123d` / OpenCASCADE(OCP)的安装在某些平台上可能很慢或失败;若如此,
+请优先使用上面的 Docker 路径。
 
 ```bash
 conda create -n aieng311 python=3.11 -y

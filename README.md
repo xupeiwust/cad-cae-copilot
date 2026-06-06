@@ -270,7 +270,29 @@ The environment will be fully set up automatically; just run `make dev` when
 it finishes loading. If `make` is unavailable, run `python3 scripts/dev.py`
 instead.
 
-### Option 2: Local install
+### Option 2: Docker all-in-one (recommended local package)
+
+This path packages the backend, built viewer, MCP HTTP server, build123d /
+OpenCASCADE dependencies, and CalculiX into one container.
+
+```bash
+docker build -t aieng/workbench:local .
+docker run --rm -it \
+  -p 8000:8000 \
+  -p 8765:8765 \
+  -v aieng-data:/data \
+  aieng/workbench:local
+```
+
+Open the viewer at http://localhost:8000/app/. Point an MCP-over-HTTP client at
+`http://localhost:8765/sse`. Generated projects and `.aieng` packages are kept
+in the `aieng-data` Docker volume.
+
+For the full local viewer experience, the container enables
+`AIENG_MCP_MANAGED_APPROVAL=1` by default: approval-gated CAD/CAE tools surface
+through the workbench approval UI instead of relying only on the client.
+
+### Option 3: Local developer install
 
 Prerequisites: a conda env named **`aieng311`** (Python >= 3.11) with
 **build123d** installed - the MCP config and run scripts assume this name.

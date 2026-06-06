@@ -1,0 +1,62 @@
+FROM node:20-bookworm-slim AS frontend-build
+
+WORKDIR /src/aieng-ui/frontend
+
+COPY aieng-ui/frontend/package*.json ./
+RUN npm install
+
+COPY aieng-ui/frontend/ ./
+RUN npm run build
+
+
+FROM python:3.11-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    AIENG_PLATFORM_DATA=/data \
+    AIENG_ROOT=/opt/aieng/aieng \
+    AIENG_BACKEND_HOST=0.0.0.0 \
+    AIENG_BACKEND_PORT=8000 \
+    AIENG_MCP_HOST=0.0.0.0 \
+    AIENG_MCP_PORT=8765 \
+    AIENG_MCP_MANAGED_APPROVAL=1 \
+    AIENG_BACKEND_URL=http://127.0.0.1:8000
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        calculix-ccx \
+        curl \
+        libegl1 \
+        libgl1 \
+        libglx-mesa0 \
+        libgomp1 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/aieng
+
+COPY aieng/ ./aieng/
+COPY aieng-ui/backend/ ./aieng-ui/backend/
+COPY aieng-agent-skills/ ./aieng-agent-skills/
+COPY AGENTS.md README.md ./
+COPY --from=frontend-build /src/aieng-ui/frontend/dist/ ./aieng-ui/frontend/dist/
+
+RUN python -m pip install --upgrade pip \
+    && python -m pip install ./aieng \
+    && python -m pip install ./aieng-ui/backend \
+    && python -c "import build123d; import app.mcp_server"
+
+COPY docker/entrypoint.sh /opt/aieng/docker/entrypoint.sh
+RUN chmod +x /opt/aieng/docker/entrypoint.sh && mkdir -p /data
+
+WORKDIR /opt/aieng/aieng-ui/backend
+
+EXPOSE 8000 8765
+VOLUME ["/data"]
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/aieng/docker/entrypoint.sh"]

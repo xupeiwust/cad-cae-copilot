@@ -28,6 +28,54 @@ back to a permissive `{"type": "object"}` schema.
 
 ## Running the server
 
+### Docker all-in-one (recommended packaged viewer mode)
+
+Build and run from the repository root:
+
+```bash
+docker build -t aieng/workbench:local .
+docker run --rm -it \
+  -p 8000:8000 \
+  -p 8765:8765 \
+  -v aieng-data:/data \
+  aieng/workbench:local
+```
+
+The container starts:
+
+- the FastAPI backend at `http://localhost:8000`,
+- the built React workbench at `http://localhost:8000/app/`,
+- the MCP HTTP/SSE server at `http://localhost:8765/sse`.
+
+The default container environment uses:
+
+```text
+AIENG_PLATFORM_DATA=/data
+AIENG_BACKEND_URL=http://127.0.0.1:8000
+AIENG_MCP_MANAGED_APPROVAL=1
+```
+
+That means generated projects persist in the Docker volume and approval-gated
+tools route through the workbench approval broker. Disable managed approval only
+when using a trusted client-managed approval flow; set
+`AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` for planning/inspection-only containers.
+
+MCP-over-HTTP client snippet:
+
+```json
+{
+  "mcpServers": {
+    "aieng-workbench": {
+      "url": "http://localhost:8765/sse"
+    }
+  }
+}
+```
+
+If your MCP client does not support HTTP/SSE yet, keep using the stdio config
+below from a local checkout, or run a client-specific stdio bridge that launches
+`python -m app.mcp_server` inside the container.
+
 ### stdio (default; what Claude Code expects)
 
 ```powershell

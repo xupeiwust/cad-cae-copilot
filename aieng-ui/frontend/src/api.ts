@@ -28,22 +28,6 @@ export type ChatSession = {
   updated_at: string;
 };
 
-export type ContextSummary = {
-  schema_version: 1;
-  session_id: string;
-  project_id: string;
-  goal: string;
-  current_state: string;
-  important_decisions: string[];
-  completed_steps: string[];
-  pending_steps: string[];
-  user_constraints: string[];
-  relevant_files: string[];
-  risks: string[];
-  next_action: string;
-  updated_at: string;
-};
-
 export type PersistedAgentEvent = {
   id: number;
   event_id: string;
@@ -545,60 +529,6 @@ export const api = {
         body: JSON.stringify({ message, history, ...(apiKey ? { api_key: apiKey } : {}), ...(sessionId ? { session_id: sessionId } : {}) }),
       },
     ),
-  getChatSessions: (projectId: string) =>
-    request<ChatSession[]>(`/api/projects/${projectId}/chat-sessions`),
-  createChatSession: (projectId: string, title?: string) =>
-    request<ChatSession>(`/api/projects/${projectId}/chat-sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    }),
-  updateChatSession: (
-    projectId: string,
-    sessionId: string,
-    payload: { title?: string; status?: string; active_run_id?: string | null; approval_mode?: "strict" | "balanced" | "manual" | string },
-  ) =>
-    request<ChatSession>(`/api/projects/${projectId}/chat-sessions/${sessionId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  deleteChatSession: (projectId: string, sessionId: string) =>
-    request<{ deleted: boolean; project_id: string; session_id: string }>(
-      `/api/projects/${projectId}/chat-sessions/${sessionId}`,
-      { method: "DELETE" },
-    ),
-  getChatMessages: (projectId: string, sessionId?: string | null) =>
-    request<PersistedChatMessage[]>(
-      `/api/projects/${projectId}/chat-messages${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,
-    ),
-  getAgentEvents: (projectId: string, sessionId?: string | null) =>
-    request<PersistedAgentEvent[]>(
-      `/api/projects/${projectId}/agent-events${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`,
-    ),
-  saveChatMessage: (
-    projectId: string,
-    payload: {
-      role: string;
-      content: string;
-      session_id?: string | null;
-      mode?: string;
-      created_at?: string;
-      extra?: Record<string, unknown>;
-    },
-  ) =>
-    request<PersistedChatMessage>(
-      `/api/projects/${projectId}/chat-messages`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-    ),
-  clearChatMessages: (projectId: string, sessionId?: string | null) =>
-    request<{ deleted: number; project_id: string }>(`/api/projects/${projectId}/chat-messages${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ""}`, {
-      method: "DELETE",
-    }),
   getProjectArtifact: (projectId: string, path: string) =>
     request<ArtifactResponse>(`/api/projects/${projectId}/artifact?path=${encodeURIComponent(path)}`),
   diffArtifactJson: (projectId: string, before: unknown, after: unknown) =>

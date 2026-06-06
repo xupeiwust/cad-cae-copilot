@@ -1,8 +1,10 @@
+<!-- SEO Keywords: AI CAD, AI CAE, AI CAX, Text-to-CAD, Text-to-CAE, Text-to-CAX, Generative CAD, AI Engineering Workbench, MCP CAD, build123d, OpenCASCADE, CalculiX -->
+
 <div align="center">
 
 # aieng
 
-### Give AI agents a real engineering workspace, not just a CAD code generator.
+### An AI-native CAD/CAE/CAX workbench — turn engineering specs into real geometry, not just text-to-CAD output.
 
 Turn explicit engineering specifications into real CAD geometry, inspect the
 result with stable topology references, and preserve every artifact in a
@@ -23,11 +25,17 @@ reproducible `.aieng` package.
 [MCP Setup](aieng-ui/backend/MCP_SETUP.md) ·
 [Agent Guide](AGENTS.md)
 
+<p align="center">
+  <a href="README.md">English</a> | <a href="README.zh.md">中文</a>
+</p>
+
 </div>
 
 <div align="center">
 
 **Specification → Real CAD → Verified Geometry → Reproducible Package**
+
+<sub>AI CAD · AI CAE · AI CAX · Text-to-CAD · Text-to-CAE · MCP Server · build123d · OpenCASCADE · CalculiX</sub>
 
 Real STEP/STL/GLB · Editable parameters · Named parts · Stable topology pointers
 · Deterministic critique · CAD → CAE artifacts · Approval-gated actions
@@ -139,10 +147,11 @@ silently invent the engineering requirements.
 
 </details>
 
-## Beyond geometry generation
+## Beyond text-to-CAD — a full engineering workflow
 
 aieng is designed for the engineering work that happens before and after a
-model first appears.
+model first appears. Unlike one-shot text-to-CAD or text-to-CAE generators,
+it preserves editable parameters, stable topology, and a full CAE path.
 
 | Capability | Typical text-to-CAD demo | aieng |
 |------------|:------------------------:|:-----:|
@@ -157,8 +166,8 @@ model first appears.
 
 ## Why aieng?
 
-Most AI CAD demos stop when a model appears. aieng treats geometry generation as
-one step in a reviewable engineering workflow:
+Most AI CAD and text-to-CAD demos stop when a model appears. aieng treats
+geometry generation as one step in a reviewable engineering workflow:
 
 - **Real, exportable CAD** - agent-written build123d / OpenCASCADE geometry
   produces STEP, STL, GLB, topology maps, feature graphs, and review thumbnails.
@@ -192,7 +201,7 @@ live backend projects and `.aieng` packages.
 
 ## About aieng
 
-aieng is an open-source AI-native CAD/CAE engineering workbench built around
+aieng is an open-source AI-native CAD/CAE/CAX engineering workbench built around
 self-describing `.aieng` project packages. It lets AI agents create real CAD
 geometry, preserve engineering artifacts, run CAD/CAE workflows, and keep
 results reproducible and inspectable.

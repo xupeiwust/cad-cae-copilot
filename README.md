@@ -1,10 +1,93 @@
-# aieng - AI-native CAD/CAE engineering workbench
+<div align="center">
+
+# aieng
+
+### An AI-native CAD/CAE workbench for inspectable engineering workflows
+
+Turn explicit engineering specifications into real CAD geometry, inspect the
+result with stable topology references, and preserve every artifact in a
+reproducible `.aieng` package.
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/armpro24-blip/workspace_aieng)
 ![CAD](https://img.shields.io/badge/CAD-build123d%20%2F%20OpenCASCADE-1f6feb)
 ![FEA](https://img.shields.io/badge/FEA-CalculiX-e36209)
 ![Agent](https://img.shields.io/badge/agent-MCP%20server-8957e5)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
+
+[Quick Start](#quick-start) ·
+[Industrial CAD Examples](#industrial-cad-examples) ·
+[MCP Setup](aieng-ui/backend/MCP_SETUP.md) ·
+[Agent Guide](AGENTS.md)
+
+</div>
+
+## Industrial CAD examples
+
+These examples start from explicit dimensions, feature locations, and modeling
+constraints. The agent executes and verifies the specification; it does not
+silently invent the engineering requirements.
+
+### Machined bearing support bracket
+
+One manufacturable solid with a specified base envelope, horizontal bearing
+bore, symmetric mounting pattern, mirrored gussets, fillets, and chamfers.
+The workbench caught and corrected construction errors, then verified the final
+datums, topology, editable parameters, and engineering critique.
+
+<img src="docs/assets/images/example1.webp" width="100%" alt="aieng generating and verifying a fully specified machined bearing support bracket"/>
+
+### Six-port pneumatic manifold
+
+A specification-driven manifold with an exact `160 × 50 × 40 mm` envelope,
+six equally spaced outlets, axial inlet ports, counterbored mounting holes,
+edge fillets, opening chamfers, and editable dimensions.
+
+<img src="docs/assets/images/example2.webp" width="100%" alt="aieng generating and auditing a fully specified six-port pneumatic manifold"/>
+
+### Industrial junction-box assembly
+
+A two-part enclosure assembly with named base and lid solids, internal mounting
+bosses, cable-gland openings, separated lid placement, generated STEP/STL/GLB
+artifacts, and a selectable stable face pointer for precise follow-up work.
+
+<img src="docs/assets/images/example3.webp" width="100%" alt="aieng generating a named-part industrial junction-box assembly with stable face pointers"/>
+
+## Why aieng?
+
+Most AI CAD demos stop when a model appears. aieng treats geometry generation as
+one step in a reviewable engineering workflow:
+
+- **Real, exportable CAD** - agent-written build123d / OpenCASCADE geometry
+  produces STEP, STL, GLB, topology maps, feature graphs, and review thumbnails.
+- **Specification-driven execution** - agents can follow explicit dimensions,
+  datums, feature positions, symmetry requirements, and manufacturing
+  constraints instead of freely inventing a design.
+- **Inspect and correct** - geometry reports, deterministic critiques, named
+  parts, and stable `@face:*` pointers support precise verification and
+  follow-up edits.
+- **Reproducible engineering packages** - `.aieng` packages preserve geometry,
+  generated source, analysis state, artifacts, metadata, and provenance.
+- **Agent-independent MCP tools** - Claude Code, GitHub Copilot, OpenAI Codex,
+  Cursor, and other MCP-capable agents can drive the same backend.
+- **CAD to CAE path** - material, boundary conditions, mesh, solver runs, result
+  mappings, and evidence can live beside the CAD model.
+
+## How it works
+
+1. Provide a mechanical specification with explicit dimensions and constraints.
+2. An MCP-capable agent uses aieng tools to create real CAD geometry.
+3. aieng exports the model and records named parts, topology, editable
+   parameters, source, and provenance.
+4. Inspect the result visually and numerically, then reference exact parts,
+   features, or faces for follow-up changes.
+5. Continue into CAE setup and solver workflows when the required engineering
+   inputs are available.
+
+The workbench UI and
+[`aieng-vscode-extension`](aieng-vscode-extension) provide visual inspection for
+live backend projects and `.aieng` packages.
+
+## About aieng
 
 aieng is an open-source AI-native CAD/CAE engineering workbench built around
 self-describing `.aieng` project packages. It lets AI agents create real CAD
@@ -14,12 +97,6 @@ results reproducible and inspectable.
 The VS Code extension is the most visual way to experience aieng: it brings CAD
 model inspection and the AI-CAD design loop directly into the editor, so agents
 and humans can iterate on mechanical designs in one workspace.
-
-## Why aieng?
-
-Most AI tools stop at text and source code. aieng gives them a reproducible
-engineering workspace with geometry, analysis state, exports, and provenance
-that survive beyond a single chat turn.
 
 ## Highlights
 

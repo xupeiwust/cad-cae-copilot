@@ -27,30 +27,56 @@ These examples start from explicit dimensions, feature locations, and modeling
 constraints. The agent executes and verifies the specification; it does not
 silently invent the engineering requirements.
 
-### Machined bearing support bracket
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <a href="docs/assets/images/example1.webp">
+        <img src="docs/assets/images/example1.webp" width="100%" alt="aieng generating and verifying a fully specified machined bearing support bracket"/>
+      </a>
+      <br>
+      <strong>Machined Bearing Bracket</strong>
+      <br>
+      <sub>Datums, bore, mounting pattern, gussets, fillets, and critique</sub>
+    </td>
+    <td width="33%" align="center">
+      <a href="docs/assets/images/example2.webp">
+        <img src="docs/assets/images/example2.webp" width="100%" alt="aieng generating and auditing a fully specified six-port pneumatic manifold"/>
+      </a>
+      <br>
+      <strong>Six-Port Pneumatic Manifold</strong>
+      <br>
+      <sub>Exact envelope, port spacing, counterbores, and editable dimensions</sub>
+    </td>
+    <td width="33%" align="center">
+      <a href="docs/assets/images/example3.webp">
+        <img src="docs/assets/images/example3.webp" width="100%" alt="aieng generating a named-part industrial junction-box assembly with stable face pointers"/>
+      </a>
+      <br>
+      <strong>Industrial Junction Box</strong>
+      <br>
+      <sub>Named assembly parts, exported artifacts, and stable face pointers</sub>
+    </td>
+  </tr>
+</table>
 
-One manufacturable solid with a specified base envelope, horizontal bearing
-bore, symmetric mounting pattern, mirrored gussets, fillets, and chamfers.
-The workbench caught and corrected construction errors, then verified the final
-datums, topology, editable parameters, and engineering critique.
+<details>
+<summary><strong>What these examples verify</strong></summary>
 
-<img src="docs/assets/images/example1.webp" width="100%" alt="aieng generating and verifying a fully specified machined bearing support bracket"/>
+- **Machined bearing support bracket** - one manufacturable solid with a
+  specified base envelope, horizontal bearing bore, symmetric mounting pattern,
+  mirrored gussets, fillets, and chamfers. The workbench caught and corrected
+  construction errors, then verified the final datums, topology, editable
+  parameters, and engineering critique.
+- **Six-port pneumatic manifold** - a specification-driven manifold with an
+  exact `160 × 50 × 40 mm` envelope, six equally spaced outlets, axial inlet
+  ports, counterbored mounting holes, edge fillets, opening chamfers, and
+  editable dimensions.
+- **Industrial junction-box assembly** - a two-part enclosure assembly with
+  named base and lid solids, internal mounting bosses, cable-gland openings,
+  separated lid placement, generated STEP/STL/GLB artifacts, and a selectable
+  stable face pointer for precise follow-up work.
 
-### Six-port pneumatic manifold
-
-A specification-driven manifold with an exact `160 × 50 × 40 mm` envelope,
-six equally spaced outlets, axial inlet ports, counterbored mounting holes,
-edge fillets, opening chamfers, and editable dimensions.
-
-<img src="docs/assets/images/example2.webp" width="100%" alt="aieng generating and auditing a fully specified six-port pneumatic manifold"/>
-
-### Industrial junction-box assembly
-
-A two-part enclosure assembly with named base and lid solids, internal mounting
-bosses, cable-gland openings, separated lid placement, generated STEP/STL/GLB
-artifacts, and a selectable stable face pointer for precise follow-up work.
-
-<img src="docs/assets/images/example3.webp" width="100%" alt="aieng generating a named-part industrial junction-box assembly with stable face pointers"/>
+</details>
 
 ## Why aieng?
 

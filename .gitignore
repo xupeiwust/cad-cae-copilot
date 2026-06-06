@@ -79,3 +79,4 @@ aieng-ui/frontend/package-lock.json
 refer/*
 /aieng-ui/data/*
 aieng-ui/backend/start.bat
+.codex/config.toml

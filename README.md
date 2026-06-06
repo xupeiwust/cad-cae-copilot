@@ -4,11 +4,13 @@
 
 # aieng
 
-### An AI-native CAD/CAE/CAX workbench — turn engineering specs into real geometry, not just text-to-CAD output.
+### Most AI CAD tools stop when a picture appears. aieng turns an engineering spec into real, editable, verifiable CAD — and keeps every artifact reproducible.
 
-Turn explicit engineering specifications into real CAD geometry, inspect the
-result with stable topology references, and preserve every artifact in a
-reproducible `.aieng` package.
+An AI-native CAD/CAE/CAX workbench. An MCP-capable agent writes real
+build123d / OpenCASCADE geometry, exports STEP/STL/GLB, names the parts,
+exposes stable topology pointers, runs a deterministic critique, and can
+continue into CAE — all preserved in one reproducible `.aieng` package.
+**No API key needed on our side.**
 
 <a href="docs/assets/images/hero.webp">
   <img src="docs/assets/images/hero.webp" width="100%" alt="A fully specified industrial motor mounting fixture modeled and inspected with aieng"/>
@@ -21,32 +23,95 @@ reproducible `.aieng` package.
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
 
 [Quick Start](#quick-start) ·
-[Industrial CAD Examples](#industrial-cad-examples) ·
+[CAD Examples](#industrial-cad-examples) ·
+[Why aieng](#why-aieng--beyond-text-to-cad) ·
 [MCP Setup](aieng-ui/backend/MCP_SETUP.md) ·
 [Agent Guide](AGENTS.md)
 
-<p align="center">
-  <a href="README.md">English</a> | <a href="README.zh.md">中文</a>
-</p>
+<sub>English | <a href="README.zh.md">中文</a></sub>
+
+<sub>Real STEP/STL/GLB · Editable parameters · Named parts · Stable topology pointers · Deterministic critique · CAD → CAE artifacts · Approval-gated actions</sub>
 
 </div>
 
-<div align="center">
+## Quick start
 
-**Specification → Real CAD → Verified Geometry → Reproducible Package**
+Three ways in — pick one and you're modeling in minutes. No API key needed on
+our side; an MCP-capable agent drives the workbench through its own harness.
 
-<sub>AI CAD · AI CAE · AI CAX · Text-to-CAD · Text-to-CAE · MCP Server · build123d · OpenCASCADE · CalculiX</sub>
+### Option 1: GitHub Codespaces (fastest, zero install)
 
-Real STEP/STL/GLB · Editable parameters · Named parts · Stable topology pointers
-· Deterministic critique · CAD → CAE artifacts · Approval-gated actions
+Click **"Open in GitHub Codespaces"** above. The environment sets itself up;
+when it finishes loading, run `make dev` (or `python3 scripts/dev.py` if `make`
+is unavailable). Then connect an agent and paste the
+[motor mounting fixture prompt](#from-specification-to-verified-cad), or the
+shorter bracket prompt:
 
-</div>
+```text
+Create a 120 × 80 × 12 mm machined bearing support bracket with a centered
+Ø42 mm horizontal bearing bore, four Ø10 mm base mounting holes, and two
+mirrored gussets. Preserve the exact dimensions, expose editable parameters,
+verify the final geometry, and run the deterministic engineering critique.
+```
+
+Inspect the generated model, named parts, verification results, and stable
+`@face:*` references in the workbench.
+
+### Option 2: Docker all-in-one (recommended local package)
+
+Packages the backend, built viewer, MCP HTTP server, build123d / OpenCASCADE
+dependencies, and CalculiX into one container.
+
+```bash
+docker build -t aieng/workbench:local .
+docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data aieng/workbench:local
+```
+
+Open the viewer at http://localhost:8000/app/ and point an MCP-over-HTTP client
+at `http://localhost:8765/sse`. Projects and `.aieng` packages persist in the
+`aieng-data` volume. The container enables `AIENG_MCP_MANAGED_APPROVAL=1` by
+default, so approval-gated CAD/CAE tools surface through the workbench UI.
+
+### Option 3: Local developer install
+
+Prerequisite: a conda env named **`aieng311`** (Python ≥ 3.11) with
+**build123d** — the MCP configs and run scripts assume this name.
+
+```bash
+conda create -n aieng311 python=3.11 -y
+conda activate aieng311
+pip install build123d
+cd aieng-ui/backend && pip install -e .
+```
+
+Then start both services in one terminal (Ctrl+C stops both):
+
+```bash
+make dev                  # macOS / Linux / WSL
+.\dev.ps1                 # Windows PowerShell
+python scripts/dev.py     # cross-platform fallback
+```
+
+Backend → FastAPI on `http://127.0.0.1:8000`; frontend → Vite on
+`http://localhost:5173`. Custom ports: `BACKEND_PORT=8080 FRONTEND_PORT=3000 make dev`.
+
+<details>
+<summary>Start services individually / run tests</summary>
+
+```bash
+make backend     # or: cd aieng-ui/backend && uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+make frontend    # or: cd aieng-ui/frontend && npm install && npm run dev
+cd aieng-ui/backend && python -m pytest    # backend test suite
+```
+
+</details>
 
 ## From specification to verified CAD
 
-The hero model was created from an explicit industrial fixture specification:
-fixed dimensions, named parts, exact hole and slot locations, required symmetry,
-and no permission to invent additional geometry.
+The hero model above was built from an explicit industrial fixture
+specification — fixed dimensions, named parts, exact hole and slot locations,
+required symmetry, and no permission to invent extra geometry. The agent
+executes and verifies the spec; it does not silently fill in the engineering.
 
 <details>
 <summary><strong>Copy the motor mounting fixture prompt</strong></summary>
@@ -92,9 +157,9 @@ Modeling requirements:
 
 ## Industrial CAD examples
 
-These examples start from explicit dimensions, feature locations, and modeling
-constraints. The agent executes and verifies the specification; it does not
-silently invent the engineering requirements.
+Each example starts from explicit dimensions, feature locations, and modeling
+constraints — the agent executes and verifies the specification rather than
+inventing the requirements.
 
 <table>
   <tr>
@@ -131,31 +196,32 @@ silently invent the engineering requirements.
 <details>
 <summary><strong>What these examples verify</strong></summary>
 
-- **Machined bearing support bracket** - one manufacturable solid with a
+- **Machined bearing support bracket** — one manufacturable solid with a
   specified base envelope, horizontal bearing bore, symmetric mounting pattern,
   mirrored gussets, fillets, and chamfers. The workbench caught and corrected
   construction errors, then verified the final datums, topology, editable
   parameters, and engineering critique.
-- **Six-port pneumatic manifold** - a specification-driven manifold with an
+- **Six-port pneumatic manifold** — a specification-driven manifold with an
   exact `160 × 50 × 40 mm` envelope, six equally spaced outlets, axial inlet
   ports, counterbored mounting holes, edge fillets, opening chamfers, and
   editable dimensions.
-- **Industrial junction-box assembly** - a two-part enclosure assembly with
+- **Industrial junction-box assembly** — a two-part enclosure assembly with
   named base and lid solids, internal mounting bosses, cable-gland openings,
   separated lid placement, generated STEP/STL/GLB artifacts, and a selectable
   stable face pointer for precise follow-up work.
 
 </details>
 
-## Beyond text-to-CAD — a full engineering workflow
+## Why aieng — beyond text-to-CAD
 
-aieng is designed for the engineering work that happens before and after a
-model first appears. Unlike one-shot text-to-CAD or text-to-CAE generators,
-it preserves editable parameters, stable topology, and a full CAE path.
+Most AI CAD and text-to-CAD demos stop when a model appears. aieng treats
+geometry generation as one step in a **reviewable engineering workflow** built
+around self-describing `.aieng` packages: editable parameters, stable topology,
+provenance, and a full CAD → CAE path all survive after the picture.
 
 | Capability | Typical text-to-CAD demo | aieng |
 |------------|:------------------------:|:-----:|
-| Generate real CAD exports | Yes | Yes |
+| Generate real CAD exports (STEP/STL/GLB) | Yes | Yes |
 | Execute explicit dimensions and datums | Partial | Yes |
 | Preserve editable source and parameters | Partial | Yes |
 | Name parts and expose stable topology references | Rarely | Yes |
@@ -164,25 +230,29 @@ it preserves editable parameters, stable topology, and a full CAE path.
 | Continue from CAD into CAE workflows | Rarely | Yes |
 | Require approval for gated engineering actions | Rarely | Yes |
 
-## Why aieng?
+What that buys you:
 
-Most AI CAD and text-to-CAD demos stop when a model appears. aieng treats
-geometry generation as one step in a reviewable engineering workflow:
-
-- **Real, exportable CAD** - agent-written build123d / OpenCASCADE geometry
-  produces STEP, STL, GLB, topology maps, feature graphs, and review thumbnails.
-- **Specification-driven execution** - agents can follow explicit dimensions,
-  datums, feature positions, symmetry requirements, and manufacturing
-  constraints instead of freely inventing a design.
-- **Inspect and correct** - geometry reports, deterministic critiques, named
+- **Real, exportable CAD** — agent-written build123d / OpenCASCADE geometry
+  produces STEP, STL, GLB, topology maps, feature graphs, and 4-view thumbnails.
+  Not a stub.
+- **Specification-driven execution** — agents follow explicit dimensions,
+  datums, feature positions, symmetry, and manufacturing constraints instead of
+  freely inventing a design.
+- **Inspect and correct** — geometry reports, deterministic critiques, named
   parts, and stable `@face:*` pointers support precise verification and
   follow-up edits.
-- **Reproducible engineering packages** - `.aieng` packages preserve geometry,
-  generated source, analysis state, artifacts, metadata, and provenance.
-- **Agent-independent MCP tools** - Claude Code, GitHub Copilot, OpenAI Codex,
-  Cursor, and other MCP-capable agents can drive the same backend.
-- **CAD to CAE path** - material, boundary conditions, mesh, solver runs, result
-  mappings, and evidence can live beside the CAD model.
+- **Reproducible engineering packages** — `.aieng` packages preserve geometry,
+  generated source, analysis state, artifacts, metadata, and provenance, so a
+  result is reviewable instead of opaque.
+- **Agent-independent MCP tools** — Claude Code, GitHub Copilot, OpenAI Codex,
+  Cursor, and other MCP-capable agents drive the same backend.
+- **CAD → CAE path** — material, boundary conditions, mesh, solver runs, result
+  mappings, and evidence live beside the CAD model.
+
+**Who it's for:** AI agent / MCP developers wanting engineering tools beyond
+text and code; mechanical engineers exploring AI-assisted CAD/CAE with real
+geometry; and makers, researchers, and open-source contributors interested in
+CAD, CAE, MCP, VS Code extensions, or build123d / OpenCASCADE.
 
 ## How it works
 
@@ -191,202 +261,35 @@ geometry generation as one step in a reviewable engineering workflow:
 3. aieng exports the model and records named parts, topology, editable
    parameters, source, and provenance.
 4. Inspect the result visually and numerically, then reference exact parts,
-   features, or faces for follow-up changes.
-5. Continue into CAE setup and solver workflows when the required engineering
+   features, or faces (`@face:*`) for follow-up changes.
+5. Continue into CAE setup and solver workflows once the required engineering
    inputs are available.
 
-The workbench UI and
+The workbench UI and the
 [`aieng-vscode-extension`](aieng-vscode-extension) provide visual inspection for
 live backend projects and `.aieng` packages.
 
-## About aieng
+## Visual inspection in VS Code
 
-aieng is an open-source AI-native CAD/CAE/CAX engineering workbench built around
-self-describing `.aieng` project packages. It lets AI agents create real CAD
-geometry, preserve engineering artifacts, run CAD/CAE workflows, and keep
-results reproducible and inspectable.
-
-The VS Code extension is the most visual way to experience aieng: it brings CAD
-model inspection and the AI-CAD design loop directly into the editor, so agents
-and humans can iterate on mechanical designs in one workspace.
-
-## Highlights
-
-- **AI-native engineering packages** - `.aieng` packages preserve geometry,
-  artifacts, analysis data, metadata, and provenance in a reproducible project
-  container.
-- **Agent-driven CAD/CAE workflows** - Claude Code, GitHub Copilot, OpenAI
-  Codex, Cursor, and other MCP-capable agents can drive the same engineering
-  backend.
-- **Real CAD geometry** - agent-written build123d / OpenCASCADE geometry
-  produces STEP, STL, GLB, and 4-view thumbnails.
-- **Visual inspection in VS Code** - the VS Code extension lets users inspect
-  generated CAD models without leaving their AI coding workspace.
-- **CAD to CAE path** - material, boundary conditions, mesh, solver runs, and
-  result mappings can be preserved in the same package.
-- **Inspectable provenance** - generated code, artifacts, analysis outputs, and
-  agent context stay reviewable instead of becoming an opaque AI result.
-
-## Experience aieng in VS Code
-
-The VS Code extension is the fastest way to see what aieng does. It is a visual
-front-end for the `.aieng` package format, MCP tools, and CAD/CAE backend.
-
-1. Ask an AI agent to create or modify a mechanical part.
-2. aieng stores the design intent, generated geometry, artifacts, and
-   provenance in a `.aieng` package.
-3. The backend generates real build123d / OpenCASCADE geometry.
-4. The VS Code extension visualizes the generated CAD model.
-5. The user inspects the result and continues the design loop with the agent.
-
-The extension lives in [`aieng-vscode-extension`](aieng-vscode-extension) and
-focuses on package preview, CAD inspection, and stable face-pointer copying.
-
-## Who should try this?
-
-- AI agent and MCP developers who want engineering tools that go beyond text
-  and code generation.
-- Mechanical engineers curious about AI-assisted CAD/CAE workflows with real
-  geometry and explicit artifacts.
-- Makers and researchers experimenting with AI-native engineering tools and
-  reproducible design loops.
-- Open-source contributors interested in CAD, CAE, VS Code extensions, MCP, or
-  build123d / OpenCASCADE.
-
-## Try it in one minute
-
-1. Open this repository in GitHub Codespaces.
-2. Run `make dev`.
-3. Connect an MCP-capable agent using the committed configuration.
-4. Copy the motor mounting fixture prompt above, or start with:
-
-```text
-Create a 120 × 80 × 12 mm machined bearing support bracket with a centered
-Ø42 mm horizontal bearing bore, four Ø10 mm base mounting holes, and two
-mirrored gussets. Preserve the exact dimensions, expose editable parameters,
-verify the final geometry, and run the deterministic engineering critique.
-```
-
-5. Inspect the generated model, named parts, verification results, and stable
-   `@face:*` references in the workbench.
-
-## Quick start
-
-### Option 1: GitHub Codespaces (fastest, zero install)
-
-Click the **"Open in GitHub Codespaces"** button at the top of this README.
-The environment will be fully set up automatically; just run `make dev` when
-it finishes loading. If `make` is unavailable, run `python3 scripts/dev.py`
-instead.
-
-### Option 2: Docker all-in-one (recommended local package)
-
-This path packages the backend, built viewer, MCP HTTP server, build123d /
-OpenCASCADE dependencies, and CalculiX into one container.
-
-```bash
-docker build -t aieng/workbench:local .
-docker run --rm -it \
-  -p 8000:8000 \
-  -p 8765:8765 \
-  -v aieng-data:/data \
-  aieng/workbench:local
-```
-
-Open the viewer at http://localhost:8000/app/. Point an MCP-over-HTTP client at
-`http://localhost:8765/sse`. Generated projects and `.aieng` packages are kept
-in the `aieng-data` Docker volume.
-
-For the full local viewer experience, the container enables
-`AIENG_MCP_MANAGED_APPROVAL=1` by default: approval-gated CAD/CAE tools surface
-through the workbench approval UI instead of relying only on the client.
-
-### Option 3: Local developer install
-
-Prerequisites: a conda env named **`aieng311`** (Python >= 3.11) with
-**build123d** installed - the MCP config and run scripts assume this name.
-
-```bash
-# 1. Create the environment and install the backend (which pulls in build123d)
-conda create -n aieng311 python=3.11 -y
-conda activate aieng311
-pip install build123d
-cd aieng-ui/backend && pip install -e .
-```
-
-### Start everything (one command)
-
-**Windows PowerShell** (recommended):
-```powershell
-.\dev.ps1
-```
-
-**macOS / Linux / WSL** (recommended):
-```bash
-make dev
-```
-
-**Cross-platform fallback** (any OS):
-```bash
-python scripts/dev.py
-# or on macOS/Linux:
-python3 scripts/dev.py
-```
-
-This starts both the backend (FastAPI on `http://127.0.0.1:8000`) and the
-frontend (Vite on `http://localhost:5173`) in one terminal. Press **Ctrl+C** to
-stop both.
-
-Custom ports:
-```bash
-BACKEND_PORT=8080 FRONTEND_PORT=3000 make dev
-```
-
-### Start services individually
-
-**Backend only:**
-```bash
-make backend
-# or manually:
-cd aieng-ui/backend && uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-**Frontend only:**
-```bash
-make frontend
-# or manually:
-cd aieng-ui/frontend && npm install && npm run dev
-```
-
-Open http://localhost:5173 for the workbench UI.
-
-Run the backend test suite:
-```bash
-cd aieng-ui/backend && python -m pytest
-```
-
-## Using aieng from VS Code
-
-The recommended visual entry point is the VS Code extension in
-[`aieng-vscode-extension`](aieng-vscode-extension). It visualizes `.aieng`
-project artifacts and generated CAD outputs inside the editor.
-
-Extension-specific setup and development notes live in
-[`aieng-vscode-extension/README.md`](aieng-vscode-extension/README.md). The
-extension can:
+The VS Code extension is the most visual way to experience aieng — a front-end
+for the `.aieng` package format, MCP tools, and CAD/CAE backend that brings the
+AI-CAD design loop directly into your editor. It can:
 
 - open a local `.aieng` package as a read-only custom editor,
 - connect to a live backend project preview,
 - visualize generated GLB/STL CAD outputs,
 - and copy stable `@face:id` pointers back into your chat with an agent.
 
-## Using aieng from AI agents via MCP
+The extension is one layer of the system, not the whole thing — the core is the
+package format and engineering backend that let agents and humans share
+reproducible CAD/CAE project state. Setup and development notes live in
+[`aieng-vscode-extension/README.md`](aieng-vscode-extension/README.md).
+
+## Drive aieng from AI agents via MCP
 
 The backend exposes its tool registry as an **MCP server** (`aieng-workbench`),
-so agents can drive the workbench through their own harnesses - no API key
-needed on our side.
-
-Connection configs are already committed and load automatically for a fresh
+so agents drive the workbench through their own harnesses — no API key needed on
+our side. Connection configs are committed and load automatically for a fresh
 clone, assuming the `aieng311` env exists:
 
 | Agent | Config file |
@@ -416,40 +319,17 @@ cad.execute_build123d     -> build/extend geometry (mode=replace|append)
 (inspect the result, repeat)
 ```
 
-Full tool details, pointer syntax, and approval-gated operations:
-[AGENTS.md](AGENTS.md)
-
-MCP wiring by client:
-[aieng-ui/backend/MCP_SETUP.md](aieng-ui/backend/MCP_SETUP.md)
-
-## What this is
-
-aieng combines:
-
-- a self-describing `.aieng` project package format,
-- an agent-facing MCP tool layer,
-- a Python CAD/CAE backend,
-- and a VS Code visualization extension.
-
-The VS Code extension is one layer of the system, not the whole system. The
-core of aieng is the package format and engineering backend that let agents and
-humans share reproducible CAD/CAE project state.
-
-Main capabilities in this repo:
-
-- real build123d / OpenCASCADE CAD generation with STEP, STL, GLB, and thumbnails,
-- CAE setup and result mapping with topology-aware pointers,
-- topology optimization and mesh-to-CAD reconstruction workflows,
-- assembly-aware proxy analysis and selected-part optimization,
-- and explicit agent-guided design studies with baseline preservation.
+Full tool details, pointer syntax, and approval-gated operations live in
+[AGENTS.md](AGENTS.md); MCP wiring by client in
+[aieng-ui/backend/MCP_SETUP.md](aieng-ui/backend/MCP_SETUP.md).
 
 ## Showcase demos
 
-Canonical backend demos:
+Canonical backend demos, each runnable as a single test:
 
-### 1. CAD Generation -> Structural FEA -> Topology Optimization
+### 1. CAD Generation → Structural FEA → Topology Optimization
 
-Runs the CAD -> FEA -> topology optimization loop and writes back editable
+Runs the CAD → FEA → topology optimization loop and writes back editable
 optimized geometry.
 
 <img src="docs/assets/showcase/geometry_cae_flow.svg" width="800" alt="CAD Generation to Structural FEA to Topology Optimization"/>
@@ -460,9 +340,9 @@ pytest aieng/tests/test_topology_optimization.py -q
 
 **Key artifacts:** `analysis/topology_optimization.json`, `geometry/shape_ir.json`
 **Boundary:** 2D plane-stress; 3D SIMP is experimental/reference only.
-[Details ->](aieng/docs/showcase_gallery.md)
+[Details →](aieng/docs/showcase_gallery.md)
 
-### 2. Rebuild CAD from Mesh -> Export STEP
+### 2. Rebuild CAD from Mesh → Export STEP
 
 Reconstructs analytic CAD from a mesh and exports STEP when the shell validates.
 
@@ -476,9 +356,9 @@ pytest aieng/tests/test_mesh_brep_solidification.py -q
 `graph/mesh_brep_stitching_plan.json`
 **Boundary:** Mesh-derived/lossy; plane/cylinder dominant; freeform/NURBS
 future work; partial shells do not produce STEP.
-[Details ->](aieng/docs/showcase_gallery.md)
+[Details →](aieng/docs/showcase_gallery.md)
 
-### 3. Assembly Model -> Selected-Part Optimization
+### 3. Assembly Model → Selected-Part Optimization
 
 Builds a proxy assembly analysis model and optimizes one selected design part.
 
@@ -492,9 +372,9 @@ pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 `parts/bracket/geometry/optimized_shape_ir.json`
 **Boundary:** Proxy connections only; no real contact/friction/bolt preload;
 one design part only; not production-certified.
-[Details ->](aieng/docs/showcase_gallery.md)
+[Details →](aieng/docs/showcase_gallery.md)
 
-### 4. Design Study: Adjustable Dimensions -> Compare -> Adopt
+### 4. Design Study: Adjustable Dimensions → Compare → Adopt
 
 Validates, executes, compares, and optionally adopts parameterized design
 candidates without overwriting the baseline.
@@ -510,50 +390,39 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 `accepted/candidate_good/geometry/shape_ir.json`
 **Boundary:** Static metrics in demo; no autonomous optimization; no baseline
 overwrite; ranking is advisory.
-[Details ->](aieng/docs/showcase_gallery.md)
+[Details →](aieng/docs/showcase_gallery.md)
 
 ## Current limitations
 
-- Not production-certified CAD/CAE. Outputs are review material that still
-  require human engineering judgment.
-- Assembly contact and bolt preload are proxy-only. Real nonlinear contact is
-  future work.
+Honesty boundaries — outputs are review material, not production sign-off:
+
+- Not production-certified CAD/CAE. Outputs still require human engineering judgment.
+- Assembly contact and bolt preload are proxy-only; real nonlinear contact is future work.
 - 3D SIMP is experimental/reference, not production-certified.
 - Mesh-to-CAD works best for plane/cylinder-dominant geometry; broader freeform
   and NURBS fitting is future work.
-- Design study is agent-guided explicit execution, not autonomous global
-  optimization.
+- Design study is agent-guided explicit execution, not autonomous global optimization.
 
 ## Repository layout
 
-### Active
-
 | Path | Status | What it is |
 |------|--------|------------|
-| **`aieng-ui/`** | **Active** | FastAPI backend, React workbench, and MCP server |
+| **`aieng-ui/`** | **Active** | FastAPI backend, React workbench, and MCP server — the active CAD/CAE engine (build123d) |
 | `aieng/` | Core library | `.aieng` semantic package format engine, schemas, validation, CLI, Shape IR, and evidence model |
 | `aieng-vscode-extension/` | Active | VS Code visualization front-end for `.aieng` packages and live project previews |
 | `aieng-agent-skills/` | Active | `SKILL.md` contracts teaching agents how to use the ecosystem |
-
-### Non-active but retained
-
-| Path | Status | What it is |
-|------|--------|------------|
-| `legacy/aieng-freecad-mcp/` | **Legacy** | Old FreeCAD execution adapter - not used by the active path |
+| `legacy/aieng-freecad-mcp/` | Legacy | Old FreeCAD execution adapter — not used by the active path |
 | `archive/CAD-Agent-main/` | Archived | Historical and experimental auxiliary CAD-agent material |
-
-The active CAD engine is `aieng-ui/backend` using **build123d**. `aieng/` is
-the core semantic library and the `.aieng` package home.
 
 ## Documentation
 
 | Doc | Purpose |
 |-----|---------|
-| [AGENTS.md](AGENTS.md) | Canonical agent guide - tools, workflows, and conventions |
+| [AGENTS.md](AGENTS.md) | Canonical agent guide — tools, workflows, and conventions |
 | [aieng-ui/backend/MCP_SETUP.md](aieng-ui/backend/MCP_SETUP.md) | Per-agent MCP wiring for Claude Code, Copilot, Cursor, and Codex |
 | [aieng-vscode-extension/README.md](aieng-vscode-extension/README.md) | VS Code extension usage and development notes |
-| [aieng/docs/showcase_gallery.md](aieng/docs/showcase_gallery.md) | Showcase gallery - demo talking points, visual guidance, and honesty boundaries |
-| [aieng/docs/demo_catalog.md](aieng/docs/demo_catalog.md) | Backend demo catalog - run commands, expected artifacts, and maturity levels |
+| [aieng/docs/showcase_gallery.md](aieng/docs/showcase_gallery.md) | Showcase gallery — demo talking points, visual guidance, and honesty boundaries |
+| [aieng/docs/demo_catalog.md](aieng/docs/demo_catalog.md) | Backend demo catalog — run commands, expected artifacts, and maturity levels |
 | [aieng/docs/backend_capability_matrix.md](aieng/docs/backend_capability_matrix.md) | Capability status snapshot |
 | [aieng/docs/roadmap.md](aieng/docs/roadmap.md) | Phase-by-phase development roadmap |
 | [CLAUDE.md](CLAUDE.md) | Claude Code entry pointer |
@@ -571,7 +440,7 @@ scope.
 - Private repo. No secrets are committed; runtime data (`data/projects/`),
   virtual environments, `node_modules`, and embedded conda envs are gitignored.
 - If your CAD env is not named `aieng311`, edit the `-n aieng311` argument in
-  the MCP configs or point `command` directly at your interpreter. See
+  the MCP configs or point `command` directly at your interpreter — see
   [aieng-ui/backend/MCP_SETUP.md](aieng-ui/backend/MCP_SETUP.md).
 - A running backend at `http://127.0.0.1:8000` enables live UI updates when an
   agent drives a build; if it is down, the MCP server falls back to in-process

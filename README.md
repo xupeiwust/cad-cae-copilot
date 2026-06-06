@@ -2,11 +2,15 @@
 
 # aieng
 
-### An AI-native CAD/CAE workbench for inspectable engineering workflows
+### Give AI agents a real engineering workspace, not just a CAD code generator.
 
 Turn explicit engineering specifications into real CAD geometry, inspect the
 result with stable topology references, and preserve every artifact in a
 reproducible `.aieng` package.
+
+<a href="docs/assets/images/hero.webp">
+  <img src="docs/assets/images/hero.webp" width="100%" alt="A fully specified industrial motor mounting fixture modeled and inspected with aieng"/>
+</a>
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/armpro24-blip/workspace_aieng)
 ![CAD](https://img.shields.io/badge/CAD-build123d%20%2F%20OpenCASCADE-1f6feb)
@@ -20,6 +24,63 @@ reproducible `.aieng` package.
 [Agent Guide](AGENTS.md)
 
 </div>
+
+<div align="center">
+
+**Specification → Real CAD → Verified Geometry → Reproducible Package**
+
+Real STEP/STL/GLB · Editable parameters · Named parts · Stable topology pointers
+· Deterministic critique · CAD → CAE artifacts · Approval-gated actions
+
+</div>
+
+## From specification to verified CAD
+
+The hero model was created from an explicit industrial fixture specification:
+fixed dimensions, named parts, exact hole and slot locations, required symmetry,
+and no permission to invent additional geometry.
+
+<details>
+<summary><strong>Copy the motor mounting fixture prompt</strong></summary>
+
+```text
+Create a fully specified industrial motor mounting fixture using millimeters.
+
+Coordinate system:
+- X is the fixture width, Y is the fixture depth, and Z is vertical.
+- Center the complete fixture on X=0.
+- Place the bottom face of the base plate at Z=0.
+
+Base plate:
+- Create a 180 × 140 × 14 mm base plate.
+- Add four Ø11 mm vertical through-holes at X=±70 mm and Y=±50 mm.
+- Add an Ø18 mm, 5 mm deep counterbore to the top of every mounting hole.
+- Add a 3 mm fillet to the four outside vertical corners.
+
+Motor support:
+- Add a centered rear vertical support plate, 130 mm wide, 14 mm thick,
+  and 120 mm tall above the base.
+- Add a Ø72 mm horizontal locating bore through the plate along Y.
+- Position its center at X=0 and Z=78 mm.
+- Add four Ø8.5 mm horizontal mounting holes on a Ø100 mm bolt circle.
+
+Reinforcement and rails:
+- Add two mirrored 12 mm thick triangular gussets extending 45 mm forward
+  and rising 65 mm above the base.
+- Add two separate 110 × 12 × 8 mm guide rails centered at X=±38 mm, Y=-12 mm.
+- Add one centered 70 × 6 mm longitudinal slot to each rail.
+
+Modeling requirements:
+- Create named parts "fixture_body", "guide_rail_left", and "guide_rail_right".
+- Color the fixture body dark blue-gray and both guide rails orange.
+- Declare all major dimensions as editable UPPER_SNAKE_CASE constants.
+- Preserve exact left/right symmetry.
+- Verify overall dimensions, named parts, and stable topology pointers.
+- Run the deterministic engineering critique after modeling.
+- Do not add a motor, fasteners, logos, decorative features, or unspecified geometry.
+```
+
+</details>
 
 ## Industrial CAD examples
 
@@ -77,6 +138,22 @@ silently invent the engineering requirements.
   stable face pointer for precise follow-up work.
 
 </details>
+
+## Beyond geometry generation
+
+aieng is designed for the engineering work that happens before and after a
+model first appears.
+
+| Capability | Typical text-to-CAD demo | aieng |
+|------------|:------------------------:|:-----:|
+| Generate real CAD exports | Yes | Yes |
+| Execute explicit dimensions and datums | Partial | Yes |
+| Preserve editable source and parameters | Partial | Yes |
+| Name parts and expose stable topology references | Rarely | Yes |
+| Verify geometry and run deterministic critique | Rarely | Yes |
+| Preserve artifacts and provenance in one package | Rarely | Yes |
+| Continue from CAD into CAE workflows | Rarely | Yes |
+| Require approval for gated engineering actions | Rarely | Yes |
 
 ## Why aieng?
 
@@ -166,6 +243,23 @@ focuses on package preview, CAD inspection, and stable face-pointer copying.
   reproducible design loops.
 - Open-source contributors interested in CAD, CAE, VS Code extensions, MCP, or
   build123d / OpenCASCADE.
+
+## Try it in one minute
+
+1. Open this repository in GitHub Codespaces.
+2. Run `make dev`.
+3. Connect an MCP-capable agent using the committed configuration.
+4. Copy the motor mounting fixture prompt above, or start with:
+
+```text
+Create a 120 × 80 × 12 mm machined bearing support bracket with a centered
+Ø42 mm horizontal bearing bore, four Ø10 mm base mounting holes, and two
+mirrored gussets. Preserve the exact dimensions, expose editable parameters,
+verify the final geometry, and run the deterministic engineering critique.
+```
+
+5. Inspect the generated model, named parts, verification results, and stable
+   `@face:*` references in the workbench.
 
 ## Quick start
 

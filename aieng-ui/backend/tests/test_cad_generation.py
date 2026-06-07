@@ -1029,6 +1029,69 @@ def test_execute_build123d_code_dry_run_no_write(tmp_path: Path) -> None:
     assert result["written_artifacts"] == []
 
 
+def test_execute_build123d_code_compact_response_omits_thumbnail(tmp_path: Path) -> None:
+    from app import cad_generation
+
+    settings = _make_settings(tmp_path)
+    create_app(settings)
+    project_id = _make_project(settings, "agent-cad-compact")
+
+    with (
+        patch("app.cad_generation.Build123dBackend.can_generate", return_value=True),
+        patch("app.cad_generation._execute_build123d_code_streaming", side_effect=_fake_stream_ok),
+        patch("app.cad_generation.render_mesh_thumbnail") as render_thumb,
+    ):
+        result = cad_generation.execute_build123d_code(
+            settings,
+            project_id,
+            {
+                "code": "from build123d import *\nresult = Box(10, 10, 10)",
+                "response_detail": "compact",
+            },
+        )
+
+    assert result["status"] == "ok"
+    assert result["response_detail"] == "compact"
+    assert result["cache_hit"] is False
+    assert isinstance(result["geometry_report"], str)
+    assert result["geometry_report"].startswith("geometry:")
+    assert "thumbnail_png_base64" not in result
+    render_thumb.assert_not_called()
+
+
+def test_execute_build123d_code_exact_cache_hit_skips_executor(tmp_path: Path) -> None:
+    from app import cad_generation
+
+    settings = _make_settings(tmp_path)
+    create_app(settings)
+    project_id = _make_project(settings, "agent-cad-cache")
+    calls = 0
+
+    def _fake_stream_counted(code: str, timeout: int = 60):
+        nonlocal calls
+        calls += 1
+        yield from _fake_stream_ok(code, timeout=timeout)
+
+    payload = {
+        "code": "from build123d import *\nresult = Box(20, 10, 5)",
+        "thumbnail": False,
+    }
+    with (
+        patch("app.cad_generation.Build123dBackend.can_generate", return_value=True),
+        patch("app.cad_generation._execute_build123d_code_streaming", side_effect=_fake_stream_counted),
+    ):
+        first = cad_generation.execute_build123d_code(settings, project_id, payload)
+        second = cad_generation.execute_build123d_code(settings, project_id, payload)
+
+    assert first["status"] == "ok"
+    assert first["cache_hit"] is False
+    assert second["status"] == "ok"
+    assert second["cache_hit"] is True
+    assert calls == 1
+    assert second["topology_summary"] == first["topology_summary"]
+    assert second["written_artifacts"] == first["written_artifacts"]
+
+
 def test_execute_build123d_code_missing_code(tmp_path: Path) -> None:
     from app import cad_generation
 
@@ -1091,7 +1154,10 @@ def test_cad_execute_build123d_tool_registered_with_approval() -> None:
     assert tools["cad.execute_build123d"]["requires_approval"] is True
     schema = tools["cad.execute_build123d"]["input_schema"]
     assert "code" in schema["properties"]
+    assert schema["properties"]["response_detail"]["enum"] == ["full", "compact"]
     assert set(schema["required"]) == {"project_id", "code"}
+    for tool_name in ("cad.edit_parameter", "cad.remove_part", "cad.replace_part"):
+        assert tools[tool_name]["input_schema"]["properties"]["response_detail"]["enum"] == ["full", "compact"]
 
 
 # ── geometry report ───────────────────────────────────────────────────────────

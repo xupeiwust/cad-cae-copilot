@@ -8,9 +8,12 @@ into the project's .aieng package.
 """
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata as importlib_metadata
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1567,13 +1570,313 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
     return report
 
 
-# ── geometry regression diff ────────────────────────────────────────────────
-# A parametric edit (or any rebuild) is supposed to change ONE thing. This
-# compares the before/after topology by named part and reports what actually
-# moved — so a typo or an over-broad constant that silently warps unrelated
-# parts is caught instead of shipping. Inspired by earthtojake/text-to-cad's
-# `inspect diff`, adapted to our named-part topology.
+# Response detail and exact build123d execution cache helpers.
 
+def _normalize_response_detail(value: Any) -> str:
+    detail = str(value or "full").strip().lower()
+    return detail if detail in {"compact", "full"} else "full"
+
+
+def _should_render_thumbnail(payload_or_flag: Any, response_detail: str) -> bool:
+    if isinstance(payload_or_flag, dict) and "thumbnail" in payload_or_flag:
+        return bool(payload_or_flag.get("thumbnail"))
+    if isinstance(payload_or_flag, bool):
+        return payload_or_flag
+    return response_detail != "compact"
+
+
+def _geometry_report_summary(report: dict[str, Any]) -> str:
+    if not report or not report.get("available"):
+        reason = report.get("reason", "no report") if isinstance(report, dict) else "no report"
+        return f"geometry unavailable: {reason}"
+    size = report.get("overall_size") if isinstance(report.get("overall_size"), dict) else {}
+    proportions = report.get("overall_proportions") if isinstance(report.get("overall_proportions"), dict) else {}
+    gaps = report.get("gaps_summary") if isinstance(report.get("gaps_summary"), dict) else {}
+    symmetry = report.get("symmetry") if isinstance(report.get("symmetry"), list) else []
+    symmetry_issues = sum(
+        1
+        for item in symmetry
+        if item.get("ok") is False or item.get("status") == "missing_partner"
+    )
+    return (
+        "geometry: "
+        f"{report.get('part_count', 0)} part(s), "
+        f"size={size.get('x', '?')}x{size.get('y', '?')}x{size.get('z', '?')} mm, "
+        f"proportions={proportions.get('x', '?')}/{proportions.get('y', '?')}/{proportions.get('z', '?')}, "
+        f"floating={gaps.get('floating', 0)}, "
+        f"symmetry_issues={symmetry_issues}"
+    )
+
+
+def _geometry_report_for_response(report: dict[str, Any], response_detail: str) -> dict[str, Any] | str:
+    if response_detail == "compact":
+        return _geometry_report_summary(report)
+    return report
+
+
+_BUILD123D_CACHE_FORMAT_VERSION = "1"
+_BUILD123D_CACHE_MAX_ENTRIES = 64
+_BUILD123D_CACHE_MAX_BYTES = 512 * 1024 * 1024
+
+
+def _package_version(name: str) -> str:
+    try:
+        return importlib_metadata.version(name)
+    except importlib_metadata.PackageNotFoundError:
+        return "not-installed"
+    except Exception:
+        return "unknown"
+
+
+def _build123d_cache_versions() -> dict[str, str]:
+    return {
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "build123d": _package_version("build123d"),
+        "ocp": _package_version("ocp"),
+        "cadquery-ocp": _package_version("cadquery-ocp"),
+    }
+
+
+def _build123d_cache_key(*, code: str, mode: str, model_kind: str) -> tuple[str, dict[str, Any]]:
+    material = {
+        "cache_format_version": _BUILD123D_CACHE_FORMAT_VERSION,
+        "executor": "build123d_streaming",
+        "mode": mode,
+        "model_kind": model_kind,
+        "code_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+        "versions": _build123d_cache_versions(),
+    }
+    encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest(), material
+
+
+def _build123d_cache_root(settings: Any) -> Path:
+    return Path(settings.data_root) / "cache" / "build123d"
+
+
+def _cache_entry_size(path: Path) -> int:
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            try:
+                total += item.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _prune_build123d_cache(root: Path) -> None:
+    try:
+        entries = [p for p in root.iterdir() if p.is_dir()]
+    except OSError:
+        return
+    if not entries:
+        return
+    sized = [(p, _cache_entry_size(p)) for p in entries]
+    total = sum(size for _p, size in sized)
+    if len(sized) <= _BUILD123D_CACHE_MAX_ENTRIES and total <= _BUILD123D_CACHE_MAX_BYTES:
+        return
+
+    def _mtime(path: Path) -> float:
+        marker = path / ".complete"
+        try:
+            return marker.stat().st_mtime if marker.exists() else path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    for entry, size in sorted(sized, key=lambda item: _mtime(item[0])):
+        if len(sized) <= _BUILD123D_CACHE_MAX_ENTRIES and total <= _BUILD123D_CACHE_MAX_BYTES:
+            break
+        shutil.rmtree(entry, ignore_errors=True)
+        total -= size
+        sized = [(p, s) for p, s in sized if p != entry]
+
+
+def _read_build123d_cache(settings: Any, cache_key: str) -> dict[str, Any] | None:
+    entry = _build123d_cache_root(settings) / cache_key
+    if not (entry / ".complete").exists():
+        return None
+    try:
+        meta = json.loads((entry / "metadata.json").read_text(encoding="utf-8"))
+        if meta.get("cache_key") != cache_key:
+            return None
+        if meta.get("cache_format_version") != _BUILD123D_CACHE_FORMAT_VERSION:
+            return None
+        return {
+            "step_bytes": (entry / "generated.step").read_bytes(),
+            "stl_bytes": (entry / "preview.stl").read_bytes(),
+            "glb_bytes": (entry / "preview.glb").read_bytes() if (entry / "preview.glb").exists() else b"",
+            "topology_map": json.loads((entry / "topology_map.json").read_text(encoding="utf-8")),
+            "feature_graph": json.loads((entry / "feature_graph.json").read_text(encoding="utf-8")),
+            "geometry_report": json.loads((entry / "geometry_report.json").read_text(encoding="utf-8")),
+            "mesh_meta": (
+                json.loads((entry / "mesh_meta.json").read_text(encoding="utf-8"))
+                if (entry / "mesh_meta.json").exists()
+                else None
+            ),
+        }
+    except Exception:
+        return None
+
+
+def _write_build123d_cache(
+    settings: Any,
+    cache_key: str,
+    key_material: dict[str, Any],
+    *,
+    step_bytes: bytes,
+    stl_bytes: bytes,
+    glb_bytes: bytes,
+    topology_map: dict[str, Any],
+    feature_graph: dict[str, Any],
+    geometry_report: dict[str, Any],
+    mesh_meta: Any,
+) -> None:
+    if not step_bytes:
+        return
+    root = _build123d_cache_root(settings)
+    entry = root / cache_key
+    try:
+        if (entry / ".complete").exists():
+            return
+        entry.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "cache_key": cache_key,
+            "cache_format_version": _BUILD123D_CACHE_FORMAT_VERSION,
+            "created_at": time.time(),
+            "key_material": key_material,
+        }
+        (entry / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+        (entry / "generated.step").write_bytes(step_bytes)
+        (entry / "preview.stl").write_bytes(stl_bytes or b"")
+        if glb_bytes:
+            (entry / "preview.glb").write_bytes(glb_bytes)
+        (entry / "topology_map.json").write_text(json.dumps(topology_map, indent=2), encoding="utf-8")
+        (entry / "feature_graph.json").write_text(json.dumps(feature_graph, indent=2), encoding="utf-8")
+        (entry / "geometry_report.json").write_text(json.dumps(geometry_report, indent=2), encoding="utf-8")
+        if mesh_meta is not None:
+            (entry / "mesh_meta.json").write_text(json.dumps(mesh_meta, indent=2), encoding="utf-8")
+        (entry / ".complete").write_text("ok", encoding="utf-8")
+        _prune_build123d_cache(root)
+    except Exception:
+        shutil.rmtree(entry, ignore_errors=True)
+
+
+def _finish_execute_build123d_response(
+    *,
+    settings: Any,
+    project_id: str,
+    project: dict[str, Any],
+    payload: dict[str, Any],
+    code: str,
+    mode: str,
+    used_base: bool,
+    prior_named_parts: list[str],
+    step_bytes: bytes,
+    stl_bytes: bytes,
+    glb_bytes: bytes,
+    topo: dict[str, Any],
+    feature_graph: dict[str, Any],
+    mesh_meta: Any,
+    geometry_report_full: dict[str, Any],
+    write_files: bool,
+    response_detail: str,
+    cache_hit: bool,
+    emit: Callable[[dict[str, Any]], None],
+) -> dict[str, Any]:
+    from .project_io import resolve_project_path
+
+    face_count = sum(1 for e in topo.get("entities", []) if e.get("type") == "face")
+    feature_count = len(feature_graph.get("features", []))
+    written: list[str] = []
+    if write_files and step_bytes:
+        emit({"phase": "writing"})
+        existing_pkg = project.get("aieng_file")
+        pkg_path = resolve_project_path(settings, project_id, existing_pkg) if existing_pkg else None
+        if pkg_path is None:
+            from .main import project_dir, save_project as _save_project
+
+            pkg_name = f"{project_id}.aieng"
+            pkg_path = project_dir(settings, project_id) / pkg_name
+            project["aieng_file"] = pkg_name
+            _save_project(settings, project)
+
+        _write_cad_artifacts(
+            pkg_path=pkg_path,
+            step_bytes=step_bytes,
+            stl_bytes=stl_bytes or b"",
+            topology_map=topo,
+            feature_graph=feature_graph,
+            generated_code=code,
+            glb_bytes=glb_bytes,
+        )
+        _clear_revalidation_status(pkg_path)
+
+        try:
+            from .main import save_project as _save_project2, now_iso as _now_iso
+
+            project["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
+            req_name = str(payload.get("name") or "").strip()
+            if req_name:
+                project["name"] = req_name
+            project["updated_at"] = _now_iso()
+            _save_project2(settings, project)
+        except Exception:
+            pass
+
+        _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
+        written = [
+            "geometry/generated.step",
+            "geometry/preview.stl",
+            "geometry/topology_map.json",
+            "graph/feature_graph.json",
+            "geometry/source.py",
+        ]
+        if glb_bytes:
+            written.append("geometry/preview.glb")
+
+    solid = next((e for e in topo.get("entities", []) if e.get("type") == "solid"), None)
+    named_parts = _named_parts_from_feature_graph(feature_graph)
+    result: dict[str, Any] = {
+        "status": "ok",
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "backend": "build123d",
+        "mode": mode,
+        "used_base": used_base,
+        "cache_hit": cache_hit,
+        "response_detail": response_detail,
+        "named_parts": named_parts,
+        "parts_added": [p for p in named_parts if p not in prior_named_parts],
+        "topology_summary": {
+            "face_count": face_count,
+            "feature_count": feature_count,
+            "bounding_box": solid.get("bounding_box") if solid else None,
+        },
+        "feature_graph": _slim_feature_graph_for_response(feature_graph),
+        "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
+        "written_artifacts": written,
+        "write_files": write_files,
+        "preview_url": f"/api/projects/{project_id}/cad-preview",
+        "preview_format": "glb" if glb_bytes else "stl",
+    }
+    if _should_render_thumbnail(payload, response_detail):
+        face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
+        ref_aieng_file = project.get("aieng_file")
+        ref_pkg = resolve_project_path(settings, project_id, ref_aieng_file) if ref_aieng_file else None
+        thumb = render_mesh_thumbnail(
+            stl_bytes or b"",
+            face_colors=face_colors,
+            reference_image_bytes=_read_reference_image_bytes(ref_pkg),
+        )
+        if thumb:
+            result["thumbnail_png_base64"] = thumb
+    return result
+
+
+# Geometry regression diff: a parametric edit or rebuild is supposed to change
+# one thing. Compare before/after topology by named part so collateral changes
+# are visible instead of silently shipping.
 def _solids_by_name(topology_map: dict[str, Any]) -> dict[str, list[float]]:
     """Map each named solid to its bounding box. Unnamed solids fall back to id
     so they still participate in the diff."""
@@ -3532,6 +3835,8 @@ def execute_build123d_code(
 
     write_files = bool(payload.get("write_files", True))
     timeout = int(payload.get("timeout", 60))
+    response_detail = _normalize_response_detail(payload.get("response_detail"))
+    model_kind = str(payload.get("model_kind", "auto"))
 
     code = _coerce_code(code)
     contract_error = _check_code_contract(code)
@@ -3590,6 +3895,31 @@ def execute_build123d_code(
             + code
         )
 
+    cache_key, cache_key_material = _build123d_cache_key(code=code, mode=mode, model_kind=model_kind)
+    cached = _read_build123d_cache(settings, cache_key)
+    if cached is not None:
+        return _finish_execute_build123d_response(
+            settings=settings,
+            project_id=project_id,
+            project=project,
+            payload=payload,
+            code=code,
+            mode=mode,
+            used_base=used_base,
+            prior_named_parts=prior_named_parts,
+            step_bytes=cached["step_bytes"],
+            stl_bytes=cached["stl_bytes"],
+            glb_bytes=cached["glb_bytes"],
+            topo=cached["topology_map"],
+            feature_graph=cached["feature_graph"],
+            mesh_meta=cached.get("mesh_meta"),
+            geometry_report_full=cached.get("geometry_report") or _compute_geometry_report(cached["topology_map"]),
+            write_files=write_files,
+            response_detail=response_detail,
+            cache_hit=True,
+            emit=_emit,
+        )
+
     # Drain the streaming executor; forward heartbeats to on_progress so a
     # subscribed UI sees the build advance in real time.
     last_error: str | None = None
@@ -3618,7 +3948,20 @@ def execute_build123d_code(
     # doesn't get written to topology_map.json on disk.
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
     feature_graph = _topology_to_feature_graph(
-        topo, source_code=code, model_kind=str(payload.get("model_kind", "auto")),
+        topo, source_code=code, model_kind=model_kind,
+    )
+    geometry_report_full = _compute_geometry_report(topo)
+    _write_build123d_cache(
+        settings,
+        cache_key,
+        cache_key_material,
+        step_bytes=step_bytes,
+        stl_bytes=stl_bytes or b"",
+        glb_bytes=glb_bytes or b"",
+        topology_map=topo,
+        feature_graph=feature_graph,
+        geometry_report=geometry_report_full,
+        mesh_meta=mesh_meta,
     )
     face_count = sum(1 for e in topo.get("entities", []) if e.get("type") == "face")
     feature_count = len(feature_graph.get("features", []))
@@ -3692,6 +4035,8 @@ def execute_build123d_code(
         "backend": "build123d",
         "mode": mode,
         "used_base": used_base,
+        "cache_hit": False,
+        "response_detail": response_detail,
         "named_parts": named_parts,
         "parts_added": parts_added,
         "topology_summary": {
@@ -3700,7 +4045,7 @@ def execute_build123d_code(
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
-        "geometry_report": _compute_geometry_report(topo),
+        "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "written_artifacts": written,
         "write_files": write_files,
         "preview_url": f"/api/projects/{project_id}/cad-preview",
@@ -3712,8 +4057,8 @@ def execute_build123d_code(
     # mesh_meta is available, colorize each part by its build123d `.color` so
     # parts can be distinguished visually. When a reference image is attached
     # to the project, tile it next to the views for side-by-side comparison.
-    # Opt out with {"thumbnail": false}.
-    if payload.get("thumbnail", True):
+    # Opt out with {"thumbnail": false}; compact mode defaults thumbnails off.
+    if _should_render_thumbnail(payload, response_detail):
         face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
         # Resolve the project package via `project.get("aieng_file")` — after a
         # write_files run, that pointer is up-to-date; before any build it
@@ -4791,6 +5136,8 @@ def edit_build123d_parameter(
     parameter_name: str,
     new_value: Any,
     timeout: int = 120,
+    response_detail: str = "full",
+    thumbnail: bool | None = None,
 ) -> dict[str, Any]:
     """Apply a parametric edit by replacing a named constant in source.py.
 
@@ -4810,6 +5157,7 @@ def edit_build123d_parameter(
         get_project,
         resolve_project_path,
     )
+    response_detail = _normalize_response_detail(response_detail)
 
     # 1. Load project & package
     try:
@@ -4960,21 +5308,25 @@ def edit_build123d_parameter(
 
     # 9. Render thumbnail so the caller can verify visually
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
-    face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
-    thumb = render_mesh_thumbnail(
-        stl_bytes or b"",
-        face_colors=face_colors,
-        reference_image_bytes=ref_bytes,
-    )
+    thumb = None
+    if _should_render_thumbnail(thumbnail, response_detail):
+        face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
+        thumb = render_mesh_thumbnail(
+            stl_bytes or b"",
+            face_colors=face_colors,
+            reference_image_bytes=ref_bytes,
+        )
 
     solid = next(
         (e for e in topo.get("entities", []) if e.get("type") == "solid"), None
     )
+    geometry_report_full = _compute_geometry_report(topo)
 
-    return {
+    result = {
         "status": "ok",
         "schema_version": "0.1",
         "project_id": project_id,
+        "response_detail": response_detail,
         "feature_id": feature_id,
         "parameter_name": parameter_name,
         "cad_parameter_name": cad_parameter_name,
@@ -4988,7 +5340,7 @@ def edit_build123d_parameter(
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
-        "geometry_report": _compute_geometry_report(topo),
+        "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "regression_diff": regression_diff,
         "written_artifacts": [
             "geometry/generated.step",
@@ -5001,6 +5353,9 @@ def edit_build123d_parameter(
         "preview_format": "glb" if glb_bytes else "stl",
         "thumbnail_png_base64": thumb,
     }
+    if not thumb:
+        result.pop("thumbnail_png_base64", None)
+    return result
 
 
 # ── part-level edits: remove / replace a named part (F2) ──────────────────────
@@ -5055,6 +5410,8 @@ def _rebuild_after_part_edit(
     expected_parts: set[str] | None,
     ref_bytes: bytes | None,
     timeout: int,
+    response_detail: str = "full",
+    thumbnail: bool | None = None,
 ) -> dict[str, Any]:
     """Execute ``new_source``, write artifacts, and assemble the response with a
     regression diff. Shared by remove_part / replace_part."""
@@ -5091,19 +5448,24 @@ def _rebuild_after_part_edit(
         pass
     _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
+    response_detail = _normalize_response_detail(response_detail)
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
-    thumb = render_mesh_thumbnail(
-        stl_bytes or b"",
-        face_colors=_build_face_colors_from_mesh_meta(mesh_meta),
-        reference_image_bytes=ref_bytes,
-    )
+    thumb = None
+    if _should_render_thumbnail(thumbnail, response_detail):
+        thumb = render_mesh_thumbnail(
+            stl_bytes or b"",
+            face_colors=_build_face_colors_from_mesh_meta(mesh_meta),
+            reference_image_bytes=ref_bytes,
+        )
     solid = next((e for e in topo.get("entities", []) if e.get("type") == "solid"), None)
     named_parts = _named_parts_from_feature_graph(feature_graph)
+    geometry_report_full = _compute_geometry_report(topo)
 
-    return {
+    result = {
         "status": "ok",
         "schema_version": "0.1",
         "project_id": project_id,
+        "response_detail": response_detail,
         "action": action,
         "label": label,
         "named_parts": named_parts,
@@ -5113,7 +5475,7 @@ def _rebuild_after_part_edit(
             "bounding_box": solid.get("bounding_box") if solid else None,
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
-        "geometry_report": _compute_geometry_report(topo),
+        "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "regression_diff": regression_diff,
         "written_artifacts": [
             "geometry/generated.step",
@@ -5126,6 +5488,9 @@ def _rebuild_after_part_edit(
         "preview_format": "glb" if glb_bytes else "stl",
         "thumbnail_png_base64": thumb,
     }
+    if not thumb:
+        result.pop("thumbnail_png_base64", None)
+    return result
 
 
 def _read_source_and_state(
@@ -5159,7 +5524,12 @@ def _read_source_and_state(
 
 
 def remove_build123d_part(
-    settings: Any, project_id: str, label: str, timeout: int = 120,
+    settings: Any,
+    project_id: str,
+    label: str,
+    timeout: int = 120,
+    response_detail: str = "full",
+    thumbnail: bool | None = None,
 ) -> dict[str, Any]:
     """Remove a named part from the model by its build123d ``.label``.
 
@@ -5188,11 +5558,19 @@ def remove_build123d_part(
         settings, project_id, project, pkg_path, new_source, before_topo,
         action="remove_part", label=label, expected_parts={label},
         ref_bytes=ref_bytes, timeout=timeout,
+        response_detail=response_detail,
+        thumbnail=thumbnail,
     )
 
 
 def replace_build123d_part(
-    settings: Any, project_id: str, label: str, code: str, timeout: int = 120,
+    settings: Any,
+    project_id: str,
+    label: str,
+    code: str,
+    timeout: int = 120,
+    response_detail: str = "full",
+    thumbnail: bool | None = None,
 ) -> dict[str, Any]:
     """Replace a named part by its ``.label`` with caller-supplied build123d code.
 
@@ -5240,4 +5618,6 @@ def replace_build123d_part(
         settings, project_id, project, pkg_path, new_source, before_topo,
         action="replace_part", label=label, expected_parts={label},
         ref_bytes=ref_bytes, timeout=timeout,
+        response_detail=response_detail,
+        thumbnail=thumbnail,
     )

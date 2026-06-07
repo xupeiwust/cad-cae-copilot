@@ -5909,6 +5909,9 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             "alignment from multiple angles — inspect all four views, alignment problems hide in iso. "
             "Also returns named_parts (all named parts now in the model), parts_added (what this step "
             "introduced), mode, and used_base — so you get text-side feedback even if the image isn't rendered. "
+            "For iterative loops, pass response_detail='compact' to return a one-line geometry summary "
+            "and suppress the thumbnail unless thumbnail=true. Identical source re-runs may return cache_hit=true "
+            "without re-running build123d. "
             "Writes source.py, generated.step, preview.stl/.glb, topology_map.json, and feature_graph.json "
             "into the .aieng package; sets project status to viewer_ready_glb."
         ),
@@ -6103,6 +6106,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             parameter_name=str(inp.get("parameterName") or ""),
             new_value=inp.get("newValue"),
             timeout=int(inp.get("timeout", 120)),
+            response_detail=str(inp.get("response_detail") or "full"),
+            thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
         )
 
     _rt.register_tool(
@@ -6126,6 +6131,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             project_id=str(inp.get("project_id") or ""),
             label=str(inp.get("label") or ""),
             timeout=int(inp.get("timeout", 120)),
+            response_detail=str(inp.get("response_detail") or "full"),
+            thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
         )
 
     _rt.register_tool(
@@ -6149,6 +6156,8 @@ def create_app(settings: "Settings | None" = None) -> "FastAPI":
             label=str(inp.get("label") or ""),
             code=str(inp.get("code") or ""),
             timeout=int(inp.get("timeout", 120)),
+            response_detail=str(inp.get("response_detail") or "full"),
+            thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
         )
 
     _rt.register_tool(

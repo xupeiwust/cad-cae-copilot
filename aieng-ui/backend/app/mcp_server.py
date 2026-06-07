@@ -206,6 +206,11 @@ returned thumbnail shows them in distinct colors) → read the returned 2×2
 contact-sheet thumbnail (front/side/top/iso) + named_parts/parts_added to
 verify silhouette and alignment, then repeat.
 
+Token-aware loop: use response_detail="compact" for routine CAD iterations.
+Compact responses keep named_parts/parts_added and a one-line geometry summary,
+omit the thumbnail unless thumbnail=true, and may return cache_hit=true when the
+exact same build123d source was already executed.
+
 Reference-driven modelling: when the target is a real product/character/
 vehicle, call cad.set_reference_image first with image_url or image_path —
 every subsequent thumbnail will tile the reference next to the four views

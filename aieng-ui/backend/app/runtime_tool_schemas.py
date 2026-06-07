@@ -422,6 +422,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "image content block. Set false to skip rendering."
                 ),
             },
+            "response_detail": {
+                "type": "string",
+                "enum": ["full", "compact"],
+                "description": (
+                    "Response verbosity. full (default) returns the full geometry_report "
+                    "and thumbnail unless thumbnail=false. compact returns a one-line "
+                    "geometry_report summary and omits the thumbnail unless thumbnail=true; "
+                    "use compact for iterative MCP loops to reduce tokens."
+                ),
+            },
         },
         "additionalProperties": True,
     },
@@ -580,6 +590,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "newValue": {
                 "description": "Replacement value. Type follows the parameter's declared schema (number, string, bool).",
             },
+            "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
+            "thumbnail": {
+                "type": "boolean",
+                "description": "Return a rendered PNG thumbnail. Defaults to true in full responses and false in compact responses.",
+            },
+            "response_detail": {
+                "type": "string",
+                "enum": ["full", "compact"],
+                "description": "full (default) returns the full geometry_report; compact returns a one-line summary and omits the thumbnail unless thumbnail=true.",
+            },
         },
         "additionalProperties": True,
     },
@@ -593,6 +613,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": "build123d .label of the named part to remove (e.g. 'chest_plate').",
             },
             "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
+            "thumbnail": {
+                "type": "boolean",
+                "description": "Return a rendered PNG thumbnail. Defaults to true in full responses and false in compact responses.",
+            },
+            "response_detail": {
+                "type": "string",
+                "enum": ["full", "compact"],
+                "description": "full (default) returns the full geometry_report; compact returns a one-line summary and omits the thumbnail unless thumbnail=true.",
+            },
         },
         "additionalProperties": True,
     },
@@ -615,6 +644,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 ),
             },
             "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
+            "thumbnail": {
+                "type": "boolean",
+                "description": "Return a rendered PNG thumbnail. Defaults to true in full responses and false in compact responses.",
+            },
+            "response_detail": {
+                "type": "string",
+                "enum": ["full", "compact"],
+                "description": "full (default) returns the full geometry_report; compact returns a one-line summary and omits the thumbnail unless thumbnail=true.",
+            },
         },
         "additionalProperties": True,
     },

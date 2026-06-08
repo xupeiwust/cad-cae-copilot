@@ -1,7 +1,7 @@
 # MCP-First Constraint Migration Checklist
 
 Status: completed audit for issue #20
-Last updated: 2026-06-04
+Last updated: 2026-06-08
 
 This checklist records what happened to the constraints that used to be spread
 across AGENTS.md, the retired embedded-agent engine, runtime tool handlers, MCP
@@ -32,6 +32,7 @@ agent discipline, or explicitly agent-dependent?
 | Solver execution is approval-gated and requires an existing prepared deck. | `cae.run_solver`; CalculiX run helper. | Yes for approval and deck presence. | `test_list_tools_for_mcp_marks_approval_tools`; `cae.prepare_solver_run` preflight. | Good. Sequence guidance remains soft, but missing deck prevents a real run. |
 | Solver evidence is only produced by solver/postprocess tools, not by summaries. | `cae.run_solver`, `cae.extract_solver_results`, `postprocess.refresh_cae_summary`; package evidence artifacts. | Yes | `package_semantics.md`; result artifacts such as `result.frd`, `computed_metrics.json`, `evidence_index.json`. | Good. Claim advancement remains `none`. |
 | MCP tool schemas are provider-compatible. | `runtime_tool_schemas.py`; `scripts/validate_mcp_schemas.py`. | Yes | `test_all_mcp_tool_schemas_are_provider_compatible`; schema validator script. | Good. This directly closes the Codex/Kimi schema compatibility gap found during dogfood. |
+| Packaged headless MCP entrypoints preserve approval modes. | `aieng-workbench-mcp`; `aieng_workbench_mcp`; `mcp_server._apply_cli_runtime_options`. | Yes | `test_pyproject_exposes_branded_mcp_entrypoints`; `test_cli_runtime_options_configure_headless_modes`; `test_packaged_mcp_smoke_stubbed_cad`; hard-block MCP tests. | Good. The local-install server defaults to env/client-managed behavior unless the user explicitly selects managed or block mode. |
 
 ## Soft Constraints
 
@@ -68,7 +69,7 @@ agent discipline, or explicitly agent-dependent?
 | CAE face references can become stale after topology-changing CAD edits. | A load/support may target a face ID that no longer means the same surface. | Track under #19 follow-up: validate CAE face references against current topology and store a topology revision/hash. |
 | bd_warehouse standard parts still rely mostly on labels for downstream semantics. | Critique/CAE/BOM can miss fasteners/bearings/gears if labels are weak. | Track under #21. |
 | AGENTS.md still contains detailed chat-era routing text. | External agents may over-read retired embedded-engine behavior as current MCP behavior. | Track under #15. Keep canonical docs layered and shorter. |
-| Packaging must preserve the same hard/soft split. | Docker/uvx forms could accidentally omit managed approval, prompts, or skill separation. | Track under #22. Acceptance for #22 should include this checklist. |
+| Packaging must preserve the same hard/soft split. | Docker/uvx forms could accidentally omit managed approval, prompts, or skill separation. | Partially fixed under #22: Docker installs the full extra; the local-install entrypoint exposes client/managed/block approval modes; packaged smoke proves prompts/resources and hard-block behavior. Remaining: publish/version the distributions and run real external-agent dogfood from the packaged form. |
 
 ## Current Recommendation
 
@@ -82,6 +83,15 @@ This makes the workbench UI the approval authority. For planning-only or
 inspection-only deployments, set `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1`; this takes
 precedence and refuses gated tools. Reserve client-managed approval for clients
 with a trustworthy permission UX or for headless compatibility modes.
+
+For headless local-install use, prefer an explicit mode rather than implicit env:
+
+1. `aieng-workbench-mcp --approval-mode client --data-dir <dir>` for trusted
+   client-managed approval.
+2. `aieng-workbench-mcp --approval-mode block --data-dir <dir>` for planning,
+   inspection, prompt/resource discovery, and CI smoke checks.
+3. `aieng-workbench-mcp --approval-mode managed --backend-url http://127.0.0.1:8000`
+   only when the live backend/viewer is running.
 
 ## Verification Pointers
 

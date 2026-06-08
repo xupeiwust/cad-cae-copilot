@@ -55,7 +55,15 @@ _PREPROCESSING_ARTIFACTS = [
 def _inject_aieng_src(aieng_root: str | Path) -> tuple[str, bool]:
     aieng_src = Path(aieng_root) / "src"
     if not aieng_src.exists():
-        raise RuntimeError(f"aieng src not found at {aieng_src}")
+        try:
+            importlib.import_module("aieng")
+        except Exception as exc:
+            raise RuntimeError(
+                "aieng core package is unavailable. Set AIENG_ROOT to a checkout "
+                f"containing src/aieng, or install the aieng-format package. "
+                f"Tried path: {aieng_src}"
+            ) from exc
+        return "", False
     candidate = str(aieng_src)
     injected = False
     if candidate not in sys.path:

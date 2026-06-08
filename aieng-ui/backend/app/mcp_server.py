@@ -14,10 +14,11 @@ Architecture:
 
 Usage:
     # stdio (Claude Code-style):
-    python -m app.mcp_server
+    aieng-workbench-mcp
+    python -m aieng_workbench_mcp
 
     # HTTP transport for debugging or multi-client:
-    python -m app.mcp_server --http --port 8765
+    aieng-workbench-mcp --http --port 8765
 
 The server boots a FastAPI app instance just to trigger the existing
 ``create_app()`` tool registration; the FastAPI request handlers themselves
@@ -255,6 +256,14 @@ Approval boundary:
   code=approval_blocked before backend forwarding or in-process execution. This
   hard-block mode takes precedence over managed approval.
 
+Pointer ergonomics:
+- Treat @face, @edge, @feature, @part, and @artifact pointers as opaque IDs from
+  the current workbench context. Copy them verbatim; do not invent IDs.
+- If geometry changed after a pointer was copied, refresh agent_context or the
+  topology map before applying loads, constraints, or localized edits.
+- If a pointer cannot be resolved, ask for a new selection or report the target
+  as unavailable instead of guessing a nearby face.
+
 CAD discipline:
 - Prefer cad.get_source before edits.
 - Use cad.execute_build123d for create/add/remove geometry; declare dimensions
@@ -262,8 +271,8 @@ CAD discipline:
   geometry to result, and omit exports.
 - Use cad.edit_parameter for pure dimension changes when editable parameters
   exist; read regression_diff after the edit.
-- Inspect the returned 4-view thumbnail and geometry_report; do fail-first
-  review before adding more details.
+- Inspect the returned 4-view thumbnail (front/side/top/iso) and geometry_report;
+  do fail-first review before adding more details.
 - For engineering parts, use canonical labels (base_plate, mounting_hole, rib,
   boss, flange, interface_face) and call cad.critique.
 - For standard parts (fasteners, nuts, washers, bearings, gears, threads, pipes,
@@ -271,6 +280,15 @@ CAD discipline:
   the cad.execute_build123d namespace as the modules fastener / bearing / gear /
   thread / pipe / flange / sprocket (e.g. fastener.SocketHeadCapScrew("M6-1",
   length=12, simple=True)); use simple=True unless real thread geometry is needed.
+
+Industrial-design / manufacturability review:
+- For brackets, fixtures, housings, and load-bearing interfaces, check minimum
+  wall thickness, hole standards, ribs/bosses, floating parts, and edge/corner
+  radii before claiming a design is ready.
+- Use cad.critique for deterministic manufacturing findings. Treat it as a
+  design-review assistant, not as production certification.
+- For visual/product form work, explicitly compare the 4-view result against the
+  stated reference or user intent and call out the biggest mismatches first.
 
 CAE discipline:
 - Never claim the solver ran unless cae.run_solver returned successful solver
@@ -297,11 +315,13 @@ def _register_mcp_first_prompts_and_resources(mcp: FastMCP) -> None:
             "call aieng.list_projects, then aieng.agent_context. Before the first "
             "CAD modeling/edit action call aieng.guide with topic='cad'; before "
             "simulation/solver work call it with topic='cae'. Use "
-            "@face/@feature/@artifact pointers verbatim. "
+            "@face/@edge/@feature/@artifact pointers verbatim and refresh context "
+            "after topology-changing edits before reusing old face IDs. "
             "Respect [APPROVAL REQUIRED] tools; AIENG_MCP_MANAGED_APPROVAL=1 routes "
             "them through the workbench viewer approval card, while "
             "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 refuses them outright. Report only "
-            "evidence from tool returns and package artifacts."
+            "evidence from tool returns and package artifacts; never claim solver "
+            "results unless solver execution evidence exists."
         )
 
     @mcp.prompt(
@@ -401,6 +421,42 @@ def _managed_approval_mode() -> bool:
 def _broker_approval_mode() -> bool:
     """Either approval mode that routes a gated tool through the backend broker."""
     return _agentic_mode() or _managed_approval_mode()
+
+
+def _apply_cli_runtime_options(
+    *,
+    backend_url: str | None = None,
+    approval_mode: str = "inherit",
+    data_dir: str | None = None,
+    require_guides: bool | None = None,
+) -> None:
+    """Apply console-script options before ``create_app()`` reads env vars."""
+    global _BACKEND_URL
+
+    if backend_url is not None:
+        normalized = backend_url.rstrip("/")
+        if normalized:
+            os.environ["AIENG_BACKEND_URL"] = normalized
+        else:
+            os.environ.pop("AIENG_BACKEND_URL", None)
+        _BACKEND_URL = normalized
+
+    if data_dir:
+        os.environ["AIENG_PLATFORM_DATA"] = str(Path(data_dir).expanduser().resolve())
+
+    if require_guides is not None:
+        os.environ["AIENG_MCP_REQUIRE_GUIDES"] = "1" if require_guides else "0"
+
+    if approval_mode == "inherit":
+        return
+    os.environ.pop("AIENG_MCP_MANAGED_APPROVAL", None)
+    os.environ.pop("AIENG_MCP_BLOCK_APPROVAL_TOOLS", None)
+    if approval_mode == "managed":
+        os.environ["AIENG_MCP_MANAGED_APPROVAL"] = "1"
+    elif approval_mode == "block":
+        os.environ["AIENG_MCP_BLOCK_APPROVAL_TOOLS"] = "1"
+    elif approval_mode != "client":
+        raise ValueError(f"unsupported approval mode: {approval_mode}")
 
 
 def _agentic_permission_decision(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -746,10 +802,46 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="app.mcp_server", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="aieng-workbench-mcp", description=__doc__.splitlines()[0])
     parser.add_argument("--http", action="store_true", help="Run over HTTP (SSE) instead of stdio.")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host (only with --http).")
     parser.add_argument("--port", type=int, default=8765, help="HTTP bind port (only with --http).")
+    parser.add_argument(
+        "--backend-url",
+        default=None,
+        help=(
+            "Optional FastAPI backend URL for live viewer mode, e.g. "
+            "http://127.0.0.1:8000. Omit for self-contained headless mode."
+        ),
+    )
+    parser.add_argument(
+        "--approval-mode",
+        choices=["inherit", "client", "managed", "block"],
+        default="inherit",
+        help=(
+            "Approval policy for [APPROVAL REQUIRED] tools. inherit reads env; "
+            "client advertises approval and trusts the MCP client; managed routes "
+            "through the backend approval broker; block rejects gated tools."
+        ),
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Directory for headless project/package/runtime data.",
+    )
+    guide_group = parser.add_mutually_exclusive_group()
+    guide_group.add_argument(
+        "--require-guides",
+        action="store_true",
+        default=None,
+        help="Require aieng.guide reads before CAD/CAE/package tools.",
+    )
+    guide_group.add_argument(
+        "--no-require-guides",
+        action="store_false",
+        dest="require_guides",
+        help="Disable guide-read enforcement for scripted smoke checks.",
+    )
     parser.add_argument(
         "--log-level",
         default="WARNING",
@@ -757,6 +849,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Server log level. stdio transport requires WARNING+ so logs don't corrupt the framed protocol.",
     )
     args = parser.parse_args(argv)
+    _apply_cli_runtime_options(
+        backend_url=args.backend_url,
+        approval_mode=args.approval_mode,
+        data_dir=args.data_dir,
+        require_guides=args.require_guides,
+    )
 
     # IMPORTANT: stdio is the wire — any stray print to stdout corrupts the
     # JSON-RPC frames. Route logging to stderr, which Claude Code surfaces

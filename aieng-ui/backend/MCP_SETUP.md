@@ -26,7 +26,193 @@ Tools listed in `app/runtime_tool_schemas.py:TOOL_SCHEMAS` carry curated JSON
 schemas so the agent constructs valid calls on the first try. Other tools fall
 back to a permissive `{"type": "object"}` schema.
 
-## Running the server
+## Connect your agent in 5 minutes
+
+### Supported tiers
+
+Choose one tier:
+
+1. **Headless local-install MCP tools** - no React viewer. The MCP server runs
+   in-process and stores projects under a local data directory. This is the
+   lowest-friction BYO-agent path.
+2. **Full backend + live viewer** - run the FastAPI backend/viewer and point the
+   MCP server at it with `AIENG_BACKEND_URL` or `--backend-url`. This preserves
+   live project mirroring and workbench-managed approval cards.
+3. **Docker all-in-one** - recommended when native CAD dependencies are the
+   blocker. The container starts backend, viewer, and MCP HTTP/SSE together.
+
+Headless install/run after publication:
+
+```bash
+uvx "aieng-workbench-mcp[full]" \
+  --approval-mode client \
+  --data-dir ~/.aieng-workbench
+```
+
+Headless run directly from this Git repository without cloning it first:
+
+```bash
+uvx \
+  --from "aieng-workbench-mcp[full] @ git+https://github.com/armpro24-blip/workspace_aieng.git#subdirectory=aieng-ui/backend" \
+  --with "aieng-format @ git+https://github.com/armpro24-blip/workspace_aieng.git#subdirectory=aieng" \
+  aieng-workbench-mcp \
+  --approval-mode client \
+  --data-dir ~/.aieng-workbench
+```
+
+Use `--approval-mode block` for planning/inspection-only sessions where no
+approval-gated CAD/package/solver mutation may execute. Use `--approval-mode
+managed --backend-url http://127.0.0.1:8000` only when the backend/viewer is
+running and should own approval.
+
+The install extras are intentionally explicit:
+
+| Install form | Capability |
+|---|---|
+| `aieng-workbench-mcp` | MCP server, prompts/resources, project inspection/setup paths when `aieng-format` is installed. |
+| `aieng-workbench-mcp[cad]` | Adds build123d, bd_warehouse, and CadQuery/OCP for real CAD execution. |
+| `aieng-workbench-mcp[llm]` | Adds Anthropic/OpenAI SDKs for compatibility endpoints. BYO MCP agents do not need this. |
+| `aieng-workbench-mcp[full]` | CAD + LLM extras; closest to the local backend environment. |
+
+Until both distributions are published, the Git `uvx --from ... --with ...`
+form above is the no-clone install path. If dependency resolution for native CAD
+wheels fails on your platform, use the Docker tier.
+
+### Claude Code snippets
+
+Headless local install:
+
+```json
+{
+  "mcpServers": {
+    "aieng-workbench": {
+      "command": "uvx",
+      "args": [
+        "aieng-workbench-mcp[full]",
+        "--approval-mode", "client",
+        "--data-dir", "~/.aieng-workbench"
+      ]
+    }
+  }
+}
+```
+
+Full backend + viewer from a repository checkout:
+
+```json
+{
+  "mcpServers": {
+    "aieng-workbench": {
+      "command": "conda",
+      "args": ["run", "-n", "aieng311", "--no-capture-output", "python", "-m", "aieng_workbench_mcp"],
+      "cwd": "aieng-ui/backend",
+      "env": {
+        "AIENG_BACKEND_URL": "http://127.0.0.1:8000",
+        "AIENG_MCP_MANAGED_APPROVAL": "1"
+      }
+    }
+  }
+}
+```
+
+### OpenAI Codex snippet
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.aieng-workbench]
+command = "uvx"
+args = [
+  "aieng-workbench-mcp[full]",
+  "--approval-mode", "client",
+  "--data-dir", "~/.aieng-workbench",
+]
+```
+
+For a local checkout with the live viewer:
+
+```toml
+[mcp_servers.aieng-workbench]
+command = "conda"
+args = ["run", "-n", "aieng311", "--no-capture-output", "python", "-m", "aieng_workbench_mcp"]
+cwd = "<absolute-path-to-clone>/aieng-ui/backend"
+
+[mcp_servers.aieng-workbench.env]
+AIENG_BACKEND_URL = "http://127.0.0.1:8000"
+AIENG_MCP_MANAGED_APPROVAL = "1"
+```
+
+### Cursor / VS Code MCP-compatible snippet
+
+Use `.vscode/mcp.json` style configuration:
+
+```json
+{
+  "servers": {
+    "aieng-workbench": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "aieng-workbench-mcp[full]",
+        "--approval-mode", "client",
+        "--data-dir", "~/.aieng-workbench"
+      ]
+    }
+  }
+}
+```
+
+For Docker/full viewer mode, prefer MCP-over-HTTP if your client supports it:
+
+```json
+{
+  "servers": {
+    "aieng-workbench": {
+      "type": "sse",
+      "url": "http://localhost:8765/sse"
+    }
+  }
+}
+```
+
+### Smoke checks
+
+CI-safe packaged smoke (stubbed CAD, no model/API/cloud dependency):
+
+```bash
+cd aieng-ui/backend
+python -m aieng_workbench_mcp.smoke
+```
+
+Installed form:
+
+```bash
+aieng-workbench-mcp-smoke
+```
+
+Manual real-CAD verification on a machine with `build123d`/OCP available:
+
+```bash
+python -m aieng_workbench_mcp.smoke --real-cad --data-dir ~/.aieng-workbench-smoke
+```
+
+Expected: the smoke reads an onboarding prompt/resource, creates a project,
+executes a simple bracket build path (stubbed by default, real with
+`--real-cad`), and proves hard-block approval mode returns
+`code="approval_blocked"` before dispatch.
+
+### Honesty boundaries
+
+- AIENG Workbench is not production-certified CAD/CAE software.
+- Solver execution must be evidenced by `cae.run_solver` output and result
+  artifacts; prompts/resources cannot make solver claims true.
+- Approval applies only to tools registered with `requires_approval=true`.
+- `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` is the server-enforced no-mutation mode.
+- `AIENG_MCP_MANAGED_APPROVAL=1` requires a reachable backend/viewer; if the
+  approval broker is unavailable, gated calls fail safe.
+- Soft discipline such as industrial-design review, face-pointer hygiene, and
+  4-view visual inspection is advisory. External agent prose is not fully
+  controlled by the workbench.
 
 ### Docker all-in-one (recommended packaged viewer mode)
 
@@ -80,7 +266,7 @@ below from a local checkout, or run a client-specific stdio bridge that launches
 
 ```powershell
 # from aieng-ui/backend/
-python -m app.mcp_server
+python -m aieng_workbench_mcp
 ```
 
 The process talks JSON-RPC over stdin/stdout. **Do not** run it in an
@@ -92,7 +278,7 @@ Logs go to stderr only (stdout is the protocol wire).
 ### HTTP / SSE (for debugging or multi-client setups)
 
 ```powershell
-python -m app.mcp_server --http --port 8765
+python -m aieng_workbench_mcp --http --port 8765
 ```
 
 Then point an MCP HTTP client at `http://127.0.0.1:8765/sse`.

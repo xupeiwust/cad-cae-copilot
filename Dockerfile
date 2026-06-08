@@ -48,7 +48,7 @@ COPY --from=frontend-build /src/aieng-ui/frontend/dist/ ./aieng-ui/frontend/dist
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install ./aieng \
-    && python -m pip install ./aieng-ui/backend \
+    && python -m pip install './aieng-ui/backend[full]' \
     && python -c "import build123d; import app.mcp_server"
 
 COPY docker/entrypoint.sh /opt/aieng/docker/entrypoint.sh

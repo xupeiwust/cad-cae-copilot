@@ -1933,3 +1933,27 @@ def test_fuselage_primitive_marks_model_organic(tmp_path: Path) -> None:
     assert out["status"] == "ok", out
     # organic helper hint → mechanical heuristics are skipped
     assert out["feature_graph"]["model_kind"] == "organic"
+
+
+# ── category starter templates produce code that actually builds ─────────────
+
+@pytest.mark.parametrize("message,expect_parts", [
+    ("model an airplane, fuselage length 500mm", {"fuselage", "wing", "tail_fin"}),
+    ("design a car body 420x180x140mm", {"body", "wheel_1", "wheel_4"}),
+    ("make a 200mm pulley wheel", {"wheel"}),
+])
+def test_category_template_code_builds(tmp_path: Path, message: str, expect_parts: set) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+    from app.cad_skill_planner import plan_build123d_skill
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "starter")
+    plan = plan_build123d_skill({"project_id": pid, "message": message})
+    assert plan["status"] == "ready", plan
+    exec_input = plan["proposed_input"]
+    out = execute_build123d_code(settings, pid, {"code": exec_input["code"], "thumbnail": False})
+    assert out["status"] == "ok", out
+    assert expect_parts.issubset(set(out["named_parts"])), (expect_parts, out["named_parts"])
+    # organic family → mechanical heuristics skipped
+    assert out["feature_graph"]["model_kind"] == "organic"

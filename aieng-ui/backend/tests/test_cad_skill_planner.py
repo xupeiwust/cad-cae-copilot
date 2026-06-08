@@ -166,3 +166,57 @@ def test_bushing_skill_rejects_invalid_od_id() -> None:
     assert result["status"] == "error"
     assert result["code"] == "invalid_bushing_dimensions"
     assert result["proposed_input"] == {}
+
+
+# ── organic starter families (aircraft / vehicle / wheel) ────────────────────
+
+def test_aircraft_skill_returns_organic_starter() -> None:
+    result = plan_build123d_skill({
+        "project_id": "p1",
+        "message": "model an airplane, fuselage length 500mm",
+    })
+
+    assert result["status"] == "ready"
+    assert result["pattern"] == "aircraft_fuselage"
+    code = result["proposed_input"]["code"]
+    assert result["proposed_input"]["model_kind"] == "organic"
+    assert "FUSELAGE_LENGTH = 500.000" in code
+    assert "fuselage_profile(" in code and "naca_airfoil(" in code
+    assert 'fuselage.label = "fuselage"' in code
+    assert "result = Compound(children=[fuselage, wing, tail_fin])" in code
+
+
+def test_vehicle_skill_returns_organic_starter_with_four_wheels() -> None:
+    result = plan_build123d_skill({
+        "project_id": "p1",
+        "message": "design a car body 420x180x140mm",
+    })
+
+    assert result["status"] == "ready"
+    assert result["pattern"] == "vehicle_body"
+    code = result["proposed_input"]["code"]
+    assert result["proposed_input"]["model_kind"] == "organic"
+    assert "BODY_LENGTH = 420.000" in code
+    assert "WHEEL_RADIUS" in code and "wheel(" in code
+    assert 'w.label = f"wheel_{_i}"' in code  # 4-wheel loop, label not f-string-mangled
+
+
+def test_wheel_skill_returns_organic_starter() -> None:
+    result = plan_build123d_skill({
+        "project_id": "p1",
+        "message": "make a 200mm pulley wheel",
+    })
+
+    assert result["status"] == "ready"
+    assert result["pattern"] == "wheel"
+    code = result["proposed_input"]["code"]
+    assert result["proposed_input"]["model_kind"] == "organic"
+    assert "RIM_RADIUS" in code and "WHEEL_WIDTH" in code
+    assert 'wheel_part.label = "wheel"' in code
+
+
+def test_vehicle_trigger_respects_word_boundaries() -> None:
+    # "scar"/"carbon" contain the substring "car" but must NOT match the vehicle family.
+    for msg in ("a scar on the panel", "a carbon fiber bracket"):
+        result = plan_build123d_skill({"project_id": "p1", "message": msg})
+        assert result.get("pattern") != "vehicle_body", msg

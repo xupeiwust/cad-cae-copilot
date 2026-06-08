@@ -81,6 +81,25 @@ def _is_bushing_request(text: str) -> bool:
     return "轴套" in text or "衬套" in text or "隔套" in text or "spacer" in lower or "bushing" in lower or "sleeve" in lower
 
 
+# Organic starter families. Short English tokens ("car", "jet") use word
+# boundaries so they don't match "scar"/"jetty"; Chinese uses substring.
+_AIRCRAFT_RE = re.compile(r"\b(airplane|aeroplane|aircraft|airliner|plane|fuselage|jet)\b", re.IGNORECASE)
+_VEHICLE_RE = re.compile(r"\b(car|cars|vehicle|truck|automobile|van|bus|suv|sedan)\b", re.IGNORECASE)
+_WHEEL_RE = re.compile(r"\b(wheel|wheels|tire|tires|tyre|tyres|pulley|roller)\b", re.IGNORECASE)
+
+
+def _is_aircraft_request(text: str) -> bool:
+    return bool(_AIRCRAFT_RE.search(text)) or any(k in text for k in ("飞机", "客机", "战机", "机身"))
+
+
+def _is_vehicle_request(text: str) -> bool:
+    return bool(_VEHICLE_RE.search(text)) or any(k in text for k in ("汽车", "卡车", "轿车", "货车"))
+
+
+def _is_wheel_request(text: str) -> bool:
+    return bool(_WHEEL_RE.search(text)) or any(k in text for k in ("轮子", "车轮", "轮胎", "皮带轮"))
+
+
 def _height_value(text: str) -> float | None:
     match = _HEIGHT_RE.search(text)
     if not match:
@@ -417,6 +436,105 @@ result = Compound(children=[bushing])
 """
 
 
+# ── organic starter families (use the runner's domain primitives) ────────────
+
+def _aircraft_code(
+    *,
+    length: float,
+    diameter: float,
+    wing_span: float,
+    wing_chord: float,
+    wing_thickness: float,
+    tail_span: float,
+) -> str:
+    return f"""from build123d import *
+
+FUSELAGE_LENGTH = {length:.3f}
+FUSELAGE_DIAMETER = {diameter:.3f}
+WING_SPAN = {wing_span:.3f}
+WING_CHORD = {wing_chord:.3f}
+WING_THICKNESS = {wing_thickness:.3f}
+TAIL_SPAN = {tail_span:.3f}
+
+# Fuselage is revolved along Z by the helper, then laid along X (nose toward +X).
+fuselage = fuselage_profile(FUSELAGE_LENGTH, FUSELAGE_DIAMETER)
+fuselage = fuselage.rotate(Axis.Y, 90).moved(Location((-FUSELAGE_LENGTH / 2, 0, 0)))
+fuselage.label = "fuselage"
+fuselage.color = Color(0.82, 0.84, 0.88)
+
+# Main wing: one airfoil spanning WING_SPAN along Y, chord along X, at mid-body.
+wing = naca_airfoil(WING_CHORD, WING_THICKNESS, span=WING_SPAN)
+wing = wing.moved(Location((-WING_CHORD / 2, -WING_SPAN / 2, 0)))
+wing.label = "wing"
+wing.color = Color(0.68, 0.72, 0.80)
+
+# Vertical tail fin at the rear, airfoil rotated into the X-Z plane.
+tail_fin = naca_airfoil(WING_CHORD * 0.55, WING_THICKNESS * 0.7, span=TAIL_SPAN)
+tail_fin = tail_fin.rotate(Axis.X, 90).moved(Location((-FUSELAGE_LENGTH * 0.40, 0, FUSELAGE_DIAMETER * 0.30)))
+tail_fin.label = "tail_fin"
+tail_fin.color = Color(0.68, 0.72, 0.80)
+
+result = Compound(children=[fuselage, wing, tail_fin])
+"""
+
+
+def _vehicle_code(
+    *,
+    length: float,
+    width: float,
+    height: float,
+    wheel_radius: float,
+    wheel_width: float,
+) -> str:
+    return f"""from build123d import *
+
+BODY_LENGTH = {length:.3f}
+BODY_WIDTH = {width:.3f}
+BODY_HEIGHT = {height:.3f}
+WHEEL_RADIUS = {wheel_radius:.3f}
+WHEEL_WIDTH = {wheel_width:.3f}
+
+# Rounded body, lifted to sit on the wheels.
+body = rounded_box(BODY_LENGTH, BODY_WIDTH, BODY_HEIGHT, radius=min(BODY_HEIGHT, BODY_WIDTH) * 0.25)
+body = body.moved(Location((0, 0, WHEEL_RADIUS + BODY_HEIGHT / 2)))
+body.label = "body"
+body.color = Color(0.20, 0.40, 0.70)
+
+# Four wheels: disc helper (axis Z) rotated to roll along X, placed at the corners.
+wheels = []
+_wx = BODY_LENGTH * 0.32
+_wy = BODY_WIDTH / 2
+for _i, (_x, _y) in enumerate([(-_wx, -_wy), (_wx, -_wy), (_wx, _wy), (-_wx, _wy)], start=1):
+    w = wheel(WHEEL_RADIUS * 0.55, WHEEL_RADIUS * 0.45, WHEEL_WIDTH)
+    w = w.rotate(Axis.X, 90).moved(Location((_x, _y, WHEEL_RADIUS)))
+    w.label = f"wheel_{{_i}}"
+    w.color = Color(0.12, 0.12, 0.14)
+    wheels.append(w)
+
+result = Compound(children=[body, *wheels])
+"""
+
+
+def _wheel_code(
+    *,
+    rim_radius: float,
+    tire_radius: float,
+    width: float,
+) -> str:
+    return f"""from build123d import *
+
+RIM_RADIUS = {rim_radius:.3f}
+TIRE_RADIUS = {tire_radius:.3f}
+WHEEL_WIDTH = {width:.3f}
+
+wheel_part = wheel(RIM_RADIUS, TIRE_RADIUS, WHEEL_WIDTH)
+wheel_part.label = "wheel"
+wheel_part.color = Color(0.20, 0.22, 0.25)
+
+result = Compound(children=[wheel_part])
+"""
+
+
 def plan_build123d_skill(payload: dict[str, Any]) -> dict[str, Any]:
     """Return a skill-authored build123d execution plan without mutating files.
 
@@ -726,6 +844,146 @@ def plan_build123d_skill(payload: dict[str, Any]) -> dict[str, Any]:
                 matched_terms=["mounting plate/base plate", "安装板"],
             ),
             pattern="mounting_plate",
+        )
+
+    if _is_aircraft_request(message):
+        length = float(payload.get("length_mm") or _tagged_value(message, _LENGTH_RE) or _first_mm(message) or 400.0)
+        diameter = float(payload.get("diameter_mm") or _tagged_value(message, _OD_RE) or max(20.0, length * 0.12))
+        wing_span = float(payload.get("wing_span_mm") or length * 0.95)
+        wing_chord = float(payload.get("wing_chord_mm") or length * 0.18)
+        wing_thickness = float(payload.get("wing_thickness_mm") or max(2.0, wing_chord * 0.12))
+        tail_span = float(payload.get("tail_span_mm") or diameter * 1.4)
+        code = _aircraft_code(
+            length=length, diameter=diameter, wing_span=wing_span,
+            wing_chord=wing_chord, wing_thickness=wing_thickness, tail_span=tail_span,
+        )
+        proposed_input = {
+            "project_id": project_id,
+            "name": f"{length:g}mm aircraft",
+            "code": code,
+            "mode": "replace",
+            "model_kind": "organic",
+            "timeout": 90,
+        }
+        return _skill_output(
+            SkillToolOutput(
+                status="ready",
+                skill_name="cad.plan_build123d_skill",
+                intent=message,
+                brief=(
+                    f"Aircraft starter: {length:g}mm fuselage (Ø{diameter:g}mm), "
+                    f"{wing_span:g}mm wing span, vertical tail fin."
+                ),
+                assumptions=[
+                    f"Interpreted fuselage length as {length:g}mm.",
+                    f"Defaulted fuselage diameter to {diameter:g}mm.",
+                    f"Defaulted wing span to {wing_span:g}mm, chord {wing_chord:g}mm.",
+                    "Built from the fuselage_profile + naca_airfoil organic primitives.",
+                    "A refine-from starting point, not a flight-accurate model.",
+                ],
+                proposed_tool="cad.execute_build123d",
+                proposed_input=proposed_input,
+                verification_targets=[
+                    "fuselage named part exists",
+                    "wing and tail_fin named parts exist",
+                    "FUSELAGE_LENGTH / WING_SPAN are editable parameters",
+                    "cad.design_review reports no floating components",
+                ],
+                match_confidence=0.80,
+                matched_terms=["airplane/aircraft/jet", "飞机/客机"],
+            ),
+            pattern="aircraft_fuselage",
+        )
+
+    if _is_vehicle_request(message):
+        dims = _dimension_values(message)
+        length = float(payload.get("length_mm") or (dims[0] if len(dims) >= 1 else 400.0))
+        width = float(payload.get("width_mm") or (dims[1] if len(dims) >= 2 else 180.0))
+        height = float(payload.get("height_mm") or (dims[2] if len(dims) >= 3 else 120.0))
+        wheel_radius = float(payload.get("wheel_radius_mm") or max(15.0, height * 0.55))
+        wheel_width = float(payload.get("wheel_width_mm") or max(8.0, width * 0.12))
+        code = _vehicle_code(
+            length=length, width=width, height=height,
+            wheel_radius=wheel_radius, wheel_width=wheel_width,
+        )
+        proposed_input = {
+            "project_id": project_id,
+            "name": f"{length:g}x{width:g}x{height:g}mm vehicle",
+            "code": code,
+            "mode": "replace",
+            "model_kind": "organic",
+            "timeout": 90,
+        }
+        return _skill_output(
+            SkillToolOutput(
+                status="ready",
+                skill_name="cad.plan_build123d_skill",
+                intent=message,
+                brief=(
+                    f"Vehicle starter: {length:g}x{width:g}x{height:g}mm rounded body "
+                    f"on four Ø{wheel_radius * 2:g}mm wheels."
+                ),
+                assumptions=[
+                    f"Interpreted body as {length:g}x{width:g}x{height:g}mm.",
+                    f"Defaulted wheel radius to {wheel_radius:g}mm, width {wheel_width:g}mm.",
+                    "Built from the rounded_box + wheel organic primitives.",
+                    "A refine-from starting point; not a specific make/model.",
+                ],
+                proposed_tool="cad.execute_build123d",
+                proposed_input=proposed_input,
+                verification_targets=[
+                    "body named part exists",
+                    "wheel_1 through wheel_4 named parts exist",
+                    "BODY_LENGTH / WHEEL_RADIUS are editable parameters",
+                    "cad.design_review reports the wheels are not floating",
+                ],
+                match_confidence=0.80,
+                matched_terms=["car/truck/vehicle", "汽车/卡车"],
+            ),
+            pattern="vehicle_body",
+        )
+
+    if _is_wheel_request(message):
+        outer_diameter = float(payload.get("diameter_mm") or _tagged_value(message, _OD_RE) or _first_mm(message) or 200.0)
+        outer_radius = outer_diameter / 2
+        rim_radius = float(payload.get("rim_radius_mm") or outer_radius * 0.6)
+        tire_radius = float(payload.get("tire_radius_mm") or max(2.0, outer_radius - rim_radius))
+        width = float(payload.get("width_mm") or max(10.0, outer_radius * 0.5))
+        code = _wheel_code(rim_radius=rim_radius, tire_radius=tire_radius, width=width)
+        proposed_input = {
+            "project_id": project_id,
+            "name": f"Ø{outer_diameter:g}mm wheel",
+            "code": code,
+            "mode": "replace",
+            "model_kind": "organic",
+            "timeout": 60,
+        }
+        return _skill_output(
+            SkillToolOutput(
+                status="ready",
+                skill_name="cad.plan_build123d_skill",
+                intent=message,
+                brief=(
+                    f"Wheel starter: Ø{outer_diameter:g}mm outer, {width:g}mm wide, "
+                    f"rim radius {rim_radius:g}mm, central axle bore."
+                ),
+                assumptions=[
+                    f"Interpreted outer diameter as {outer_diameter:g}mm.",
+                    f"Defaulted rim radius to {rim_radius:g}mm, tire band {tire_radius:g}mm.",
+                    f"Defaulted width to {width:g}mm.",
+                    "Built from the wheel organic primitive (disc + axle bore).",
+                ],
+                proposed_tool="cad.execute_build123d",
+                proposed_input=proposed_input,
+                verification_targets=[
+                    "wheel named part exists",
+                    "RIM_RADIUS / WHEEL_WIDTH are editable parameters",
+                    "cad.design_review reports a single connected component",
+                ],
+                match_confidence=0.82,
+                matched_terms=["wheel/tire/pulley", "轮子/车轮/轮胎"],
+            ),
+            pattern="wheel",
         )
 
     if not _is_flange_request(message):

@@ -2672,10 +2672,13 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         input_schema=_schema("cad.plan_build123d_skill"),
         description=(
             "Read-only CAD skill planner. Use this before cad.execute_build123d for common "
-            "create-new mechanical parts such as flanges. It interprets the user's request, "
-            "records assumptions, and returns a parameterized build123d execute_input for "
-            "the agent to review and then pass to cad.execute_build123d through the normal "
-            "approval gate. It does not mutate the package and does not bypass Autopilot."
+            "create-new parts — mechanical (flange, mounting plate, L-bracket, enclosure, "
+            "bushing) and organic starters (aircraft, vehicle/car, wheel, built from the "
+            "fuselage_profile/naca_airfoil/wheel/rounded_box primitives). It interprets the "
+            "request, records assumptions, and returns a parameterized build123d execute_input "
+            "(UPPER_SNAKE_CASE constants, named parts) for the agent to review and then pass to "
+            "cad.execute_build123d through the normal approval gate. It does not mutate the "
+            "package and does not bypass Autopilot."
         ),
     )
 

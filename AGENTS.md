@@ -476,7 +476,10 @@ their own image search can also find a URL and pass it to
 
 **Response summary fields** (text-side feedback, useful when your client drops the image):
 `named_parts` (all named parts now in the model), `parts_added` (what this step added),
-`mode` (`replace`/`append`), `used_base` (whether an append consumed a prior model).
+`mode` (`replace`/`append`), `used_base` (whether an append consumed a prior model),
+`geometry_report_summary` (always present in **both** `response_detail` modes — a one-line
+`part_count / size / proportions / floating=N / symmetry_issues=N`; non-zero `floating` or
+`symmetry_issues` is your cue to call `cad.design_review` and self-correct before reporting done).
 
 **Quantitative geometry report (`geometry_report`).** Every `cad.execute_build123d`
 and `cad.edit_parameter` response carries a deterministic `geometry_report` —

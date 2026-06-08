@@ -1957,3 +1957,23 @@ def test_category_template_code_builds(tmp_path: Path, message: str, expect_part
     assert expect_parts.issubset(set(out["named_parts"])), (expect_parts, out["named_parts"])
     # organic family → mechanical heuristics skipped
     assert out["feature_graph"]["model_kind"] == "organic"
+
+
+def test_execute_response_always_includes_geometry_report_summary(tmp_path: Path) -> None:
+    """geometry_report_summary is a stable one-liner in BOTH detail modes."""
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "summary-contract")
+    code = "from build123d import *\nbody = Box(40, 40, 10); body.label='base'\nresult = Compound(children=[body])\n"
+
+    full = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False, "response_detail": "full"})
+    compact = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False, "response_detail": "compact"})
+    for out in (full, compact):
+        assert out["status"] == "ok", out
+        assert isinstance(out["geometry_report_summary"], str)
+        assert out["geometry_report_summary"].startswith("geometry:")
+    # full mode keeps the rich dict under geometry_report; compact collapses it to the summary
+    assert isinstance(full["geometry_report"], dict)
+    assert isinstance(compact["geometry_report"], str)

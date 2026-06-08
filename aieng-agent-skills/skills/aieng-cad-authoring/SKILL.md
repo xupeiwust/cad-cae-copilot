@@ -32,9 +32,38 @@ For solver workflows, use `aieng-cad-cae-copilot`.
    - sets `.label` on every meaningful part,
    - sets `.color = Color(r,g,b)` for readability,
    - declares editable dimensions as `UPPER_SNAKE_CASE` constants.
-4. Inspect the returned thumbnail, `named_parts`, `parts_added`, `geometry_report`, symmetry, and gaps before continuing.
+4. Inspect the returned thumbnail, `named_parts`, `parts_added`, `geometry_report_summary`, symmetry, and gaps before continuing.
 5. For pure dimensional changes, use `cad.edit_parameter` and read `regression_diff` before trusting the result.
 6. For mechanical parts, call `cad.critique` after creation and fix blocking manufacturability findings.
+
+## Self-correction before presenting a result
+
+Do not present a build as done just because it executed. Read the deterministic
+signals every `cad.execute_build123d` / `edit_parameter` / `replace_part` /
+`remove_part` returns and self-correct first:
+
+- **`geometry_report_summary`** is always present (both `response_detail` modes):
+  a one-line `part_count / size / proportions / floating=N / symmetry_issues=N`.
+  Non-zero `floating` means a part is detached (usually a coordinate typo);
+  non-zero `symmetry_issues` means a left/right pair is mismatched or missing.
+- **When `floating` or `symmetry_issues` is non-zero, call `cad.design_review`**
+  (read-only). It folds the critique + those structural signals into one
+  severity-ranked `actions` list and binds each fixable finding to a concrete
+  `cad.edit_parameter` target (`featureId` / `parameterName` / range). Fix the
+  highest-severity targets, then re-run the review. It mutates nothing — applying
+  a fix still goes through the approval-gated edit path.
+- **Reference images.** When the user names a real product / character / vehicle
+  but supplies no picture, call `cad.search_reference_image { project_id, query }`
+  before iterating — it attaches a Wikimedia Commons match so every thumbnail is
+  calibrated against the real proportions. Verify the returned `page_url`'s
+  source/license; `status: "no_results"` just means proceed without one. If the
+  user gives a URL/file, use `cad.set_reference_image` directly.
+- **Reversibility.** Each successful CAD mutation is auto-snapshotted; if an edit
+  goes wrong, `cad.list_snapshots` then `cad.restore_snapshot` rolls back
+  (approval-gated). Iterate freely rather than over-planning a single build.
+- **Category starters.** For a common shape (flange, plate, bracket, enclosure,
+  bushing, aircraft, vehicle, wheel), `cad.plan_build123d_skill` returns a
+  parameterized starting point with editable constants — review it, then execute.
 
 ## Standard parts (bd_warehouse)
 

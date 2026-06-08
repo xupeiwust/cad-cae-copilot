@@ -260,3 +260,37 @@ def test_invalid_fixture_json_surfaces_as_invalid(tmp_path: Path) -> None:
 
 # ── extra: is_cad_related_action gate ────────────────────────────────────────
 
+
+
+def test_observe_cad_state_surfaces_geometry_self_correction_signals(tmp_path: Path) -> None:
+    """A topology with a floating part + asymmetric pair → geometry_report signals
+    + a run_design_review recommendation, so connected agents self-correct."""
+    settings = _make_settings(tmp_path)
+    project_id, pkg = _make_project(settings, "obs-geo", "obs-geo.aieng")
+    topo = {"entities": [
+        {"type": "solid", "id": "b1", "name": "torso", "bounding_box": [-30, -15, 100, 30, 15, 300]},
+        {"type": "solid", "id": "b2", "name": "arm_L", "bounding_box": [-50, -10, 150, -30, 10, 290]},
+        {"type": "solid", "id": "b3", "name": "arm_R", "bounding_box": [30, -10, 150, 50, 10, 250]},
+        {"type": "solid", "id": "b4", "name": "foot_FL", "bounding_box": [-200, -10, -20, -180, 10, 0]},
+    ]}
+    _make_minimal_package(pkg, extra_members={"geometry/topology_map.json": json.dumps(topo).encode()})
+
+    obs = observe_cad_state(settings, project_id)
+    assert obs["geometry_report_summary"] and "floating=" in obs["geometry_report_summary"]
+    assert "foot_FL" in obs["floating_parts"]
+    assert set(obs["broken_symmetry"]) >= {"arm_L", "arm_R"}
+    kinds = {r.get("kind") for r in obs["next_recommended_actions"]}
+    assert "run_design_review" in kinds
+
+
+def test_observe_cad_state_no_geometry_has_empty_self_correction_signals(tmp_path: Path) -> None:
+    """No topology → empty signals, no design_review recommendation (nothing to fix)."""
+    settings = _make_settings(tmp_path)
+    project_id, pkg = _make_project(settings, "obs-empty", "obs-empty.aieng")
+    _make_minimal_package(pkg)  # manifest only
+
+    obs = observe_cad_state(settings, project_id)
+    assert obs["geometry_report_summary"] is None
+    assert obs["floating_parts"] == [] and obs["broken_symmetry"] == []
+    kinds = {r.get("kind") for r in obs["next_recommended_actions"]}
+    assert "run_design_review" not in kinds

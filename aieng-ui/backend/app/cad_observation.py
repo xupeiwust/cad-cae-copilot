@@ -245,6 +245,25 @@ def cad_specific_recommendations(observation: dict[str, Any]) -> list[dict[str, 
     evidence = observation.get("geometry_evidence_level")
     out: list[dict[str, Any]] = []
 
+    # Self-correction: when the geometry report flags floating parts or broken
+    # symmetry, point the agent at the read-only design review (which binds each
+    # fixable finding to a concrete cad.edit_parameter target) before it presents
+    # the result as done.
+    floating = observation.get("floating_parts") or []
+    broken_sym = observation.get("broken_symmetry") or []
+    if floating or broken_sym:
+        out.append(_rec(
+            "run_design_review",
+            "Run cad.design_review for a prioritized, fixable list of the geometry issues.",
+            rationale=(
+                f"The geometry report flags {len(floating)} floating part(s) and "
+                f"{len(broken_sym)} broken-symmetry part(s). design_review binds each "
+                "fixable finding to a concrete cad.edit_parameter target; fix the "
+                "highest-severity ones, then re-run."
+            ),
+            reference="cad.design_review",
+        ))
+
     if status == "missing" or evidence == "none":
         out.append(_rec(
             "generate_cad_fixture",
@@ -644,12 +663,42 @@ def observe_cad_state(
             )
         summary = " ".join(summary_lines)
 
+        # Geometry self-correction signals — the same structural data
+        # cad.design_review folds in (floating parts, broken left/right
+        # symmetry), surfaced here so a connected agent sees them without a
+        # separate call. Computed from the topology map; best-effort.
+        geometry_report_summary: str | None = None
+        floating_parts: list[str] = []
+        broken_symmetry: list[str] = []
+        if isinstance(topology, dict) and topology.get("entities"):
+            try:
+                from .cad_generation import _compute_geometry_report, _geometry_report_summary
+
+                report = _compute_geometry_report(topology)
+                geometry_report_summary = _geometry_report_summary(report)
+                floating_parts = [str(p) for p in (report.get("floating_parts") or [])]
+                for sym in report.get("symmetry") or []:
+                    if not isinstance(sym, dict):
+                        continue
+                    if sym.get("ok") is False or sym.get("status") == "missing_partner":
+                        if sym.get("part"):
+                            broken_symmetry.append(str(sym["part"]))
+                        for name in sym.get("pair") or []:
+                            if name:
+                                broken_symmetry.append(str(name))
+            except Exception:
+                geometry_report_summary = None
+        broken_symmetry = _unique(broken_symmetry)
+
         observation = {
             "schema_version": SCHEMA_VERSION,
             "status": status,
             "source_artifacts": _unique(source_artifacts),
             "geometry_evidence_level": evidence_level,
             "summary": summary,
+            "geometry_report_summary": geometry_report_summary,
+            "floating_parts": floating_parts,
+            "broken_symmetry": broken_symmetry,
             "known_geometry": known_geometry,
             "known_parameters": known_parameters,
             "known_materials": known_materials,

@@ -529,6 +529,10 @@ def test_mcp_first_resource_is_registered(mcp_server) -> None:
     assert "aieng.agent_readme" in text
     assert "cae.prepare_solver_run" in text
     assert "cad.execute_build123d" in text
+    assert "Pointer ergonomics" in text
+    assert "@edge" in text
+    assert "front/side/top/iso" in text
+    assert "Industrial-design / manufacturability review" in text
 
 
 # ── coerce_result serialisation ───────────────────────────────────────────────
@@ -612,6 +616,41 @@ def test_forward_to_backend_posts_and_parses(monkeypatch) -> None:
     assert out["status"] == "ok"
     assert captured["url"].endswith("/api/agent/invoke-tool")
     assert captured["body"] == {"tool": "aieng.inspect_package", "input": {"project_id": "p1"}}
+
+
+def test_mcp_hard_block_refuses_every_gated_registry_tool(monkeypatch) -> None:
+    """A raw MCP client cannot bypass any requires_approval registry tool in hard-block mode."""
+    import asyncio
+
+    import app.mcp_server as ms
+
+    monkeypatch.setenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", "1")
+    monkeypatch.setenv("AIENG_MCP_REQUIRE_GUIDES", "0")
+    monkeypatch.setattr(ms, "_BACKEND_URL", "")
+
+    def _should_not_invoke(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("hard-blocked gated tool must not invoke runtime")
+
+    monkeypatch.setattr(_rt, "invoke_tool", _should_not_invoke)
+    mcp = ms._build_mcp_server()
+    gated = [entry["name"] for entry in _rt.list_tools_for_mcp() if entry.get("requires_approval")]
+    assert gated, "registry should expose approval-gated tools"
+
+    payload = {
+        "project_id": "p1",
+        "code": "result = None",
+        "featureId": "feat",
+        "parameterName": "radius_mm",
+        "newValue": 1,
+        "label": "part",
+        "patch": {"operations": []},
+        "patches": [],
+    }
+    for tool_name in gated:
+        out = asyncio.run(mcp.call_tool(_mcp_name(tool_name), payload))
+        blocked = json.loads(_tool_text(out))
+        assert blocked["code"] == "approval_blocked", tool_name
+        assert blocked["tool"] == tool_name
 
 
 def test_coerce_result_handles_completely_unserialisable() -> None:

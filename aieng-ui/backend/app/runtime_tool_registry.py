@@ -2843,6 +2843,30 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         ),
     )
 
+    def _tool_cad_search_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.search_reference_image(active_settings, str(project_id), inp)
+
+    _rt.register_tool(
+        "cad.search_reference_image",
+        _tool_cad_search_reference_image,
+        input_schema=_schema("cad.search_reference_image"),
+        description=(
+            "Search Wikimedia Commons for a reference image matching a free-text query "
+            "(e.g. 'Boeing 747 side view') and attach the best raster match to the project "
+            "as its reference image — a convenience wrapper around cad.set_reference_image "
+            "for when the user names a real product/character/vehicle but supplies no picture. "
+            "Returns the matched page_url so the source and its license can be verified. "
+            "Degrades gracefully: status='no_results' means proceed without a reference. "
+            "Like cad.set_reference_image, the image is stored as geometry/reference.png and "
+            "every future cad.execute_build123d thumbnail tiles it for side-by-side calibration."
+        ),
+    )
+
     def _tool_cad_get_named_part_bbox(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
 

@@ -506,6 +506,32 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    "cad.search_reference_image": {
+        "type": "object",
+        "required": ["project_id", "query"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "query": {
+                "type": "string",
+                "description": (
+                    "Free-text image search, e.g. 'Boeing 747 side view' or "
+                    "'Eames lounge chair'. Searched against Wikimedia Commons; "
+                    "the best-ranked raster match is fetched and attached as "
+                    "the project's reference image."
+                ),
+            },
+            "source": {
+                "type": "string",
+                "description": "Reference source; only 'wikimedia' is supported (default).",
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional caption override stored in geometry/reference.json.",
+            },
+        },
+        "additionalProperties": True,
+    },
+
     # ── Critique: deterministic engineering audit (read-only) ───────────────
     "cad.critique": {
         "type": "object",

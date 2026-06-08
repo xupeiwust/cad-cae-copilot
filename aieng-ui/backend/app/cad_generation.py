@@ -4751,6 +4751,184 @@ def set_reference_image(
     }
 
 
+# ── reference image search (Wikimedia Commons) ───────────────────────────────
+
+_WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
+_REFERENCE_SEARCH_UA = (
+    "aieng-workbench/1.0 (CAD reference search; "
+    "https://github.com/armpro24-blip/workspace_aieng)"
+)
+
+
+def _search_wikimedia_images(
+    query: str, *, limit: int = 10, thumb_width: int = 1024
+) -> list[dict[str, Any]]:
+    """Query Wikimedia Commons for File-namespace images matching ``query``.
+
+    Returns candidates ranked by Wikimedia's search relevance, each as
+    ``{title, url, width, height, mime, page_url}``. SVG and result rows
+    without a usable raster URL are filtered out (set_reference_image needs
+    raster bytes that PIL can decode). Raises on network/parse failure so the
+    caller can shape the error response.
+    """
+    import urllib.parse
+    import urllib.request
+
+    params = {
+        "action": "query",
+        "format": "json",
+        "generator": "search",
+        "gsrsearch": query,
+        "gsrnamespace": "6",  # File: namespace
+        "gsrlimit": str(limit),
+        "prop": "imageinfo",
+        "iiprop": "url|size|mime",
+        "iiurlwidth": str(thumb_width),
+    }
+    url = f"{_WIKIMEDIA_API}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": _REFERENCE_SEARCH_UA, "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    pages = ((data.get("query") or {}).get("pages") or {})
+    # generator=search annotates each page with `index` = search rank (1-based).
+    ranked = sorted(pages.values(), key=lambda p: p.get("index", 1_000_000))
+    candidates: list[dict[str, Any]] = []
+    for page in ranked:
+        infos = page.get("imageinfo") or []
+        if not infos:
+            continue
+        info = infos[0]
+        mime = str(info.get("mime") or "")
+        if not mime.startswith("image/") or mime == "image/svg+xml":
+            continue
+        # Prefer the scaled thumb (smaller download); fall back to the full url.
+        img_url = info.get("thumburl") or info.get("url")
+        if not img_url:
+            continue
+        candidates.append(
+            {
+                "title": page.get("title"),
+                "url": img_url,
+                "width": info.get("thumbwidth") or info.get("width"),
+                "height": info.get("thumbheight") or info.get("height"),
+                "mime": mime,
+                "page_url": info.get("descriptionurl"),
+            }
+        )
+    return candidates
+
+
+def search_reference_image(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Search Wikimedia Commons for a reference image and attach the best match.
+
+    A convenience wrapper around :func:`set_reference_image`: it resolves a
+    free-text query (e.g. ``"Boeing 747 side view"``) to a real image URL from
+    Wikimedia Commons, then delegates to ``set_reference_image`` to fetch,
+    downscale, and store it. The matched ``page_url`` is returned so the user
+    can verify the source and its license before relying on it. Degrades
+    gracefully: when nothing usable is found it returns ``status="no_results"``
+    and the caller proceeds without a reference instead of failing the build.
+
+    Payload keys:
+        query:       required free-text search string.
+        source:      optional; only "wikimedia" is supported (default).
+        description: optional caption override stored with the reference.
+    """
+    query = (payload.get("query") or "").strip()
+    if not query:
+        return {
+            "status": "error",
+            "code": "missing_query",
+            "message": "query is required (e.g. 'Boeing 747 side view').",
+        }
+
+    source = str(payload.get("source") or "wikimedia").strip().lower()
+    if source != "wikimedia":
+        return {
+            "status": "error",
+            "code": "unsupported_source",
+            "message": (
+                f"Unsupported reference source '{source}'. "
+                "Only 'wikimedia' is supported."
+            ),
+        }
+
+    try:
+        candidates = _search_wikimedia_images(query)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "code": "search_failed",
+            "message": f"Wikimedia search failed: {exc}",
+        }
+
+    if not candidates:
+        return {
+            "status": "no_results",
+            "project_id": project_id,
+            "query": query,
+            "source": source,
+            "message": (
+                f"No usable Wikimedia Commons image found for '{query}'. "
+                "Proceed without a reference, or attach one manually with "
+                "cad.set_reference_image."
+            ),
+        }
+
+    # Try candidates in rank order; the first that set_reference_image can
+    # actually fetch + decode wins (guards against dead thumbs / odd formats).
+    last_error: str | None = None
+    caption = (payload.get("description") or "").strip() or f"{query} (Wikimedia Commons)"
+    for cand in candidates:
+        attached = set_reference_image(
+            settings,
+            project_id,
+            {"image_url": cand["url"], "description": caption},
+        )
+        if attached.get("status") == "ok":
+            return {
+                "status": "ok",
+                "project_id": project_id,
+                "query": query,
+                "source": source,
+                "attached": True,
+                "matched_url": cand["url"],
+                "page_url": cand.get("page_url"),
+                "title": cand.get("title"),
+                "width": attached.get("width"),
+                "height": attached.get("height"),
+                "byte_size_kb": attached.get("byte_size_kb"),
+                "candidates_considered": len(candidates),
+                "message": (
+                    f"Attached a Wikimedia Commons reference for '{query}'. "
+                    "Verify the source/license at page_url. Future "
+                    "cad.execute_build123d thumbnails will tile it for "
+                    "side-by-side comparison."
+                ),
+            }
+        last_error = attached.get("message")
+
+    return {
+        "status": "error",
+        "code": "attach_failed",
+        "project_id": project_id,
+        "query": query,
+        "source": source,
+        "message": (
+            f"Found {len(candidates)} candidate(s) but none could be "
+            f"fetched/decoded. Last error: {last_error}"
+        ),
+    }
+
+
 # ── critique: deterministic engineering audit ────────────────────────────────
 
 # Canonical labels (from aieng/schemas/feature_graph.schema.json type enum)

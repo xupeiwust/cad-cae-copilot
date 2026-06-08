@@ -456,6 +456,15 @@ proportions; with one, fail-first review can cite specific mismatches like
 "forearm tapers wrong: reference shows widening toward the wrist, my build
 narrows."
 
+When the user names a real target but supplies **no** picture, call
+`cad.search_reference_image { project_id, query }` (e.g. `query: "Boeing 747
+side view"`). It searches Wikimedia Commons, attaches the best raster match via
+the same path as `cad.set_reference_image`, and returns the matched `page_url`
+so the source and its license can be verified. It degrades gracefully —
+`status: "no_results"` just means proceed without a reference. (Agents with
+their own image search can also find a URL and pass it to
+`cad.set_reference_image` directly.)
+
 **Response summary fields** (text-side feedback, useful when your client drops the image):
 `named_parts` (all named parts now in the model), `parts_added` (what this step added),
 `mode` (`replace`/`append`), `used_base` (whether an append consumed a prior model).
@@ -846,6 +855,7 @@ fixture and load on flat interfaces.
 | `cad.replace_part` | Swap ONE named part (by `.label`) for caller-supplied build123d code, keeping everything else. Re-executes, no LLM. See "Part-level edits" below |
 | `cad.remove_part` | Drop ONE named part (by `.label`) from the model. Re-executes, no LLM |
 | `cad.set_reference_image` | Attach a reference photo/drawing to a project so future thumbnails include it side-by-side for proportion calibration |
+| `cad.search_reference_image` | Search Wikimedia Commons for `query` and auto-attach the best match via `cad.set_reference_image` — use when the user names a real target but gives no picture. Returns `page_url` for source/license verification; `no_results` degrades gracefully. No approval (same as `set_reference_image`) |
 
 Before an incremental edit, call **`cad.get_source`** (read-only) to see the current
 accumulated script, which named parts already exist, and whether `has_base` (append

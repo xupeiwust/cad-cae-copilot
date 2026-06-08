@@ -1637,3 +1637,134 @@ def test_execute_nurbs_source_builds_brep_face() -> None:
     faces = [e for e in topo.get("entities", []) if e.get("type") == "face"]
     assert faces, "NURBS surface must yield at least one B-Rep face"
     assert any(f.get("surface_type") == "bspline" for f in faces)
+
+
+# ── cad.search_reference_image (Wikimedia Commons) ───────────────────────────
+
+def _fake_urlopen_json(payload: dict) -> MagicMock:
+    """Build a urlopen() return value usable as a context manager yielding JSON."""
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode("utf-8")
+    cm = MagicMock()
+    cm.__enter__.return_value = resp
+    cm.__exit__.return_value = False
+    return cm
+
+
+def test_search_wikimedia_images_filters_svg_and_ranks_by_index() -> None:
+    from app import cad_generation as cg
+
+    api_payload = {
+        "query": {
+            "pages": {
+                "20": {  # higher index -> ranked second
+                    "title": "File:Plane B.jpg",
+                    "index": 2,
+                    "imageinfo": [{
+                        "mime": "image/jpeg",
+                        "thumburl": "https://upload.wikimedia.org/b_thumb.jpg",
+                        "url": "https://upload.wikimedia.org/b_full.jpg",
+                        "thumbwidth": 1024, "thumbheight": 600,
+                        "descriptionurl": "https://commons.wikimedia.org/wiki/File:Plane_B.jpg",
+                    }],
+                },
+                "10": {  # lower index -> ranked first
+                    "title": "File:Plane A.png",
+                    "index": 1,
+                    "imageinfo": [{
+                        "mime": "image/png",
+                        "thumburl": "https://upload.wikimedia.org/a_thumb.png",
+                        "url": "https://upload.wikimedia.org/a_full.png",
+                        "thumbwidth": 1024, "thumbheight": 700,
+                        "descriptionurl": "https://commons.wikimedia.org/wiki/File:Plane_A.png",
+                    }],
+                },
+                "30": {  # SVG must be filtered out
+                    "title": "File:Plane C.svg",
+                    "index": 3,
+                    "imageinfo": [{
+                        "mime": "image/svg+xml",
+                        "url": "https://upload.wikimedia.org/c.svg",
+                        "descriptionurl": "https://commons.wikimedia.org/wiki/File:Plane_C.svg",
+                    }],
+                },
+            }
+        }
+    }
+    with patch("urllib.request.urlopen", return_value=_fake_urlopen_json(api_payload)):
+        candidates = cg._search_wikimedia_images("airplane")
+
+    assert [c["title"] for c in candidates] == ["File:Plane A.png", "File:Plane B.jpg"]
+    assert candidates[0]["url"] == "https://upload.wikimedia.org/a_thumb.png"  # thumb preferred
+    assert candidates[0]["page_url"].endswith("File:Plane_A.png")
+
+
+def test_search_reference_image_attaches_best_match() -> None:
+    from app import cad_generation as cg
+
+    candidates = [
+        {"title": "File:A.jpg", "url": "https://x/a.jpg", "width": 1024, "height": 700,
+         "mime": "image/jpeg", "page_url": "https://commons.wikimedia.org/wiki/File:A.jpg"},
+    ]
+    attach_result = {"status": "ok", "width": 800, "height": 547, "byte_size_kb": 42.0}
+    with (
+        patch.object(cg, "_search_wikimedia_images", return_value=candidates),
+        patch.object(cg, "set_reference_image", return_value=attach_result) as mock_set,
+    ):
+        out = cg.search_reference_image(None, "proj1", {"query": "Boeing 747 side view"})
+
+    assert out["status"] == "ok"
+    assert out["attached"] is True
+    assert out["matched_url"] == "https://x/a.jpg"
+    assert out["page_url"].endswith("File:A.jpg")
+    assert out["byte_size_kb"] == 42.0
+    assert out["candidates_considered"] == 1
+    # Delegates the fetch/store to set_reference_image with the resolved URL.
+    assert mock_set.call_args.args[2]["image_url"] == "https://x/a.jpg"
+
+
+def test_search_reference_image_falls_back_to_next_candidate() -> None:
+    from app import cad_generation as cg
+
+    candidates = [
+        {"title": "File:Dead.jpg", "url": "https://x/dead.jpg", "page_url": "p1"},
+        {"title": "File:Good.jpg", "url": "https://x/good.jpg", "page_url": "p2"},
+    ]
+    results = [
+        {"status": "error", "code": "fetch_failed", "message": "404"},
+        {"status": "ok", "width": 800, "height": 600, "byte_size_kb": 30.0},
+    ]
+    with (
+        patch.object(cg, "_search_wikimedia_images", return_value=candidates),
+        patch.object(cg, "set_reference_image", side_effect=results),
+    ):
+        out = cg.search_reference_image(None, "proj1", {"query": "thing"})
+
+    assert out["status"] == "ok"
+    assert out["matched_url"] == "https://x/good.jpg"
+
+
+def test_search_reference_image_no_results() -> None:
+    from app import cad_generation as cg
+
+    with patch.object(cg, "_search_wikimedia_images", return_value=[]):
+        out = cg.search_reference_image(None, "proj1", {"query": "asdfqwerty nonexistent"})
+    assert out["status"] == "no_results"
+    assert "proceed without a reference" in out["message"].lower()
+
+
+def test_search_reference_image_search_failure_is_graceful() -> None:
+    from app import cad_generation as cg
+
+    with patch.object(cg, "_search_wikimedia_images", side_effect=OSError("network down")):
+        out = cg.search_reference_image(None, "proj1", {"query": "thing"})
+    assert out["status"] == "error"
+    assert out["code"] == "search_failed"
+
+
+def test_search_reference_image_validates_input() -> None:
+    from app import cad_generation as cg
+
+    assert cg.search_reference_image(None, "p", {"query": "   "})["code"] == "missing_query"
+    bad_source = cg.search_reference_image(None, "p", {"query": "x", "source": "bing"})
+    assert bad_source["code"] == "unsupported_source"

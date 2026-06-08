@@ -1768,3 +1768,133 @@ def test_search_reference_image_validates_input() -> None:
     assert cg.search_reference_image(None, "p", {"query": "   "})["code"] == "missing_query"
     bad_source = cg.search_reference_image(None, "p", {"query": "x", "source": "bing"})
     assert bad_source["code"] == "unsupported_source"
+
+
+# ── cad.design_review (critique + structure + fix targets) ───────────────────
+
+def test_design_review_symmetry_findings_from_report() -> None:
+    from app import cad_generation as cg
+
+    report = {
+        "symmetry": [
+            {"pair": ["arm_L", "arm_R"], "ok": False, "mirror_axis": "x", "align_residual_mm": 12.0},
+            {"pair": ["leg_L", "leg_R"], "ok": True, "mirror_axis": "x"},  # ignored
+            {"part": "ear_L", "expected_partner": "ear_R", "status": "missing_partner"},
+        ]
+    }
+    findings = cg._symmetry_findings(report)
+    rules = [f["rule"] for f in findings]
+    assert rules == ["broken_symmetry", "broken_symmetry"]  # ok==True pair skipped
+    assert all(f["severity"] == "medium" and f["category"] == "structure" for f in findings)
+    assert "arm_L / arm_R" in findings[0]["feature"]
+    assert "ear_R" in findings[1]["observation"]
+
+
+def _param_entry(cad_name: str, tokens: set[str], **kw) -> dict:
+    base = {
+        "feature_id": kw.get("feature_id", "f1"), "feature_name": "global_params",
+        "feature_type": "global_params", "scope": "global",
+        "parameter_name": kw.get("parameter_name", "thickness_mm"),
+        "cad_parameter_name": cad_name, "current_value": kw.get("current_value", 2.0),
+        "min_value": 1.0, "max_value": 20.0, "search_tokens": sorted(tokens),
+    }
+    return base
+
+
+def test_bind_finding_to_parameter_unique_match() -> None:
+    from app import cad_generation as cg
+
+    index = [_param_entry("WALL_THICKNESS", {"wall", "thickness"})]
+    finding = {"feature": "wall_front", "rule": "min_wall_thickness"}
+    target = cg._bind_finding_to_parameter(finding, index)
+    assert target["known"] is True
+    assert target["cad_parameter_name"] == "WALL_THICKNESS"
+    assert target["min_value"] == 1.0 and target["max_value"] == 20.0
+
+
+def test_bind_finding_to_parameter_ambiguous_lists_candidates() -> None:
+    from app import cad_generation as cg
+
+    index = [
+        _param_entry("WALL_THICKNESS", {"wall", "thickness"}, feature_id="a", parameter_name="p1"),
+        _param_entry("WALL_THICKNESS_2", {"wall", "thickness"}, feature_id="b", parameter_name="p2"),
+    ]
+    finding = {"feature": "wall", "rule": "min_wall_thickness"}
+    target = cg._bind_finding_to_parameter(finding, index)
+    assert target["known"] is False
+    assert len(target["candidates"]) == 2
+
+
+def test_bind_finding_to_parameter_no_index_or_no_overlap_is_none() -> None:
+    from app import cad_generation as cg
+
+    assert cg._bind_finding_to_parameter({"feature": "wall", "rule": "x"}, None) is None
+    index = [_param_entry("BOLT_CIRCLE_DIA", {"bolt", "circle", "dia"})]
+    assert cg._bind_finding_to_parameter({"feature": "rib_main", "rule": "min_wall_thickness"}, index) is None
+
+
+def test_design_review_merges_critique_and_respects_detail(tmp_path: Path) -> None:
+    from app import cad_generation as cg
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "review-merge")  # no geometry → no package
+    fake_crit = {
+        "status": "ok", "verdict": "passes_with_notes",
+        "findings": [{"id": "find_001", "severity": "low", "category": "manufacturing_rule",
+                      "rule": "standard_hole_size", "feature": "h1", "feature_id": "b1",
+                      "observation": "non-standard hole", "suggested_fix": "round it"}],
+    }
+    with patch.object(cg, "critique", return_value=fake_crit):
+        full = cg.design_review(settings, pid, {})
+        compact = cg.design_review(settings, pid, {"response_detail": "compact"})
+
+    assert full["verdict"] == "passes_with_notes"
+    assert full["critique_verdict"] == "passes_with_notes"
+    assert full["summary"]["findings_count"] == 1
+    assert full["summary"]["actionable_count"] == 0  # no feature graph → no bound target
+    assert "findings" in full and "findings" not in compact  # compact omits the full list
+    assert "actions" in compact and "recommendation" in compact
+
+
+def test_design_review_propagates_critique_error(tmp_path: Path) -> None:
+    from app import cad_generation as cg
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "review-err")
+    with patch.object(cg, "critique", return_value={"status": "error", "code": "no_package"}):
+        out = cg.design_review(settings, pid, {})
+    assert out["status"] == "error" and out["code"] == "no_package"
+
+
+def test_design_review_end_to_end_binds_target_and_flags_symmetry(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import design_review, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "review-e2e")
+    # Thin wall (2mm < 3mm CNC min) with an editable WALL_THICKNESS constant,
+    # plus an asymmetric arm pair (different Z extents).
+    code = (
+        "from build123d import *\n"
+        "WALL_THICKNESS = 2\n"
+        "wall = Box(40, 40, WALL_THICKNESS); wall.label = 'wall_front'\n"
+        "arm_l = Box(5, 5, 40).moved(Location((-30, 0, 0))); arm_l.label = 'arm_L'\n"
+        "arm_r = Box(5, 5, 20).moved(Location((30, 0, 0))); arm_r.label = 'arm_R'\n"
+        "result = Compound(children=[wall, arm_l, arm_r])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+
+    review = design_review(settings, pid, {})
+    assert review["status"] == "ok"
+    # thin wall is a high-severity manufacturing finding → fails the audit
+    assert review["verdict"] == "fails_audit"
+    # symmetry check (which plain critique lacks) flags the mismatched arm pair
+    assert any("arm_L" in s for s in review["summary"]["broken_symmetry"])
+    # the thin-wall finding is bound to the concrete editable constant
+    wall_actions = [
+        a for a in review["actions"]
+        if a.get("parameter_target", {}).get("cad_parameter_name") == "WALL_THICKNESS"
+    ]
+    assert wall_actions, "thin-wall finding should bind to WALL_THICKNESS"
+    assert wall_actions[0]["parameter_target"]["known"] is True

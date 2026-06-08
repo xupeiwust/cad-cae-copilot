@@ -5226,6 +5226,256 @@ def critique(
     }
 
 
+# ── design review: critique + structure + concrete fix targets (read-only) ───
+
+# Extra dimension keywords per critique rule, unioned with the finding's feature
+# name to bind it to a concrete editable parameter. critique itself only knows
+# the body id; design_review resolves the parameter the agent would actually edit.
+_REVIEW_RULE_KEYWORDS: dict[str, str] = {
+    "min_wall_thickness": "wall thickness",
+    "standard_hole_size": "hole diameter",
+    "min_corner_radius": "fillet corner radius",
+}
+
+_REVIEW_VERDICT_RANK = {
+    "skipped": 0,
+    "passes": 1,
+    "passes_with_notes": 2,
+    "passes_with_warnings": 3,
+    "fails_audit": 4,
+}
+
+
+def _verdict_from_counts(counts: dict[str, int]) -> str:
+    if counts.get("high", 0) > 0:
+        return "fails_audit"
+    if counts.get("medium", 0) > 0:
+        return "passes_with_warnings"
+    if counts.get("low", 0) > 0:
+        return "passes_with_notes"
+    return "passes"
+
+
+def _symmetry_findings(geometry_report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Structural findings critique does NOT produce: broken / missing mirror pairs.
+
+    Pure. Reads the `symmetry` list from a geometry_report and turns each
+    non-ok pair (`ok == False`) and each `missing_partner` row into a medium
+    finding shaped like critique's findings (so they merge seamlessly).
+    """
+    out: list[dict[str, Any]] = []
+    symmetry = geometry_report.get("symmetry") if isinstance(geometry_report, dict) else None
+    if not isinstance(symmetry, list):
+        return out
+    counter = 0
+    for item in symmetry:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") == "missing_partner":
+            counter += 1
+            part = item.get("part", "<part>")
+            expected = item.get("expected_partner", "?")
+            out.append({
+                "id": f"sym_{counter:03d}",
+                "severity": "medium",
+                "category": "structure",
+                "rule": "broken_symmetry",
+                "feature": str(part),
+                "feature_id": None,
+                "observation": (
+                    f"{part}: expected mirror partner '{expected}' not found — "
+                    "left/right symmetry is likely broken."
+                ),
+                "suggested_fix": (
+                    f"Add the mirrored counterpart of {part} (e.g. "
+                    f"mirror({part}, about=Plane.YZ)) or fix its label."
+                ),
+            })
+        elif item.get("ok") is False:
+            counter += 1
+            pair = item.get("pair") or []
+            pair_label = " / ".join(str(p) for p in pair) if pair else "<pair>"
+            residual = item.get("align_residual_mm")
+            axis = item.get("mirror_axis", "?")
+            residual_txt = f"{residual}mm" if residual is not None else "non-zero"
+            out.append({
+                "id": f"sym_{counter:03d}",
+                "severity": "medium",
+                "category": "structure",
+                "rule": "broken_symmetry",
+                "feature": pair_label,
+                "feature_id": None,
+                "observation": (
+                    f"{pair_label}: mirror pair is not symmetric across {axis} "
+                    f"(alignment residual {residual_txt}) — likely a coordinate typo."
+                ),
+                "suggested_fix": (
+                    f"Re-derive one side by mirroring the other "
+                    f"(mirror(part, about=Plane.{str(axis).upper()}Z)) so the pair matches."
+                ),
+            })
+    return out
+
+
+def _bind_finding_to_parameter(
+    finding: dict[str, Any], index: list[dict[str, Any]] | None
+) -> dict[str, Any] | None:
+    """Resolve the concrete editable parameter a finding points at, or None.
+
+    Reuses parameter_binding's token-overlap matcher (and its honesty rules:
+    no index → unverified, no overlap → not found, tie → ambiguous). The slot
+    query unions the finding's feature name with rule-specific dimension words.
+    """
+    from .agent_autopilot.parameter_binding import bind_parameter_slots
+
+    keywords = _REVIEW_RULE_KEYWORDS.get(str(finding.get("rule") or ""), "")
+    query = f"{finding.get('feature') or ''} {keywords}".strip()
+    if not query:
+        return None
+    binding = bind_parameter_slots([{"name": query, "value": None, "unit": None}], index)[0]
+    known = binding.get("known")
+    if known is True:
+        return {
+            "known": True,
+            "feature_id": binding["feature_id"],
+            "parameter_name": binding["parameter_name"],
+            "cad_parameter_name": binding["cad_parameter_name"],
+            "current_value": binding["current_value"],
+            "min_value": binding["min_value"],
+            "max_value": binding["max_value"],
+            "match_score": binding["match_score"],
+        }
+    if binding.get("candidates"):
+        return {"known": False, "reason": binding.get("reason"), "candidates": binding["candidates"]}
+    # No overlap / no index: stay quiet rather than emit a noisy "not found" per
+    # finding — the absence of a target already says "no fast parametric fix".
+    return None
+
+
+def design_review(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Read-only self-review: critique + structural checks + concrete fix targets.
+
+    Synthesizes existing deterministic signals into one prioritized, actionable
+    report so an agent can self-correct before presenting a result, instead of
+    only fixing what the user explicitly points out. It:
+
+      1. runs ``critique`` (manufacturing rules, floating components, ...),
+      2. adds the symmetry checks critique lacks (from ``geometry_report``),
+      3. binds each fixable finding to the concrete ``cad.edit_parameter``
+         target the agent would edit (featureId / parameterName / range).
+
+    It changes NOTHING: it never calls ``cad.edit_parameter`` /
+    ``cad.execute_build123d``. Applying a fix still goes through the normal
+    approval-gated path. ``response_detail: "compact"`` returns the prioritized
+    actions + summary only; ``"full"`` (default) also returns every finding.
+
+    Payload (all optional): ``mode`` / ``min_wall_mm`` / ``min_corner_radius_mm``
+    (forwarded to critique), ``response_detail`` ("compact" | "full").
+    """
+    from .project_io import get_project, resolve_project_path
+
+    detail = _normalize_response_detail(payload.get("response_detail"))
+
+    crit = critique(settings, project_id, payload)
+    if crit.get("status") != "ok":
+        return crit
+
+    # Load topology + feature graph once for the structural + parameter signals.
+    geometry_report: dict[str, Any] = {}
+    parameter_index: list[dict[str, Any]] | None = None
+    try:
+        project = get_project(settings, project_id)
+        pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+        if pkg_path is not None and pkg_path.exists():
+            with zipfile.ZipFile(pkg_path, "r") as zf:
+                names = zf.namelist()
+                if "geometry/topology_map.json" in names:
+                    topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                    geometry_report = _compute_geometry_report(topo)
+                if "graph/feature_graph.json" in names:
+                    from .agent_autopilot.parameter_binding import build_parameter_index
+
+                    fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+                    parameter_index = build_parameter_index(fg)
+    except Exception:
+        # Critique already succeeded; degrade to critique-only findings rather
+        # than fail the whole review on a structural-signal read error.
+        geometry_report = {}
+
+    findings = list(crit.get("findings") or []) + _symmetry_findings(geometry_report)
+
+    # Bind fix targets and build the prioritized, actionable subset.
+    severity_rank = {"high": 0, "medium": 1, "low": 2}
+    actions: list[dict[str, Any]] = []
+    for finding in findings:
+        target = _bind_finding_to_parameter(finding, parameter_index)
+        if target is not None:
+            finding["parameter_target"] = target
+            if target.get("known") is True:
+                actions.append({
+                    "finding_id": finding.get("id"),
+                    "severity": finding.get("severity"),
+                    "category": finding.get("category"),
+                    "observation": finding.get("observation"),
+                    "suggested_fix": finding.get("suggested_fix"),
+                    "parameter_target": target,
+                })
+    actions.sort(key=lambda a: severity_rank.get(a.get("severity"), 9))
+
+    severity_counts = {
+        sev: sum(1 for f in findings if f.get("severity") == sev)
+        for sev in ("high", "medium", "low")
+    }
+    verdict = _verdict_from_counts(severity_counts)
+    floating_parts = geometry_report.get("floating_parts") or []
+    broken_symmetry = [
+        f["feature"] for f in findings if f.get("rule") == "broken_symmetry"
+    ]
+
+    if actions:
+        recommendation = (
+            f"{len(actions)} finding(s) map to a fast cad.edit_parameter fix; "
+            "start with the highest-severity targets, then re-run cad.design_review. "
+            "Issues without a parameter target need a geometry edit "
+            "(cad.execute_build123d / replace_part)."
+        )
+    elif findings:
+        recommendation = (
+            "No finding maps to a single editable parameter — address them with a "
+            "geometry edit (cad.execute_build123d / cad.replace_part) and re-review."
+        )
+    else:
+        recommendation = "No issues found. Geometry passes the deterministic review."
+
+    result: dict[str, Any] = {
+        "status": "ok",
+        "project_id": project_id,
+        "verdict": verdict,
+        "critique_verdict": crit.get("verdict"),
+        "summary": {
+            "findings_count": len(findings),
+            "by_severity": severity_counts,
+            "actionable_count": len(actions),
+            "floating_parts": floating_parts,
+            "broken_symmetry": broken_symmetry,
+        },
+        "actions": actions,
+        "recommendation": recommendation,
+        "message": (
+            "Read-only review — nothing was changed. Apply any fix through the "
+            "approval-gated cad.edit_parameter (parameter targets) or "
+            "cad.execute_build123d / cad.replace_part path."
+        ),
+    }
+    if detail != "compact":
+        result["findings"] = findings
+    return result
+
+
 def read_cad_source(settings: Any, project_id: str) -> dict[str, Any]:
     """Return the accumulated build123d source plus a structured state summary.
 

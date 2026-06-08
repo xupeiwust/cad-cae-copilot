@@ -561,6 +561,37 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    # ── Design review: critique + structure + fix targets (read-only) ───────
+    "cad.design_review": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "mode": {
+                "type": "string",
+                "enum": ["auto", "engineering", "geometry"],
+                "description": "Forwarded to cad.critique (default auto).",
+            },
+            "min_wall_mm": {
+                "type": "number",
+                "description": "Forwarded to cad.critique (default 3mm = CNC aluminium).",
+            },
+            "min_corner_radius_mm": {
+                "type": "number",
+                "description": "Forwarded to cad.critique (default 2mm).",
+            },
+            "response_detail": {
+                "type": "string",
+                "enum": ["compact", "full"],
+                "description": (
+                    "compact: prioritized actions + summary only. full (default): "
+                    "also includes every enriched finding."
+                ),
+            },
+        },
+        "additionalProperties": True,
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),

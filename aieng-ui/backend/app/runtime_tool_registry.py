@@ -2820,6 +2820,34 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         ),
     )
 
+    def _tool_cad_design_review(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.design_review(active_settings, str(project_id), inp)
+
+    _rt.register_tool(
+        "cad.design_review",
+        _tool_cad_design_review,
+        input_schema=_schema("cad.design_review"),
+        description=(
+            "Read-only self-review that synthesizes the deterministic critique, structural "
+            "geometry signals, and editable parameters into ONE prioritized, actionable list "
+            "so you can self-correct before presenting a result — not just fix what the user "
+            "points out. On top of cad.critique it adds the left/right symmetry checks critique "
+            "lacks (broken / missing mirror pairs from the geometry report) and, for each "
+            "fixable finding, binds the concrete cad.edit_parameter target (featureId / "
+            "parameterName / current value / allowed range) you would edit. Returns a merged "
+            "verdict, a severity-ranked `actions` list (findings with a fast parameter fix), and "
+            "a recommendation. Changes NOTHING — applying a fix still goes through the "
+            "approval-gated cad.edit_parameter / cad.execute_build123d path. "
+            "response_detail='compact' returns actions + summary only; 'full' (default) also "
+            "returns every finding. Call after building/editing an engineering part."
+        ),
+    )
+
     def _tool_cad_set_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
 

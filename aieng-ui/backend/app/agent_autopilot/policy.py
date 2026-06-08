@@ -38,6 +38,7 @@ AUTO_READ_TOOLS = {
     "cad.get_named_part_bbox",
     "cad.plan_build123d_skill",
     "cad.critique",
+    "cad.design_review",
 }
 
 AUTO_PREVIEW_TOOLS = {

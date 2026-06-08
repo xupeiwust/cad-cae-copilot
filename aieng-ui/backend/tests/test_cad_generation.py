@@ -1637,3 +1637,299 @@ def test_execute_nurbs_source_builds_brep_face() -> None:
     faces = [e for e in topo.get("entities", []) if e.get("type") == "face"]
     assert faces, "NURBS surface must yield at least one B-Rep face"
     assert any(f.get("surface_type") == "bspline" for f in faces)
+
+
+# ── cad.search_reference_image (Wikimedia Commons) ───────────────────────────
+
+def _fake_urlopen_json(payload: dict) -> MagicMock:
+    """Build a urlopen() return value usable as a context manager yielding JSON."""
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode("utf-8")
+    cm = MagicMock()
+    cm.__enter__.return_value = resp
+    cm.__exit__.return_value = False
+    return cm
+
+
+def test_search_wikimedia_images_filters_svg_and_ranks_by_index() -> None:
+    from app import cad_generation as cg
+
+    api_payload = {
+        "query": {
+            "pages": {
+                "20": {  # higher index -> ranked second
+                    "title": "File:Plane B.jpg",
+                    "index": 2,
+                    "imageinfo": [{
+                        "mime": "image/jpeg",
+                        "thumburl": "https://upload.wikimedia.org/b_thumb.jpg",
+                        "url": "https://upload.wikimedia.org/b_full.jpg",
+                        "thumbwidth": 1024, "thumbheight": 600,
+                        "descriptionurl": "https://commons.wikimedia.org/wiki/File:Plane_B.jpg",
+                    }],
+                },
+                "10": {  # lower index -> ranked first
+                    "title": "File:Plane A.png",
+                    "index": 1,
+                    "imageinfo": [{
+                        "mime": "image/png",
+                        "thumburl": "https://upload.wikimedia.org/a_thumb.png",
+                        "url": "https://upload.wikimedia.org/a_full.png",
+                        "thumbwidth": 1024, "thumbheight": 700,
+                        "descriptionurl": "https://commons.wikimedia.org/wiki/File:Plane_A.png",
+                    }],
+                },
+                "30": {  # SVG must be filtered out
+                    "title": "File:Plane C.svg",
+                    "index": 3,
+                    "imageinfo": [{
+                        "mime": "image/svg+xml",
+                        "url": "https://upload.wikimedia.org/c.svg",
+                        "descriptionurl": "https://commons.wikimedia.org/wiki/File:Plane_C.svg",
+                    }],
+                },
+            }
+        }
+    }
+    with patch("urllib.request.urlopen", return_value=_fake_urlopen_json(api_payload)):
+        candidates = cg._search_wikimedia_images("airplane")
+
+    assert [c["title"] for c in candidates] == ["File:Plane A.png", "File:Plane B.jpg"]
+    assert candidates[0]["url"] == "https://upload.wikimedia.org/a_thumb.png"  # thumb preferred
+    assert candidates[0]["page_url"].endswith("File:Plane_A.png")
+
+
+def test_search_reference_image_attaches_best_match() -> None:
+    from app import cad_generation as cg
+
+    candidates = [
+        {"title": "File:A.jpg", "url": "https://x/a.jpg", "width": 1024, "height": 700,
+         "mime": "image/jpeg", "page_url": "https://commons.wikimedia.org/wiki/File:A.jpg"},
+    ]
+    attach_result = {"status": "ok", "width": 800, "height": 547, "byte_size_kb": 42.0}
+    with (
+        patch.object(cg, "_search_wikimedia_images", return_value=candidates),
+        patch.object(cg, "set_reference_image", return_value=attach_result) as mock_set,
+    ):
+        out = cg.search_reference_image(None, "proj1", {"query": "Boeing 747 side view"})
+
+    assert out["status"] == "ok"
+    assert out["attached"] is True
+    assert out["matched_url"] == "https://x/a.jpg"
+    assert out["page_url"].endswith("File:A.jpg")
+    assert out["byte_size_kb"] == 42.0
+    assert out["candidates_considered"] == 1
+    # Delegates the fetch/store to set_reference_image with the resolved URL.
+    assert mock_set.call_args.args[2]["image_url"] == "https://x/a.jpg"
+
+
+def test_search_reference_image_falls_back_to_next_candidate() -> None:
+    from app import cad_generation as cg
+
+    candidates = [
+        {"title": "File:Dead.jpg", "url": "https://x/dead.jpg", "page_url": "p1"},
+        {"title": "File:Good.jpg", "url": "https://x/good.jpg", "page_url": "p2"},
+    ]
+    results = [
+        {"status": "error", "code": "fetch_failed", "message": "404"},
+        {"status": "ok", "width": 800, "height": 600, "byte_size_kb": 30.0},
+    ]
+    with (
+        patch.object(cg, "_search_wikimedia_images", return_value=candidates),
+        patch.object(cg, "set_reference_image", side_effect=results),
+    ):
+        out = cg.search_reference_image(None, "proj1", {"query": "thing"})
+
+    assert out["status"] == "ok"
+    assert out["matched_url"] == "https://x/good.jpg"
+
+
+def test_search_reference_image_no_results() -> None:
+    from app import cad_generation as cg
+
+    with patch.object(cg, "_search_wikimedia_images", return_value=[]):
+        out = cg.search_reference_image(None, "proj1", {"query": "asdfqwerty nonexistent"})
+    assert out["status"] == "no_results"
+    assert "proceed without a reference" in out["message"].lower()
+
+
+def test_search_reference_image_search_failure_is_graceful() -> None:
+    from app import cad_generation as cg
+
+    with patch.object(cg, "_search_wikimedia_images", side_effect=OSError("network down")):
+        out = cg.search_reference_image(None, "proj1", {"query": "thing"})
+    assert out["status"] == "error"
+    assert out["code"] == "search_failed"
+
+
+def test_search_reference_image_validates_input() -> None:
+    from app import cad_generation as cg
+
+    assert cg.search_reference_image(None, "p", {"query": "   "})["code"] == "missing_query"
+    bad_source = cg.search_reference_image(None, "p", {"query": "x", "source": "bing"})
+    assert bad_source["code"] == "unsupported_source"
+
+
+# ── cad.design_review (critique + structure + fix targets) ───────────────────
+
+def test_design_review_symmetry_findings_from_report() -> None:
+    from app import cad_generation as cg
+
+    report = {
+        "symmetry": [
+            {"pair": ["arm_L", "arm_R"], "ok": False, "mirror_axis": "x", "align_residual_mm": 12.0},
+            {"pair": ["leg_L", "leg_R"], "ok": True, "mirror_axis": "x"},  # ignored
+            {"part": "ear_L", "expected_partner": "ear_R", "status": "missing_partner"},
+        ]
+    }
+    findings = cg._symmetry_findings(report)
+    rules = [f["rule"] for f in findings]
+    assert rules == ["broken_symmetry", "broken_symmetry"]  # ok==True pair skipped
+    assert all(f["severity"] == "medium" and f["category"] == "structure" for f in findings)
+    assert "arm_L / arm_R" in findings[0]["feature"]
+    assert "ear_R" in findings[1]["observation"]
+
+
+def _param_entry(cad_name: str, tokens: set[str], **kw) -> dict:
+    base = {
+        "feature_id": kw.get("feature_id", "f1"), "feature_name": "global_params",
+        "feature_type": "global_params", "scope": "global",
+        "parameter_name": kw.get("parameter_name", "thickness_mm"),
+        "cad_parameter_name": cad_name, "current_value": kw.get("current_value", 2.0),
+        "min_value": 1.0, "max_value": 20.0, "search_tokens": sorted(tokens),
+    }
+    return base
+
+
+def test_bind_finding_to_parameter_unique_match() -> None:
+    from app import cad_generation as cg
+
+    index = [_param_entry("WALL_THICKNESS", {"wall", "thickness"})]
+    finding = {"feature": "wall_front", "rule": "min_wall_thickness"}
+    target = cg._bind_finding_to_parameter(finding, index)
+    assert target["known"] is True
+    assert target["cad_parameter_name"] == "WALL_THICKNESS"
+    assert target["min_value"] == 1.0 and target["max_value"] == 20.0
+
+
+def test_bind_finding_to_parameter_ambiguous_lists_candidates() -> None:
+    from app import cad_generation as cg
+
+    index = [
+        _param_entry("WALL_THICKNESS", {"wall", "thickness"}, feature_id="a", parameter_name="p1"),
+        _param_entry("WALL_THICKNESS_2", {"wall", "thickness"}, feature_id="b", parameter_name="p2"),
+    ]
+    finding = {"feature": "wall", "rule": "min_wall_thickness"}
+    target = cg._bind_finding_to_parameter(finding, index)
+    assert target["known"] is False
+    assert len(target["candidates"]) == 2
+
+
+def test_bind_finding_to_parameter_no_index_or_no_overlap_is_none() -> None:
+    from app import cad_generation as cg
+
+    assert cg._bind_finding_to_parameter({"feature": "wall", "rule": "x"}, None) is None
+    index = [_param_entry("BOLT_CIRCLE_DIA", {"bolt", "circle", "dia"})]
+    assert cg._bind_finding_to_parameter({"feature": "rib_main", "rule": "min_wall_thickness"}, index) is None
+
+
+def test_design_review_merges_critique_and_respects_detail(tmp_path: Path) -> None:
+    from app import cad_generation as cg
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "review-merge")  # no geometry → no package
+    fake_crit = {
+        "status": "ok", "verdict": "passes_with_notes",
+        "findings": [{"id": "find_001", "severity": "low", "category": "manufacturing_rule",
+                      "rule": "standard_hole_size", "feature": "h1", "feature_id": "b1",
+                      "observation": "non-standard hole", "suggested_fix": "round it"}],
+    }
+    with patch.object(cg, "critique", return_value=fake_crit):
+        full = cg.design_review(settings, pid, {})
+        compact = cg.design_review(settings, pid, {"response_detail": "compact"})
+
+    assert full["verdict"] == "passes_with_notes"
+    assert full["critique_verdict"] == "passes_with_notes"
+    assert full["summary"]["findings_count"] == 1
+    assert full["summary"]["actionable_count"] == 0  # no feature graph → no bound target
+    assert "findings" in full and "findings" not in compact  # compact omits the full list
+    assert "actions" in compact and "recommendation" in compact
+
+
+def test_design_review_propagates_critique_error(tmp_path: Path) -> None:
+    from app import cad_generation as cg
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "review-err")
+    with patch.object(cg, "critique", return_value={"status": "error", "code": "no_package"}):
+        out = cg.design_review(settings, pid, {})
+    assert out["status"] == "error" and out["code"] == "no_package"
+
+
+def test_design_review_end_to_end_binds_target_and_flags_symmetry(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import design_review, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "review-e2e")
+    # Thin wall (2mm < 3mm CNC min) with an editable WALL_THICKNESS constant,
+    # plus an asymmetric arm pair (different Z extents).
+    code = (
+        "from build123d import *\n"
+        "WALL_THICKNESS = 2\n"
+        "wall = Box(40, 40, WALL_THICKNESS); wall.label = 'wall_front'\n"
+        "arm_l = Box(5, 5, 40).moved(Location((-30, 0, 0))); arm_l.label = 'arm_L'\n"
+        "arm_r = Box(5, 5, 20).moved(Location((30, 0, 0))); arm_r.label = 'arm_R'\n"
+        "result = Compound(children=[wall, arm_l, arm_r])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+
+    review = design_review(settings, pid, {})
+    assert review["status"] == "ok"
+    # thin wall is a high-severity manufacturing finding → fails the audit
+    assert review["verdict"] == "fails_audit"
+    # symmetry check (which plain critique lacks) flags the mismatched arm pair
+    assert any("arm_L" in s for s in review["summary"]["broken_symmetry"])
+    # the thin-wall finding is bound to the concrete editable constant
+    wall_actions = [
+        a for a in review["actions"]
+        if a.get("parameter_target", {}).get("cad_parameter_name") == "WALL_THICKNESS"
+    ]
+    assert wall_actions, "thin-wall finding should bind to WALL_THICKNESS"
+    assert wall_actions[0]["parameter_target"]["known"] is True
+
+
+# ── domain primitives (naca_airfoil / fuselage_profile / wheel / ribbed_plate) ─
+
+@pytest.mark.parametrize("snippet", [
+    "result = naca_airfoil(120, 14, span=200, label='wing')",
+    "result = fuselage_profile(400, 60, label='fuselage')",
+    "result = wheel(30, 8, 20, label='wheel')",
+    "result = ribbed_plate(120, 80, 6, rib_count=3, label='panel')",
+])
+def test_domain_primitive_builds_valid_solid(tmp_path: Path, snippet: str) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "primitive")
+    code = "from build123d import *\n" + snippet + "\n"
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    # a real solid with faces was produced (the helper geometry is valid)
+    assert out["topology_summary"]["bounding_box"] is not None
+    assert out["topology_summary"]["face_count"] > 0
+
+
+def test_fuselage_primitive_marks_model_organic(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "organic-primitive")
+    code = "from build123d import *\nresult = fuselage_profile(400, 60, label='fuselage')\n"
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    # organic helper hint → mechanical heuristics are skipped
+    assert out["feature_graph"]["model_kind"] == "organic"

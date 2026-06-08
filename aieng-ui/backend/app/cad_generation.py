@@ -334,6 +334,104 @@ def organic_blend(solids, radius, label=None, color=None):
     return _aieng_finish(fused, label, color)
 
 
+# ── domain primitives (common engineering / vehicle shapes) ──────────────────
+# Higher-level than the generic helpers above: one call for a shape that would
+# otherwise take a fragile hand-rolled sketch. Same _aieng_finish(label, color)
+# contract; each returns a labelled, colourable Part.
+
+def naca_airfoil(chord, thickness, span=None, label=None, color=None):
+    \"\"\"A symmetric NACA-4-digit airfoil section extruded into a 3D wing solid.
+
+    ``chord`` = chord length (mm) along X, ``thickness`` = max thickness (mm),
+    ``span`` = extrusion length along Y (default = chord). Wings, fins, blades,
+    struts. Profile follows the standard NACA00xx half-thickness polynomial.
+    For a tapered/swept wing, build two and ``loft`` between them.
+    \"\"\"
+    c = float(chord)
+    tf = float(thickness) / c
+    sp = float(span) if span is not None else c
+    n = 30
+    xs = [i / n for i in range(n + 1)]
+
+    def _yt(x):
+        return 5 * tf * c * (
+            0.2969 * x ** 0.5 - 0.1260 * x - 0.3516 * x ** 2
+            + 0.2843 * x ** 3 - 0.1015 * x ** 4
+        )
+
+    upper = [(x * c, _yt(x)) for x in xs]
+    lower = [(x * c, -_yt(x)) for x in reversed(xs[1:-1])]
+    pts = upper + lower
+    with BuildPart() as _bp:
+        with BuildSketch(Plane.XZ):
+            with BuildLine():
+                Polyline(*pts, close=True)
+            make_face()
+        extrude(amount=sp)
+    return _aieng_finish(_bp.part, label, color)
+
+
+def fuselage_profile(length, max_diameter, nose_frac=0.2, tail_frac=0.3, label=None, color=None):
+    \"\"\"A revolved fuselage: rounded nose, constant mid-body, tapered tail.
+
+    ``length`` axial span (mm) along Z, ``max_diameter`` the max body diameter;
+    ``nose_frac`` / ``tail_frac`` are the fractions of length spent on the nose
+    and tail tapers. Aircraft/rocket bodies, pods, bottles.
+    \"\"\"
+    L = float(length)
+    R = float(max_diameter) / 2.0
+    nose = max(0.0, float(nose_frac)) * L
+    tail = max(0.0, float(tail_frac)) * L
+    pts = []
+    ns = 6
+    for i in range(ns + 1):
+        f = i / ns
+        pts.append((max(0.001, R * (f ** 0.5)), f * nose))
+    pts.append((R, max(nose, L - tail)))
+    ts = 6
+    for i in range(1, ts + 1):
+        f = i / ts
+        pts.append((max(0.001, R * (1 - f)), (L - tail) + f * tail))
+    return revolved_profile(pts, label=label, color=color)
+
+
+def wheel(rim_radius, tire_radius, width, label=None, color=None):
+    \"\"\"A wheel disc (axis along Z) with a central axle bore.
+
+    Outer radius = ``rim_radius`` + ``tire_radius``; ``width`` is the axial
+    thickness. The bore is 30% of ``rim_radius``. Vehicle wheels, pulleys,
+    rollers, gear blanks.
+    \"\"\"
+    rr = float(rim_radius)
+    outer = rr + float(tire_radius)
+    bore = max(0.001, rr * 0.3)
+    with BuildPart() as _bp:
+        Cylinder(outer, float(width))
+        Cylinder(bore, float(width), mode=Mode.SUBTRACT)
+    return _aieng_finish(_bp.part, label, color)
+
+
+def ribbed_plate(length, width, thickness, rib_count=2, rib_height=None, label=None, color=None):
+    \"\"\"A flat plate with parallel stiffening ribs on top, running along length.
+
+    ``rib_count`` evenly-spaced ribs across the width; ``rib_height`` defaults to
+    3x ``thickness``; rib thickness is ~0.8x plate ``thickness``. Brackets, base
+    plates, structural panels. The plate bottom sits at Z=0.
+    \"\"\"
+    L = float(length)
+    W = float(width)
+    t = float(thickness)
+    n = max(1, int(rib_count))
+    rh = float(rib_height) if rib_height is not None else t * 3.0
+    rt = max(1.0, t * 0.8)
+    ys = [(-W / 2 + W * (i + 0.5) / n) for i in range(n)]
+    with BuildPart() as _bp:
+        Box(L, W, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        with Locations(*[(0, y, t) for y in ys]):
+            Box(L, rt, rh, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return _aieng_finish(_bp.part, label, color)
+
+
 # ---- aieng generated code ----
 __AIENG_GENERATED_CODE__
 # ---- end generated code ----
@@ -1026,6 +1124,7 @@ _ENGINEERING_LABEL_HINTS: tuple[str, ...] = (
 _ORGANIC_HELPER_HINTS: tuple[str, ...] = (
     "lofted_stack(", "capsule(", "swept_tube(", "revolved_profile(",
     "organic_blend(", "tapered_cylinder(",
+    "naca_airfoil(", "fuselage_profile(", "wheel(",
 )
 
 
@@ -4751,6 +4850,184 @@ def set_reference_image(
     }
 
 
+# ── reference image search (Wikimedia Commons) ───────────────────────────────
+
+_WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
+_REFERENCE_SEARCH_UA = (
+    "aieng-workbench/1.0 (CAD reference search; "
+    "https://github.com/armpro24-blip/workspace_aieng)"
+)
+
+
+def _search_wikimedia_images(
+    query: str, *, limit: int = 10, thumb_width: int = 1024
+) -> list[dict[str, Any]]:
+    """Query Wikimedia Commons for File-namespace images matching ``query``.
+
+    Returns candidates ranked by Wikimedia's search relevance, each as
+    ``{title, url, width, height, mime, page_url}``. SVG and result rows
+    without a usable raster URL are filtered out (set_reference_image needs
+    raster bytes that PIL can decode). Raises on network/parse failure so the
+    caller can shape the error response.
+    """
+    import urllib.parse
+    import urllib.request
+
+    params = {
+        "action": "query",
+        "format": "json",
+        "generator": "search",
+        "gsrsearch": query,
+        "gsrnamespace": "6",  # File: namespace
+        "gsrlimit": str(limit),
+        "prop": "imageinfo",
+        "iiprop": "url|size|mime",
+        "iiurlwidth": str(thumb_width),
+    }
+    url = f"{_WIKIMEDIA_API}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": _REFERENCE_SEARCH_UA, "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    pages = ((data.get("query") or {}).get("pages") or {})
+    # generator=search annotates each page with `index` = search rank (1-based).
+    ranked = sorted(pages.values(), key=lambda p: p.get("index", 1_000_000))
+    candidates: list[dict[str, Any]] = []
+    for page in ranked:
+        infos = page.get("imageinfo") or []
+        if not infos:
+            continue
+        info = infos[0]
+        mime = str(info.get("mime") or "")
+        if not mime.startswith("image/") or mime == "image/svg+xml":
+            continue
+        # Prefer the scaled thumb (smaller download); fall back to the full url.
+        img_url = info.get("thumburl") or info.get("url")
+        if not img_url:
+            continue
+        candidates.append(
+            {
+                "title": page.get("title"),
+                "url": img_url,
+                "width": info.get("thumbwidth") or info.get("width"),
+                "height": info.get("thumbheight") or info.get("height"),
+                "mime": mime,
+                "page_url": info.get("descriptionurl"),
+            }
+        )
+    return candidates
+
+
+def search_reference_image(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Search Wikimedia Commons for a reference image and attach the best match.
+
+    A convenience wrapper around :func:`set_reference_image`: it resolves a
+    free-text query (e.g. ``"Boeing 747 side view"``) to a real image URL from
+    Wikimedia Commons, then delegates to ``set_reference_image`` to fetch,
+    downscale, and store it. The matched ``page_url`` is returned so the user
+    can verify the source and its license before relying on it. Degrades
+    gracefully: when nothing usable is found it returns ``status="no_results"``
+    and the caller proceeds without a reference instead of failing the build.
+
+    Payload keys:
+        query:       required free-text search string.
+        source:      optional; only "wikimedia" is supported (default).
+        description: optional caption override stored with the reference.
+    """
+    query = (payload.get("query") or "").strip()
+    if not query:
+        return {
+            "status": "error",
+            "code": "missing_query",
+            "message": "query is required (e.g. 'Boeing 747 side view').",
+        }
+
+    source = str(payload.get("source") or "wikimedia").strip().lower()
+    if source != "wikimedia":
+        return {
+            "status": "error",
+            "code": "unsupported_source",
+            "message": (
+                f"Unsupported reference source '{source}'. "
+                "Only 'wikimedia' is supported."
+            ),
+        }
+
+    try:
+        candidates = _search_wikimedia_images(query)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "code": "search_failed",
+            "message": f"Wikimedia search failed: {exc}",
+        }
+
+    if not candidates:
+        return {
+            "status": "no_results",
+            "project_id": project_id,
+            "query": query,
+            "source": source,
+            "message": (
+                f"No usable Wikimedia Commons image found for '{query}'. "
+                "Proceed without a reference, or attach one manually with "
+                "cad.set_reference_image."
+            ),
+        }
+
+    # Try candidates in rank order; the first that set_reference_image can
+    # actually fetch + decode wins (guards against dead thumbs / odd formats).
+    last_error: str | None = None
+    caption = (payload.get("description") or "").strip() or f"{query} (Wikimedia Commons)"
+    for cand in candidates:
+        attached = set_reference_image(
+            settings,
+            project_id,
+            {"image_url": cand["url"], "description": caption},
+        )
+        if attached.get("status") == "ok":
+            return {
+                "status": "ok",
+                "project_id": project_id,
+                "query": query,
+                "source": source,
+                "attached": True,
+                "matched_url": cand["url"],
+                "page_url": cand.get("page_url"),
+                "title": cand.get("title"),
+                "width": attached.get("width"),
+                "height": attached.get("height"),
+                "byte_size_kb": attached.get("byte_size_kb"),
+                "candidates_considered": len(candidates),
+                "message": (
+                    f"Attached a Wikimedia Commons reference for '{query}'. "
+                    "Verify the source/license at page_url. Future "
+                    "cad.execute_build123d thumbnails will tile it for "
+                    "side-by-side comparison."
+                ),
+            }
+        last_error = attached.get("message")
+
+    return {
+        "status": "error",
+        "code": "attach_failed",
+        "project_id": project_id,
+        "query": query,
+        "source": source,
+        "message": (
+            f"Found {len(candidates)} candidate(s) but none could be "
+            f"fetched/decoded. Last error: {last_error}"
+        ),
+    }
+
+
 # ── critique: deterministic engineering audit ────────────────────────────────
 
 # Canonical labels (from aieng/schemas/feature_graph.schema.json type enum)
@@ -5046,6 +5323,256 @@ def critique(
         },
         "rule_source": "aieng/schemas/constraints.schema.json (manufacturing_rule type)",
     }
+
+
+# ── design review: critique + structure + concrete fix targets (read-only) ───
+
+# Extra dimension keywords per critique rule, unioned with the finding's feature
+# name to bind it to a concrete editable parameter. critique itself only knows
+# the body id; design_review resolves the parameter the agent would actually edit.
+_REVIEW_RULE_KEYWORDS: dict[str, str] = {
+    "min_wall_thickness": "wall thickness",
+    "standard_hole_size": "hole diameter",
+    "min_corner_radius": "fillet corner radius",
+}
+
+_REVIEW_VERDICT_RANK = {
+    "skipped": 0,
+    "passes": 1,
+    "passes_with_notes": 2,
+    "passes_with_warnings": 3,
+    "fails_audit": 4,
+}
+
+
+def _verdict_from_counts(counts: dict[str, int]) -> str:
+    if counts.get("high", 0) > 0:
+        return "fails_audit"
+    if counts.get("medium", 0) > 0:
+        return "passes_with_warnings"
+    if counts.get("low", 0) > 0:
+        return "passes_with_notes"
+    return "passes"
+
+
+def _symmetry_findings(geometry_report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Structural findings critique does NOT produce: broken / missing mirror pairs.
+
+    Pure. Reads the `symmetry` list from a geometry_report and turns each
+    non-ok pair (`ok == False`) and each `missing_partner` row into a medium
+    finding shaped like critique's findings (so they merge seamlessly).
+    """
+    out: list[dict[str, Any]] = []
+    symmetry = geometry_report.get("symmetry") if isinstance(geometry_report, dict) else None
+    if not isinstance(symmetry, list):
+        return out
+    counter = 0
+    for item in symmetry:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") == "missing_partner":
+            counter += 1
+            part = item.get("part", "<part>")
+            expected = item.get("expected_partner", "?")
+            out.append({
+                "id": f"sym_{counter:03d}",
+                "severity": "medium",
+                "category": "structure",
+                "rule": "broken_symmetry",
+                "feature": str(part),
+                "feature_id": None,
+                "observation": (
+                    f"{part}: expected mirror partner '{expected}' not found — "
+                    "left/right symmetry is likely broken."
+                ),
+                "suggested_fix": (
+                    f"Add the mirrored counterpart of {part} (e.g. "
+                    f"mirror({part}, about=Plane.YZ)) or fix its label."
+                ),
+            })
+        elif item.get("ok") is False:
+            counter += 1
+            pair = item.get("pair") or []
+            pair_label = " / ".join(str(p) for p in pair) if pair else "<pair>"
+            residual = item.get("align_residual_mm")
+            axis = item.get("mirror_axis", "?")
+            residual_txt = f"{residual}mm" if residual is not None else "non-zero"
+            out.append({
+                "id": f"sym_{counter:03d}",
+                "severity": "medium",
+                "category": "structure",
+                "rule": "broken_symmetry",
+                "feature": pair_label,
+                "feature_id": None,
+                "observation": (
+                    f"{pair_label}: mirror pair is not symmetric across {axis} "
+                    f"(alignment residual {residual_txt}) — likely a coordinate typo."
+                ),
+                "suggested_fix": (
+                    f"Re-derive one side by mirroring the other "
+                    f"(mirror(part, about=Plane.{str(axis).upper()}Z)) so the pair matches."
+                ),
+            })
+    return out
+
+
+def _bind_finding_to_parameter(
+    finding: dict[str, Any], index: list[dict[str, Any]] | None
+) -> dict[str, Any] | None:
+    """Resolve the concrete editable parameter a finding points at, or None.
+
+    Reuses parameter_binding's token-overlap matcher (and its honesty rules:
+    no index → unverified, no overlap → not found, tie → ambiguous). The slot
+    query unions the finding's feature name with rule-specific dimension words.
+    """
+    from .agent_autopilot.parameter_binding import bind_parameter_slots
+
+    keywords = _REVIEW_RULE_KEYWORDS.get(str(finding.get("rule") or ""), "")
+    query = f"{finding.get('feature') or ''} {keywords}".strip()
+    if not query:
+        return None
+    binding = bind_parameter_slots([{"name": query, "value": None, "unit": None}], index)[0]
+    known = binding.get("known")
+    if known is True:
+        return {
+            "known": True,
+            "feature_id": binding["feature_id"],
+            "parameter_name": binding["parameter_name"],
+            "cad_parameter_name": binding["cad_parameter_name"],
+            "current_value": binding["current_value"],
+            "min_value": binding["min_value"],
+            "max_value": binding["max_value"],
+            "match_score": binding["match_score"],
+        }
+    if binding.get("candidates"):
+        return {"known": False, "reason": binding.get("reason"), "candidates": binding["candidates"]}
+    # No overlap / no index: stay quiet rather than emit a noisy "not found" per
+    # finding — the absence of a target already says "no fast parametric fix".
+    return None
+
+
+def design_review(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Read-only self-review: critique + structural checks + concrete fix targets.
+
+    Synthesizes existing deterministic signals into one prioritized, actionable
+    report so an agent can self-correct before presenting a result, instead of
+    only fixing what the user explicitly points out. It:
+
+      1. runs ``critique`` (manufacturing rules, floating components, ...),
+      2. adds the symmetry checks critique lacks (from ``geometry_report``),
+      3. binds each fixable finding to the concrete ``cad.edit_parameter``
+         target the agent would edit (featureId / parameterName / range).
+
+    It changes NOTHING: it never calls ``cad.edit_parameter`` /
+    ``cad.execute_build123d``. Applying a fix still goes through the normal
+    approval-gated path. ``response_detail: "compact"`` returns the prioritized
+    actions + summary only; ``"full"`` (default) also returns every finding.
+
+    Payload (all optional): ``mode`` / ``min_wall_mm`` / ``min_corner_radius_mm``
+    (forwarded to critique), ``response_detail`` ("compact" | "full").
+    """
+    from .project_io import get_project, resolve_project_path
+
+    detail = _normalize_response_detail(payload.get("response_detail"))
+
+    crit = critique(settings, project_id, payload)
+    if crit.get("status") != "ok":
+        return crit
+
+    # Load topology + feature graph once for the structural + parameter signals.
+    geometry_report: dict[str, Any] = {}
+    parameter_index: list[dict[str, Any]] | None = None
+    try:
+        project = get_project(settings, project_id)
+        pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+        if pkg_path is not None and pkg_path.exists():
+            with zipfile.ZipFile(pkg_path, "r") as zf:
+                names = zf.namelist()
+                if "geometry/topology_map.json" in names:
+                    topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                    geometry_report = _compute_geometry_report(topo)
+                if "graph/feature_graph.json" in names:
+                    from .agent_autopilot.parameter_binding import build_parameter_index
+
+                    fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+                    parameter_index = build_parameter_index(fg)
+    except Exception:
+        # Critique already succeeded; degrade to critique-only findings rather
+        # than fail the whole review on a structural-signal read error.
+        geometry_report = {}
+
+    findings = list(crit.get("findings") or []) + _symmetry_findings(geometry_report)
+
+    # Bind fix targets and build the prioritized, actionable subset.
+    severity_rank = {"high": 0, "medium": 1, "low": 2}
+    actions: list[dict[str, Any]] = []
+    for finding in findings:
+        target = _bind_finding_to_parameter(finding, parameter_index)
+        if target is not None:
+            finding["parameter_target"] = target
+            if target.get("known") is True:
+                actions.append({
+                    "finding_id": finding.get("id"),
+                    "severity": finding.get("severity"),
+                    "category": finding.get("category"),
+                    "observation": finding.get("observation"),
+                    "suggested_fix": finding.get("suggested_fix"),
+                    "parameter_target": target,
+                })
+    actions.sort(key=lambda a: severity_rank.get(a.get("severity"), 9))
+
+    severity_counts = {
+        sev: sum(1 for f in findings if f.get("severity") == sev)
+        for sev in ("high", "medium", "low")
+    }
+    verdict = _verdict_from_counts(severity_counts)
+    floating_parts = geometry_report.get("floating_parts") or []
+    broken_symmetry = [
+        f["feature"] for f in findings if f.get("rule") == "broken_symmetry"
+    ]
+
+    if actions:
+        recommendation = (
+            f"{len(actions)} finding(s) map to a fast cad.edit_parameter fix; "
+            "start with the highest-severity targets, then re-run cad.design_review. "
+            "Issues without a parameter target need a geometry edit "
+            "(cad.execute_build123d / replace_part)."
+        )
+    elif findings:
+        recommendation = (
+            "No finding maps to a single editable parameter — address them with a "
+            "geometry edit (cad.execute_build123d / cad.replace_part) and re-review."
+        )
+    else:
+        recommendation = "No issues found. Geometry passes the deterministic review."
+
+    result: dict[str, Any] = {
+        "status": "ok",
+        "project_id": project_id,
+        "verdict": verdict,
+        "critique_verdict": crit.get("verdict"),
+        "summary": {
+            "findings_count": len(findings),
+            "by_severity": severity_counts,
+            "actionable_count": len(actions),
+            "floating_parts": floating_parts,
+            "broken_symmetry": broken_symmetry,
+        },
+        "actions": actions,
+        "recommendation": recommendation,
+        "message": (
+            "Read-only review — nothing was changed. Apply any fix through the "
+            "approval-gated cad.edit_parameter (parameter targets) or "
+            "cad.execute_build123d / cad.replace_part path."
+        ),
+    }
+    if detail != "compact":
+        result["findings"] = findings
+    return result
 
 
 def read_cad_source(settings: Any, project_id: str) -> dict[str, Any]:

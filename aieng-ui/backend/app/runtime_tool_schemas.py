@@ -506,6 +506,32 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    "cad.search_reference_image": {
+        "type": "object",
+        "required": ["project_id", "query"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "query": {
+                "type": "string",
+                "description": (
+                    "Free-text image search, e.g. 'Boeing 747 side view' or "
+                    "'Eames lounge chair'. Searched against Wikimedia Commons; "
+                    "the best-ranked raster match is fetched and attached as "
+                    "the project's reference image."
+                ),
+            },
+            "source": {
+                "type": "string",
+                "description": "Reference source; only 'wikimedia' is supported (default).",
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional caption override stored in geometry/reference.json.",
+            },
+        },
+        "additionalProperties": True,
+    },
+
     # ── Critique: deterministic engineering audit (read-only) ───────────────
     "cad.critique": {
         "type": "object",
@@ -535,9 +561,66 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    # ── Design review: critique + structure + fix targets (read-only) ───────
+    "cad.design_review": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "mode": {
+                "type": "string",
+                "enum": ["auto", "engineering", "geometry"],
+                "description": "Forwarded to cad.critique (default auto).",
+            },
+            "min_wall_mm": {
+                "type": "number",
+                "description": "Forwarded to cad.critique (default 3mm = CNC aluminium).",
+            },
+            "min_corner_radius_mm": {
+                "type": "number",
+                "description": "Forwarded to cad.critique (default 2mm).",
+            },
+            "response_detail": {
+                "type": "string",
+                "enum": ["compact", "full"],
+                "description": (
+                    "compact: prioritized actions + summary only. full (default): "
+                    "also includes every enriched finding."
+                ),
+            },
+        },
+        "additionalProperties": True,
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),
+
+    # ── Snapshots / undo (list read-only, restore approval-gated) ────────────
+    "cad.list_snapshots": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "limit": {
+                "type": "integer",
+                "description": "Max snapshots to return, newest first (default 20).",
+            },
+        },
+        "additionalProperties": True,
+    },
+    "cad.restore_snapshot": {
+        "type": "object",
+        "required": ["project_id", "snapshot_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "snapshot_id": {
+                "type": "string",
+                "description": "Snapshot to restore (e.g. 'snap_0003'), from cad.list_snapshots.",
+            },
+        },
+        "additionalProperties": True,
+    },
     "cad.get_named_part_bbox": {
         "type": "object",
         "required": ["project_id", "part_name"],

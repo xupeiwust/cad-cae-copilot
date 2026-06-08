@@ -1,0 +1,840 @@
+"""Project creation, engineering workflow, simulation, and contextual-chat routes."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from fastapi import FastAPI
+
+from ..legacy_app_symbols import sync_main_symbols
+from ..logging_utils import log_exception
+
+LOGGER = logging.getLogger("app.app_factory")
+
+
+def _sync_main_symbols() -> None:
+    sync_main_symbols(globals())
+
+
+def register_project_workflow_routes(
+    app: FastAPI,
+    *,
+    active_settings: Any,
+    db_path: Any,
+    app_context: Any,
+    tool_handlers: Any,
+) -> None:
+    _sync_main_symbols()
+    _add_chat_message_and_publish = app_context.add_chat_message_and_publish
+    _delete_project_everywhere = app_context.delete_project_everywhere
+    _load_project_feature_parameters = app_context.load_project_feature_parameters
+    _load_project_simulation_setup = app_context.load_project_simulation_setup
+    _resolve_api_key = app_context.resolve_api_key
+    _tool_aieng_apply_shape_ir_patch = tool_handlers.apply_shape_ir_patch
+    _tool_opt_derive_problem_from_cae = tool_handlers.derive_topology_optimization_problem
+    _tool_opt_run_topology_optimization = tool_handlers.run_topology_optimization
+    _tool_opt_writeback_to_shape_ir = tool_handlers.writeback_topology_optimization
+    _tool_opt_run_assembly_topology_optimization = tool_handlers.run_assembly_topology_optimization
+
+    @app.get("/api/adapters/structural/preflight")
+    def structural_adapter_preflight() -> dict[str, Any]:
+        """Read-only structural CAD/CAE adapter readiness check.
+
+        Returns a capability manifest plus an honest environment preflight
+        for the existing Gmsh / CalculiX structural path. Never executes
+        mesh or solver tools; never mutates any project or package.
+        """
+        from .. import structural_adapter
+
+        return structural_adapter.preflight_structural_adapter(active_settings)
+
+    @app.post("/api/projects/{project_id}/structural/prepare-preview")
+    def structural_prepare_preview(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Read-only structural solver-run preflight for one project.
+
+        Reuses the structural adapter semantics but remains strictly non-
+        executing: no mesh generation, no solver execution, no FRD parsing, and
+        no package mutation.
+        """
+        from .. import structural_adapter
+
+        return structural_adapter.prepare_structural_run_preview(
+            active_settings,
+            project_id,
+            payload or {},
+        )
+
+    @app.get("/api/projects")
+    def list_projects() -> list[dict[str, Any]]:
+        items = [normalize_project(read_json(path, {})) for path in active_settings.projects_root.glob("*/metadata.json")]
+        return sorted(items, key=lambda item: item.get("updated_at", ""), reverse=True)
+
+    @app.post("/api/projects")
+    def create_project(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
+        data = payload or {}
+        name = str(data.get("name") or "Untitled project").strip() or "Untitled project"
+        return save_project(active_settings, default_project(name))
+
+    @app.post("/api/projects/sample")
+    def create_sample_project() -> dict[str, Any]:
+        project = save_project(active_settings, default_project("SFA-5.41 sample"))
+        if active_settings.sample_step.exists():
+            target = project_dir(active_settings, project["id"]) / "source" / active_settings.sample_step.name
+            shutil.copy2(active_settings.sample_step, target)
+            project["source_step"] = project_relpath(active_settings, project["id"], target)
+            project["status"] = "sample_ready"
+            project["last_error"] = None
+        else:
+            project["status"] = "sample_missing"
+            project["last_error"] = f"Sample STEP not found: {active_settings.sample_step}"
+        return save_project(active_settings, project)
+
+    @app.post("/api/projects/{project_id}/upload")
+    async def upload(project_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
+        project = get_project(active_settings, project_id)
+        filename = SAFE_NAME.sub("_", file.filename or "upload.bin")
+        suffix = Path(filename).suffix.lower()
+        if suffix not in STEP_EXTENSIONS | {AIENG_EXT}:
+            raise HTTPException(status_code=400, detail="only STEP/.aieng uploads are supported")
+        folder = "packages" if suffix == AIENG_EXT else "source"
+        destination = project_dir(active_settings, project_id) / folder / filename
+        with destination.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+        relpath = project_relpath(active_settings, project_id, destination)
+        if folder == "packages":
+            project["aieng_file"] = relpath
+            project["status"] = "package_uploaded"
+        else:
+            project["source_step"] = relpath
+            project["status"] = "step_uploaded"
+        project["last_error"] = None
+        return save_project(active_settings, project)
+
+    @app.get("/api/projects/{project_id}")
+    def get_project_summary(project_id: str) -> dict[str, Any]:
+        return package_summary(active_settings, project_id)
+
+    @app.delete("/api/projects/{project_id}")
+    def delete_project_endpoint(project_id: str) -> dict[str, Any]:
+        """Delete a project: its directory (.aieng package, metadata, viewer,
+        logs) and all its chat sessions/messages (kept in a separate sqlite db).
+        Idempotent-ish: 404s only if the project metadata doesn't exist."""
+        return _delete_project_everywhere(project_id)
+
+    @app.get("/api/projects/{project_id}/agent-context")
+    def get_project_agent_context(project_id: str) -> dict[str, Any]:
+        """Read-only CAD/CAE semantic context for connected AI agents.
+
+        This is the mainline agent-facing context package: it aggregates
+        existing CAD observation, CAE setup/result summaries, targets, metrics,
+        target comparisons, and loop history without running CAD/CAE tools or
+        mutating project artifacts.
+        """
+        from .. import agent_context
+
+        return agent_context.build_agent_context(active_settings, project_id)
+
+    @app.post("/api/projects/{project_id}/engineering-action-plan")
+    def engineering_action_plan_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Return a typed, read-only action candidate for a chat prompt.
+
+        This endpoint does not execute CAD/CAE tools and does not mutate the
+        package. It centralizes the first-pass intent/action decision so the
+        chat UI can avoid brittle frontend-only keyword ordering.
+        """
+        from .. import engineering_action_plan
+
+        p = payload or {}
+        return engineering_action_plan.build_engineering_action_plan(
+            settings=active_settings,
+            project_id=project_id,
+            message=str(p.get("message") or ""),
+        )
+
+    @app.post("/api/projects/{project_id}/brep-graph/build")
+    def build_brep_graph_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Build symbolic B-Rep graph, entity pointer index, and digest.
+
+        Derived from geometry/topology_map.json only; no CAD kernel, LLM, mesh,
+        or solver is executed. By default writes graph/brep_graph.json,
+        graph/entity_index.json, and ai/brep_digest.md into the package.
+        """
+        from .. import brep_graph
+
+        return brep_graph.build_brep_graph_for_project(
+            active_settings, project_id, payload or {}
+        )
+
+    @app.get("/api/projects/{project_id}/brep-graph")
+    def get_brep_graph_endpoint(project_id: str) -> dict[str, Any]:
+        """Read symbolic B-Rep graph artifacts from a project package."""
+        from .. import brep_graph
+
+        return brep_graph.get_brep_graph_for_project(active_settings, project_id)
+
+    @app.get("/api/projects/{project_id}/object-registry")
+    def get_object_registry_endpoint(project_id: str) -> dict[str, Any]:
+        """Shape IR object registry (+ verification) — source of truth for mapping
+        Shape IR nodes <-> viewer-selectable entities. Returns
+        {object_registry, verification}. 404 if the project has no package or no
+        registry (i.e. not a Shape IR package)."""
+        import zipfile as _zipfile
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        registry: dict[str, Any] | None = None
+        verification: dict[str, Any] | None = None
+        try:
+            with _zipfile.ZipFile(package_path, "r") as zf:
+                names = set(zf.namelist())
+                if "registry/object_registry.json" in names:
+                    registry = json.loads(zf.read("registry/object_registry.json").decode("utf-8"))
+                if "diagnostics/shape_ir_verification.json" in names:
+                    verification = json.loads(zf.read("diagnostics/shape_ir_verification.json").decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"failed to read registry: {exc}") from exc
+        if registry is None:
+            raise HTTPException(status_code=404, detail="object registry not found (not a Shape IR package?)")
+        return {"object_registry": registry, "verification": verification}
+
+    @app.get("/api/projects/{project_id}/editable-parameters")
+    def get_editable_parameters_endpoint(project_id: str) -> dict[str, Any]:
+        """Editable-parameter listing for the Editable Parameters panel (read-only).
+
+        Reuses the same package feature-graph read as the /modify slot binding and
+        the cad.list_editable_parameters tool (single source). Returns
+        {parameters, summary}; an empty listing (no feature graph / no editable
+        constants) is a valid 200 state the panel renders as "nothing editable yet"
+        — not a 404."""
+        from ..agent_autopilot.parameter_binding import summarize_parameter_index
+
+        index = _load_project_feature_parameters(project_id) or []
+        parameters = [{k: v for k, v in entry.items() if k != "search_tokens"} for entry in index]
+        return {"parameters": parameters, "summary": summarize_parameter_index(index)}
+
+    @app.get("/api/projects/{project_id}/critique")
+    def get_critique_endpoint(project_id: str) -> dict[str, Any]:
+        """Deterministic engineering critique for the Critique panel (read-only).
+
+        Runs the same cad.critique audit (min wall, hole sizes, floating parts, …)
+        and returns its findings + severity summary. Best-effort: any failure /
+        no-geometry project resolves to an empty findings set the panel hides."""
+        from .. import cad_generation as _cg
+
+        empty = {"status": "ok", "findings": [], "summary": {"by_severity": {"high": 0, "medium": 0, "low": 0}}}
+        try:
+            result = _cg.critique(active_settings, project_id, {})
+        except Exception:
+            log_exception(
+                LOGGER,
+                "CAD critique endpoint failed; returning empty findings.",
+                subsystem="app_factory.project_critique",
+                context={"project_id": project_id},
+            )
+            return empty
+        if not isinstance(result, dict) or not isinstance(result.get("findings"), list):
+            # No package / no geometry yet (critique returns an error shape) — the
+            # panel treats an empty findings set as "nothing to show".
+            return empty
+        return result
+
+    @app.get("/api/projects/{project_id}/simulation-readiness")
+    def get_simulation_readiness_endpoint(project_id: str) -> dict[str, Any]:
+        """Deterministic simulation-readiness report for the CAE readiness panel.
+
+        Classifies the six core inputs (analysis_type / material / loads /
+        constraints / mesh / solver) as present / missing / defaultable / unknown,
+        reusing the same builder as /simulate. Read-only; runs no solver. Reads the
+        direct CAE setup artifact (preferred) and the agent-context cae block.
+        Best-effort: failures resolve to a not_found report the panel can hide."""
+        from ..agent_autopilot.simulation_readiness import build_simulation_readiness_report
+
+        cae_block: dict[str, Any] | None = None
+        try:
+            from ..agent_context import build_agent_context
+
+            context = build_agent_context(active_settings, project_id)
+            if isinstance(context, dict) and isinstance(context.get("cae"), dict):
+                cae_block = context["cae"]
+        except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to read CAE block for simulation readiness endpoint.",
+                subsystem="app_factory.simulation_readiness.context",
+                context={"project_id": project_id},
+            )
+            cae_block = None
+        try:
+            setup_artifact = _load_project_simulation_setup(project_id)
+        except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to read direct simulation setup artifact for readiness endpoint.",
+                subsystem="app_factory.simulation_readiness.setup_artifact",
+                context={"project_id": project_id},
+            )
+            setup_artifact = None
+        return build_simulation_readiness_report(cae_block, setup_artifact=setup_artifact)
+
+    @app.post("/api/projects/{project_id}/shape-ir-patch")
+    def apply_shape_ir_patch_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Apply a Shape IR patch. Body: {patch: {...}, dry_run?: bool}."""
+        p = payload or {}
+        return _tool_aieng_apply_shape_ir_patch(
+            {"project_id": project_id, "patch": p.get("patch"), "dry_run": bool(p.get("dry_run", False))},
+            {},
+        )
+
+    @app.get("/api/projects/{project_id}/cae-result-map")
+    def get_cae_result_map_endpoint(project_id: str) -> dict[str, Any]:
+        """Build (and persist) the CAE -> Shape IR result map for a project."""
+        import zipfile as _zipfile
+        from aieng.converters.cae_result_map import build_cae_result_map_for_package, write_cae_result_map
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        with _zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
+            cae_sources = (
+                "analysis/computed_metrics.json", "analysis/field_regions.json",
+                "results/computed_metrics.json", "results/field_regions.json",
+            )
+            if not any(m in names for m in cae_sources):
+                raise HTTPException(status_code=404, detail="no CAE results to map (run the solver + extract first)")
+        try:
+            return write_cae_result_map(package_path)
+        except Exception:  # noqa: BLE001 - fall back to a non-persisted build
+            log_exception(
+                LOGGER,
+                "Failed to persist CAE result map; falling back to non-persisted response.",
+                subsystem="app_factory.cae_result_map.persist",
+                context={"project_id": project_id},
+            )
+            return build_cae_result_map_for_package(package_path)
+
+    @app.post("/api/projects/{project_id}/topology-optimization")
+    def run_topology_optimization_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Run topology optimization. Body: {problem?, auto_derive?, optimizer?}."""
+        p = payload or {}
+        return _tool_opt_run_topology_optimization(
+            {"project_id": project_id, "problem": p.get("problem"),
+             "auto_derive": p.get("auto_derive"), "optimizer": p.get("optimizer")},
+            {},
+        )
+
+    @app.post("/api/projects/{project_id}/topology-optimization/derive")
+    def derive_topology_optimization_problem_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Derive a topopt problem from the project's CAE setup + geometry (read-only).
+        Body: {resolution?, volfrac?, penalty?, rmin?, max_iters?}."""
+        return _tool_opt_derive_problem_from_cae({"project_id": project_id, **(payload or {})}, {})
+
+    @app.post("/api/projects/{project_id}/topology-optimization/writeback")
+    def writeback_topology_optimization_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Author the topology-optimization result back into Shape IR + recompile.
+        Body: {representation?, cell_size?, thickness?, origin?, node_id?}."""
+        p = payload or {}
+        return _tool_opt_writeback_to_shape_ir({"project_id": project_id, **p}, {})
+
+    @app.post("/api/projects/{project_id}/assembly/topology-optimization/run")
+    def run_assembly_topology_optimization_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Explicitly run assembly-aware topopt for one selected design part.
+        Body: {optimizer?, writeback?, method?, representation?, boundary?}.
+        Does not run as part of /assembly/process."""
+        p = payload or {}
+        return _tool_opt_run_assembly_topology_optimization({"project_id": project_id, **p}, {})
+
+    @app.post("/api/projects/{project_id}/assembly/process")
+    def process_assembly_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Best-effort Assembly IR v0 processing: if the package carries
+        assembly/assembly_ir.json, (re)write its validation + part registry +
+        connection graph + solver-neutral CAE setup draft. No solver is run; no
+        single-part geometry is touched. Returns {assembly_present: false} when the
+        package has no assembly artifact."""
+        from aieng.converters.assembly_ir import process_assembly_package
+        from aieng.converters.assembly_interface_resolution import (
+            resolve_and_validate_assembly_geometry,
+        )
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        base = process_assembly_package(package_path)
+        result = {"project_id": project_id, **base}
+        if base.get("assembly_present"):
+            geo = resolve_and_validate_assembly_geometry(package_path)
+            result["interface_resolution"] = geo.get("resolution_summary")
+            result["connection_geometry"] = geo.get("geometry_summary")
+            result["assembly_cae_model_status"] = geo.get("assembly_cae_model_status")
+            result["solver_deck_status"] = geo.get("solver_deck_status")
+            result["solver_execution_status"] = geo.get("solver_execution_status")
+            result["assembly_result_mapping_status"] = geo.get("assembly_result_mapping_status")
+        return result
+
+    @app.post("/api/projects/{project_id}/design-study/validate")
+    def validate_design_study_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Best-effort design study v0 validation: if the package carries
+        analysis/design_study_problem.json, validate the problem + any candidate
+        patches under patches/design_candidates/ and write the diagnostics. Contract
+        + validation ONLY — no patch is applied, no geometry recompiled, no CAE run,
+        no optimization executed. Returns {design_study_present: false} when absent."""
+        from aieng.converters.design_study import process_design_study_package
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **process_design_study_package(package_path)}
+
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/run")
+    def run_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """EXPLICITLY execute ONE validated design-study candidate into a derived workspace
+        (candidates/<id>/...). Applies the patch to a DERIVED Shape IR only; the baseline is
+        never overwritten and no candidate is auto-promoted. Compiles the candidate in a
+        throwaway copy when ``compile`` is enabled (default true); records the iteration in
+        analysis/design_study_iterations.json + diagnostics/design_study_report.json. No
+        optimizer/search/loop and no CAE are run."""
+        from aieng.converters.design_study_execution import execute_design_study_candidate
+        from ..cad_generation import make_candidate_recompiler
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        do_compile = (payload or {}).get("compile", True)
+        recompiler = make_candidate_recompiler(package_path) if do_compile else None
+        return {"project_id": project_id,
+                **execute_design_study_candidate(package_path, candidate_id, recompiler=recompiler)}
+
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/evaluate")
+    def evaluate_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Evaluate ONE candidate from candidate-local solver-neutral/static evidence.
+
+        Writes ``candidates/<id>/analysis/evaluation.json`` and
+        ``candidates/<id>/diagnostics/evaluation_report.json``. This is
+        backend-only post-processing: it does NOT run CAE, does NOT recompile
+        geometry, does NOT apply/promote candidates, and does NOT overwrite
+        baseline geometry.
+        """
+        from aieng.converters.design_study_evaluation import evaluate_design_study_candidate
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **evaluate_design_study_candidate(package_path, candidate_id)}
+
+    @app.post("/api/projects/{project_id}/design-study/rank")
+    def rank_design_study_candidates_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Rank already-executed design-study candidates.
+
+        Reads analysis/design_study_iterations.json + per-candidate evaluation artifacts,
+        classifies feasibility, scores against the problem objective and constraints,
+        and writes analysis/design_study_candidate_ranking.json +
+        diagnostics/design_study_scoring_report.json.
+
+        Does NOT execute new candidates, does NOT recompile geometry, does NOT run CAE,
+        and does NOT modify baseline geometry. Ranking is advisory only."""
+        from aieng.converters.design_study_ranking import rank_design_study_candidates
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **rank_design_study_candidates(package_path)}
+
+    @app.post("/api/projects/{project_id}/design-study/hints")
+    def build_design_study_candidate_hints_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Build advisory candidate proposal hints from existing design-study evidence.
+
+        Explicit backend-only decision support. Writes
+        ``analysis/design_study_candidate_hints.json`` and
+        ``diagnostics/design_study_candidate_hints_report.json``. It does NOT
+        generate candidate patches, execute candidates, run CAE, rank/accept
+        candidates, mutate geometry, or overwrite baseline artifacts.
+        """
+        from aieng.converters.design_study_hints import build_design_study_candidate_hints
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **build_design_study_candidate_hints(package_path, max_hints=int(data.get("max_hints", 10))),
+        }
+
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/accept")
+    def accept_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Explicitly accept ONE ranked design-study candidate into a derived accepted workspace.
+
+        Copies the candidate's derived artifacts into ``accepted/<candidate_id>/`` and writes
+        ``analysis/design_study_acceptance.json`` + ``diagnostics/design_study_acceptance_report.json``.
+
+        The candidate must be eligible (feasible, not failed/unknown, and safe_to_accept or
+        best_candidate_id unless override_unsafe is explicitly set in the payload).
+
+        Does NOT overwrite baseline geometry. Does NOT auto-promote. Production approval is
+        NOT claimed."""
+        from aieng.converters.design_study_acceptance import accept_design_study_candidate
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **accept_design_study_candidate(
+                package_path,
+                candidate_id,
+                accepted_by=data.get("accepted_by", "agent"),
+                reasoning=data.get("reasoning"),
+                override_unsafe=bool(data.get("override_unsafe", False)),
+            ),
+        }
+
+    @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/cae-evaluate")
+    def cae_evaluate_design_study_candidate_endpoint(
+        project_id: str,
+        candidate_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Explicitly request CAE evaluation for ONE design-study candidate.
+
+        Derives candidate-local CAE setup from the baseline, normalizes existing
+        candidate-local neutral metrics into ``candidates/<id>/analysis/evaluation.json``,
+        and optionally refreshes ranking. Solver execution is disabled by default.
+
+        Writes:
+          - ``candidates/<id>/analysis/cae_evaluation_request.json``
+          - ``candidates/<id>/diagnostics/cae_evaluation_request.json``
+          - ``candidates/<id>/simulation/setup.yaml`` (copied from baseline)
+          - ``candidates/<id>/simulation/cae_mapping.json`` (copied from baseline)
+          - ``candidates/<id>/analysis/evaluation.json`` (refreshed)
+          - ``candidates/<id>/diagnostics/evaluation_report.json`` (refreshed)
+
+        Does NOT overwrite baseline geometry or baseline CAE artifacts. Does NOT
+        auto-accept or auto-promote candidates. Does NOT run unbounded iterations.
+        """
+        from aieng.converters.design_study_cae_evaluation import (
+            request_design_study_candidate_cae_evaluation,
+        )
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **request_design_study_candidate_cae_evaluation(
+                package_path,
+                candidate_id,
+                mode=data.get("mode", "prepare_only"),
+                allow_solver_execution=bool(data.get("allow_solver_execution", False)),
+                allow_solver_deck_generation=bool(data.get("allow_solver_deck_generation", True)),
+                allow_ranking_refresh=bool(data.get("allow_ranking_refresh", False)),
+                requested_by=data.get("requested_by", "agent"),
+                load_case_ids=data.get("load_case_ids"),
+                constraints_to_evaluate=data.get("constraints_to_evaluate"),
+            ),
+        }
+
+    @app.post("/api/projects/{project_id}/brep/pick-face")
+    def pick_face_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Pick the closest B-Rep face to a 3D point from the viewer.
+
+        Body: { x: float, y: float, z: float }
+        Returns the best-matching face pointer, surface type, center, normal,
+        and a human-readable label. Returns 404 if no B-Rep graph is available.
+        """
+        from .. import brep_graph
+        from ..project_io import get_project, resolve_project_path
+
+        data = payload or {}
+        px = float(data.get("x", 0))
+        py = float(data.get("y", 0))
+        pz = float(data.get("z", 0))
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+
+        result = brep_graph.pick_face_at_point(package_path, px, py, pz)
+        if result is None:
+            raise HTTPException(status_code=404, detail="No B-Rep face graph available")
+        return {
+            "project_id": project_id,
+            "pick_point": {"x": px, "y": py, "z": pz},
+            **result,
+        }
+
+    @app.post("/api/projects/{project_id}/ai-preprocessing")
+    def ai_preprocessing_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """AI-driven FEA preprocessing setup generator.
+
+        Reads geometry from the project's .aieng package, calls Claude to decide
+        material, boundary conditions, loads, and mesh strategy, then writes
+        simulation/setup.yaml and simulation/cae_mapping.json into the package.
+
+        Body:
+          task_description (str, required): natural-language description of the
+            load case and support conditions, e.g. "Bracket bolted at 4 corner
+            holes, 500 N downward load at the end face."
+          material_hint (str, optional): preferred material name or description.
+          mesh_hint (str, optional): "coarse", "medium", or "fine".
+          write_files (bool, optional): write artifacts to package (default true).
+            Pass false to get a dry-run preview without mutating the package.
+        """
+        from .. import ai_preprocessing
+
+        data = payload or {}
+        resolved_key = _resolve_api_key(data)
+        if resolved_key:
+            data = {**data, "api_key": resolved_key}
+        if isinstance(data.get("llm_config"), dict):
+            data = {**data, "llm_config": agent_engine.sanitize_llm_config(data.get("llm_config"))}
+        return ai_preprocessing.run_ai_preprocessing(
+            active_settings, project_id, data
+        )
+
+    @app.post("/api/projects/{project_id}/run-simulation")
+    def run_simulation_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Mesh with Gmsh + solve with CalculiX from AI preprocessing output.
+
+        Requires confirmed=true in the request body — this runs external processes.
+        Returns gracefully if Gmsh or CalculiX are not installed.
+
+        Body:
+          confirmed (bool, required): must be true to execute.
+          timeout_s (int, optional): CalculiX timeout in seconds (default 180).
+
+        Prerequisites: the package must contain simulation/setup.yaml
+        (from ai-preprocessing) and geometry/generated.step (from generate-cad).
+        """
+        from .. import simulation_runner
+
+        return simulation_runner.run_simulation(
+            active_settings, project_id, payload or {}
+        )
+
+    @app.get("/api/simulation/tools")
+    def get_simulation_tools() -> dict[str, Any]:
+        """Check whether Gmsh and CalculiX are available on this host."""
+        from .. import simulation_runner
+
+        return simulation_runner.check_simulation_tools()
+
+    @app.post("/api/projects/{project_id}/run-simulation-stream")
+    def run_simulation_stream_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ):
+        """Mesh + solve with streaming SSE progress events.
+
+        Yields server-sent events: checking_tools → meshing → building_nsets →
+        solving → parsing → done (with full result) | error.
+        Requires confirmed=true in the request body.
+        """
+        from fastapi.responses import StreamingResponse
+        from .. import simulation_runner
+
+        def generate():
+            yield from simulation_runner.run_simulation_stream(
+                active_settings, project_id, payload or {}
+            )
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/projects/{project_id}/stress-heatmap")
+    def stress_heatmap_endpoint(project_id: str):
+        """Return a colored GLB with per-node Von Mises stress heatmap.
+
+        Requires simulation/mesh.inp and simulation/result.frd in the package
+        (written automatically after a successful simulation run).
+        Returns 409 if the package exists but those files are not yet present.
+        """
+        from fastapi.responses import Response
+        from ..project_io import get_project, resolve_project_path
+        from .. import simulation_runner, stress_heatmap
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(
+            active_settings, project_id, project.get("aieng_file")
+        )
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+
+        inp_bytes = simulation_runner._read_member(package_path, "simulation/mesh.inp")
+        frd_bytes = simulation_runner._read_member(package_path, "simulation/result.frd")
+        if not inp_bytes or not frd_bytes:
+            raise HTTPException(
+                status_code=409,
+                detail="Simulation mesh and results not yet available — run simulation first",
+            )
+
+        result = stress_heatmap.generate_heatmap_glb(
+            inp_bytes.decode("utf-8", errors="replace"), frd_bytes
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Could not generate heatmap: no stress data found in FRD file",
+            )
+
+        glb, min_mpa, max_mpa = result
+        return Response(
+            content=glb,
+            media_type="model/gltf-binary",
+            headers={
+                "Content-Disposition": f'inline; filename="stress_heatmap_{project_id}.glb"',
+                "Cache-Control": "no-cache",
+                "Access-Control-Expose-Headers": "X-Stress-Min-Mpa, X-Stress-Max-Mpa",
+                "X-Stress-Min-Mpa": f"{min_mpa:.4f}",
+                "X-Stress-Max-Mpa": f"{max_mpa:.4f}",
+            },
+        )
+
+    @app.post("/api/projects/{project_id}/chat-set-target")
+    def chat_set_target_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Parse a natural-language message and upsert a design target into design_targets.yaml.
+
+        Body: { message: str }
+        Example: {"message": "set max stress to 250 MPa"}
+        """
+        from .. import design_target_chat
+
+        p = payload or {}
+        return design_target_chat.add_target_from_chat(
+            settings=active_settings,
+            project_id=project_id,
+            text=str(p.get("message") or ""),
+        )
+
+    @app.post("/api/projects/{project_id}/contextual-chat")
+    def contextual_chat_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Context-aware engineering chat grounded in the current project state.
+
+        Injects geometry summary, simulation results, verdict, and design targets
+        into the system prompt so the LLM can answer engineering questions accurately.
+        Body: { message: str, history?: [{role, content}], api_key?: str }
+        """
+        from .. import contextual_chat, db
+
+        p = payload or {}
+        message = str(p.get("message") or "").strip()
+        session_id = str(p.get("session_id") or "").strip() or None
+        if session_id is None:
+            session_id = db.ensure_default_chat_session(db_path, project_id)["id"]
+        if message:
+            _add_chat_message_and_publish(
+                project_id=project_id,
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
+        result = contextual_chat.chat_with_context(
+            settings=active_settings,
+            project_id=project_id,
+            message=message,
+            history=list(p.get("history") or []),
+            api_key=_resolve_api_key(p),
+        )
+        reply = result.get("reply", "")
+        if reply:
+            _add_chat_message_and_publish(
+                project_id=project_id,
+                session_id=session_id,
+                role="assistant",
+                content=reply,
+            )
+        return result

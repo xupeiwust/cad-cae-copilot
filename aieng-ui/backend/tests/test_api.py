@@ -10632,7 +10632,14 @@ def test_topology_optimization_endpoint(tmp_path: Path) -> None:
     with _zip.ZipFile(pkg) as zf:
         sir2 = _json.loads(zf.read("geometry/shape_ir.json"))
     (node2,) = sir2["parts"]
-    assert node2["type"] == "extruded_region" and node2["polygons"]
+    if node2["type"] == "extruded_region":
+        assert node2["polygons"]
+    else:
+        # Contour extraction uses optional scikit-image. Without it, writeback
+        # must preserve the result honestly as voxels instead of claiming a
+        # contour was generated.
+        assert node2["type"] == "density_voxels"
+        assert "contour_fallback" in node2["source_optimization"]
 
 
 def test_topology_optimization_derive_from_cae_endpoint(tmp_path: Path) -> None:
@@ -10735,6 +10742,13 @@ def test_topology_optimization_3d_endpoint(tmp_path: Path) -> None:
     sir = wb_body["shape_ir"]
     assert sir["representation"] == "manifold_mesh"          # 3D defaults to mesh, not B-Rep
     node = sir["parts"][0]
+    if node["type"] == "density_voxels":
+        # Marching cubes is optional. The endpoint must report the fallback
+        # explicitly rather than mislabel a voxel body as a smooth mesh.
+        assert node["dimension"] == 3
+        assert "surface_fallback" in node["source_optimization"]
+        assert node["preview_only"] is True and node["cad_editable"] is False
+        return
     assert node["type"] == "smooth_mesh_proxy" and node["dimension"] == 3   # default = smooth mesh proxy
     assert node["preview_only"] is True and node["cad_editable"] is False
     assert node["triangle_count"] > 0 and "not_production_cad" in node["tags"]

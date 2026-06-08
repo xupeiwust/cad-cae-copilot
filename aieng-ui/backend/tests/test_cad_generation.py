@@ -1898,3 +1898,38 @@ def test_design_review_end_to_end_binds_target_and_flags_symmetry(tmp_path: Path
     ]
     assert wall_actions, "thin-wall finding should bind to WALL_THICKNESS"
     assert wall_actions[0]["parameter_target"]["known"] is True
+
+
+# ── domain primitives (naca_airfoil / fuselage_profile / wheel / ribbed_plate) ─
+
+@pytest.mark.parametrize("snippet", [
+    "result = naca_airfoil(120, 14, span=200, label='wing')",
+    "result = fuselage_profile(400, 60, label='fuselage')",
+    "result = wheel(30, 8, 20, label='wheel')",
+    "result = ribbed_plate(120, 80, 6, rib_count=3, label='panel')",
+])
+def test_domain_primitive_builds_valid_solid(tmp_path: Path, snippet: str) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "primitive")
+    code = "from build123d import *\n" + snippet + "\n"
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    # a real solid with faces was produced (the helper geometry is valid)
+    assert out["topology_summary"]["bounding_box"] is not None
+    assert out["topology_summary"]["face_count"] > 0
+
+
+def test_fuselage_primitive_marks_model_organic(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "organic-primitive")
+    code = "from build123d import *\nresult = fuselage_profile(400, 60, label='fuselage')\n"
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    # organic helper hint → mechanical heuristics are skipped
+    assert out["feature_graph"]["model_kind"] == "organic"

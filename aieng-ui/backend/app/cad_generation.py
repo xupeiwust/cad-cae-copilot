@@ -334,6 +334,104 @@ def organic_blend(solids, radius, label=None, color=None):
     return _aieng_finish(fused, label, color)
 
 
+# ── domain primitives (common engineering / vehicle shapes) ──────────────────
+# Higher-level than the generic helpers above: one call for a shape that would
+# otherwise take a fragile hand-rolled sketch. Same _aieng_finish(label, color)
+# contract; each returns a labelled, colourable Part.
+
+def naca_airfoil(chord, thickness, span=None, label=None, color=None):
+    \"\"\"A symmetric NACA-4-digit airfoil section extruded into a 3D wing solid.
+
+    ``chord`` = chord length (mm) along X, ``thickness`` = max thickness (mm),
+    ``span`` = extrusion length along Y (default = chord). Wings, fins, blades,
+    struts. Profile follows the standard NACA00xx half-thickness polynomial.
+    For a tapered/swept wing, build two and ``loft`` between them.
+    \"\"\"
+    c = float(chord)
+    tf = float(thickness) / c
+    sp = float(span) if span is not None else c
+    n = 30
+    xs = [i / n for i in range(n + 1)]
+
+    def _yt(x):
+        return 5 * tf * c * (
+            0.2969 * x ** 0.5 - 0.1260 * x - 0.3516 * x ** 2
+            + 0.2843 * x ** 3 - 0.1015 * x ** 4
+        )
+
+    upper = [(x * c, _yt(x)) for x in xs]
+    lower = [(x * c, -_yt(x)) for x in reversed(xs[1:-1])]
+    pts = upper + lower
+    with BuildPart() as _bp:
+        with BuildSketch(Plane.XZ):
+            with BuildLine():
+                Polyline(*pts, close=True)
+            make_face()
+        extrude(amount=sp)
+    return _aieng_finish(_bp.part, label, color)
+
+
+def fuselage_profile(length, max_diameter, nose_frac=0.2, tail_frac=0.3, label=None, color=None):
+    \"\"\"A revolved fuselage: rounded nose, constant mid-body, tapered tail.
+
+    ``length`` axial span (mm) along Z, ``max_diameter`` the max body diameter;
+    ``nose_frac`` / ``tail_frac`` are the fractions of length spent on the nose
+    and tail tapers. Aircraft/rocket bodies, pods, bottles.
+    \"\"\"
+    L = float(length)
+    R = float(max_diameter) / 2.0
+    nose = max(0.0, float(nose_frac)) * L
+    tail = max(0.0, float(tail_frac)) * L
+    pts = []
+    ns = 6
+    for i in range(ns + 1):
+        f = i / ns
+        pts.append((max(0.001, R * (f ** 0.5)), f * nose))
+    pts.append((R, max(nose, L - tail)))
+    ts = 6
+    for i in range(1, ts + 1):
+        f = i / ts
+        pts.append((max(0.001, R * (1 - f)), (L - tail) + f * tail))
+    return revolved_profile(pts, label=label, color=color)
+
+
+def wheel(rim_radius, tire_radius, width, label=None, color=None):
+    \"\"\"A wheel disc (axis along Z) with a central axle bore.
+
+    Outer radius = ``rim_radius`` + ``tire_radius``; ``width`` is the axial
+    thickness. The bore is 30% of ``rim_radius``. Vehicle wheels, pulleys,
+    rollers, gear blanks.
+    \"\"\"
+    rr = float(rim_radius)
+    outer = rr + float(tire_radius)
+    bore = max(0.001, rr * 0.3)
+    with BuildPart() as _bp:
+        Cylinder(outer, float(width))
+        Cylinder(bore, float(width), mode=Mode.SUBTRACT)
+    return _aieng_finish(_bp.part, label, color)
+
+
+def ribbed_plate(length, width, thickness, rib_count=2, rib_height=None, label=None, color=None):
+    \"\"\"A flat plate with parallel stiffening ribs on top, running along length.
+
+    ``rib_count`` evenly-spaced ribs across the width; ``rib_height`` defaults to
+    3x ``thickness``; rib thickness is ~0.8x plate ``thickness``. Brackets, base
+    plates, structural panels. The plate bottom sits at Z=0.
+    \"\"\"
+    L = float(length)
+    W = float(width)
+    t = float(thickness)
+    n = max(1, int(rib_count))
+    rh = float(rib_height) if rib_height is not None else t * 3.0
+    rt = max(1.0, t * 0.8)
+    ys = [(-W / 2 + W * (i + 0.5) / n) for i in range(n)]
+    with BuildPart() as _bp:
+        Box(L, W, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        with Locations(*[(0, y, t) for y in ys]):
+            Box(L, rt, rh, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    return _aieng_finish(_bp.part, label, color)
+
+
 # ---- aieng generated code ----
 __AIENG_GENERATED_CODE__
 # ---- end generated code ----
@@ -1026,6 +1124,7 @@ _ENGINEERING_LABEL_HINTS: tuple[str, ...] = (
 _ORGANIC_HELPER_HINTS: tuple[str, ...] = (
     "lofted_stack(", "capsule(", "swept_tube(", "revolved_profile(",
     "organic_blend(", "tapered_cylinder(",
+    "naca_airfoil(", "fuselage_profile(", "wheel(",
 )
 
 

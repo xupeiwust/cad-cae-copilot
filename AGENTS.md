@@ -623,6 +623,10 @@ failed builds. Each takes `label=` / `color=` and returns a `Part`:
 | `swept_tube(path_points, radius)` | pipes, handles, exhausts, cables | `path_points` = list of `(x,y,z)` |
 | `revolved_profile(profile_points)` | bottles, vases, wheels, axisymmetric | `profile_points` = list of `(r, z)`, auto-closed to Z axis |
 | `organic_blend(solids, radius)` | merge parts into ONE smooth body | fuses + fillets the joins; auto-degrades radius if infeasible |
+| `naca_airfoil(chord, thickness, span=)` | wings, fins, blades, struts | symmetric NACA00xx section extruded along Y (`span` default = chord); `loft` two for a tapered wing |
+| `fuselage_profile(length, max_diameter, nose_frac=, tail_frac=)` | aircraft/rocket bodies, pods | revolved body: rounded nose, constant mid, tapered tail (axis = Z) |
+| `wheel(rim_radius, tire_radius, width)` | vehicle wheels, pulleys, rollers | disc with central axle bore; outer radius = `rim_radius + tire_radius`, axis = Z |
+| `ribbed_plate(length, width, thickness, rib_count=, rib_height=)` | brackets, base plates, panels | flat plate + N stiffening ribs on top; bottom at Z=0 |
 
 ```python
 # A humanoid torso + symmetric arms + blended head — no BuildSketch boilerplate:

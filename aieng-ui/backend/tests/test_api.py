@@ -11375,3 +11375,58 @@ def test_design_study_run_candidate_endpoint_real_compile(tmp_path: Path) -> Non
         # no throwaway temp package left behind
     assert not list(pkg.parent.glob("*.tmp.aieng"))
     assert not list(pkg.parent.glob("*.dscand_*.aieng"))
+
+
+def test_geometry_report_endpoint_surfaces_floating_and_symmetry(tmp_path: Path) -> None:
+    """GET /geometry-report returns floating parts, broken symmetry, and per-part boxes."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    project = save_project(settings, default_project("assembly-check"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "assembly.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    topo = {"entities": [
+        {"type": "solid", "id": "b1", "name": "torso", "bounding_box": [-30, -15, 100, 30, 15, 300]},
+        {"type": "solid", "id": "b2", "name": "arm_L", "bounding_box": [-50, -10, 150, -30, 10, 290]},
+        {"type": "solid", "id": "b3", "name": "arm_R", "bounding_box": [30, -10, 150, 50, 10, 250]},
+        {"type": "solid", "id": "b4", "name": "foot_FL", "bounding_box": [-200, -10, -20, -180, 10, 0]},
+    ]}
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "assembly-check", "resources": {}}))
+        zf.writestr("geometry/topology_map.json", json.dumps(topo))
+    project["aieng_file"] = "assembly.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/geometry-report")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is True
+    assert "foot_FL" in data["floating_parts"]
+    # per-part boxes for every named solid, each a 6-number bbox
+    assert set(data["part_boxes"]) == {"torso", "arm_L", "arm_R", "foot_FL"}
+    assert len(data["part_boxes"]["arm_L"]) == 6
+    # the arm pair is flagged asymmetric
+    arm = next(s for s in data["symmetry"] if s.get("pair") == ["arm_L", "arm_R"])
+    assert arm["ok"] is False
+
+
+def test_geometry_report_endpoint_no_package_is_graceful(tmp_path: Path) -> None:
+    """No package / unknown project → 200 with available=False, not a 404."""
+    from app.main import create_app, default_project, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    project_id = save_project(settings, default_project("no-geo"))["id"]
+    resp = client.get(f"/api/projects/{project_id}/geometry-report")
+    assert resp.status_code == 200
+    assert resp.json()["available"] is False
+
+    unknown = client.get("/api/projects/doesnotexist99/geometry-report")
+    assert unknown.status_code == 200
+    assert unknown.json()["available"] is False

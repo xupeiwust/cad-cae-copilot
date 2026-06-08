@@ -311,6 +311,15 @@ single-part edit.
     a `/simulate …`. Hidden for pure-CAD projects (`setup_source == not_found`).
   Both are read-only (run no solver, mutate nothing); actions flow through the
   existing approval-gated `/modify` / `/simulate` path.
+- **Assembly-check viewer overlay (in-3D affordance).** The model viewer has a
+  "Show assembly check" toggle ([`ModelViewer.tsx`](aieng-ui/frontend/src/components/ModelViewer.tsx),
+  fed by `useGeometryReport` → `GET /api/projects/{id}/geometry-report`, shaped by
+  [`geometryReport.ts`](aieng-ui/frontend/src/app/geometryReport.ts), drawn by
+  [`assemblyCheck.ts`](aieng-ui/frontend/src/components/viewer/assemblyCheck.ts)).
+  It draws a **red** wireframe box around each floating part and an **amber** box
+  around each part in a broken / missing left-right symmetry pair — the same
+  `geometry_report` structural signals `cad.design_review` folds in, made visible
+  in 3D. Read-only; the toggle only appears when there is at least one alert.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

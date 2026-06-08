@@ -1366,6 +1366,35 @@ export type EditableParametersResponse = {
   summary: { total: number; by_scope: { local: number; global: number; unscoped: number } };
 };
 
+/** Geometry assembly-check report for the viewer overlay (from /geometry-report). */
+export type GeometrySymmetryPair = {
+  pair?: [string, string] | string[];
+  ok?: boolean;
+  status?: string;
+  part?: string;
+  expected_partner?: string;
+  align_residual_mm?: number;
+  mirror_axis?: string;
+};
+
+export type GeometryGap = {
+  part?: string;
+  nearest?: string;
+  gap_mm?: number;
+  status?: "touching" | "near" | "floating" | string;
+};
+
+export type GeometryReportResponse = {
+  available: boolean;
+  reason?: string;
+  units?: string;
+  floating_parts?: string[];
+  symmetry?: GeometrySymmetryPair[];
+  gaps?: GeometryGap[];
+  /** Per-named-part bounding box [xmin, ymin, zmin, xmax, ymax, zmax] in mm. */
+  part_boxes?: Record<string, number[]>;
+};
+
 /** One deterministic engineering-critique finding (from cad.critique). */
 export type CritiqueFinding = {
   severity: "high" | "medium" | "low" | string;

@@ -5,9 +5,12 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 import { api } from "../api";
+import { assemblyAlertCounts } from "../app/geometryReport";
+import { useGeometryReport } from "../app/useGeometryReport";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { fieldLabel, resolveAssetFormat } from "../appUtils";
 import type { SolverFieldDescriptor } from "../types";
+import { buildAssemblyCheckGroup, disposeAssemblyCheckGroup } from "./viewer/assemblyCheck";
 import { fitCameraToObject } from "./viewer/camera";
 import {
   IDENTITY_TRANSFORM,
@@ -51,6 +54,7 @@ export function ModelViewer({
   // Scene refs shared between the asset-loading effect and the highlight effect.
   const sceneRef = useRef<THREE.Scene | null>(null);
   const highlightGroupRef = useRef<THREE.Group | null>(null);
+  const assemblyGroupRef = useRef<THREE.Group | null>(null);
   const objectRef = useRef<THREE.Object3D | null>(null);
   const [objectReadyKey, setObjectReadyKey] = useState(0);
   const [viewerState, setViewerState] = useState<{ status: ViewerLoadState; detail: string }>({
@@ -58,6 +62,13 @@ export function ModelViewer({
     detail: "Waiting for preview asset",
   });
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
+  const [showAssemblyCheck, setShowAssemblyCheck] = useState(false);
+  // Assembly-check overlay: floating / broken-symmetry parts from /geometry-report.
+  const { geometryReport } = useGeometryReport({
+    selectedId: projectId ?? null,
+    geometryVersion: assetUrl ?? null,
+  });
+  const assemblyAlerts = assemblyAlertCounts(geometryReport);
   // Viewer↔model coordinate transform (see DisplayTransform). Held in a ref so
   // the click handler always reads the current value without re-binding.
   const displayTransformRef = useRef<DisplayTransform>(IDENTITY_TRANSFORM);
@@ -97,6 +108,10 @@ export function ModelViewer({
     highlightGroup.name = "pointer-highlights";
     scene.add(highlightGroup);
     highlightGroupRef.current = highlightGroup;
+    const assemblyGroup = new THREE.Group();
+    assemblyGroup.name = "assembly-check-group";
+    scene.add(assemblyGroup);
+    assemblyGroupRef.current = assemblyGroup;
 
     const initialSize = getHostSize();
     const camera = new THREE.PerspectiveCamera(45, initialSize.width / initialSize.height, 0.1, 1000);
@@ -297,6 +312,7 @@ export function ModelViewer({
       host.innerHTML = "";
       sceneRef.current = null;
       highlightGroupRef.current = null;
+      assemblyGroupRef.current = null;
       objectRef.current = null;
     };
   }, [assetFormat, assetUrl, fieldDescriptorKey]);
@@ -359,9 +375,47 @@ export function ModelViewer({
     }
   }, [highlightedFaceIds, brepSnapshot, objectReadyKey]);
 
+  // Assembly-check overlay: red boxes around floating parts, amber around broken
+  // symmetry pairs. Rebuilds when toggled, when the report changes, or when the
+  // model reloads (so the transform the boxes use is current).
+  useEffect(() => {
+    const group = assemblyGroupRef.current;
+    if (!group) return;
+    while (group.children.length > 0) {
+      const child = group.children.pop()!;
+      group.remove(child);
+      if (child instanceof THREE.Group) disposeAssemblyCheckGroup(child);
+    }
+    if (!showAssemblyCheck || !geometryReport) return;
+    group.add(buildAssemblyCheckGroup(geometryReport, displayTransformRef.current));
+  }, [showAssemblyCheck, geometryReport, objectReadyKey]);
+
   return (
     <div className="viewer-canvas-shell">
       <div className="viewer-canvas" ref={hostRef} />
+      {assemblyAlerts.total > 0 && (
+        <button
+          type="button"
+          className="viewer-assembly-toggle"
+          onClick={() => setShowAssemblyCheck((value) => !value)}
+          title="Highlight floating parts and broken left/right symmetry detected in the geometry"
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: showAssemblyCheck ? "#7f1d1d" : "rgba(20,20,20,0.78)",
+            color: "#f5f5f5",
+            cursor: "pointer",
+          }}
+        >
+          {showAssemblyCheck ? "Hide" : "Show"} assembly check ({assemblyAlerts.total})
+        </button>
+      )}
       <ViewerOverlays
         viewerState={viewerState}
         tooltipFace={tooltipFace}

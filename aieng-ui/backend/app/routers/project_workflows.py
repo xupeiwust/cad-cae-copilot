@@ -305,6 +305,55 @@ def register_project_workflow_routes(
             {},
         )
 
+    @app.get("/api/projects/{project_id}/geometry-report")
+    def get_geometry_report_endpoint(project_id: str) -> dict[str, Any]:
+        """Geometry assembly-check report for the viewer overlay (read-only).
+
+        Reuses cad_generation._compute_geometry_report (the same structural
+        signals cad.design_review folds in) and adds a compact per-named-part
+        bounding-box map (model frame, mm) so the frontend can draw floating /
+        broken-symmetry boxes that line up with the rendered model. Empty or
+        missing geometry is a valid 200 the viewer renders as "no assembly
+        issues" — not a 404."""
+        import json as _json
+        import zipfile as _zipfile
+
+        from ..cad_generation import _compute_geometry_report
+        from ..project_io import get_project, resolve_project_path
+
+        try:
+            project = get_project(active_settings, project_id)
+        except Exception:
+            return {"available": False, "reason": "project_not_found"}
+        pkg_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if pkg_path is None or not pkg_path.exists():
+            return {"available": False, "reason": "no_package"}
+        try:
+            with _zipfile.ZipFile(pkg_path, "r") as zf:
+                if "geometry/topology_map.json" not in zf.namelist():
+                    return {"available": False, "reason": "no_topology"}
+                topo = _json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+        except Exception:
+            return {"available": False, "reason": "read_failed"}
+
+        report = _compute_geometry_report(topo)
+        part_boxes: dict[str, list[float]] = {}
+        for ent in topo.get("entities", []):
+            if ent.get("type") != "solid":
+                continue
+            name = ent.get("name")
+            bbox = ent.get("bounding_box")
+            if name and isinstance(bbox, list) and len(bbox) >= 6:
+                part_boxes[str(name)] = [float(v) for v in bbox[:6]]
+        return {
+            "available": bool(report.get("available")),
+            "units": report.get("units", "mm"),
+            "floating_parts": report.get("floating_parts", []),
+            "symmetry": report.get("symmetry", []),
+            "gaps": report.get("gaps", []),
+            "part_boxes": part_boxes,
+        }
+
     @app.get("/api/projects/{project_id}/cae-result-map")
     def get_cae_result_map_endpoint(project_id: str) -> dict[str, Any]:
         """Build (and persist) the CAE -> Shape IR result map for a project."""

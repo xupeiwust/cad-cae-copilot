@@ -595,6 +595,32 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),
+
+    # ── Snapshots / undo (list read-only, restore approval-gated) ────────────
+    "cad.list_snapshots": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "limit": {
+                "type": "integer",
+                "description": "Max snapshots to return, newest first (default 20).",
+            },
+        },
+        "additionalProperties": True,
+    },
+    "cad.restore_snapshot": {
+        "type": "object",
+        "required": ["project_id", "snapshot_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "snapshot_id": {
+                "type": "string",
+                "description": "Snapshot to restore (e.g. 'snap_0003'), from cad.list_snapshots.",
+            },
+        },
+        "additionalProperties": True,
+    },
     "cad.get_named_part_bbox": {
         "type": "object",
         "required": ["project_id", "part_name"],

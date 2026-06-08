@@ -39,6 +39,7 @@ AUTO_READ_TOOLS = {
     "cad.plan_build123d_skill",
     "cad.critique",
     "cad.design_review",
+    "cad.list_snapshots",
 }
 
 AUTO_PREVIEW_TOOLS = {
@@ -64,6 +65,7 @@ AUTO_WRITE_SAFE_TOOLS = {
 APPROVAL_MUTATION_TOOLS = {
     "cad.execute_build123d",
     "cad.edit_parameter",
+    "cad.restore_snapshot",
     "aieng.convert",
     "aieng.generate_preview",
     "aieng.refresh_semantics",

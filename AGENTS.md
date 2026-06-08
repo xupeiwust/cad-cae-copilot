@@ -846,6 +846,7 @@ fixture and load on flat interfaces.
 | `cad.list_editable_parameters` | List the parameters editable fast via `cad.edit_parameter` (the "point" of point-and-shoot): per-parameter `featureId`/`parameterName`/`cad_parameter_name`/current/min-max + `scope` (`local`/`global`/`unscoped`) + a summary. Answers "what can I change here?" |
 | `cad.critique` | Deterministic engineering audit (min wall, hole sizes, floating components) — call after building an engineering part |
 | `cad.design_review` | Read-only self-review: `cad.critique` + the left/right **symmetry** checks critique lacks + a concrete `cad.edit_parameter` **fix target** (featureId/parameterName/range) bound to each fixable finding. Returns a severity-ranked `actions` list + merged verdict. Changes nothing; fixes still go through approval. Use it to self-correct before presenting a result |
+| `cad.list_snapshots` | List the recent CAD undo timeline. A snapshot is recorded automatically after each successful `execute_build123d`/`edit_parameter`/`replace_part`/`remove_part`. Returns tiny metadata only (`snapshot_id`, `created_at`, `tool_name`, `part_count`, `named_parts`) — pair with `cad.restore_snapshot` |
 
 ### Geometry creation (requires approval — mutates package)
 
@@ -857,6 +858,7 @@ fixture and load on flat interfaces.
 | `cad.remove_part` | Drop ONE named part (by `.label`) from the model. Re-executes, no LLM |
 | `cad.set_reference_image` | Attach a reference photo/drawing to a project so future thumbnails include it side-by-side for proportion calibration |
 | `cad.search_reference_image` | Search Wikimedia Commons for `query` and auto-attach the best match via `cad.set_reference_image` — use when the user names a real target but gives no picture. Returns `page_url` for source/license verification; `no_results` degrades gracefully. No approval (same as `set_reference_image`) |
+| `cad.restore_snapshot` | Roll the project back to an earlier snapshot (`snapshot_id` from `cad.list_snapshots`): replaces the `.aieng` package with the snapshot and republishes the viewer, clearing stale flags. Undo for an unwanted edit. Confirm first — the current state is not auto-snapshotted before restore |
 
 Before an incremental edit, call **`cad.get_source`** (read-only) to see the current
 accumulated script, which named parts already exist, and whether `has_base` (append
@@ -1001,8 +1003,8 @@ process. Always: (1) explain the side effects to the user, (2) wait for explicit
 confirmation, (3) report the outcome after the call.
 
 Currently approval-gated: `cad.execute_build123d`, `cad.edit_parameter`,
-`cad.replace_part`, `cad.remove_part`, `cae.run_solver`, `aieng.delete_project`,
-`aieng.apply_shape_ir_patch`.
+`cad.replace_part`, `cad.remove_part`, `cad.restore_snapshot`, `cae.run_solver`,
+`aieng.delete_project`, `aieng.apply_shape_ir_patch`.
 
 ---
 

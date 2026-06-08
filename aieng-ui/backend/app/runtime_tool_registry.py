@@ -2679,13 +2679,23 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         ),
     )
 
+    def _record_cad_snapshot(result: dict[str, Any], project_id: Any, tool_name: str) -> None:
+        # Best-effort undo timeline: snapshot the package after a successful CAD
+        # mutation so cad.restore_snapshot can roll back. Never affects the tool.
+        if isinstance(result, dict) and result.get("status") == "ok" and project_id:
+            from . import snapshots as _snap
+
+            _snap.record_snapshot(active_settings, str(project_id), tool_name)
+
     def _tool_cad_execute_build123d(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
 
         project_id = inp.get("project_id")
         if not project_id:
             return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
-        return _cg.execute_build123d_code(active_settings, project_id, inp)
+        result = _cg.execute_build123d_code(active_settings, project_id, inp)
+        _record_cad_snapshot(result, project_id, "cad.execute_build123d")
+        return result
 
     _rt.register_tool(
         "cad.execute_build123d",
@@ -2951,7 +2961,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
 
     def _tool_cad_edit_parameter(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
-        return _cg.edit_build123d_parameter(
+        result = _cg.edit_build123d_parameter(
             settings=active_settings,
             project_id=str(inp.get("project_id") or ""),
             feature_id=str(inp.get("featureId") or ""),
@@ -2961,6 +2971,8 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             response_detail=str(inp.get("response_detail") or "full"),
             thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
         )
+        _record_cad_snapshot(result, inp.get("project_id"), "cad.edit_parameter")
+        return result
 
     _rt.register_tool(
         "cad.edit_parameter",
@@ -2978,7 +2990,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
 
     def _tool_cad_remove_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
-        return _cg.remove_build123d_part(
+        result = _cg.remove_build123d_part(
             settings=active_settings,
             project_id=str(inp.get("project_id") or ""),
             label=str(inp.get("label") or ""),
@@ -2986,6 +2998,8 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             response_detail=str(inp.get("response_detail") or "full"),
             thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
         )
+        _record_cad_snapshot(result, inp.get("project_id"), "cad.remove_part")
+        return result
 
     _rt.register_tool(
         "cad.remove_part",
@@ -3002,7 +3016,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
 
     def _tool_cad_replace_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_generation as _cg
-        return _cg.replace_build123d_part(
+        result = _cg.replace_build123d_part(
             settings=active_settings,
             project_id=str(inp.get("project_id") or ""),
             label=str(inp.get("label") or ""),
@@ -3011,6 +3025,8 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             response_detail=str(inp.get("response_detail") or "full"),
             thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
         )
+        _record_cad_snapshot(result, inp.get("project_id"), "cad.replace_part")
+        return result
 
     _rt.register_tool(
         "cad.replace_part",
@@ -3025,6 +3041,51 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             "resubmitting the whole model. Returns a regression_diff. Requires approval."
         ),
     )
+
+    def _tool_cad_list_snapshots(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import snapshots as _snap
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        limit = inp.get("limit")
+        return _snap.list_snapshots(active_settings, str(project_id), int(limit) if limit else 20)
+
+    _rt.register_tool(
+        "cad.list_snapshots",
+        _tool_cad_list_snapshots,
+        input_schema=_schema("cad.list_snapshots"),
+        description=(
+            "Read-only: list the recent CAD snapshots (undo timeline). A snapshot is "
+            "recorded automatically after every successful cad.execute_build123d / "
+            "edit_parameter / replace_part / remove_part. Returns tiny metadata only "
+            "(snapshot_id, created_at, tool_name, part_count, named_parts) — never "
+            "package bytes. Pair with cad.restore_snapshot to roll back."
+        ),
+    )
+
+    def _tool_cad_restore_snapshot(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from . import snapshots as _snap
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _snap.restore_snapshot(active_settings, str(project_id), str(inp.get("snapshot_id") or ""))
+
+    _rt.register_tool(
+        "cad.restore_snapshot",
+        _tool_cad_restore_snapshot,
+        requires_approval=True,
+        input_schema=_schema("cad.restore_snapshot"),
+        description=(
+            "[APPROVAL REQUIRED] Roll the project back to an earlier CAD snapshot by "
+            "snapshot_id (from cad.list_snapshots). Replaces the current .aieng package "
+            "with the snapshot and republishes the viewer preview, clearing stale-artifact "
+            "flags. Use to undo an unwanted edit. Irreversible from the agent's side "
+            "(the current state is not auto-snapshotted before restore), so confirm first."
+        ),
+    )
+
     from . import runtime_tools
     runtime_tools.register_engineering_template_tools(_rt, active_settings)
 

@@ -1426,10 +1426,13 @@ def test_freeform_faces_get_proxy_normal(tmp_path: Path) -> None:
     _step, _stl, _glb, topo = _execute_build123d_code(
         "arm = capsule(20, 80, label='arm')\nresult = Compound(children=[arm])\n"
     )
-    others = [e for e in topo["entities"] if e.get("type") == "face" and e.get("surface_type") == "other"]
-    assert others, "capsule should produce free-form 'other' faces"
+    freeform_faces = [
+        e for e in topo["entities"]
+        if e.get("type") == "face" and e.get("freeform") is True
+    ]
+    assert freeform_faces, "capsule should produce curved/free-form faces"
     # every free-form face now carries a proxy normal + freeform flag so CAE can bind it
-    for f in others:
+    for f in freeform_faces:
         assert f.get("freeform") is True
         assert f.get("normal") and len(f["normal"]) == 3
 

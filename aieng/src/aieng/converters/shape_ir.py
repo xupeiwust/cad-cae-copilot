@@ -311,25 +311,82 @@ def shape_ir_representation(payload: dict[str, Any]) -> str:
     return str(payload.get("representation") or payload.get("target") or "brep_build123d").lower()
 
 
-def compile_shape_ir(payload: dict[str, Any]) -> dict[str, Any]:
+def compile_shape_ir(payload: dict[str, Any], *, use_cache: bool = True) -> dict[str, Any]:
     """Dispatch Shape IR to its representation's registered compiler.
 
     Returns ``{representation, requested_representation, source, source_path,
     runtime, fallback}``. Unknown representations fall back to build123d and set
     ``fallback=True`` so callers can record the substitution honestly.
+
+    Args:
+        use_cache: When ``True`` (default), check the ``GeometryCache`` before
+            compiling. Cache misses proceed with normal compilation and store
+            the result.
     """
     requested = shape_ir_representation(payload)
     entry = _COMPILER_REGISTRY.get(requested)
     fallback = entry is None
     if entry is None:
         entry = _COMPILER_REGISTRY["brep_build123d"]
+
+    if use_cache:
+        try:
+            from aieng.cache.geometry_cache import CachedGeometry, GeometryCache, compute_shape_ir_hash
+            from aieng.cache.metrics import get_default_metrics
+
+            cache = GeometryCache()
+            metrics = get_default_metrics()
+            h = compute_shape_ir_hash(payload)
+            cached = cache.get(h)
+            if cached is not None and cached.metadata.get("source"):
+                metrics.record_hit()
+                return {
+                    "representation": cached.metadata.get("representation", entry["canonical"]),
+                    "requested_representation": requested,
+                    "source": cached.metadata["source"],
+                    "source_path": cached.metadata.get("source_path", entry["source_path"]),
+                    "runtime": cached.metadata.get("runtime", entry["runtime"]),
+                    "fallback": fallback,
+                    "cached": True,
+                }
+            metrics.record_miss()
+            source = entry["compiler"](payload)
+            # Store in cache for future reuse
+            cache.set(
+                h,
+                CachedGeometry(
+                    shape_ir_hash=h,
+                    metadata={
+                        "representation": entry["canonical"],
+                        "runtime": entry["runtime"],
+                        "source": source,
+                        "source_path": entry["source_path"],
+                    },
+                ),
+            )
+            metrics.record_set()
+            return {
+                "representation": entry["canonical"],
+                "requested_representation": requested,
+                "source": source,
+                "source_path": entry["source_path"],
+                "runtime": entry["runtime"],
+                "fallback": fallback,
+                "cached": False,
+            }
+        except Exception:
+            # Cache failure is non-fatal; fall through to normal compilation
+            pass
+
+    source = entry["compiler"](payload)
     return {
         "representation": entry["canonical"],
         "requested_representation": requested,
-        "source": entry["compiler"](payload),
+        "source": source,
         "source_path": entry["source_path"],
         "runtime": entry["runtime"],
         "fallback": fallback,
+        "cached": False,
     }
 
 

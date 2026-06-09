@@ -3448,13 +3448,19 @@ def _replace_member(pkg_path: Path, name: str, data: bytes) -> None:
         raise
 
 
-def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dict[str, Any]:
+def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120, use_cache: bool = True) -> dict[str, Any]:
     """Recompile + re-execute a package whose geometry/shape_ir.json changed.
 
     Routes by the representation's runtime (build123d / sdf / manifold), writes
     the compiled source + regenerated artifacts, reconciles provenance, and
     refreshes shape_ir_verification + object_registry. Returns a summary. Reused
     by the Shape IR patch apply path so an edit re-runs the full pipeline.
+
+    Args:
+        package_path: Path to the .aieng package file.
+        timeout: Subprocess timeout in seconds.
+        use_cache: When ``True`` (default), check the ``GeometryCache`` before
+            recompiling. Cache hits skip compilation and return the cached summary.
     """
     from aieng.converters.shape_ir import compile_shape_ir
     from aieng.converters.shape_ir_object_registry import write_shape_ir_object_registry
@@ -3463,7 +3469,36 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
     package_path = Path(package_path)
     with zipfile.ZipFile(package_path, "r") as zf:
         payload = json.loads(zf.read("geometry/shape_ir.json").decode("utf-8"))
-    compiled = compile_shape_ir(payload)
+
+    # ── GeometryCache integration ───────────────────────────────────────────
+    if use_cache:
+        try:
+            from aieng.cache.geometry_cache import GeometryCache, compute_shape_ir_hash
+            from aieng.cache.metrics import get_default_metrics
+
+            cache = GeometryCache()
+            metrics = get_default_metrics()
+            h = compute_shape_ir_hash(payload)
+            cached = cache.get(h)
+            if cached is not None and cached.metadata.get("source"):
+                metrics.record_hit()
+                # Re-write cached artifacts into the package so the package stays consistent
+                _write_cached_artifacts_to_package(package_path, cached)
+                return {
+                    "representation": cached.metadata.get("representation", "brep_build123d"),
+                    "runtime": cached.metadata.get("runtime", "build123d"),
+                    "executed": True,
+                    "geometry_kind": cached.metadata.get("geometry_kind", "brep"),
+                    "cached": True,
+                    "cache_hit": True,
+                    "source_path": cached.metadata.get("source_path", "geometry/source.py"),
+                }
+            metrics.record_miss()
+        except Exception:
+            # Cache failure is non-fatal; fall through to normal compilation
+            pass
+
+    compiled = compile_shape_ir(payload, use_cache=use_cache)
     representation, runtime, source = compiled["representation"], compiled["runtime"], compiled["source"]
     _replace_member(package_path, compiled["source_path"], source.encode())
 
@@ -3480,6 +3515,36 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
             fg = _topology_to_feature_graph(topo, source_code=source, model_kind=str(payload.get("model_kind") or "auto"))
             _write_cad_artifacts(package_path, step_bytes=step, stl_bytes=stl, topology_map=topo,
                                  feature_graph=fg, generated_code=source, glb_bytes=glb)
+            # ── Write to GeometryCache ──────────────────────────────────────────
+            if use_cache:
+                try:
+                    from aieng.cache.geometry_cache import CachedGeometry, GeometryCache, compute_shape_ir_hash
+                    from aieng.cache.metrics import get_default_metrics
+
+                    cache = GeometryCache()
+                    metrics = get_default_metrics()
+                    h = compute_shape_ir_hash(payload)
+                    cg = CachedGeometry(
+                        shape_ir_hash=h,
+                        metadata={
+                            "representation": representation,
+                            "runtime": runtime,
+                            "source": source,
+                            "source_path": compiled["source_path"],
+                            "geometry_kind": "brep",
+                            "step_bytes": step,
+                            "stl_bytes": stl,
+                            "glb_bytes": glb,
+                            "topology_map": topo,
+                            "feature_graph": fg,
+                        },
+                    )
+                    cg.topology_map = topo
+                    cg.feature_graph = fg
+                    cache.set(h, cg)
+                    metrics.record_set()
+                except Exception:
+                    pass
             reconcile_shape_ir_provenance(package_path, topo, fg, representation=representation,
                                           backend="build123d", geometry_kind="brep",
                                           requested_runtime=runtime, fallback_used=fallback_used,
@@ -3490,6 +3555,35 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120) -> dic
             stl, glb, topo = runner(source, timeout=timeout)
             fg = _mesh_feature_graph(topo)
             _write_mesh_artifacts(package_path, stl, glb, topo, fg)
+            # ── Write to GeometryCache ──────────────────────────────────────────
+            if use_cache:
+                try:
+                    from aieng.cache.geometry_cache import CachedGeometry, GeometryCache, compute_shape_ir_hash
+                    from aieng.cache.metrics import get_default_metrics
+
+                    cache = GeometryCache()
+                    metrics = get_default_metrics()
+                    h = compute_shape_ir_hash(payload)
+                    cg = CachedGeometry(
+                        shape_ir_hash=h,
+                        metadata={
+                            "representation": representation,
+                            "runtime": runtime,
+                            "source": source,
+                            "source_path": compiled["source_path"],
+                            "geometry_kind": "mesh",
+                            "stl_bytes": stl,
+                            "glb_bytes": glb,
+                            "topology_map": topo,
+                            "feature_graph": fg,
+                        },
+                    )
+                    cg.topology_map = topo
+                    cg.feature_graph = fg
+                    cache.set(h, cg)
+                    metrics.record_set()
+                except Exception:
+                    pass
             reconcile_shape_ir_provenance(package_path, topo, fg, representation=representation,
                                           backend=runtime, geometry_kind="mesh",
                                           requested_runtime=runtime, fallback_used=fallback_used,
@@ -6152,3 +6246,49 @@ def replace_build123d_part(
         response_detail=response_detail,
         thumbnail=thumbnail,
     )
+
+
+def _write_cached_artifacts_to_package(
+    package_path: Path,
+    cached: "aieng.cache.geometry_cache.CachedGeometry",
+) -> None:
+    """Write cached geometry artifacts back into an .aieng package.
+
+    Used by ``recompile_shape_ir_package`` on cache hit so the package stays
+    consistent even when compilation is skipped.
+    """
+    import zipfile
+
+    meta = cached.metadata
+    # Re-write source.py if available
+    source = meta.get("source")
+    source_path = meta.get("source_path", "geometry/source.py")
+    if source:
+        _replace_member(package_path, source_path, source.encode("utf-8"))
+
+    # Re-write binary artifacts
+    step_bytes = meta.get("step_bytes")
+    if step_bytes:
+        _replace_member(package_path, "geometry/generated.step", step_bytes)
+    stl_bytes = meta.get("stl_bytes")
+    if stl_bytes:
+        _replace_member(package_path, "geometry/preview.stl", stl_bytes)
+    glb_bytes = meta.get("glb_bytes")
+    if glb_bytes:
+        _replace_member(package_path, "geometry/preview.glb", glb_bytes)
+
+    # Re-write topology_map.json and feature_graph.json
+    topo = cached.topology_map or meta.get("topology_map")
+    if topo:
+        _replace_member(
+            package_path,
+            "geometry/topology_map.json",
+            (json.dumps(topo, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )
+    fg = cached.feature_graph or meta.get("feature_graph")
+    if fg:
+        _replace_member(
+            package_path,
+            "graph/feature_graph.json",
+            (json.dumps(fg, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )

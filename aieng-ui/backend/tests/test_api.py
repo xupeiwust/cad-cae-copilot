@@ -86,6 +86,42 @@ def test_health_endpoint() -> None:
     assert isinstance(data["pid"], int)
     assert data["python_executable"]
     assert data["runtime_tool_count"] >= 0
+    # Registry identity for stale-session detection (#29).
+    assert data["registry_hash"].startswith("sha256:")
+
+
+def test_health_registry_hash_matches_runtime_identity() -> None:
+    """The health endpoint's registry_hash mirrors runtime.registry_identity()."""
+    from app import runtime as _rt
+
+    client = TestClient(app)
+    data = client.get("/api/health").json()
+    identity = _rt.registry_identity()
+    assert data["registry_hash"] == identity["registry_hash"]
+    assert data["runtime_tool_count"] == identity["tool_count"]
+
+
+def test_registry_identity_is_deterministic_and_drift_sensitive() -> None:
+    """The registry hash is stable across calls and changes when the tool set
+    changes — the signal a long-lived MCP session uses to detect a stale registry.
+    """
+    from app import runtime as _rt
+
+    first = _rt.registry_identity()
+    second = _rt.registry_identity()
+    assert first == second
+    assert first["tool_count"] == len(_rt.registered_tool_names())
+
+    sentinel = "test.stale_registry_probe"
+    _rt.register_tool(sentinel, lambda inp, ctx: {"status": "ok"}, description="probe")
+    try:
+        changed = _rt.registry_identity()
+        assert changed["tool_count"] == first["tool_count"] + 1
+        assert changed["registry_hash"] != first["registry_hash"]
+    finally:
+        _rt._REGISTRY.pop(sentinel, None)
+    # Removing the probe restores the original identity.
+    assert _rt.registry_identity() == first
 
 
 def test_field_descriptor_endpoint_returns_synthetic_contract(tmp_path: Path) -> None:

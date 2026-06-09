@@ -347,6 +347,36 @@ def test_mcp_hard_block_refuses_solver_too(monkeypatch) -> None:
     assert payload["tool"] == "cae.run_solver"
 
 
+def test_mcp_hard_block_refuses_nonapproval_cad_mutation(monkeypatch) -> None:
+    """Inspection-only mode blocks CAD mutations even though they are no longer
+    approval-gated (approval moved to the modeling-plan boundary; cad.execute_build123d
+    is requires_approval=False, read_only=False). Regression guard for the gap that
+    let block mode silently run CAD edits and broke the packaged headless smoke.
+    """
+    import asyncio
+
+    import app.mcp_server as ms
+
+    def _should_not_forward(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("blocked CAD mutation must not forward to backend")
+
+    def _should_not_invoke(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("blocked CAD mutation must not invoke runtime")
+
+    monkeypatch.setenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", "1")
+    monkeypatch.setenv("AIENG_MCP_REQUIRE_GUIDES", "0")
+    monkeypatch.setattr(ms, "_BACKEND_URL", "http://127.0.0.1:8000")
+    monkeypatch.setattr(ms, "_forward_to_backend", _should_not_forward)
+    monkeypatch.setattr(_rt, "invoke_tool", _should_not_invoke)
+
+    mcp = ms._build_mcp_server()
+    out = asyncio.run(mcp.call_tool("cad_execute_build123d", {"project_id": "p1", "code": "result = None"}))
+    payload = json.loads(_tool_text(out))
+    assert payload["status"] == "error"
+    assert payload["code"] == "approval_blocked"
+    assert payload["tool"] == "cad.execute_build123d"
+
+
 def test_mcp_hard_block_does_not_block_safe_tools(monkeypatch) -> None:
     import asyncio
 

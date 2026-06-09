@@ -388,9 +388,10 @@ def _approval_blocked_result(tool_name: str) -> dict[str, Any]:
         "code": "approval_blocked",
         "tool": tool_name,
         "message": (
-            f"{tool_name} requires human approval. "
-            "AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 is enabled, so this MCP server "
-            "refuses approval-gated CAD/CAE mutations instead of executing them."
+            f"{tool_name} mutates project state. AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 "
+            "(inspection-only mode) is enabled, so this MCP server refuses "
+            "CAD/CAE/package mutations — approval-gated or plan-boundary — "
+            "instead of executing them."
         ),
     }
 
@@ -732,7 +733,7 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
             "additionalProperties": True,
         }
 
-        def _make_handler(name_: str, requires_approval: bool = False):
+        def _make_handler(name_: str, requires_approval: bool = False, *, is_mutation: bool = False):
             def _handler(**kwargs: Any) -> Any:
                 args = dict(kwargs)
                 if name_ == "aieng.guide":
@@ -762,7 +763,12 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
                 # settings — so a user allow-listing the workbench tools cannot
                 # bypass the workbench's own approval policy. Denied/timed-out
                 # requests never execute.
-                if requires_approval and _mcp_hard_blocks_approval_tools():
+                # Inspection-only mode blocks ANY mutating tool, not only the
+                # approval-gated ones. CAD authoring/edit tools are
+                # requires_approval=False (approval lives at the modeling-plan
+                # boundary) but still mutate the package, so gate on is_mutation
+                # too — otherwise block mode would silently let CAD edits run.
+                if (requires_approval or is_mutation) and _mcp_hard_blocks_approval_tools():
                     return _coerce_result(_approval_blocked_result(name_))
                 if requires_approval and _broker_approval_mode():
                     decision = _agentic_permission_decision(name_, args)
@@ -814,7 +820,11 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
             openWorldHint=False,
         )
         mcp.add_tool(
-            _make_handler(tool_name, bool(tool_def.get("requires_approval"))),
+            _make_handler(
+                tool_name,
+                bool(tool_def.get("requires_approval")),
+                is_mutation=not bool(tool_def.get("read_only", False)),
+            ),
             name=mcp_name,
             description=description,
             structured_output=False,

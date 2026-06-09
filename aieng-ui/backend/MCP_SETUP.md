@@ -207,7 +207,14 @@ executes a simple bracket build path (stubbed by default, real with
 - Solver execution must be evidenced by `cae.run_solver` output and result
   artifacts; prompts/resources cannot make solver claims true.
 - Approval applies only to tools registered with `requires_approval=true`.
-- `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` is the server-enforced no-mutation mode.
+- `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` (a.k.a. `--approval-mode block`) is the
+  server-enforced inspection-only mode: it hard-blocks **every mutating tool**,
+  not only approval-gated ones. That includes the plan-boundary CAD
+  authoring/edit tools (`cad.execute_build123d`, `cad.edit_parameter`,
+  `cad.replace_part`, `cad.remove_part`, `cad.refine`, `cad.set_reference_image`),
+  which are `requires_approval=false` because approval moved to the modeling-plan
+  boundary. Read-only inspection tools still run; blocked calls return
+  `code: approval_blocked`.
 - `AIENG_MCP_MANAGED_APPROVAL=1` requires a reachable backend/viewer; if the
   approval broker is unavailable, gated calls fail safe. The bridge pre-flights
   the approval surface, so when no viewer is connected to approve, the gated

@@ -104,7 +104,7 @@ of this file for the corresponding committed artifacts.
 
 **Validation commands:**
 ```powershell
-cd /path/to/workspace_aieng\aieng-ui\backend
+cd /path/to/cad-cae-copilot\aieng-ui\backend
 python -m pytest tests/test_api.py::test_run_solver_real_ccx_skipped_if_unavailable -v
 ```
 

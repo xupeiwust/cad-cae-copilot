@@ -58,7 +58,7 @@ eventual multi-agent integration on the critical path.
 ## Installation
 
 ```powershell
-cd /path/to/workspace_aieng/aieng
+cd /path/to/cad-cae-copilot/aieng
 pip install -e ".[benchmark]"
 ```
 

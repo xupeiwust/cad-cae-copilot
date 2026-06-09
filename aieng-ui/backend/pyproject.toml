@@ -83,10 +83,10 @@ aieng-workbench-mcp = "aieng_workbench_mcp.__main__:main"
 aieng-workbench-mcp-smoke = "aieng_workbench_mcp.smoke:main"
 
 [project.urls]
-Homepage = "https://github.com/armpro24-blip/workspace_aieng"
-Repository = "https://github.com/armpro24-blip/workspace_aieng"
-Issues = "https://github.com/armpro24-blip/workspace_aieng/issues"
-Documentation = "https://github.com/armpro24-blip/workspace_aieng/tree/main/aieng-ui/backend"
+Homepage = "https://github.com/armpro24-blip/cad-cae-copilot"
+Repository = "https://github.com/armpro24-blip/cad-cae-copilot"
+Issues = "https://github.com/armpro24-blip/cad-cae-copilot/issues"
+Documentation = "https://github.com/armpro24-blip/cad-cae-copilot/tree/main/aieng-ui/backend"
 "Sister project (aieng)" = "https://github.com/armpro24-blip/aieng"
 "Sister project (MCP bridge)" = "https://github.com/armpro24-blip/aieng-freecad-mcp"
 

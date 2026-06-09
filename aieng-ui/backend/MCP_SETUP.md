@@ -53,8 +53,8 @@ Headless run directly from this Git repository without cloning it first:
 
 ```bash
 uvx \
-  --from "aieng-workbench-mcp[full] @ git+https://github.com/armpro24-blip/workspace_aieng.git#subdirectory=aieng-ui/backend" \
-  --with "aieng-format @ git+https://github.com/armpro24-blip/workspace_aieng.git#subdirectory=aieng" \
+  --from "aieng-workbench-mcp[full] @ git+https://github.com/armpro24-blip/cad-cae-copilot.git#subdirectory=aieng-ui/backend" \
+  --with "aieng-format @ git+https://github.com/armpro24-blip/cad-cae-copilot.git#subdirectory=aieng" \
   aieng-workbench-mcp \
   --approval-mode client \
   --data-dir ~/.aieng-workbench

@@ -1325,7 +1325,7 @@ Reason:
 Use this prompt when handing a task to a new LLM:
 
 ```text
-You are working in G:\Code\workspace_aieng.
+You are working in G:\Code\cad-cae-copilot.
 Read AGENTS.md first. Do not inspect aieng/src for capability discovery.
 
 Implement task <TASK_ID> from:

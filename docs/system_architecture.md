@@ -4,7 +4,7 @@ Three sibling repositories form the aieng engineering workbench platform.
 Each has a single, narrow responsibility.
 
 ```text
-workspace_aieng/
+cad-cae-copilot/
   aieng/               — semantic package engine and .aieng format
   aieng_freecad_mcp/   — FreeCAD execution adapter (MCP-facing)
   aieng-ui/            — web workbench UI + FastAPI service layer

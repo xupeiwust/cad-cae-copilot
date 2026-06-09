@@ -78,7 +78,7 @@ adjust your PATH and retry.
 One command from the `aieng-ui` backend directory:
 
 ```powershell
-cd /path/to/workspace_aieng\aieng-ui\backend
+cd /path/to/cad-cae-copilot\aieng-ui\backend
 python -m pytest -c NUL tests/test_api.py::test_run_solver_real_ccx_skipped_if_unavailable -v
 ```
 

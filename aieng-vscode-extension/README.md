@@ -75,7 +75,7 @@ If you already have a file such as `aieng-cad-preview-0.1.1.vsix`:
 
 ### Option 2: Build and install from this repo
 
-From `workspace_aieng/aieng-vscode-extension`:
+From `cad-cae-copilot/aieng-vscode-extension`:
 
 ```powershell
 npm install

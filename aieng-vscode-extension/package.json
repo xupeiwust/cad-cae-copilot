@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/armpro24-blip/workspace_aieng.git",
+    "url": "https://github.com/armpro24-blip/cad-cae-copilot.git",
     "directory": "aieng-vscode-extension"
   },
   "engines": {

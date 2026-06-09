@@ -249,7 +249,7 @@ claude -p `
   --json-schema "<agent-action-schema>" `
   --permission-mode auto `
   --tools "Read,Edit,Grep,Glob,LS,Search" `
-  --add-dir "G:\Code\workspace_aieng" `
+  --add-dir "G:\Code\cad-cae-copilot" `
   "<packed autopilot prompt>"
 
 # Subsequent calls in the same chat session:
@@ -260,7 +260,7 @@ claude -p `
   --json-schema "<agent-action-schema>" `
   --permission-mode auto `
   --tools "Read,Edit,Grep,Glob,LS,Search" `
-  --add-dir "G:\Code\workspace_aieng" `
+  --add-dir "G:\Code\cad-cae-copilot" `
   "<packed autopilot prompt>"
 ```
 

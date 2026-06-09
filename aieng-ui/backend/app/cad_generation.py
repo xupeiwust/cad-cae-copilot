@@ -4745,7 +4745,7 @@ def set_reference_image(
                 headers={
                     "User-Agent": (
                         "aieng-workbench/1.0 (CAD reference fetch; "
-                        "https://github.com/armpro24-blip/workspace_aieng)"
+                        "https://github.com/armpro24-blip/cad-cae-copilot)"
                     ),
                     "Accept": "image/*",
                 },
@@ -4857,7 +4857,7 @@ def set_reference_image(
 _WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
 _REFERENCE_SEARCH_UA = (
     "aieng-workbench/1.0 (CAD reference search; "
-    "https://github.com/armpro24-blip/workspace_aieng)"
+    "https://github.com/armpro24-blip/cad-cae-copilot)"
 )
 
 

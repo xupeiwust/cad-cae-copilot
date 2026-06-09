@@ -876,6 +876,34 @@ fixture and load on flat interfaces.
 | `cad.search_reference_image` | Search Wikimedia Commons for `query` and auto-attach the best match via `cad.set_reference_image` — use when the user names a real target but gives no picture. Returns `page_url` for source/license verification; `no_results` degrades gracefully. No approval (same as `set_reference_image`) |
 | `cad.restore_snapshot` | Roll the project back to an earlier snapshot (`snapshot_id` from `cad.list_snapshots`): replaces the `.aieng` package with the snapshot and republishes the viewer, clearing stale flags. Undo for an unwanted edit. Confirm first — the current state is not auto-snapshotted before restore |
 
+### Materials & standard parts (read-only)
+
+| Tool | Purpose |
+|------|---------|
+| `aieng.list_materials` | List available engineering materials, optionally filtered by `category` or `query` |
+| `aieng.get_material_details` | Return full properties (mechanical, thermal) for a specific material |
+| `aieng.compare_materials` | Compare two or more materials side-by-side with normalized scores |
+| `aieng.list_standard_parts` | List available standard part types (fasteners, bearings, shafts, profiles, holes) |
+| `aieng.get_standard_part_specs` | Return Shape IR spec, editable parameters, and presets for a part type |
+| `aieng.insert_standard_part` | Insert a standard part into the current project as Shape IR (preset + optional overrides) |
+| `aieng.generate_bom` | Generate a Bill of Materials from the project's feature graph |
+
+**Usage examples:**
+```
+# Query materials
+aieng.list_materials { category: "Aluminum Alloy" }
+aieng.get_material_details { material_name: "Al6061-T6" }
+aieng.compare_materials { material_names: ["Al6061-T6", "Steel-316L"] }
+
+# Query and insert standard parts
+aieng.list_standard_parts { category: "fastener" }
+aieng.get_standard_part_specs { part_type: "hex_bolt", preset_name: "M8" }
+aieng.insert_standard_part { part_type: "hex_bolt", preset_name: "M8", position: [0,0,0] }
+
+# Generate BOM
+aieng.generate_bom { format: "markdown" }
+```
+
 Before an incremental edit, call **`cad.get_source`** (read-only) to see the current
 accumulated script, which named parts already exist, and whether `has_base` (append
 is possible).

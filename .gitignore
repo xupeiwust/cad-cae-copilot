@@ -80,3 +80,6 @@ refer/*
 /aieng-ui/data/*
 aieng-ui/backend/start.bat
 .codex/config.toml
+
+# local machine-specific MCP launcher
+run-aieng-mcp.cmd

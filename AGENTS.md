@@ -1404,7 +1404,7 @@ curl -X POST http://localhost:8000/api/agent/invoke-tool \
 | `AIENG_PLATFORM_DATA` | Override the data directory (default `aieng-ui/data`) |
 | `AIENG_BACKEND_URL` | When set, forward tool calls to the running backend for live UI |
 | `AIENG_MCP_MANAGED_APPROVAL` | Set to `1` to route approval-gated external MCP calls through the workbench backend approval card; unavailable approval fails safe. When no approval surface (viewer) is connected, gated calls **fail fast** with `code: approval_surface_unavailable` instead of blocking to the approval timeout |
-| `AIENG_MCP_BLOCK_APPROVAL_TOOLS` | Set to `1` to hard-block approval-gated tools at the server level |
+| `AIENG_MCP_BLOCK_APPROVAL_TOOLS` | Set to `1` for inspection-only mode: hard-block **all mutating tools** at the server level — not just approval-gated ones, but also the plan-boundary CAD authoring/edit tools (`cad.execute_build123d`/`edit_parameter`/`replace_part`/`remove_part`/`refine`/`set_reference_image`). Read-only inspection tools still run |
 | `AIENG_MCP_REQUIRE_GUIDES` | Require the relevant `aieng.guide` topic before CAD, CAE, or package-lifecycle tools (default `1`; set `0` to disable) |
 | `AIENG_AGENTIC_PERMISSION_TOOL` | Set to `1` only for an agentic session driver that uses the backend approval broker |
 | `AIENG_AGENTIC_APPROVAL_TIMEOUT_SECONDS` | Maximum seconds to wait for a workbench approval decision (default `900`) |

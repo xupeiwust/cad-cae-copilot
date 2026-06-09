@@ -1444,6 +1444,7 @@ def _run_runtime_tool(
     project_id: str,
     message: str,
     tool_input: dict[str, Any] | None = None,
+    require_approval: bool = False,
 ) -> dict[str, Any]:
     run = _rt.RunRecord(
         run_id=uuid.uuid4().hex[:12],
@@ -1455,6 +1456,8 @@ def _run_runtime_tool(
     ctx: dict[str, Any] = {"project_id": project_id}
     if tool_input:
         ctx["tool_input"] = tool_input
+    if require_approval:
+        ctx["require_approval"] = True
     _rt.execute_run(run, ctx)
     return _rt.run_to_dict(run)
 
@@ -1680,6 +1683,12 @@ def _advance_apply(
             "parameterName": change.get("name"),
             "newValue": change.get("to"),
         },
+        # The copilot loop keeps its own approval checkpoint for the CAD
+        # mutation (STEP_DEFS apply_cad_edit.requiresApproval). The runtime
+        # registry no longer gates cad.edit_parameter per call (approval moved
+        # to the modeling-plan boundary), so force the gate here to pause at
+        # waiting_for_approval until the user approves/rejects this loop step.
+        require_approval=True,
     )
     _apply_run_outcome_to_step(loop, step, run)
 

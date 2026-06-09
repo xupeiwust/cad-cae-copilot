@@ -87,3 +87,8 @@ markers = [
 packages = ["src/aieng"]
 artifacts = ["src/aieng/schemas/*.json"]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+

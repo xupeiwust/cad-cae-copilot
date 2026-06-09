@@ -101,6 +101,63 @@ AIENG_PACKAGE_MCP_TOOLS: tuple[dict[str, Any], ...] = (
         "side_effects": ["Writes a patch proposal under ai/patches/"],
         "dry_run_support": "none",
     },
+    # 材料查询工具
+    {
+        "name": "list_materials",
+        "category": "reference",
+        "purpose": "List all available engineering materials with properties. Optional filter by category or search query.",
+        "optional_inputs": ["category", "query"],
+    },
+    {
+        "name": "get_material_details",
+        "category": "reference",
+        "purpose": "Return full properties for a specific material including E, nu, density, yield strength, ultimate strength, thermal expansion.",
+        "required_inputs": ["material_name"],
+    },
+    {
+        "name": "compare_materials",
+        "category": "reference",
+        "purpose": "Compare properties of two or more materials side by side.",
+        "required_inputs": ["material_names"],
+    },
+    # 标准件查询工具
+    {
+        "name": "list_standard_parts",
+        "category": "reference",
+        "purpose": "List available standard part categories and types (fasteners, bearings, shafts, profiles, holes).",
+        "optional_inputs": ["category"],
+    },
+    {
+        "name": "get_standard_part_specs",
+        "category": "reference",
+        "purpose": "Return Shape IR spec and available presets for a standard part type.",
+        "required_inputs": ["part_type"],
+        "optional_inputs": ["preset_name"],
+    },
+    # CAD 操作工具（需要审批）
+    {
+        "name": "insert_standard_part",
+        "category": "cad",
+        "purpose": "Insert a standard part (fastener, bearing, profile, etc.) into the current project as Shape IR. Returns the generated geometry node.",
+        "required_inputs": ["part_type", "parameters"],
+        "optional_inputs": ["position", "orientation", "part_name", "preset_name"],
+        "mutates_package": True,
+    },
+    {
+        "name": "set_part_material",
+        "category": "cad",
+        "purpose": "Assign a material to a named part in the current project. Updates the part metadata.",
+        "required_inputs": ["part_name", "material_name"],
+        "optional_inputs": ["override_properties"],
+        "mutates_package": True,
+    },
+    # BOM 工具
+    {
+        "name": "generate_bom",
+        "category": "reference",
+        "purpose": "Generate a Bill of Materials from the current project parts, including standard parts and their quantities.",
+        "optional_inputs": ["format"],
+    },
 )
 
 

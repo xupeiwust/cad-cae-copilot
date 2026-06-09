@@ -2,9 +2,9 @@
 
 <div align="center">
 
-# aieng
+# CAD/CAE Copilot
 
-### 大多数 AI CAD 工具在出图那一刻就结束了。aieng 把工程规格变成真实、可编辑、可验证的 CAD —— 并让每个产物都可复现。
+### 大多数 AI CAD 工具在出图那一刻就结束了。CAD/CAE Copilot 把工程规格变成真实、可编辑、可验证的 CAD —— 并让每个产物都可复现。
 
 一个 AI 原生 CAD/CAE/CAX 工作台。支持 MCP 的 Agent 编写真实的
 build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
@@ -18,7 +18,7 @@ build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
   <img src="docs/assets/images/hero.webp" width="100%" alt="使用 aieng 建模并检验的工业电机安装夹具全规格模型">
 </a>
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/armpro24-blip/workspace_aieng)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/armpro24-blip/cad-cae-copilot)
 ![CAD](https://img.shields.io/badge/CAD-build123d%20%2F%20OpenCASCADE-1f6feb)
 ![FEA](https://img.shields.io/badge/FEA-CalculiX-e36209)
 ![Agent](https://img.shields.io/badge/agent-MCP%20server-8957e5)

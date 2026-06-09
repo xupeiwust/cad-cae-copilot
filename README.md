@@ -2,9 +2,9 @@
 
 <div align="center">
 
-# aieng
+# CAD/CAE Copilot
 
-### Most AI CAD tools stop when a picture appears. aieng turns an engineering spec into real, editable, verifiable CAD — and keeps every artifact reproducible.
+### Most AI CAD tools stop when a picture appears. CAD/CAE Copilot turns an engineering spec into real, editable, verifiable CAD — and keeps every artifact reproducible.
 
 An AI-native CAD/CAE/CAX workbench. An MCP-capable agent writes real
 build123d / OpenCASCADE geometry, exports STEP/STL/GLB, names the parts,
@@ -18,7 +18,7 @@ which carries its own model access. The aieng backend itself needs no API key.
   <img src="docs/assets/images/hero.webp" width="100%" alt="A fully specified industrial motor mounting fixture modeled and inspected with aieng"/>
 </a>
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/armpro24-blip/workspace_aieng)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/armpro24-blip/cad-cae-copilot)
 ![CAD](https://img.shields.io/badge/CAD-build123d%20%2F%20OpenCASCADE-1f6feb)
 ![FEA](https://img.shields.io/badge/FEA-CalculiX-e36209)
 ![Agent](https://img.shields.io/badge/agent-MCP%20server-8957e5)

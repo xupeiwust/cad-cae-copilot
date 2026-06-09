@@ -345,6 +345,33 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
 
     # ── CAD generation (agent writes the code, we execute) ───────────────────
+    "cad.confirm_modeling_plan": {
+        "type": "object",
+        "required": ["project_id", "summary", "steps"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "summary": {
+                "type": "string",
+                "description": "Concise user-facing summary of the proposed modeling plan.",
+            },
+            "steps": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"},
+                "description": "Ordered CAD creation/edit and review steps covered by this approval.",
+            },
+            "assumptions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Important dimensions, defaults, and interpretation assumptions.",
+            },
+            "scope": {
+                "type": "string",
+                "description": "Boundary of the approved work; material scope changes require another confirmation.",
+            },
+        },
+        "additionalProperties": False,
+    },
     "cad.execute_build123d": {
         "type": "object",
         "required": ["project_id", "code"],

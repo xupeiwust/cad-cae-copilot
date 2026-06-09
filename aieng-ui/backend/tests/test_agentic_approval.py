@@ -155,7 +155,7 @@ def test_api_gated_tool_pending_then_approve(tmp_path: Path):
     client = _client(tmp_path)
     created = client.post(
         "/api/agent/agentic/permission",
-        json={"tool_name": "cad.execute_build123d", "input": {"code": "result = Box(1,1,1)"}, "run_id": "r1"},
+        json={"tool_name": "cad.restore_snapshot", "input": {"snapshot_id": "snap_0001"}, "run_id": "r1"},
     ).json()
     assert created["status"] == "pending"
     pid = created["permission_id"]

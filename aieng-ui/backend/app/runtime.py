@@ -109,6 +109,8 @@ def register_tool(
     handler: ToolHandler,
     *,
     requires_approval: bool = False,
+    read_only: bool | None = None,
+    destructive: bool | None = None,
     description: str = "",
     input_schema: dict[str, Any] | None = None,
 ) -> None:
@@ -123,6 +125,8 @@ def register_tool(
     _REGISTRY[name] = {
         "handler": handler,
         "requires_approval": requires_approval,
+        "read_only": (not requires_approval) if read_only is None else read_only,
+        "destructive": requires_approval if destructive is None else destructive,
         "description": description,
         "input_schema": input_schema,
     }
@@ -137,6 +141,8 @@ def registered_tools_info() -> list[dict[str, Any]]:
         {
             "name": name,
             "requires_approval": meta["requires_approval"],
+            "read_only": meta["read_only"],
+            "destructive": meta["destructive"],
             "description": meta.get("description", ""),
         }
         for name, meta in _REGISTRY.items()
@@ -161,6 +167,8 @@ def list_tools_for_mcp() -> list[dict[str, Any]]:
                 "name": name,
                 "description": meta.get("description", ""),
                 "requires_approval": bool(meta.get("requires_approval", False)),
+                "read_only": bool(meta.get("read_only", False)),
+                "destructive": bool(meta.get("destructive", False)),
                 "input_schema": schema,
             }
         )

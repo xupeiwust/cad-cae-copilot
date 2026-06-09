@@ -2661,6 +2661,33 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         ),
     )
 
+    def _tool_cad_confirm_modeling_plan(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "plan_confirmed": True,
+            "project_id": str(inp.get("project_id") or ""),
+            "summary": str(inp.get("summary") or ""),
+            "steps": list(inp.get("steps") or []),
+            "assumptions": list(inp.get("assumptions") or []),
+            "scope": str(inp.get("scope") or ""),
+            "message": "Modeling plan confirmed in the agent client. Continue within the approved scope.",
+        }
+
+    _rt.register_tool(
+        "cad.confirm_modeling_plan",
+        _tool_cad_confirm_modeling_plan,
+        requires_approval=True,
+        input_schema=_schema("cad.confirm_modeling_plan"),
+        description=(
+            "[APPROVAL REQUIRED] Present a proposed CAD modeling plan in the connecting agent's "
+            "native confirmation UI. This authorization tool does not write files or execute CAD. "
+            "Call it after preparing the plan instead of ending the conversation or asking for a "
+            "plain-text reply. If the user approves, it returns immediately and the agent should "
+            "continue in the same task with ordinary CAD build/edit tools. If the user denies it, "
+            "do not mutate CAD. A materially changed scope requires another plan confirmation."
+        ),
+    )
+
     def _tool_cad_plan_build123d_skill(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from . import cad_skill_planner as _planner
 
@@ -2677,7 +2704,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             "fuselage_profile/naca_airfoil/wheel/rounded_box primitives). It interprets the "
             "request, records assumptions, and returns a parameterized build123d execute_input "
             "(UPPER_SNAKE_CASE constants, named parts) for the agent to review and then pass to "
-            "cad.execute_build123d through the normal approval gate. It does not mutate the "
+            "cad.execute_build123d after the modeling plan is explicitly confirmed. It does not mutate the "
             "package and does not bypass Autopilot."
         ),
     )
@@ -2703,10 +2730,11 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     _rt.register_tool(
         "cad.execute_build123d",
         _tool_cad_execute_build123d,
-        requires_approval=True,
+        read_only=False,
+        destructive=False,
         input_schema=_schema("cad.execute_build123d"),
         description=(
-            "[APPROVAL REQUIRED] Execute caller-supplied build123d Python code to create CAD geometry. "
+            "Execute caller-supplied build123d Python code under an explicitly approved modeling plan. "
             "The agent writes the full build123d script and this tool runs it in a sandboxed subprocess — "
             "no LLM API key needed. "
             "Code contract: bind the final model to a variable named `result`; omit all export calls "
@@ -2855,7 +2883,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             "parameterName / current value / allowed range) you would edit. Returns a merged "
             "verdict, a severity-ranked `actions` list (findings with a fast parameter fix), and "
             "a recommendation. Changes NOTHING — applying a fix still goes through the "
-            "approval-gated cad.edit_parameter / cad.execute_build123d path. "
+            "approved modeling-plan cad.edit_parameter / cad.execute_build123d path. "
             "response_detail='compact' returns actions + summary only; 'full' (default) also "
             "returns every finding. Call after building/editing an engineering part."
         ),
@@ -2872,6 +2900,8 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     _rt.register_tool(
         "cad.set_reference_image",
         _tool_cad_set_reference_image,
+        read_only=False,
+        destructive=False,
         input_schema=_schema("cad.set_reference_image"),
         description=(
             "Attach a reference image (real-world photo, drawing, or render) to a project so "
@@ -2895,6 +2925,8 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     _rt.register_tool(
         "cad.search_reference_image",
         _tool_cad_search_reference_image,
+        read_only=False,
+        destructive=False,
         input_schema=_schema("cad.search_reference_image"),
         description=(
             "Search Wikimedia Commons for a reference image matching a free-text query "
@@ -2953,10 +2985,11 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     _rt.register_tool(
         "cad.refine",
         _tool_cad_refine,
-        requires_approval=True,
+        read_only=False,
+        destructive=False,
         input_schema=_schema("cad.refine"),
         description=(
-            "[APPROVAL REQUIRED] Refine the existing build123d model from natural-language feedback. "
+            "Refine the existing build123d model within an explicitly approved modeling plan. "
             "Reads geometry/source.py, asks Claude to edit the code, re-executes it, and writes updated "
             "geometry/topology/preview artifacts back into the .aieng package."
         ),
@@ -2980,11 +3013,12 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     _rt.register_tool(
         "cad.edit_parameter",
         _tool_cad_edit_parameter,
-        requires_approval=True,
+        read_only=False,
+        destructive=False,
         input_schema=_schema("cad.edit_parameter"),
         description=(
             "Apply a parametric edit to a CAD model feature. "
-            "Requires explicit user approval before execution. "
+            "The encompassing modeling plan must already be explicitly approved. "
             "Performs a fast deterministic text replacement in geometry/source.py "
             "(no LLM round-trip) and re-executes build123d so the change is immediate. "
             "The feature graph must carry editable parameters (UPPER_SNAKE_CASE constants)."
@@ -3007,13 +3041,14 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     _rt.register_tool(
         "cad.remove_part",
         _tool_cad_remove_part,
-        requires_approval=True,
+        read_only=False,
+        destructive=False,
         input_schema=_schema("cad.remove_part"),
         description=(
             "Remove a named part from the model by its build123d label. "
             "Appends a filter step to geometry/source.py (keeping the script "
             "self-consistent) and re-executes — no LLM. Returns a regression_diff "
-            "confirming only that part was dropped. Requires approval."
+            "confirming only that part was dropped. The encompassing modeling plan must already be approved."
         ),
     )
 
@@ -3034,14 +3069,15 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     _rt.register_tool(
         "cad.replace_part",
         _tool_cad_replace_part,
-        requires_approval=True,
+        read_only=False,
+        destructive=False,
         input_schema=_schema("cad.replace_part"),
         description=(
             "Replace a named part by its build123d label with caller-supplied "
             "build123d code (the code must reassign `result` to the new part and "
             "set result.label). Drops the old part, combines the new one in, and "
             "re-executes — no LLM. Lets the agent refine one part without "
-            "resubmitting the whole model. Returns a regression_diff. Requires approval."
+            "resubmitting the whole model. Returns a regression_diff. The encompassing modeling plan must already be approved."
         ),
     )
 

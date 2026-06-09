@@ -40,6 +40,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadata
+from mcp.types import ToolAnnotations
 from pydantic import ConfigDict
 
 logger = logging.getLogger(__name__)
@@ -771,12 +772,22 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
             _handler.__doc__ = description
             return _handler
 
+        # Publish standard MCP safety hints in addition to the human-readable
+        # approval marker. Client-managed mode relies on the connecting agent's
+        # permission UX, and capable clients use these annotations to distinguish
+        # read-only inspection from package/geometry/solver mutations.
+        annotations = ToolAnnotations(
+            readOnlyHint=bool(tool_def.get("read_only")),
+            destructiveHint=bool(tool_def.get("destructive")),
+            idempotentHint=False,
+            openWorldHint=False,
+        )
         mcp.add_tool(
             _make_handler(tool_name, bool(tool_def.get("requires_approval"))),
             name=mcp_name,
             description=description,
             structured_output=False,
-            annotations=None,
+            annotations=annotations,
         )
         # Override two things on the registered Tool:
         #  - parameters: advertise the curated JSON schema (what clients construct

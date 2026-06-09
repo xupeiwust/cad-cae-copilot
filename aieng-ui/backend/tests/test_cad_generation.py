@@ -1140,7 +1140,7 @@ def test_execute_build123d_code_build123d_unavailable(tmp_path: Path) -> None:
     assert result["code"] == "build123d_unavailable"
 
 
-def test_cad_execute_build123d_tool_registered_with_approval() -> None:
+def test_cad_execute_build123d_tool_registered_for_plan_approved_execution() -> None:
     from app import runtime
     from app.app_factory import create_app as _ca
 
@@ -1150,8 +1150,13 @@ def test_cad_execute_build123d_tool_registered_with_approval() -> None:
     assert tools["cad.plan_build123d_skill"]["requires_approval"] is False
     skill_schema = tools["cad.plan_build123d_skill"]["input_schema"]
     assert set(skill_schema["required"]) == {"project_id", "message"}
+    assert tools["cad.confirm_modeling_plan"]["requires_approval"] is True
+    confirm_schema = tools["cad.confirm_modeling_plan"]["input_schema"]
+    assert set(confirm_schema["required"]) == {"project_id", "summary", "steps"}
     assert "cad.execute_build123d" in tools
-    assert tools["cad.execute_build123d"]["requires_approval"] is True
+    assert tools["cad.execute_build123d"]["requires_approval"] is False
+    assert tools["cad.execute_build123d"]["read_only"] is False
+    assert tools["cad.execute_build123d"]["destructive"] is False
     schema = tools["cad.execute_build123d"]["input_schema"]
     assert "code" in schema["properties"]
     assert schema["properties"]["response_detail"]["enum"] == ["full", "compact"]

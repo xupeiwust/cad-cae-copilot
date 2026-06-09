@@ -15,6 +15,9 @@ def test_quickstart_is_compact_and_preserves_first_three_calls() -> None:
     assert "aieng.agent_context" in result["content"]
     assert "aieng.guide" in result["content"]
     assert "Before the first CAD modeling or geometry-edit action" in result["content"]
+    assert "cad.confirm_modeling_plan" in result["content"]
+    assert "AskUserQuestion" in result["content"]
+    assert "request_user_input" in result["content"]
     assert "Re-read a guide only if" in result["content"]
     assert 'code: "guide_required"' in result["content"]
 

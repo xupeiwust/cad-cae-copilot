@@ -266,7 +266,7 @@ path instead of regenerating the whole model.
   target. Slots + bindings ride on the observation (`parameter_slots` /
   `parameter_bindings`) for the frontend/audit.
 - Prompt/context only: no tool is selected, CAD execution is unchanged, the
-  mutation guard is unchanged, and `cad.edit_parameter` stays approval-gated — the
+  mutation guard is unchanged, and `cad.edit_parameter` stays inside the approved modeling-plan boundary — the
   binding only *proposes* a target, and out-of-range / ambiguous edits are routed
   to user confirmation.
 
@@ -295,7 +295,7 @@ single-part edit.
   groups parameters by scope (local / global-shared / unscoped, color-coded),
   shows each parameter's current value + allowed range + editable constant, and a
   click drafts a `/modify set <name> to ` into the composer — so editing still
-  flows through the existing approval-gated path (the panel itself never mutates).
+  flows through the existing modeling-plan-confirmed path (the panel itself never mutates).
 - **Sibling read-only panels (same draft-into-composer pattern).** Two more
   workbench panels surface backend audits the agent already produces:
   - **Critique panel** ([`CritiquePanel.tsx`](aieng-ui/frontend/src/components/CritiquePanel.tsx),
@@ -310,7 +310,7 @@ single-part edit.
     **required** input (material / loads / constraints) gets an **Add** that drafts
     a `/simulate …`. Hidden for pure-CAD projects (`setup_source == not_found`).
   Both are read-only (run no solver, mutate nothing); actions flow through the
-  existing approval-gated `/modify` / `/simulate` path.
+  existing plan-confirmed `/modify` path or approval-gated `/simulate` solver path.
 - **Assembly-check viewer overlay (in-3D affordance).** The model viewer has a
   "Show assembly check" toggle ([`ModelViewer.tsx`](aieng-ui/frontend/src/components/ModelViewer.tsx),
   fed by `useGeometryReport` → `GET /api/projects/{id}/geometry-report`, shaped by
@@ -335,7 +335,7 @@ keyword* resolver (no LLM) and lands the normalized result in state. A dimension
 proceeds). The principle: **let the agent associate, but have the system make the
 association explicit as a normalized intent.**
 - **Future work:** inline value editing in the panel (a field that calls the
-  approval-gated `cad.edit_parameter` directly), and consume the LLM classifier's
+  plan-confirmed `cad.edit_parameter` directly), and consume the LLM classifier's
   `targets` / `parameters` beyond the deterministic slots.
 
 **`@`-mentions (strict binding, v1).** The composer parses lightweight
@@ -864,7 +864,7 @@ fixture and load on flat interfaces.
 | `cad.design_review` | Read-only self-review: `cad.critique` + the left/right **symmetry** checks critique lacks + a concrete `cad.edit_parameter` **fix target** (featureId/parameterName/range) bound to each fixable finding. Returns a severity-ranked `actions` list + merged verdict. Changes nothing; fixes still go through approval. Use it to self-correct before presenting a result |
 | `cad.list_snapshots` | List the recent CAD undo timeline. A snapshot is recorded automatically after each successful `execute_build123d`/`edit_parameter`/`replace_part`/`remove_part`. Returns tiny metadata only (`snapshot_id`, `created_at`, `tool_name`, `part_count`, `named_parts`) — pair with `cad.restore_snapshot` |
 
-### Geometry creation (requires approval — mutates package)
+### Geometry creation (requires approved modeling plan — mutates package)
 
 | Tool | Purpose |
 |------|---------|
@@ -1014,13 +1014,35 @@ can click to highlight them.
 
 ## Approval-gated tools
 
-Tools marked `[APPROVAL REQUIRED]` mutate the package or execute an external
-process. Always: (1) explain the side effects to the user, (2) wait for explicit
-confirmation, (3) report the outcome after the call.
+CAD creation and ordinary editing use **one confirmation at the modeling-plan
+boundary**, not one approval per execution step. The confirmation must use an
+interactive control in the connecting agent; do not merely print a question and
+end the conversation. Before the first
+`cad.execute_build123d`, `cad.edit_parameter`, `cad.replace_part`,
+`cad.remove_part`, or `cad.refine` call for a new request:
 
-Currently approval-gated: `cad.execute_build123d`, `cad.edit_parameter`,
-`cad.replace_part`, `cad.remove_part`, `cad.restore_snapshot`, `cae.run_solver`,
-`aieng.delete_project`, `aieng.apply_shape_ir_patch`.
+1. Present a concise modeling plan: intended parts/features, important
+   dimensions/assumptions, and the expected CAD mutations.
+2. Prefer the agent's native interactive question tool when available:
+   Claude Code `AskUserQuestion`, Codex `request_user_input`, or the equivalent.
+   Offer **Approve plan**, **Revise plan**, and **Cancel**; include a free-form
+   revision path when the client supports it.
+3. If no native question tool is available, call `cad.confirm_modeling_plan` so
+   the MCP client displays its permission dialog. Do not invoke a CAD mutation
+   if the user denies or cancels.
+4. After approval, continue in the same task and iterate within that approved
+   plan without asking again for every CAD tool call.
+5. Ask for a new plan confirmation if the goal or mutation scope changes
+   materially. Small corrective iterations discovered during visual/design
+   review remain inside the approved plan.
+
+Writing "please confirm" is not confirmation, and the original modeling request
+does not itself approve the plan. Never end the conversation merely to wait for
+a plain-text confirmation.
+
+High-risk operations remain individually `[APPROVAL REQUIRED]`:
+`cad.restore_snapshot`, `cae.run_solver`, `aieng.delete_project`, and
+`aieng.apply_shape_ir_patch`.
 
 ---
 

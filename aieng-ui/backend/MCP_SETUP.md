@@ -19,7 +19,7 @@ Every tool registered via `runtime.register_tool()` is surfaced. That includes:
 - `cae.run_solver` ⚠️ approval-gated
 - `cae.extract_solver_results`, `cae.extract_field_regions`
 - `postprocess.generate_computed_metrics`, `postprocess.refresh_cae_summary`
-- `cad.edit_parameter` ⚠️ approval-gated
+- `cad.edit_parameter` — executes inside an explicitly approved modeling plan
 - …and the remaining runtime tools listed by `python -c "from app import runtime; from app.app_factory import create_app; create_app(); print('\n'.join(runtime.registered_tool_names()))"`.
 
 Tools listed in `app/runtime_tool_schemas.py:TOOL_SCHEMAS` carry curated JSON
@@ -494,7 +494,7 @@ with `ANTHROPIC_API_KEY` to write build123d code. **You don't need that when
 Claude Code is the agent** — Claude Code writes the build123d code itself using
 its own subscription, and the framework just executes it.
 
-The enabling tool is **`cad.execute_build123d`** (approval-gated):
+The enabling tool is **`cad.execute_build123d`** (requires an approved modeling plan):
 
 - Input: `{ project_id, code, mode?, write_files?, timeout?, thumbnail? }`
 - `code` is a full build123d script that binds the model to a variable named
@@ -564,7 +564,7 @@ thumbnail (LLMs read ratios far more reliably than 3D renders):
 - `gaps[]` / `floating_parts` — `status:floating` flags a detached part (usually a
   coordinate typo); `touching` means parts connect as intended.
 
-### Fast parametric edits — `cad.edit_parameter` (approval-gated)
+### Fast parametric edits — `cad.edit_parameter` (approved modeling plan)
 
 For pure dimensional tweaks of an existing model, prefer `cad.edit_parameter`
 over regenerating: it replaces a named **UPPER_SNAKE_CASE** constant in
@@ -587,7 +587,7 @@ seconds, fully reproducible.
   or `topology_changed` (a part appeared/disappeared). Collateral is not judged for
   `Global Parameters` edits, since shared dims are meant to move many parts.
 
-### Part-level edits — `cad.replace_part` / `cad.remove_part` (approval-gated)
+### Part-level edits — `cad.replace_part` / `cad.remove_part` (approved modeling plan)
 
 `append` only adds geometry. To fix or drop ONE part of a model without
 resubmitting the whole script:
@@ -681,9 +681,21 @@ is written to the package and the React workbench viewer updates automatically.
 
 ## Approval-gated tools
 
-Mutation/execution tools such as `cad.execute_build123d`, `cad.edit_parameter`,
-and `cae.run_solver` are flagged with `requires_approval=true` in the registry.
-The MCP server prepends `[APPROVAL REQUIRED]` to their descriptions so an MCP
+Ordinary CAD build/edit tools use a plan-first confirmation contract: the agent
+should prefer its native interactive question tool: Claude Code
+`AskUserQuestion`, Codex `request_user_input`, or the client equivalent, with
+Approve / Revise / Cancel options. This suspends and resumes the same task rather
+than ending the conversation. If that capability is unavailable, the agent calls
+the approval-gated, no-write `cad.confirm_modeling_plan` fallback so the MCP
+client displays its permission dialog. After approval it may run
+`cad.execute_build123d`, `cad.edit_parameter`, `cad.replace_part`,
+`cad.remove_part`, and `cad.refine` repeatedly within that approved plan. These
+execution tools advertise `readOnlyHint=false` but do not request per-call
+approval.
+
+High-risk operations such as `cad.restore_snapshot`, `cae.run_solver`,
+`aieng.delete_project`, and `aieng.apply_shape_ir_patch` remain
+`requires_approval=true`; the MCP server prepends `[APPROVAL REQUIRED]` so the
 client can surface the side effect before invocation.
 
 There are three MCP-first operating modes:
@@ -695,9 +707,15 @@ There are three MCP-first operating modes:
    authoritative even if the connecting client has allow-listed the tool. If the
    broker/viewer is unavailable, the gated call is denied fail-safe.
 2. **Client-managed approval mode**: leave both approval env flags unset.
-   Approval-gated tools are advertised as `[APPROVAL REQUIRED]`, and the
+   Approval-gated tools are advertised as `[APPROVAL REQUIRED]` and with the
+   standard MCP `readOnlyHint=false` / `destructiveHint=true` annotations. The
    connecting MCP client is responsible for prompting the human before
-   invocation. Use this only with a client permission UX you trust.
+   invocation. Use this only with a client permission UX you trust. Do not
+   allow-list gated tools in Claude Code, and run Codex with
+   `approval_policy="on-request"` (or `--ask-for-approval on-request`).
+   An agent sentence such as "please confirm" is not approval. The agent should
+   invoke `cad.confirm_modeling_plan`, let the client display the confirmation,
+   and continue in the same task after approval.
 3. **Hard-block planning/inspection mode**: set
    `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` in the MCP server environment. In this
    mode the MCP server rejects every registry tool with `requires_approval=true`

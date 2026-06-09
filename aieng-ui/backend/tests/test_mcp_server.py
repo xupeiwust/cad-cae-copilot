@@ -208,8 +208,8 @@ def test_guide_guard_can_be_explicitly_disabled(monkeypatch) -> None:
 
 def test_approval_gated_tools_advertise_in_description(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
-    # cae.run_solver and cad.edit_parameter both require approval.
-    for approval_tool in ("cae.run_solver", "cad.edit_parameter"):
+    # Plan authorization and high-risk operations use the agent client's prompt.
+    for approval_tool in ("cad.confirm_modeling_plan", "cae.run_solver", "cad.restore_snapshot"):
         external_name = _mcp_name(approval_tool)
         assert external_name in tools, f"{approval_tool} missing from MCP server"
         assert "[APPROVAL REQUIRED]" in tools[external_name].description
@@ -218,6 +218,27 @@ def test_approval_gated_tools_advertise_in_description(mcp_server) -> None:
 def test_non_approval_tool_has_no_approval_marker(mcp_server) -> None:
     tools = _tool_dict(mcp_server)
     assert "[APPROVAL REQUIRED]" not in tools[_mcp_name("aieng.inspect_package")].description
+
+
+def test_mcp_tools_advertise_standard_safety_annotations(mcp_server) -> None:
+    tools = _tool_dict(mcp_server)
+    cad_write = tools[_mcp_name("cad.execute_build123d")].annotations
+    plan_confirmation = tools[_mcp_name("cad.confirm_modeling_plan")].annotations
+    gated = tools[_mcp_name("cae.run_solver")].annotations
+    read_only = tools[_mcp_name("aieng.inspect_package")].annotations
+
+    assert cad_write is not None
+    assert cad_write.readOnlyHint is False
+    assert cad_write.destructiveHint is False
+    assert plan_confirmation is not None
+    assert plan_confirmation.readOnlyHint is False
+    assert plan_confirmation.destructiveHint is True
+    assert gated is not None
+    assert gated.readOnlyHint is False
+    assert gated.destructiveHint is True
+    assert read_only is not None
+    assert read_only.readOnlyHint is True
+    assert read_only.destructiveHint is False
 
 
 # ── FastMCP call_tool dispatch (real client path) ─────────────────────────────
@@ -255,6 +276,30 @@ def test_mcp_call_tool_forwards_all_fields(monkeypatch) -> None:
         _rt._REGISTRY.pop("test.echo_args", None)
 
 
+def test_modeling_plan_confirmation_returns_without_cad_mutation(monkeypatch) -> None:
+    import asyncio
+
+    import app.mcp_server as ms
+
+    monkeypatch.setenv("AIENG_MCP_REQUIRE_GUIDES", "0")
+    monkeypatch.setattr(ms, "_BACKEND_URL", "")
+    mcp = ms._build_mcp_server()
+
+    out = asyncio.run(mcp.call_tool("cad_confirm_modeling_plan", {
+        "project_id": "p1",
+        "summary": "Build a compact enclosure",
+        "steps": ["Create shell", "Add vents", "Review proportions"],
+        "assumptions": ["200 x 160 x 80 mm"],
+        "scope": "Enclosure exterior and ventilation details",
+    }))
+    payload = json.loads(_tool_text(out))
+
+    assert payload["status"] == "ok"
+    assert payload["plan_confirmed"] is True
+    assert payload["project_id"] == "p1"
+    assert payload["steps"] == ["Create shell", "Add vents", "Review proportions"]
+
+
 def test_mcp_hard_block_refuses_gated_tool_before_dispatch(monkeypatch) -> None:
     """AIENG_MCP_BLOCK_APPROVAL_TOOLS=1 rejects gated tools before any execution path."""
     import asyncio
@@ -275,11 +320,11 @@ def test_mcp_hard_block_refuses_gated_tool_before_dispatch(monkeypatch) -> None:
     monkeypatch.setattr(_rt, "invoke_tool", _should_not_invoke)
 
     mcp = ms._build_mcp_server()
-    out = asyncio.run(mcp.call_tool("cad_execute_build123d", {"project_id": "p1", "code": "result = None"}))
+    out = asyncio.run(mcp.call_tool("cad_restore_snapshot", {"project_id": "p1", "snapshot_id": "snap_0001"}))
     payload = json.loads(_tool_text(out))
     assert payload["status"] == "error"
     assert payload["code"] == "approval_blocked"
-    assert payload["tool"] == "cad.execute_build123d"
+    assert payload["tool"] == "cad.restore_snapshot"
 
 
 def test_mcp_hard_block_refuses_solver_too(monkeypatch) -> None:
@@ -442,13 +487,15 @@ def test_mcp_handler_catches_keyerror_and_returns_structured_error(mcp_server) -
 # ── list_tools_for_mcp accessor ───────────────────────────────────────────────
 
 def test_list_tools_for_mcp_returns_full_metadata(mcp_server) -> None:
-    """Each entry must carry name, description, requires_approval, input_schema."""
+    """Each entry carries approval, side-effect, description, and schema metadata."""
     entries = _rt.list_tools_for_mcp()
     assert len(entries) >= 10
     for entry in entries:
         assert "name" in entry
         assert "description" in entry
         assert "requires_approval" in entry
+        assert "read_only" in entry
+        assert "destructive" in entry
         assert "input_schema" in entry
         assert isinstance(entry["input_schema"], dict)
         assert entry["input_schema"].get("type") == "object"
@@ -457,7 +504,8 @@ def test_list_tools_for_mcp_returns_full_metadata(mcp_server) -> None:
 def test_list_tools_for_mcp_marks_approval_tools() -> None:
     entries = {e["name"]: e for e in _rt.list_tools_for_mcp()}
     assert entries["cae.run_solver"]["requires_approval"] is True
-    assert entries["cad.edit_parameter"]["requires_approval"] is True
+    assert entries["cad.edit_parameter"]["requires_approval"] is False
+    assert entries["cad.edit_parameter"]["read_only"] is False
     assert entries["aieng.inspect_package"]["requires_approval"] is False
 
 
@@ -645,6 +693,8 @@ def test_mcp_hard_block_refuses_every_gated_registry_tool(monkeypatch) -> None:
         "label": "part",
         "patch": {"operations": []},
         "patches": [],
+        "summary": "Confirm test plan",
+        "steps": ["Build test geometry"],
     }
     for tool_name in gated:
         out = asyncio.run(mcp.call_tool(_mcp_name(tool_name), payload))

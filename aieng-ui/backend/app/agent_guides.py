@@ -34,7 +34,12 @@ implemented in `aieng-ui/backend`.
 - Inspect CAE readiness before simulation. Material, loads, and constraints are
   required. Never claim solver results unless `cae.run_solver` returned
   successful evidence.
-- Approval-gated tools remain approval-gated. Never bypass or imply approval.
+- Before the first CAD mutation for a new request, show a concise plan through
+  the agent's native interactive question tool (Claude Code `AskUserQuestion`,
+  Codex `request_user_input`, or equivalent) with Approve / Revise / Cancel.
+  Fall back to `cad.confirm_modeling_plan` when no native question tool exists.
+  On approval, continue in the same task; ordinary CAD build/edit iterations
+  need no per-tool approval. Material scope changes need a new confirmation.
 - A normal `cad.execute_build123d` call writes/updates the project's `.aieng`
   package by default. `write_files=false` is an explicit no-write exception.
 

@@ -5471,7 +5471,7 @@ def design_review(
 
     It changes NOTHING: it never calls ``cad.edit_parameter`` /
     ``cad.execute_build123d``. Applying a fix still goes through the normal
-    approval-gated path. ``response_detail: "compact"`` returns the prioritized
+    approved modeling-plan path. ``response_detail: "compact"`` returns the prioritized
     actions + summary only; ``"full"`` (default) also returns every finding.
 
     Payload (all optional): ``mode`` / ``min_wall_mm`` / ``min_corner_radius_mm``
@@ -5568,7 +5568,7 @@ def design_review(
         "recommendation": recommendation,
         "message": (
             "Read-only review — nothing was changed. Apply any fix through the "
-            "approval-gated cad.edit_parameter (parameter targets) or "
+            "modeling-plan-approved cad.edit_parameter (parameter targets) or "
             "cad.execute_build123d / cad.replace_part path."
         ),
     }

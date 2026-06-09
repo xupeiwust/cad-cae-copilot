@@ -2421,8 +2421,13 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         from . import agent_guides
 
         if str(inp.get("detail") or "quickstart").lower() == "full":
-            return agent_guides.full_result()
-        return agent_guides.quickstart_result()
+            result = agent_guides.full_result()
+        else:
+            result = agent_guides.quickstart_result()
+        # Registry identity so an agent can tell if this long-lived MCP session
+        # is serving a stale tool set (#29) — compare against GET /api/health.
+        result["registry"] = _rt.registry_identity()
+        return result
 
     _rt.register_tool(
         "aieng.agent_readme",

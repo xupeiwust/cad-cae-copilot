@@ -218,6 +218,20 @@ executes a simple bracket build path (stubbed by default, real with
   4-view visual inspection is advisory. External agent prose is not fully
   controlled by the workbench.
 
+### Keeping the tool registry fresh
+
+The MCP server builds its tool registry **once at process start**. After you
+pull backend changes that add or modify tools, **restart the MCP server** —
+a long-lived session keeps serving the old set (new tools invisible, changed
+descriptions stale) with no other signal.
+
+To check what a running server actually exposes, read its **registry identity**:
+`aieng.agent_readme` returns a `registry` block (`tool_count` + `registry_hash`),
+and `GET /api/health` returns the same `registry_hash`. The hash changes whenever
+a tool is added/removed or its description / approval flag / input schema changes,
+so a mismatch against a freshly-started server means the session is stale —
+restart it.
+
 ### Docker all-in-one (recommended packaged viewer mode)
 
 Build and run from the repository root:

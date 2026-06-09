@@ -38,6 +38,9 @@ def register_system_routes(
             "app_root": str(APP_ROOT),
             "runtime_tool_count": len(tool_names),
             "cad_tool_count": len(cad_tool_names),
+            # Content hash of the registered tool set: lets an operator detect a
+            # long-lived MCP server serving a stale registry (#29).
+            "registry_hash": _rt.registry_identity()["registry_hash"],
             "backend_log_path": app.state.backend_log_path,
             "error_metrics": error_metrics_snapshot(limit=20),
         }

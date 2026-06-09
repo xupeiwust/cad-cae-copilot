@@ -112,6 +112,10 @@ def test_agent_readme_defaults_to_compact_and_full_mode_remains_available(mcp_se
     assert len(quick["content"]) < 8_000
     assert full["mode"] == "full"
     assert len(full["content"]) > 50_000
+    # Both modes carry the registry identity for stale-session detection (#29).
+    for result in (quick, full):
+        assert result["registry"]["registry_hash"].startswith("sha256:")
+        assert result["registry"]["tool_count"] > 0
 
 
 def test_topic_guide_is_available_through_mcp(mcp_server) -> None:

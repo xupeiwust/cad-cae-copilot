@@ -175,6 +175,38 @@ def list_tools_for_mcp() -> list[dict[str, Any]]:
     return out
 
 
+def registry_identity() -> dict[str, Any]:
+    """A deterministic identity for the currently-registered tool set.
+
+    The MCP server builds its tool registry once at process start (via
+    ``create_app``), so a long-lived session can silently serve a stale set —
+    new tools invisible, changed descriptions outdated — with no other signal
+    (#29). This returns a content hash that changes whenever a tool is added or
+    removed, or its description / approval flags / input schema change, plus the
+    tool count. Surfaced in ``GET /api/health`` and ``aieng.agent_readme`` so an
+    agent or operator can tell whether it is talking to a current registry.
+    """
+    import hashlib
+
+    entries = [
+        {
+            "name": name,
+            "description": meta.get("description", ""),
+            "requires_approval": bool(meta.get("requires_approval", False)),
+            "read_only": bool(meta.get("read_only", False)),
+            "destructive": bool(meta.get("destructive", False)),
+            "input_schema": meta.get("input_schema") or {"type": "object", "additionalProperties": True},
+        }
+        for name, meta in sorted(_REGISTRY.items())
+    ]
+    blob = json.dumps(entries, sort_keys=True, ensure_ascii=False, default=str)
+    digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return {
+        "tool_count": len(entries),
+        "registry_hash": f"sha256:{digest[:16]}",
+    }
+
+
 def invoke_tool(
     name: str,
     inp: dict[str, Any],

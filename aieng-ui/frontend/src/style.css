@@ -8665,6 +8665,10 @@ textarea:focus,
   background: var(--bg-root);
 }
 
+.app-shell.embed-mode {
+  grid-template-rows: 1fr;
+}
+
 /* ── Top bar ── */
 .app-topbar {
   display: flex;
@@ -10036,5 +10040,27 @@ textarea:focus,
 
   .control-pane-tab-copy span {
     display: none;
+  }
+}
+
+/* The VS Code preview is project-bound, so its embedded workbench gives the
+   full width to the viewer instead of reserving space for project navigation. */
+.app-shell.embed-mode .app-main,
+.app-shell.embed-mode .app-main.sidebar-collapsed,
+.app-shell.embed-mode .app-main.embed-main {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 700px) {
+  .app-shell.embed-mode .viewer-header {
+    padding: 8px 10px;
+  }
+
+  .app-shell.embed-mode .viewer-stage-shell {
+    margin: 8px 10px 10px;
+  }
+
+  .app-shell.embed-mode .viewer-stage-head {
+    padding: 8px 10px;
   }
 }

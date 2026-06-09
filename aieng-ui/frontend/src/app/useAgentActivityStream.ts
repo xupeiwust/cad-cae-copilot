@@ -161,6 +161,10 @@ export function useAgentActivityStream({
       const isViewerAssetChange = event.type === "viewer_asset_changed" && Boolean(event.project_id);
       const isForCurrent = !event.project_id || !current || event.project_id === current;
 
+      if (isForCurrent) {
+        setCadGenerationProgressRef.current((prev) => applyAgentActivityEvent(prev, event));
+      }
+
       if (isBuildDone && !isForCurrent) {
         void refreshProjectsRef.current(selectedIdRef.current);
         setChatHistoryRef.current((curr) => [
@@ -173,6 +177,12 @@ export function useAgentActivityStream({
           },
         ]);
         return;
+      }
+
+      if (isBuildDone && event.project_id) {
+        refreshViewerAssetRef.current(event.project_id, event.preview_url, event.preview_format);
+        void refreshProjectsRef.current(event.project_id);
+        window.setTimeout(() => setCadGenerationProgressRef.current(null), 1500);
       }
 
       if (event.type === "autopilot_update") {
@@ -249,8 +259,6 @@ export function useAgentActivityStream({
 
       if (!isForCurrent) return;
 
-      setCadGenerationProgressRef.current((prev) => applyAgentActivityEvent(prev, event));
-
       if (isViewerAssetChange && event.project_id) {
         refreshViewerAssetRef.current(event.project_id, event.preview_url, event.preview_format);
       }
@@ -259,11 +267,6 @@ export function useAgentActivityStream({
         void refreshProjectsRef.current(event.project_id);
       }
 
-      if (isBuildDone && event.project_id) {
-        refreshViewerAssetRef.current(event.project_id, event.preview_url, event.preview_format);
-        void refreshProjectsRef.current(event.project_id);
-        window.setTimeout(() => setCadGenerationProgressRef.current(null), 1500);
-      }
     };
     source.onerror = () => {
       setLiveSyncStatus((current) => nextStatusAfterStreamError(current));

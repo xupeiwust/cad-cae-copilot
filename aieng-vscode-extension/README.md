@@ -20,6 +20,13 @@ AIENG project and ask your agent to generate the first model.
 You can also start the backend yourself before opening AIENG Home. If the
 extension connects to an existing backend, it will not try to stop that process.
 
+The extension subscribes to the backend agent-activity SSE stream after VS Code
+starts. When an event includes a `project_id` and no Live CAD Preview is open,
+the matching project preview opens automatically. If another project later
+publishes a new viewer asset, the existing preview follows that project. The SSE
+client keeps retrying when the backend starts after VS Code. Set
+`aieng.autoOpenPreviewOnActivity` to `false` to disable this behavior.
+
 ## Backend lifecycle
 
 AIENG CAD Preview can start a managed backend for the current workspace.

@@ -41,7 +41,7 @@ export function AppChrome({ app }: AppChromeProps) {
           }
         }}
       />
-      <div className="app-shell">
+      <div className={embed ? "app-shell embed-mode" : "app-shell"}>
         {!embed && (
         <header className="app-topbar">
           <div className="app-topbar-brand">
@@ -63,24 +63,26 @@ export function AppChrome({ app }: AppChromeProps) {
         </header>
         )}
 
-        <div className={app.sidebarCollapsed ? "app-main sidebar-collapsed" : "app-main"}>
-          <SessionsSidebar
-            collapsed={app.sidebarCollapsed}
-            onCollapsedChange={app.setSidebarCollapsed}
-            projectName={app.projectName}
-            onProjectNameChange={app.setProjectName}
-            busy={app.busy}
-            selectedFile={app.selectedFile}
-            onSelectedFileChange={app.setSelectedFile}
-            selectedId={app.selectedId}
-            selectedProject={app.selectedProject}
-            projects={app.projects}
-            stages={app.stages}
-            runBusyTask={app.runBusyTask}
-            refreshProjects={app.refreshProjects}
-            setNotice={app.setNotice}
-            runWorkbenchImportFlow={app.runWorkbenchImportFlow}
-          />
+        <div className={embed ? "app-main embed-main" : app.sidebarCollapsed ? "app-main sidebar-collapsed" : "app-main"}>
+          {!embed && (
+            <SessionsSidebar
+              collapsed={app.sidebarCollapsed}
+              onCollapsedChange={app.setSidebarCollapsed}
+              projectName={app.projectName}
+              onProjectNameChange={app.setProjectName}
+              busy={app.busy}
+              selectedFile={app.selectedFile}
+              onSelectedFileChange={app.setSelectedFile}
+              selectedId={app.selectedId}
+              selectedProject={app.selectedProject}
+              projects={app.projects}
+              stages={app.stages}
+              runBusyTask={app.runBusyTask}
+              refreshProjects={app.refreshProjects}
+              setNotice={app.setNotice}
+              runWorkbenchImportFlow={app.runWorkbenchImportFlow}
+            />
+          )}
 
           <ViewerPane
             runtimeReady={app.runtimeReady}

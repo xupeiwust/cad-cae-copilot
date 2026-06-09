@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 
+import { AgentActivitySubscriber, type ProjectActivityEvent } from "./agentActivity";
 import { BackendManager } from "./backendManager";
 import { HomePanel } from "./homePanel";
-import { backendUrl, chooseLiveProject } from "./livePreview";
+import { backendUrl, chooseLiveProject, listProjects, type Project } from "./livePreview";
 import { readAiengPackage } from "./packageReader";
 import { modifyPrompt, projectContextPrompt, starterPrompt } from "./prompts";
 import type { WebviewToHostMessage } from "./protocol";
@@ -53,11 +54,41 @@ class AiengPreviewProvider implements vscode.CustomReadonlyEditorProvider<AiengD
 
 class LivePreviewPanel {
   private static current: LivePreviewPanel | undefined;
+  private static opening: Promise<void> | undefined;
+
+  static async handleActivity(extensionUri: vscode.Uri, backend: BackendManager, event: ProjectActivityEvent): Promise<void> {
+    const current = LivePreviewPanel.current;
+    if (current?.projectId === event.projectId) {
+      current.refreshFromActivity(event);
+      return;
+    }
+    // Keep the current project stable for read-only/background activity, but
+    // follow a different project once it actually publishes updated geometry.
+    if (current && !isProjectSwitchEvent(event)) return;
+    if (LivePreviewPanel.opening) {
+      await LivePreviewPanel.opening;
+      const opened = LivePreviewPanel.current;
+      if (opened?.projectId === event.projectId) {
+        opened.refreshFromActivity(event);
+      } else if (!opened || isProjectSwitchEvent(event)) {
+        await LivePreviewPanel.open(extensionUri, backend, await projectFromActivity(event));
+      }
+      return;
+    }
+    LivePreviewPanel.opening = (async () => {
+      await LivePreviewPanel.open(extensionUri, backend, await projectFromActivity(event));
+    })();
+    try {
+      await LivePreviewPanel.opening;
+    } finally {
+      LivePreviewPanel.opening = undefined;
+    }
+  }
 
   static async open(
     extensionUri: vscode.Uri,
     backend: BackendManager,
-    project?: { id: string; name?: string; status?: string; updated_at?: string; named_parts?: string[] },
+    project?: Project,
   ): Promise<void> {
     const selectedProject = project ?? await chooseLiveProject();
     if (!selectedProject) return;
@@ -79,6 +110,7 @@ class LivePreviewPanel {
   }
 
   private readonly subscriptions: vscode.Disposable[] = [];
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   private constructor(
     readonly panel: vscode.WebviewPanel,
@@ -99,9 +131,19 @@ class LivePreviewPanel {
       (message) => this.handlePreviewAction(message, extensionUri),
     );
     this.subscriptions.push(panel.onDidDispose(() => {
+      if (this.refreshTimer) clearTimeout(this.refreshTimer);
       this.subscriptions.splice(0).forEach((item) => item.dispose());
-      LivePreviewPanel.current = undefined;
+      if (LivePreviewPanel.current === this) LivePreviewPanel.current = undefined;
     }));
+  }
+
+  private refreshFromActivity(event: ProjectActivityEvent): void {
+    if (event.projectId !== this.projectId || !["project_changed", "viewer_asset_changed"].includes(event.type)) return;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      void this.panel.webview.postMessage({ kind: "refreshLivePreview" });
+    }, 300);
   }
 
   private async handlePreviewAction(message: WebviewToHostMessage, extensionUri: vscode.Uri): Promise<void> {
@@ -132,9 +174,26 @@ class LivePreviewPanel {
   }
 }
 
+function isProjectSwitchEvent(event: ProjectActivityEvent): boolean {
+  return event.type === "viewer_asset_changed";
+}
+
+async function projectFromActivity(event: ProjectActivityEvent): Promise<Project> {
+  const fallback = { id: event.projectId, name: event.projectId };
+  try {
+    return (await listProjects()).find((item) => item.id === event.projectId) ?? fallback;
+  } catch {
+    // The SSE event is authoritative enough to open by id if project listing fails.
+    return fallback;
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const backend = new BackendManager();
   context.subscriptions.push(backend);
+  context.subscriptions.push(new AgentActivitySubscriber(
+    (event) => LivePreviewPanel.handleActivity(context.extensionUri, backend, event),
+  ));
   const provider = new AiengPreviewProvider(context.extensionUri);
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("aieng.cadPreview", provider, {
     supportsMultipleEditorsPerDocument: false,

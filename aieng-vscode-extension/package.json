@@ -2,7 +2,7 @@
   "name": "aieng-cad-preview",
   "displayName": "AIENG CAD Preview",
   "description": "Preview AIENG CAD packages and copy stable face pointers into any chat.",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "publisher": "aieng",
   "license": "MIT",
   "repository": {
@@ -18,6 +18,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCustomEditor:aieng.cadPreview",
     "onCommand:aieng.openHome",
     "onCommand:aieng.openLivePreview",
@@ -66,6 +67,11 @@
           "type": "string",
           "default": "",
           "description": "Optional fixed Workbench project ID. When empty, Live CAD Preview prompts for a project."
+        },
+        "aieng.autoOpenPreviewOnActivity": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open Live CAD Preview from backend SSE activity and follow newly published viewer assets."
         },
         "aieng.backendCwd": {
           "type": "string",

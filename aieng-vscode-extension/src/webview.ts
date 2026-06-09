@@ -60,6 +60,12 @@ export function configureLiveWorkbenchWebview(
     iframe { flex: 1; width: 100%; border: 0; background: #0a0e1a; }
     .toast { position: fixed; left: 50%; top: 50px; transform: translateX(-50%); background: #2563eb; color: #fff; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; opacity: 0; transition: opacity .18s; pointer-events: none; }
     .toast.show { opacity: 1; }
+    @media (max-width: 700px) {
+      .bar { flex-wrap: wrap; gap: 5px; padding: 5px 6px; }
+      .bar .name { flex: 1 1 100%; max-width: 100%; }
+      .bar .hint, .bar .sep, .bar .spacer { display: none; }
+      .bar button { flex: 1 1 auto; padding: 4px 6px; }
+    }
   </style>
 </head>
 <body>
@@ -115,6 +121,12 @@ export function configureLiveWorkbenchWebview(
     window.addEventListener("message", (event) => {
       const data = event.data;
       if (!data || typeof data !== "object" || typeof data.kind !== "string") return;
+      if (data.kind === "refreshLivePreview") {
+        const url = new URL(frame.src);
+        url.searchParams.set("refresh", Date.now().toString());
+        frame.src = url.toString();
+        return;
+      }
       if (data.kind === "selectionChanged") { pointers = Array.isArray(data.pointers) ? data.pointers : []; syncModify(); return; }
       if (data.kind === "copy" || data.kind.startsWith("copy") || data.kind === "openHome") vscode.postMessage(data);
     });

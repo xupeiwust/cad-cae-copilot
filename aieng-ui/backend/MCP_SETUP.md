@@ -209,7 +209,11 @@ executes a simple bracket build path (stubbed by default, real with
 - Approval applies only to tools registered with `requires_approval=true`.
 - `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` is the server-enforced no-mutation mode.
 - `AIENG_MCP_MANAGED_APPROVAL=1` requires a reachable backend/viewer; if the
-  approval broker is unavailable, gated calls fail safe.
+  approval broker is unavailable, gated calls fail safe. The bridge pre-flights
+  the approval surface, so when no viewer is connected to approve, the gated
+  call **fails fast** with `code: approval_surface_unavailable` (and a hint to
+  open the workbench UI or use `--approval-mode client|block`) instead of
+  blocking to `AIENG_AGENTIC_APPROVAL_TIMEOUT_SECONDS`.
 - Soft discipline such as industrial-design review, face-pointer hygiene, and
   4-view visual inspection is advisory. External agent prose is not fully
   controlled by the workbench.

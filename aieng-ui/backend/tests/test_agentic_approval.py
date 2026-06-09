@@ -187,3 +187,34 @@ def test_api_unknown_permission_id_404(tmp_path: Path):
     client = _client(tmp_path)
     assert client.get("/api/agent/agentic/permission/nope").status_code == 404
     assert client.post("/api/agent/agentic/permission/nope/resolve", json={"approved": True}).status_code == 404
+
+
+def test_api_approval_surface_reflects_subscribers(tmp_path: Path):
+    """The pre-flight surface endpoint reports whether a viewer can approve.
+
+    Backs the #30 fast-fail: with no subscriber the bridge denies immediately
+    instead of blocking to the long approval timeout.
+    """
+    from app import agent_activity
+
+    agent_activity.reset()
+    client = _client(tmp_path)
+    try:
+        # No viewer connected → no approval surface.
+        body = client.get("/api/agent/agentic/approval-surface").json()
+        assert body == {"available": False, "subscriber_count": 0}
+
+        # A connected viewer (SSE subscriber) is an approval surface.
+        q = agent_activity.subscribe()
+        try:
+            body = client.get("/api/agent/agentic/approval-surface").json()
+            assert body["available"] is True
+            assert body["subscriber_count"] == 1
+        finally:
+            agent_activity.unsubscribe(q)
+
+        # Disconnecting it removes the surface again.
+        body = client.get("/api/agent/agentic/approval-surface").json()
+        assert body == {"available": False, "subscriber_count": 0}
+    finally:
+        agent_activity.reset()

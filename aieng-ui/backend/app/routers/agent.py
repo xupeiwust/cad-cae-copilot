@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from fastapi import Body, FastAPI, HTTPException
 
-from .. import agent_engine, agent_workbench
+from .. import agent_activity, agent_engine, agent_workbench
 from .. import runtime as _rt
 from ..agent_autopilot.agentic_approval import (
     PermissionBroker,
@@ -150,6 +150,21 @@ def register_agent_routes(
 
     def _agentic_approval_names() -> set[str]:
         return build_approval_name_set(_rt.list_tools_for_mcp())
+
+    @app.get("/api/agent/agentic/approval-surface")
+    def get_agentic_approval_surface() -> dict[str, Any]:
+        """Report whether a live approval surface is listening for gated tools.
+
+        An approval request is fanned out as an ``approval_requested`` agent
+        event; only a connected workbench viewer (an SSE subscriber on
+        ``/api/agent-activity/stream``) can render it and resolve it. When no
+        viewer is subscribed, a created request would block to the long
+        approval timeout with nobody able to answer. The MCP approval bridge
+        pre-flights this endpoint so a headless / BYO-agent session fails fast
+        with a clear signal instead of stalling. Read-only.
+        """
+        count = agent_activity.subscriber_count()
+        return {"available": count > 0, "subscriber_count": count}
 
     @app.post("/api/agent/agentic/permission")
     def create_agentic_permission(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:

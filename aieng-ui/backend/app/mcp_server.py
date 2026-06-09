@@ -499,6 +499,34 @@ def _agentic_permission_decision(tool_name: str, tool_input: dict[str, Any]) -> 
         with urllib.request.urlopen(f"{_BACKEND_URL}{path}", timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
+    # Pre-flight: an approval request can only be resolved by a connected
+    # approval surface (a workbench viewer). If none is listening, creating the
+    # request would block to AIENG_AGENTIC_APPROVAL_TIMEOUT_SECONDS (~15 min)
+    # with nobody able to answer — a silent stall on the very first gated call
+    # in a headless / BYO-agent session. Detect that up front and fail fast with
+    # a clear, structured signal. (The gate is NOT bypassed — the tool still does
+    # not run.) A failed pre-flight is non-fatal: fall through to _post, which
+    # fail-safe denies if the backend itself is unreachable.
+    try:
+        surface = _get("/api/agent/agentic/approval-surface", timeout=10)
+    except Exception as exc:
+        logger.warning("approval surface pre-flight failed for %s: %s", tool_name, exc)
+        surface = None
+    if isinstance(surface, dict) and surface.get("available") is False:
+        return {
+            "behavior": "deny",
+            "code": "approval_surface_unavailable",
+            "message": (
+                "Approval is required for this tool, but no workbench approval "
+                "surface is connected — no viewer is listening to approve, so the "
+                "request cannot be answered. Open the workbench UI to approve, or "
+                "run the MCP server with --approval-mode client (let your own agent "
+                "prompt for approval) or --approval-mode block. The tool was NOT "
+                "executed; re-run it once an approval surface is available."
+            ),
+            "recoverable": True,
+        }
+
     try:
         created = _post("/api/agent/agentic/permission", body)
     except Exception as exc:  # backend unreachable / error → fail safe
@@ -739,11 +767,14 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
                 if requires_approval and _broker_approval_mode():
                     decision = _agentic_permission_decision(name_, args)
                     if decision.get("behavior") != "allow":
-                        return _coerce_result({
+                        error: dict[str, Any] = {
                             "status": "error",
-                            "code": "approval_denied",
+                            "code": decision.get("code") or "approval_denied",
                             "message": decision.get("message") or "Approval was denied in the workbench UI.",
-                        })
+                        }
+                        if decision.get("recoverable"):
+                            error["recoverable"] = True
+                        return _coerce_result(error)
                     updated = decision.get("updatedInput")
                     if isinstance(updated, dict) and updated:
                         args = updated

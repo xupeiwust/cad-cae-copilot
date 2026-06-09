@@ -627,8 +627,15 @@ def _execute_steps(
             # Reuse the ToolCall already recorded when the approval gate fired
             tc = run.tool_calls[actual_idx]
         else:
+            # An explicit per-step ``requires_approval`` (set by a caller that
+            # gates a tool independently of the global registry flag — e.g. the
+            # copilot loop's human-in-the-loop apply step) takes precedence;
+            # otherwise fall back to the tool's registry default.
+            step_requires_approval = step.get("requires_approval")
             requires_approval = (
-                tool_def.get("requires_approval", False) if tool_def else False
+                bool(step_requires_approval)
+                if step_requires_approval is not None
+                else (tool_def.get("requires_approval", False) if tool_def else False)
             )
             tc = ToolCall(
                 id=uuid.uuid4().hex[:8],
@@ -714,6 +721,13 @@ def execute_run(run: RunRecord, ctx: dict[str, Any]) -> RunRecord:
                 merged = dict(step_input)
                 merged.update(tool_input)
                 step["input"] = merged
+    # Let a caller force an approval gate for this run independently of the
+    # global registry flag (the registry treats CAD edits as plan-confirmed, but
+    # the copilot loop keeps its own per-step approval checkpoint).
+    if ctx.get("require_approval"):
+        for step in plan:
+            if (step.get("kind") or "tool") in {"tool", "mcp_tool"}:
+                step["requires_approval"] = True
     run.plan = plan
     _emit(run, "plan_created", {"steps": [s["name"] for s in plan]})
 

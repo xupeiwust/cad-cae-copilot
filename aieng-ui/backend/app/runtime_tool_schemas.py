@@ -415,6 +415,46 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "baseline."
         ),
     },
+    "opt.propose_next": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "count": {"type": "integer", "minimum": 1,
+                      "description": "Number of candidates to propose this round (default 4)."},
+            "shrink": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
+                       "description": "Trust-region radius shrink factor per iteration (default 0.5)."},
+            "seed": {"type": "integer", "description": "Random seed for reproducibility (default 0)."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "Propose the next batch of candidates by trust-region local refinement "
+            "around the ranking incumbent (LHS fallback when none). Writes candidate "
+            "patches; does NOT run/evaluate/accept candidates or modify the baseline."
+        ),
+    },
+    "opt.check_convergence": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "evaluations_total": {"type": "integer", "minimum": 0,
+                                  "description": "Override the total-evaluations count (default: candidate count)."},
+            "failures_this_round": {"type": "integer", "minimum": 0,
+                                    "description": "Number of failed candidates this round (default 0)."},
+            "had_success": {"type": "boolean",
+                            "description": "Whether this round produced any successful candidate (default true)."},
+            "proposer_exhausted": {"type": "boolean",
+                                   "description": "Signal that the proposer cannot suggest a new point (default false)."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "Record the current iteration's incumbent into "
+            "analysis/optimization_iterations.json and return a deterministic, advisory "
+            "convergence verdict. Advisory only — never accepts a candidate, runs CAE, "
+            "or modifies the baseline."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

@@ -88,6 +88,18 @@ def test_config_thresholds_sourced_from_study():
     assert v["verdict"] == "converged"
 
 
+def test_maximize_objective_is_direction_aware():
+    cfg = resolve_convergence_config(None)
+    # increasing objective = improvement under maximize -> should NOT converge
+    rising = [_it(0.6, evals=4), _it(0.8, evals=8), _it(1.0, evals=12)]
+    assert evaluate_convergence(rising, cfg, sense="maximize")["verdict"] == "continue"
+    # the same rising series under minimize is "getting worse" -> no improvement -> converged
+    assert evaluate_convergence(rising, cfg, sense="minimize")["verdict"] == "converged"
+    # a plateaued maximize series converges
+    flat = [_it(0.990, evals=4), _it(0.995, evals=8), _it(0.996, evals=12)]
+    assert evaluate_convergence(flat, cfg, sense="maximize")["verdict"] == "converged"
+
+
 def test_all_reason_codes_in_shared_vocabulary():
     cfg = resolve_convergence_config(None)
     seen = set()

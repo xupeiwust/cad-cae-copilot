@@ -28,6 +28,7 @@ OPTIMIZATION_OBJECTIVES_PATH = "analysis/optimization_objectives.json"
 OPTIMIZATION_CONSTRAINTS_PATH = "analysis/optimization_constraints.json"
 OPTIMIZATION_DECISION_LOG_PATH = "analysis/optimization_decision_log.json"
 DESIGN_STUDY_ITERATIONS_PATH = "analysis/design_study_iterations.json"
+OPTIMIZATION_ITERATIONS_PATH = "analysis/optimization_iterations.json"
 DESIGN_STUDY_RANKING_PATH = "analysis/design_study_candidate_ranking.json"
 DESIGN_STUDY_SCORING_REPORT_PATH = "diagnostics/design_study_scoring_report.json"
 OPTIMIZATION_RECOMMENDATION_PATH = "analysis/optimization_recommendation.json"
@@ -164,6 +165,7 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             constraints = _read_json(zf, OPTIMIZATION_CONSTRAINTS_PATH, names)
             decision_log = _read_json(zf, OPTIMIZATION_DECISION_LOG_PATH, names)
             iterations_doc = _read_json(zf, DESIGN_STUDY_ITERATIONS_PATH, names)
+            opt_iterations_doc = _read_json(zf, OPTIMIZATION_ITERATIONS_PATH, names)
             ranking = _read_json(zf, DESIGN_STUDY_RANKING_PATH, names)
             scoring = _read_json(zf, DESIGN_STUDY_SCORING_REPORT_PATH, names)
             recommendation = _read_json(zf, OPTIMIZATION_RECOMMENDATION_PATH, names)
@@ -226,6 +228,30 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
         decision_log.get("entries") if isinstance(decision_log, dict) else None
     ) or []
 
+    # ── Phase-2 iteration history (present only for iterative runs) ──────────
+    opt_iters = (
+        [r for r in (opt_iterations_doc.get("iterations") or []) if isinstance(r, dict)]
+        if isinstance(opt_iterations_doc, dict) else []
+    )
+    iteration_history = {
+        "iteration_count": len(opt_iters),
+        "latest_verdict": (
+            opt_iterations_doc.get("latest_verdict") if isinstance(opt_iterations_doc, dict) else None
+        ),
+        "iterations": [
+            {
+                "index": it.get("index"),
+                "incumbent_candidate_id": it.get("incumbent_candidate_id"),
+                "incumbent_objective": it.get("incumbent_objective"),
+                "feasible": it.get("feasible"),
+                "evaluations_total": it.get("evaluations_total"),
+                "convergence_verdict": it.get("convergence_verdict"),
+            }
+            for it in opt_iters
+        ],
+    }
+    sources_present["optimization_iterations"] = bool(opt_iters)
+
     report = {
         "format": OPTIMIZATION_REPORT_FORMAT,
         "format_version": FORMAT_VERSION,
@@ -266,6 +292,7 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             ),
             "promotion_mode": acceptance.get("promotion_mode") if isinstance(acceptance, dict) else None,
         },
+        "iteration_history": iteration_history,
         "decision_log_entries": decision_entries,
         "sources_present": sources_present,
         "missing_stages": missing_stages,

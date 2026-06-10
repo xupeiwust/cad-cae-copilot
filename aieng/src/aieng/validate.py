@@ -11,6 +11,11 @@ from typing import Any, Iterable
 from .reference import ref_check_package
 
 from . import FORMAT_VERSION
+from .optimization_artifacts import (
+    DESIGN_STUDY_PROBLEM_PATH,
+    OPTIMIZATION_ARTIFACT_PATHS,
+    validate_optimization_artifact_set,
+)
 from .package import PACKAGE_DIRECTORIES
 
 try:  # jsonschema is a lightweight Phase 0 dependency, with fallback checks below.
@@ -72,6 +77,11 @@ SCHEMA_FILES = {
     "validation/evidence_report.json": "evidence_report.schema.json",
     "results/field_regions.json": "field_regions.schema.json",
     "results/field_summary.json": "field_summary.schema.json",
+    "analysis/optimization_study.json": "optimization_study.schema.json",
+    "analysis/optimization_variables.json": "optimization_variables.schema.json",
+    "analysis/optimization_objectives.json": "optimization_objectives.schema.json",
+    "analysis/optimization_constraints.json": "optimization_constraints.schema.json",
+    "analysis/optimization_decision_log.json": "optimization_decision_log.schema.json",
 }
 
 TEXT_RESOURCES = (
@@ -217,11 +227,18 @@ def _validate_zip_members(package: zipfile.ZipFile, names: set[str]) -> Iterable
     evidence_report_data: Any | None = None
     conversion_manifest_data: Any | None = None
     converter_capabilities_data: Any | None = None
+    optimization_documents: dict[str, dict[str, Any]] = {}
+    optimization_kind_by_path = {
+        artifact_path: kind for kind, artifact_path in OPTIMIZATION_ARTIFACT_PATHS.items()
+    }
     for member, schema_name in SCHEMA_FILES.items():
         if member in names:
             data = _read_json_member(package, member, messages)
             if data is not None:
                 messages.extend(_validate_against_schema(member, data, schema_name))
+                optimization_kind = optimization_kind_by_path.get(member)
+                if optimization_kind and isinstance(data, dict):
+                    optimization_documents[optimization_kind] = data
                 if member == "geometry/topology_map.json":
                     topology_map_data = data
                     messages.extend(_validate_topology_map_semantics(data))
@@ -265,6 +282,37 @@ def _validate_zip_members(package: zipfile.ZipFile, names: set[str]) -> Iterable
                     conversion_manifest_data = data
                 if member == "provenance/converter_capabilities.json":
                     converter_capabilities_data = data
+
+    if optimization_documents:
+        design_study_problem = (
+            _read_json_member(package, DESIGN_STUDY_PROBLEM_PATH, messages)
+            if DESIGN_STUDY_PROBLEM_PATH in names
+            else None
+        )
+        if design_study_problem is None:
+            messages.append(
+                ValidationMessage(
+                    Level.FAIL,
+                    f"optimization artifacts require {DESIGN_STUDY_PROBLEM_PATH}",
+                )
+            )
+        else:
+            optimization_issues = validate_optimization_artifact_set(
+                optimization_documents,
+                design_study_problem=design_study_problem,
+            )
+            if optimization_issues:
+                messages.extend(
+                    ValidationMessage(Level.FAIL, f"optimization artifact consistency: {issue}")
+                    for issue in optimization_issues
+                )
+            else:
+                messages.append(
+                    ValidationMessage(
+                        Level.PASS,
+                        "optimization artifacts are consistent with design-study source",
+                    )
+                )
 
     if "simulation/setup.yaml" in names:
         simulation_setup_data = _read_yaml_member(package, "simulation/setup.yaml", messages)
@@ -2868,7 +2916,7 @@ def _validate_design_targets(package: zipfile.ZipFile, member: str) -> list[Vali
     elif target_ids:
         messages.append(ValidationMessage(Level.PASS, f"{member} target IDs are unique"))
 
-    # Phase 35 PR 2 — cross-field semantic checks. Schema enum already
+    # Phase 35 PR 2 - cross-field semantic checks. Schema enum already
     # constrains comparator validity; these checks add the per-comparator
     # cross-field requirements (within_range needs both thresholds, etc.)
     # that JSON Schema does not express directly. Backward-compatible: each

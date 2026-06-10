@@ -35,6 +35,7 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset({
     "solver_run_completed",
     "cae_summary_refreshed",
     "claim_proposal_created",
+    "optimization_artifact_written",
 })
 
 # Required fields in every serialised audit event artifact.

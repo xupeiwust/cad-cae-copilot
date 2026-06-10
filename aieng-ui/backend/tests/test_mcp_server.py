@@ -565,6 +565,8 @@ def test_list_tools_for_mcp_marks_approval_tools() -> None:
     # Acceptance is the hard gate of the opt family — the only approval-gated one.
     assert entries["opt.accept_candidate"]["requires_approval"] is True
     assert entries["opt.accept_candidate"]["read_only"] is False
+    assert entries["opt.write_report"]["requires_approval"] is False
+    assert entries["opt.write_report"]["read_only"] is False
     assert "opt.sample_candidates" not in entries
 
 

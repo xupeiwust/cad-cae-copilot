@@ -2701,6 +2701,47 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         requires_approval=True,
     )
 
+    def _tool_opt_write_report(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Aggregate the optimization study into a single summary report.
+        Reads existing package artifacts (problem, variables/objectives/constraints,
+        candidates + metrics, ranking, failed candidates, recommendation, acceptance,
+        decision log) and writes diagnostics/optimization_report.json. Read-only with
+        respect to engineering state: does NOT execute/evaluate/rank/accept candidates,
+        run CAE, or modify the baseline. The report is reconstructable from artifacts."""
+        from aieng.converters.optimization_report import build_optimization_report
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = build_optimization_report(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "report_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.write_report", "report_result": result}
+
+    _rt.register_tool(
+        "opt.write_report",
+        _tool_opt_write_report,
+        description=(
+            "Aggregate the optimization study into a single summary report. Reads the "
+            "existing package artifacts (problem definition, variables / objectives / "
+            "constraints, all candidates + metrics, ranking, failed candidates, the "
+            "advisory recommendation, acceptance state, and decision log) and writes "
+            "diagnostics/optimization_report.json. Read-only with respect to "
+            "engineering state — does NOT execute / evaluate / rank / accept "
+            "candidates, run CAE, or modify the baseline. The report is "
+            "reconstructable purely from on-disk artifacts."
+        ),
+        input_schema=_schema("opt.write_report"),
+        requires_approval=False,
+        read_only=False,
+    )
+
     _rt.register_tool(
         "cae.map_results",
         _tool_cae_map_results,

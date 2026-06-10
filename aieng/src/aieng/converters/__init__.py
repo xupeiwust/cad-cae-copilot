@@ -39,6 +39,9 @@ from .design_study_batch import (
 # Advisory recommendation / explanation (Issue #41)
 from .optimization_recommendation import explain_recommendation
 
+# Study summary report (Issue #43)
+from .optimization_report import build_optimization_report
+
 __all__ = [
     "CAPABILITY_LEVEL_NAMES",
     "CONVERTER_CLAIM_POLICY",
@@ -61,4 +64,5 @@ __all__ = [
     "run_design_study_batch",
     "run_design_study_evaluation_batch",
     "explain_recommendation",
+    "build_optimization_report",
 ]

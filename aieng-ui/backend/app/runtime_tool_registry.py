@@ -2404,6 +2404,58 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         input_schema=_schema("opt.run_assembly_topology_optimization"),
     )
 
+    def _tool_opt_propose_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Generate candidate parameter sets from optimization variables.
+        Reads analysis/optimization_variables.json (and optionally
+        optimization_study.json) from the project's .aieng package, runs
+        the requested sampler, and writes candidate patches to
+        patches/design_candidates/<cid>.json. Does NOT execute candidates,
+        recompile geometry, run CAE, or modify the baseline."""
+        from aieng.converters.optimization_sampler import sample_candidates_package
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = sample_candidates_package(
+                pkg,
+                algorithm=inp.get("algorithm"),
+                count=inp.get("count"),
+                seed=inp.get("seed"),
+                max_candidates=inp.get("max_candidates"),
+                overwrite=bool(inp.get("overwrite", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "sampling_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {
+            "status": result.get("status", "error"),
+            "tool": "opt.propose_candidates",
+            "sampler_result": result,
+        }
+
+    _rt.register_tool(
+        "opt.propose_candidates",
+        _tool_opt_propose_candidates,
+        description=(
+            "Generate candidate parameter sets from optimization variables. "
+            "Reads analysis/optimization_variables.json (required) and optionally "
+            "analysis/optimization_study.json from the project's .aieng package, "
+            "runs the requested sampler (grid / random / latin_hypercube), and "
+            "writes candidate patches to patches/design_candidates/<cid>.json "
+            "in the format consumed by the candidate executor/evaluator/ranker. "
+            "Does NOT execute candidates, recompile geometry, run CAE, or modify "
+            "the baseline. The study's candidate_ids are updated to include the "
+            "new candidates. Deterministic given a seed."
+        ),
+        input_schema=_schema("opt.propose_candidates"),
+        requires_approval=True,
+    )
+
     _rt.register_tool(
         "cae.map_results",
         _tool_cae_map_results,

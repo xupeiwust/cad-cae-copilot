@@ -610,6 +610,47 @@ def register_project_workflow_routes(
             ),
         }
 
+    @app.post("/api/projects/{project_id}/design-study/sample")
+    def sample_design_study_candidates_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Generate candidate parameter sets from optimization variables.
+
+        Reads ``analysis/optimization_variables.json`` and optionally
+        ``analysis/optimization_study.json`` from the project's .aieng package,
+        runs the requested sampler (grid / random / latin_hypercube), and writes
+        candidate patches to ``patches/design_candidates/<cid>.json``.
+
+        Body (all optional, overrides study config when provided):
+          algorithm (str): grid | random | latin_hypercube | lhs
+          count (int): number of candidates (for random/LHS)
+          seed (int): random seed for reproducibility
+          max_candidates (int): hard cap (default 50)
+          overwrite (bool): overwrite existing candidates (default false)
+
+        Does NOT execute candidates, recompile geometry, run CAE, or modify baseline.
+        """
+        from aieng.converters.optimization_sampler import sample_candidates_package
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **sample_candidates_package(
+                package_path,
+                algorithm=data.get("algorithm"),
+                count=data.get("count"),
+                seed=data.get("seed"),
+                max_candidates=data.get("max_candidates"),
+                overwrite=bool(data.get("overwrite", False)),
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/cae-evaluate")
     def cae_evaluate_design_study_candidate_endpoint(
         project_id: str,

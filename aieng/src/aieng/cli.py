@@ -700,6 +700,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional note; repeat for multiple lines",
     )
 
+    sample_candidates_parser = subparsers.add_parser(
+        "sample-candidates",
+        help="Generate candidate parameter sets from optimization variables using grid/random/LHS sampling",
+    )
+    sample_candidates_parser.add_argument("package", help="Path to a .aieng package")
+    sample_candidates_parser.add_argument(
+        "--algorithm",
+        default=None,
+        choices=["grid", "random", "latin_hypercube", "lhs"],
+        help="Sampling algorithm (default: from optimization_study.json or grid)",
+    )
+    sample_candidates_parser.add_argument(
+        "--count", type=int, default=None,
+        help="Number of candidates to generate (for random/LHS; auto-computed for grid)",
+    )
+    sample_candidates_parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed for reproducibility (default: 0 or from study)",
+    )
+    sample_candidates_parser.add_argument(
+        "--max-candidates", type=int, default=None,
+        help="Hard cap on emitted candidates (default: 50 or from study)",
+    )
+    sample_candidates_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Explicitly overwrite existing candidate patches with the same IDs",
+    )
+
     serve_parser = subparsers.add_parser(
         "serve",
         help="Start an MCP server exposing .aieng package resources as agent-callable tools",
@@ -1512,6 +1541,34 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(f"PASS recorded tool trace entry -> {out}")
         print("PASS provenance/tool_trace.json updated")
+        return 0
+
+    if args.command == "sample-candidates":
+        from .converters.optimization_sampler import sample_candidates_package
+
+        try:
+            result = sample_candidates_package(
+                Path(args.package),
+                algorithm=args.algorithm,
+                count=args.count,
+                seed=args.seed,
+                max_candidates=args.max_candidates,
+                overwrite=args.overwrite,
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"FAIL {exc}", file=sys.stderr)
+            return 2
+        if result.get("status") == "error":
+            print(f"FAIL {result.get('message', 'unknown error')}", file=sys.stderr)
+            return 2
+        print(f"PASS sampled candidates ({result['algorithm']}): "
+              f"{result['candidate_count']} written, "
+              f"{result['total_generated']} generated, "
+              f"{result['dropped_count']} dropped (cap={result['capped']})")
+        for path in result.get("artifacts_written", []):
+            print(f"PASS wrote {path}")
+        for w in result.get("warnings", []):
+            print(f"WARN {w}")
         return 0
 
     if args.command == "serve":

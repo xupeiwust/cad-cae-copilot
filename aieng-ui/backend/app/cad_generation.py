@@ -3480,15 +3480,47 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120, use_ca
             metrics = get_default_metrics()
             h = compute_shape_ir_hash(payload)
             cached = cache.get(h)
-            if cached is not None and cached.metadata.get("source"):
+            if cached is not None and _cached_geometry_has_real_artifacts(cached):
                 metrics.record_hit()
                 # Re-write cached artifacts into the package so the package stays consistent
                 _write_cached_artifacts_to_package(package_path, cached)
+                representation = str(cached.metadata.get("representation", "brep_build123d"))
+                runtime = str(cached.metadata.get("runtime", "build123d"))
+                geometry_kind = str(cached.metadata.get("geometry_kind", "brep"))
+                topo = cached.topology_map or cached.metadata.get("topology_map")
+                feature_graph = cached.feature_graph or cached.metadata.get("feature_graph")
+                if isinstance(topo, dict) and isinstance(feature_graph, dict):
+                    reconcile_shape_ir_provenance(
+                        package_path,
+                        topo,
+                        feature_graph,
+                        representation=representation,
+                        backend=runtime,
+                        geometry_kind=geometry_kind,
+                        requested_runtime=runtime,
+                    )
+                else:
+                    # Older cache entries may not carry semantic maps. Still
+                    # restore an honest normalized execution record from the
+                    # binary artifacts that were written back into the package.
+                    write_geometry_execution_manifest(
+                        package_path,
+                        representation=representation,
+                        requested_runtime=runtime,
+                        actual_runtime=runtime,
+                        executed=True,
+                        geometry_kind=geometry_kind,
+                    )
+                for refresh in (write_shape_ir_verification, write_shape_ir_object_registry):
+                    try:
+                        refresh(package_path)
+                    except Exception:  # noqa: BLE001 - cache restore remains best-effort
+                        pass
                 return {
-                    "representation": cached.metadata.get("representation", "brep_build123d"),
-                    "runtime": cached.metadata.get("runtime", "build123d"),
+                    "representation": representation,
+                    "runtime": runtime,
                     "executed": True,
-                    "geometry_kind": cached.metadata.get("geometry_kind", "brep"),
+                    "geometry_kind": geometry_kind,
                     "cached": True,
                     "cache_hit": True,
                     "source_path": cached.metadata.get("source_path", "geometry/source.py"),
@@ -6292,3 +6324,28 @@ def _write_cached_artifacts_to_package(
             "graph/feature_graph.json",
             (json.dumps(fg, indent=2, sort_keys=True) + "\n").encode("utf-8"),
         )
+
+
+def _cached_geometry_has_real_artifacts(
+    cached: "aieng.cache.geometry_cache.CachedGeometry",
+) -> bool:
+    """Return whether a cache entry can replace geometry execution.
+
+    ``compile_shape_ir`` also uses ``GeometryCache`` for source-only entries.
+    Those entries may skip source generation, but they must never make
+    ``recompile_shape_ir_package`` skip the runtime that produces real geometry.
+    """
+    meta = cached.metadata
+    if not meta.get("source"):
+        return False
+    return any(
+        bool(value)
+        for value in (
+            meta.get("step_bytes"),
+            meta.get("stl_bytes"),
+            meta.get("glb_bytes"),
+            cached.step_path,
+            cached.stl_path,
+            cached.glb_path,
+        )
+    )

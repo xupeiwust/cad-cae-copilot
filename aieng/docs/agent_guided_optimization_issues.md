@@ -296,6 +296,8 @@ implement until Phase 1 is stable.
 
 **Labels.** `documentation`, `enhancement`
 
+**Delivered:** [`phase2_iterative_optimization_plan.md`](phase2_iterative_optimization_plan.md).
+
 ---
 
 ## Issue 10 — Plan feature-level shape optimization
@@ -317,5 +319,7 @@ without arbitrary freeform boundary movement.
 - Supported feature parameters listed.
 
 **Dependencies.** Phase 1 (Issues 1–8); relates to Issue 9.
+
+**Delivered:** [`phase3_feature_shape_optimization_plan.md`](phase3_feature_shape_optimization_plan.md).
 
 **Labels.** `documentation`, `enhancement`

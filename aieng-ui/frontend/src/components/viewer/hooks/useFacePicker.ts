@@ -6,6 +6,24 @@ import type { PickedFace } from "../../../appTypes";
 import { displayToModelPoint, type DisplayTransform } from "../../viewer/coordinateFrames";
 
 /**
+ * Validate and coerce a raw pick-face API response into a safe PickedFace.
+ * Returns null when the response is malformed or missing required fields.
+ */
+export function validatePickFaceResponse(data: unknown): PickedFace | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+
+  if (typeof d.pointer !== "string" || d.pointer.length === 0) return null;
+
+  const pointer = d.pointer;
+  const label = typeof d.label === "string" && d.label.length > 0 ? d.label : pointer;
+  const surface_type = typeof d.surface_type === "string" ? d.surface_type : "unknown";
+  const roles = Array.isArray(d.roles) ? d.roles.filter((r): r is string => typeof r === "string") : [];
+
+  return { pointer, label, surface_type, roles };
+}
+
+/**
  * Raycast click handler for face picking.
  *
  * - Fast path: if the hit primitive is already mapped to a B-Rep face via
@@ -65,15 +83,12 @@ export function useFacePicker(
       api
         .pickFace(projectId, pt.x, pt.y, pt.z)
         .then((data) => {
-          if (data && data.pointer) {
-            const face: PickedFace = {
-              pointer: data.pointer as string,
-              label: (data.label as string) || (data.pointer as string),
-              surface_type: (data.surface_type as string) || "unknown",
-              roles: Array.isArray(data.roles) ? (data.roles as string[]) : [],
-            };
+          const face = validatePickFaceResponse(data);
+          if (face) {
             onAddPickedFaceRef.current(face);
             setTooltipFaceRef.current(face);
+          } else {
+            setTooltipFaceRef.current(null);
           }
         })
         .catch(() => setTooltipFaceRef.current(null));

@@ -36,6 +36,9 @@ from .design_study_batch import (
     run_design_study_evaluation_batch,
 )
 
+# Advisory recommendation / explanation (Issue #41)
+from .optimization_recommendation import explain_recommendation
+
 __all__ = [
     "CAPABILITY_LEVEL_NAMES",
     "CONVERTER_CLAIM_POLICY",
@@ -57,4 +60,5 @@ __all__ = [
     "discover_executed_candidate_ids",
     "run_design_study_batch",
     "run_design_study_evaluation_batch",
+    "explain_recommendation",
 ]

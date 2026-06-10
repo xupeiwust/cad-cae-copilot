@@ -345,6 +345,31 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "candidate or modify the baseline."
         ),
     },
+    "opt.rank_candidates": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {"project_id": {"type": "string"}},
+        "additionalProperties": False,
+        "description": (
+            "Rank evaluated design-study candidates (advisory). Classifies "
+            "feasibility, scores against the objective + constraints, and writes "
+            "analysis/design_study_candidate_ranking.json. best_candidate_id is set "
+            "only for a feasible, improving, high-confidence candidate. Does NOT "
+            "accept a candidate, run CAE, or modify the baseline."
+        ),
+    },
+    "opt.explain_recommendation": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {"project_id": {"type": "string"}},
+        "additionalProperties": False,
+        "description": (
+            "Explain the candidate ranking as an advisory, reason-coded "
+            "recommendation. Reads the ranking (run opt.rank_candidates first) and "
+            "writes analysis/optimization_recommendation.json. Advisory only — does "
+            "NOT accept a candidate, run CAE, or modify the baseline."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

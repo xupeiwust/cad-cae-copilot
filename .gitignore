@@ -83,3 +83,4 @@ aieng-ui/backend/start.bat
 
 # local machine-specific MCP launcher
 run-aieng-mcp.cmd
+.aieng_cache/

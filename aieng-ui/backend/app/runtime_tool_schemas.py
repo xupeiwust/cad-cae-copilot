@@ -880,6 +880,149 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
     "aieng.refresh_semantics": _project_id_schema(),
+
+    # ── materials ─────────────────────────────────────────────────────────────
+    "list_materials": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "description": "Filter by material category, e.g. 'Aluminum Alloy', 'Stainless Steel', 'Engineering Plastic'.",
+            },
+            "query": {
+                "type": "string",
+                "description": "Search query matched against material names and descriptions (case-insensitive).",
+            },
+        },
+        "additionalProperties": False,
+        "description": "List available engineering materials with optional category or search filter.",
+    },
+    "get_material_details": {
+        "type": "object",
+        "required": ["material_name"],
+        "properties": {
+            "material_name": {
+                "type": "string",
+                "description": "Exact material name, e.g. 'Al6061-T6' or 'Steel-316L'.",
+            },
+        },
+        "additionalProperties": False,
+        "description": "Return full properties for a specific material (E, nu, density, yield, ultimate, thermal expansion).",
+    },
+    "compare_materials": {
+        "type": "object",
+        "required": ["material_names"],
+        "properties": {
+            "material_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 2,
+                "description": "List of material names to compare, e.g. ['Al6061-T6', 'Steel-316L', 'Ti-6Al-4V'].",
+            },
+        },
+        "additionalProperties": False,
+        "description": "Compare properties of two or more materials side by side with normalized scores.",
+    },
+
+    # ── standard parts ────────────────────────────────────────────────────────
+    "list_standard_parts": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": ["fastener", "bearing", "shaft", "structural_profile", "hole"],
+                "description": "Filter by standard part category.",
+            },
+        },
+        "additionalProperties": False,
+        "description": "List available standard part categories and types (fasteners, bearings, shafts, profiles, holes).",
+    },
+    "get_standard_part_specs": {
+        "type": "object",
+        "required": ["part_type"],
+        "properties": {
+            "part_type": {
+                "type": "string",
+                "description": "Standard part type identifier, e.g. 'hex_bolt', 'deep_groove_ball_bearing', 'i_beam_profile'.",
+            },
+            "preset_name": {
+                "type": "string",
+                "description": "Optional preset name (e.g. 'M8', '6204') to return preset parameters.",
+            },
+        },
+        "additionalProperties": False,
+        "description": "Return Shape IR spec and available presets for a standard part type.",
+    },
+    "insert_standard_part": {
+        "type": "object",
+        "required": ["project_id", "part_type", "parameters"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "part_type": {
+                "type": "string",
+                "description": "Standard part type, e.g. 'hex_bolt', 'socket_head_cap_screw', 'deep_groove_ball_bearing'.",
+            },
+            "parameters": {
+                "type": "object",
+                "description": "Part-specific parameters dict. Use get_standard_part_specs to discover editable parameters.",
+            },
+            "position": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Optional [x, y, z] translation applied to the generated Shape IR node.",
+            },
+            "orientation": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Optional [rx, ry, rz] rotation in degrees applied to the generated Shape IR node.",
+            },
+            "part_name": {
+                "type": "string",
+                "description": "Optional human-readable name for the inserted part (sets node id and name).",
+            },
+            "preset_name": {
+                "type": "string",
+                "description": "Optional preset to use as base parameters (e.g. 'M8', '6204'). Caller parameters override preset values.",
+            },
+        },
+        "additionalProperties": True,
+        "description": "Insert a standard part into the current project as Shape IR. Recompiles the package on success.",
+    },
+    "set_part_material": {
+        "type": "object",
+        "required": ["project_id", "part_name", "material_name"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "part_name": {
+                "type": "string",
+                "description": "Exact named-part label from the feature graph / topology map.",
+            },
+            "material_name": {
+                "type": "string",
+                "description": "Material name, e.g. 'Al6061-T6'. Must be a known material from list_materials.",
+            },
+            "override_properties": {
+                "type": "object",
+                "description": "Optional dict of property overrides to store alongside the material assignment.",
+            },
+        },
+        "additionalProperties": False,
+        "description": "Assign a material to a named part in the current project. Updates graph/feature_graph.json.",
+    },
+    "generate_bom": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "format": {
+                "type": "string",
+                "enum": ["json", "markdown"],
+                "description": "Output format. json (default) returns structured data; markdown returns a table string.",
+            },
+        },
+        "additionalProperties": False,
+        "description": "Generate a Bill of Materials from the current project parts, including standard parts and quantities.",
+    },
 }
 
 

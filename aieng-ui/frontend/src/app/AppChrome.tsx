@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Settings } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Settings, Database, Puzzle, List } from "lucide-react";
 
 import { api } from "../api";
 import { NoticeCenter } from "../components/common";
@@ -7,10 +7,15 @@ import { PointerProvider } from "../components/PointerText";
 import { PendingApprovals } from "../components/PendingApprovals";
 import { SessionsSidebar } from "../components/SessionsSidebar";
 import { ViewerPane } from "../components/ViewerPane";
+import { MaterialLibraryPanel } from "../components/MaterialLibraryPanel";
+import { StandardPartsPanel } from "../components/StandardPartsPanel";
+import { BOMPanel } from "../components/BOMPanel";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
 import { isEmbedMode } from "./embed";
 import type { useWorkbenchApp } from "./useWorkbenchApp";
+
+type LibraryTab = "materials" | "standards" | "bom";
 
 type AppChromeProps = {
   app: ReturnType<typeof useWorkbenchApp>;
@@ -18,6 +23,7 @@ type AppChromeProps = {
 
 export function AppChrome({ app }: AppChromeProps) {
   const embed = isEmbedMode();
+  const [libraryTab, setLibraryTab] = useState<LibraryTab | null>(null);
 
   // In embed mode (VS Code webview iframe), relay the picked faces to the host
   // shell so its "Copy modify" handoff can target the selected @face: pointers.
@@ -28,6 +34,16 @@ export function AppChrome({ app }: AppChromeProps) {
       "*",
     );
   }, [embed, app.pickedFaces]);
+
+  const mainClass = embed
+    ? "app-main embed-main"
+    : [
+        "app-main",
+        app.sidebarCollapsed ? "sidebar-collapsed" : "",
+        libraryTab ? "library-open" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
 
   return (
     <PointerProvider value={app.pointerContextValue}>
@@ -43,27 +59,51 @@ export function AppChrome({ app }: AppChromeProps) {
       />
       <div className={embed ? "app-shell embed-mode" : "app-shell"}>
         {!embed && (
-        <header className="app-topbar">
-          <div className="app-topbar-brand">
-            <span className="app-logo">AIENG</span>
-            <span className="app-topbar-divider" />
-            <span className="app-topbar-project">{app.selectedProject?.name || "Workbench"}</span>
-            <span className="app-topbar-mcp">Live CAD/CAE workbench + MCP server</span>
-          </div>
-          <div className="app-topbar-actions">
-            <button
-              type="button"
-              className="app-topbar-btn"
-              onClick={() => app.setSettingsOpen(true)}
-              title="Settings"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-          </div>
-        </header>
+          <header className="app-topbar">
+            <div className="app-topbar-brand">
+              <span className="app-logo">AIENG</span>
+              <span className="app-topbar-divider" />
+              <span className="app-topbar-project">{app.selectedProject?.name || "Workbench"}</span>
+              <span className="app-topbar-mcp">Live CAD/CAE workbench + MCP server</span>
+            </div>
+            <div className="app-topbar-actions">
+              <button
+                type="button"
+                className={libraryTab === "materials" ? "app-topbar-btn active" : "app-topbar-btn"}
+                onClick={() => setLibraryTab((t) => (t === "materials" ? null : "materials"))}
+                title="Materials"
+              >
+                <Database className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className={libraryTab === "standards" ? "app-topbar-btn active" : "app-topbar-btn"}
+                onClick={() => setLibraryTab((t) => (t === "standards" ? null : "standards"))}
+                title="Standard Parts"
+              >
+                <Puzzle className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className={libraryTab === "bom" ? "app-topbar-btn active" : "app-topbar-btn"}
+                onClick={() => setLibraryTab((t) => (t === "bom" ? null : "bom"))}
+                title="BOM"
+              >
+                <List className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="app-topbar-btn"
+                onClick={() => app.setSettingsOpen(true)}
+                title="Settings"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            </div>
+          </header>
         )}
 
-        <div className={embed ? "app-main embed-main" : app.sidebarCollapsed ? "app-main sidebar-collapsed" : "app-main"}>
+        <div className={mainClass}>
           {!embed && (
             <SessionsSidebar
               collapsed={app.sidebarCollapsed}
@@ -107,6 +147,59 @@ export function AppChrome({ app }: AppChromeProps) {
             )}
             onResolve={app.resolveApproval}
           />
+
+          {libraryTab && !embed && (
+            <aside className="library-pane" aria-label="Library panel">
+              <div className="library-pane-tabs">
+                <button
+                  type="button"
+                  className={libraryTab === "materials" ? "library-pane-tab active" : "library-pane-tab"}
+                  onClick={() => setLibraryTab("materials")}
+                >
+                  <Database className="h-4 w-4" />
+                  <span>Materials</span>
+                </button>
+                <button
+                  type="button"
+                  className={libraryTab === "standards" ? "library-pane-tab active" : "library-pane-tab"}
+                  onClick={() => setLibraryTab("standards")}
+                >
+                  <Puzzle className="h-4 w-4" />
+                  <span>Standard Parts</span>
+                </button>
+                <button
+                  type="button"
+                  className={libraryTab === "bom" ? "library-pane-tab active" : "library-pane-tab"}
+                  onClick={() => setLibraryTab("bom")}
+                >
+                  <List className="h-4 w-4" />
+                  <span>BOM</span>
+                </button>
+              </div>
+
+              {libraryTab === "materials" && (
+                <MaterialLibraryPanel
+                  projectId={app.selectedId}
+                  onAssignMaterial={(name) => {
+                    app.setNotice({ tone: "success", title: "Material selected", detail: `${name} — assign via chat or parameter panel.` });
+                  }}
+                  onNotice={(title, detail) => app.setNotice({ tone: "info", title, detail })}
+                />
+              )}
+              {libraryTab === "standards" && (
+                <StandardPartsPanel
+                  projectId={app.selectedId}
+                  onNotice={(title, detail) => app.setNotice({ tone: "info", title, detail })}
+                />
+              )}
+              {libraryTab === "bom" && (
+                <BOMPanel
+                  projectId={app.selectedId}
+                  onNotice={(title, detail) => app.setNotice({ tone: "info", title, detail })}
+                />
+              )}
+            </aside>
+          )}
         </div>
       </div>
 

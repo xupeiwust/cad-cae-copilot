@@ -1,6 +1,10 @@
 import type { ObjectRegistryResponse, SelectedGeometryContext } from "./appTypes";
 import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactResponse, AutopilotRunState, BenchmarkRun, BenchmarkScenario, CadRecommendationsResponse, CaeArtifactDetection, CaePreprocessingSummary, CaeReviewReport, CaeSimulationRunSummary, CapabilityDescriptor, CapabilityPreview, ChatConnection, ChatResponse, ComputedMetricsDocument, ComputedMetricsImportPayload, ComputedMetricsResponse, CopilotLoop, CopilotLoopDemoSeedResponse, CopilotLoopDemoSmokeCheckResponse, CopilotLoopExportRequest, CopilotLoopExportResponse, CopilotLoopList, CopilotLoopReport, CopilotLoopReportDiff, CritiqueResponse, DesignTarget, DesignTargetsDocument, DesignTargetsResponse, EditableParametersResponse, GeometryReportResponse, EngineeringTemplateAdoptTargetsResponse, SimulationReadinessResponse, EngineeringTemplateCadFixtureResponse, EngineeringTemplateDetail, EngineeringTemplatePreviewResponse, EngineeringTemplateSaveDraftResponse, EngineeringTemplateSummary, FreeCadAdapterPreflightResponse, FreeCadEditParameterRequest, FreeCadEditParameterResponse, FreeCadInspectionEvidenceResponse, FreeCadInspectFeaturesRequest, FreeCadInspectFeaturesResponse, IntentActionExecuteResponse, IntentObserveResponse, IntentPlan, LLMConfig, LocalAgentCapability, ProjectHealthCheckResponse, ProjectRecord, ProjectSummary, ReviewSupportPacketResponse, RuntimeConfig, RuntimeConfigSnapshot, RuntimeEvent, RuntimeRun, RuntimeRunSummary, RuntimeToolInfo, SolverFieldDescriptor, StructuralAdapterPreflightResponse, StructuralPreparePreviewResponse, StructuralSolverInputImportResponse, TargetComparisonResponse, WorkflowDefinition, WorkflowStep } from "./types";
 
+import type { Material, MaterialComparison, MaterialProperties } from "./types/materials";
+import type { BOMData } from "./types/bom";
+import type { InsertResult, StandardPartCategory, StandardPartSpec } from "./types/standards";
+
 const API = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
 export type PersistedChatMessage = {
@@ -539,4 +543,41 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ before, after }),
     }),
+
+  // ── Material Library ───────────────────────────────────────────────────────
+  listMaterials: (category?: string, query?: string) => {
+    const params = new URLSearchParams();
+    if (category) params.append("category", category);
+    if (query) params.append("query", query);
+    const qs = params.toString();
+    return request<Material[]>(`/api/materials${qs ? `?${qs}` : ""}`);
+  },
+  getMaterialDetails: (name: string) =>
+    request<MaterialProperties>(`/api/materials/${encodeURIComponent(name)}`),
+  compareMaterials: (names: string[]) =>
+    request<MaterialComparison>("/api/materials/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names }),
+    }),
+
+  // ── Standard Parts ─────────────────────────────────────────────────────────
+  listStandardParts: (category?: string) =>
+    request<StandardPartCategory[]>(
+      `/api/standards/parts${category ? `?category=${encodeURIComponent(category)}` : ""}`,
+    ),
+  getStandardPartSpecs: (partType: string, presetName?: string) =>
+    request<StandardPartSpec>(
+      `/api/standards/parts/${encodeURIComponent(partType)}/specs${presetName ? `?preset=${encodeURIComponent(presetName)}` : ""}`,
+    ),
+  insertStandardPart: (projectId: string, partType: string, params: object) =>
+    request<InsertResult>(`/api/projects/${projectId}/standards/insert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ part_type: partType, parameters: params }),
+    }),
+
+  // ── BOM ────────────────────────────────────────────────────────────────────
+  generateBOM: (projectId: string, format?: string) =>
+    request<BOMData>(`/api/projects/${projectId}/bom${format ? `?format=${encodeURIComponent(format)}` : ""}`),
 };

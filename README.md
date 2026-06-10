@@ -242,6 +242,9 @@ provenance, and a full CAD → CAE path all survive after the picture.
 | Preserve artifacts and provenance in one package | Rarely | Yes |
 | Continue from CAD into CAE workflows | Rarely | Yes |
 | Require approval for gated engineering actions | Rarely | Yes |
+| Standard parts library | No | Yes |
+| Extended material database (51 materials) | No | Yes |
+| BOM generation | No | Yes |
 
 What that buys you:
 
@@ -275,8 +278,27 @@ CAD, CAE, MCP, VS Code extensions, or build123d / OpenCASCADE.
    parameters, source, and provenance.
 4. Inspect the result visually and numerically, then reference exact parts,
    features, or faces (`@face:*`) for follow-up changes.
-5. Continue into CAE setup and solver workflows once the required engineering
+5. Query the extended material database (51 engineering materials) to assign
+   accurate mechanical and thermal properties to parts.
+6. Insert standard parts — fasteners, bearings, shafts, structural profiles,
+   and standard holes — directly from the library into the model.
+7. Generate a Bill of Materials (BOM) from the assembled parts for review
+   and procurement.
+8. Continue into CAE setup and solver workflows once the required engineering
    inputs are available.
+
+**Materials & standard parts workflow:**
+```
+aieng.list_materials { category: "Aluminum Alloy" }
+aieng.get_material_details { material_name: "Al6061-T6" }
+aieng.compare_materials { material_names: ["Al6061-T6", "Steel-316L"] }
+
+aieng.list_standard_parts { category: "fastener" }
+aieng.get_standard_part_specs { part_type: "hex_bolt", preset_name: "M8" }
+aieng.insert_standard_part { part_type: "hex_bolt", preset_name: "M8", position: [0,0,0] }
+
+aieng.generate_bom { format: "markdown" }
+```
 
 The workbench UI and the
 [`aieng-vscode-extension`](aieng-vscode-extension) provide visual inspection for

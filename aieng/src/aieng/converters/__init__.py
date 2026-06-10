@@ -25,6 +25,9 @@ from .base import (
 )
 from .registry import available_converters, get_converter, register_converter
 
+# Sampling (Issue #38) — candidate parameter generation
+from .optimization_sampler import sample_candidates, sample_candidates_package
+
 __all__ = [
     "CAPABILITY_LEVEL_NAMES",
     "CONVERTER_CLAIM_POLICY",
@@ -40,4 +43,6 @@ __all__ = [
     "available_converters",
     "get_converter",
     "register_converter",
+    "sample_candidates",
+    "sample_candidates_package",
 ]

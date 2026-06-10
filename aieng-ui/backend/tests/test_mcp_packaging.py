@@ -31,6 +31,18 @@ def test_python_module_entrypoint_uses_existing_mcp_server_main() -> None:
 def test_cli_runtime_options_configure_headless_modes(monkeypatch, tmp_path: Path) -> None:
     from app import mcp_server as ms
 
+    # _apply_cli_runtime_options intentionally mutates process-wide environment
+    # state. Register every affected key with monkeypatch so later tests do not
+    # inherit this test's managed-approval or data-directory configuration.
+    for key in (
+        "AIENG_BACKEND_URL",
+        "AIENG_MCP_BLOCK_APPROVAL_TOOLS",
+        "AIENG_MCP_MANAGED_APPROVAL",
+        "AIENG_MCP_REQUIRE_GUIDES",
+        "AIENG_PLATFORM_DATA",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
     old_backend_url = ms._BACKEND_URL
     try:
         ms._apply_cli_runtime_options(

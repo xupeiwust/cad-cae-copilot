@@ -217,3 +217,51 @@ def test_package_validates_problem_and_candidates(tmp_path: Path):
         assert by_id["cand_bad"]["status"] == "rejected"
         assert all(c["applied"] is False for c in diag["candidates"])
         assert diag["provenance"]["optimization_executed"] is False
+
+
+def test_validate_signals_sampling_when_no_candidates_exist(tmp_path: Path) -> None:
+    """When safe-to-modify variables exist but no candidates, the validation
+    output should flag sampling_available and suggest the sampler tool."""
+    from aieng.converters.optimization_sampler import sample_candidates_package
+
+    problem = _problem()
+    variables_doc = {
+        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "study_id": "test", "design_study_problem_ref": "analysis/design_study_problem.json",
+        "variables": [
+            {"id": "wall_t", "path": "shape_ir/params/WALL_THICKNESS", "type": "continuous",
+             "current_value": 3.0, "min_value": 2.0, "max_value": 8.0, "allowed_values": None,
+             "unit": "mm", "scope": "local", "safe_to_modify": True,
+             "featureId": "feat_wall", "parameterName": "thickness", "cad_parameter_name": "WALL_THICKNESS",
+             "binding_status": "bound", "candidate_ids": []},
+        ],
+        "candidate_ids": [],
+        "provenance": {"created_at": "2026-06-10T00:00:00Z", "created_by": "test",
+                       "claim_advancement": "none"},
+        "claim_policy": {"advisory_only": True, "baseline_unchanged": True,
+                         "human_approval_required_for_acceptance": True, "claim_advancement": "none"},
+    }
+    # Ensure no candidates directory contents
+    pkg = tmp_path / "no_candidates.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", json.dumps({"name": "No Candidates"}))
+        zf.writestr("geometry/shape_ir.json", json.dumps({}))
+        zf.writestr("analysis/design_study_problem.json", json.dumps(problem))
+        zf.writestr("analysis/optimization_variables.json", json.dumps(variables_doc))
+        # No patches/design_candidates/
+
+    result = process_design_study_package(pkg)
+    assert result["design_study_present"] is True
+    assert result["candidate_count"] == 0
+    assert result.get("sampling_available") is True
+    assert "sampling_suggestion" in result
+    assert "opt.propose_candidates" in result["sampling_suggestion"]
+
+    # Now sample, then validate again — sampling_available should be gone
+    sampler_result = sample_candidates_package(pkg, algorithm="random", count=3, seed=42)
+    assert sampler_result["status"] == "ok"
+    assert sampler_result["candidate_count"] == 3
+
+    result2 = process_design_study_package(pkg)
+    assert result2["candidate_count"] == 3
+    assert result2.get("sampling_available") is not True  # no longer suggests sampling

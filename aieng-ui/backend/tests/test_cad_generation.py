@@ -1092,6 +1092,81 @@ def test_execute_build123d_code_exact_cache_hit_skips_executor(tmp_path: Path) -
     assert second["written_artifacts"] == first["written_artifacts"]
 
 
+def test_recompile_shape_ir_cache_hit_restores_execution_manifest(tmp_path: Path) -> None:
+    from aieng.cache.geometry_cache import CachedGeometry
+    from app import cad_generation
+
+    package = tmp_path / "cached-recompile.aieng"
+    shape_ir = {
+        "representation": "brep_build123d",
+        "parts": [{"id": "block", "type": "box", "parameters": {"length": 10}}],
+    }
+    cached = CachedGeometry(
+        shape_ir_hash="cache-key",
+        topology_map={"entities": []},
+        feature_graph={"features": []},
+        metadata={
+            "representation": "brep_build123d",
+            "runtime": "build123d",
+            "geometry_kind": "brep",
+            "source": "from build123d import *\nresult = Box(10, 10, 10)",
+            "source_path": "geometry/source.py",
+            "step_bytes": b"cached-step",
+            "stl_bytes": b"cached-stl",
+        },
+    )
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("geometry/shape_ir.json", json.dumps(shape_ir))
+
+    with patch("aieng.cache.geometry_cache.GeometryCache.get", return_value=cached):
+        result = cad_generation.recompile_shape_ir_package(package)
+
+    assert result["cache_hit"] is True
+    with zipfile.ZipFile(package) as zf:
+        manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+    execution = manifest["geometry_execution"]
+    assert execution["executed"] is True
+    assert execution["geometry_kind"] == "brep"
+    assert "geometry/generated.step" in execution["artifacts"]
+
+
+def test_recompile_shape_ir_does_not_treat_source_only_cache_as_geometry(
+    tmp_path: Path,
+) -> None:
+    from aieng.cache.geometry_cache import CachedGeometry
+    from app import cad_generation
+
+    package = tmp_path / "source-only-cache.aieng"
+    shape_ir = {
+        "representation": "brep_build123d",
+        "parts": [{"id": "block", "type": "box", "parameters": {"length": 10}}],
+    }
+    source_only = CachedGeometry(
+        shape_ir_hash="cache-key",
+        metadata={
+            "representation": "brep_build123d",
+            "runtime": "build123d",
+            "source": "from build123d import *\nresult = Box(10, 10, 10)",
+            "source_path": "geometry/source.py",
+        },
+    )
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("geometry/shape_ir.json", json.dumps(shape_ir))
+
+    with (
+        patch("aieng.cache.geometry_cache.GeometryCache.get", return_value=source_only),
+        patch("aieng.cache.geometry_cache.GeometryCache.set"),
+        patch("app.cad_generation._execute_build123d_code", side_effect=_fake_execute_ok) as execute,
+    ):
+        result = cad_generation.recompile_shape_ir_package(package)
+
+    assert result["executed"] is True
+    execute.assert_called_once()
+    with zipfile.ZipFile(package) as zf:
+        manifest = json.loads(zf.read("provenance/conversion_manifest.json"))
+    assert manifest["geometry_execution"]["executed"] is True
+
+
 def test_execute_build123d_code_missing_code(tmp_path: Path) -> None:
     from app import cad_generation
 

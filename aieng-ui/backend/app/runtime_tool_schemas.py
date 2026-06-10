@@ -231,6 +231,42 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "density_voxels node and recompile. Run opt.run_topology_optimization first."
         ),
     },
+    "opt.propose_candidates": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "algorithm": {
+                "type": "string",
+                "enum": ["grid", "random", "latin_hypercube", "lhs"],
+                "description": "Sampling algorithm (default: read from optimization_study.json or 'grid').",
+            },
+            "count": {
+                "type": "integer", "minimum": 1,
+                "description": "Number of candidates to generate (for random/LHS; auto-computed for grid).",
+            },
+            "seed": {
+                "type": "integer",
+                "description": "Random seed for reproducibility (default: 0 or from study config).",
+            },
+            "max_candidates": {
+                "type": "integer", "minimum": 1,
+                "description": "Hard cap on emitted candidates (default: 50 or from study).",
+            },
+            "overwrite": {
+                "type": "boolean",
+                "description": "Overwrite existing candidate patches with the same IDs (default: false).",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Generate candidate parameter sets from optimization variables. "
+            "Reads analysis/optimization_variables.json and optionally "
+            "analysis/optimization_study.json, runs the sampler, and writes "
+            "candidates to patches/design_candidates/<cid>.json. Does NOT "
+            "execute candidates, recompile geometry, run CAE, or modify baseline."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

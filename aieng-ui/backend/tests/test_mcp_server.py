@@ -72,8 +72,8 @@ def test_high_frequency_tools_carry_curated_schema(mcp_server) -> None:
         params = tools[external_name].parameters
         assert isinstance(params, dict)
         assert params.get("type") == "object"
-        # Most curated schemas require project_id.
-        # Exceptions: tools with no required parameters (list/readme) and aieng.convert.
+        # Most curated schemas are project-scoped. Global catalog/discovery
+        # tools and aieng.convert intentionally operate without project_id.
         _no_project_id = {
             "aieng.list_projects",
             "aieng.agent_readme",
@@ -81,6 +81,11 @@ def test_high_frequency_tools_carry_curated_schema(mcp_server) -> None:
             "aieng.guide",
             "aieng.convert",
             "aieng.find_projects_by_part",
+            "list_materials",
+            "get_material_details",
+            "compare_materials",
+            "list_standard_parts",
+            "get_standard_part_specs",
         }
         props = params.get("properties") or {}
         if name not in _no_project_id:
@@ -286,6 +291,9 @@ def test_modeling_plan_confirmation_returns_without_cad_mutation(monkeypatch) ->
     import app.mcp_server as ms
 
     monkeypatch.setenv("AIENG_MCP_REQUIRE_GUIDES", "0")
+    monkeypatch.delenv("AIENG_MCP_BLOCK_APPROVAL_TOOLS", raising=False)
+    monkeypatch.delenv("AIENG_MCP_MANAGED_APPROVAL", raising=False)
+    monkeypatch.delenv("AIENG_AGENTIC_PERMISSION_TOOL", raising=False)
     monkeypatch.setattr(ms, "_BACKEND_URL", "")
     mcp = ms._build_mcp_server()
 
@@ -541,6 +549,9 @@ def test_list_tools_for_mcp_marks_approval_tools() -> None:
     assert entries["cad.edit_parameter"]["requires_approval"] is False
     assert entries["cad.edit_parameter"]["read_only"] is False
     assert entries["aieng.inspect_package"]["requires_approval"] is False
+    assert entries["opt.propose_candidates"]["requires_approval"] is True
+    assert entries["opt.propose_candidates"]["read_only"] is False
+    assert "opt.sample_candidates" not in entries
 
 
 # ── provider-compatible schema guards ─────────────────────────────────────────

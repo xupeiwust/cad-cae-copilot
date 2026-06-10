@@ -26,6 +26,7 @@ DESIGN_STUDY_PROBLEM_PATH = "analysis/design_study_problem.json"
 DESIGN_STUDY_PROBLEM_DIAGNOSTICS_PATH = "diagnostics/design_study_problem_diagnostics.json"
 DESIGN_CANDIDATES_DIR = "patches/design_candidates/"
 DESIGN_STUDY_CANDIDATE_VALIDATION_PATH = "diagnostics/design_study_candidate_validation.json"
+OPTIMIZATION_VARIABLES_PATH = "analysis/optimization_variables.json"
 
 VARIABLE_TYPES = {"continuous", "integer", "discrete", "categorical", "boolean"}
 _BOUNDED_TYPES = {"continuous", "integer"}
@@ -342,6 +343,14 @@ def process_design_study_package(package_path: str | Path) -> dict[str, Any]:
     tally: dict[str, int] = {}
     for r in records:
         tally[r["status"]] = tally.get(r["status"], 0) + 1
+
+    # Check whether sampling is available (no candidates yet but variables exist)
+    sampling_available = False
+    if isinstance(problem, dict) and OPTIMIZATION_VARIABLES_PATH in names:
+        safe_vars = [v for v in (problem.get("variables") or [])
+                     if isinstance(v, dict) and v.get("safe_to_modify") is True]
+        sampling_available = bool(safe_vars) and len(records) == 0
+
     candidate_diag = {
         "format": "aieng.design_study_candidate_validation", "format_version": FORMAT_VERSION,
         "schema_version": "0.1",
@@ -360,10 +369,18 @@ def process_design_study_package(package_path: str | Path) -> dict[str, Any]:
         DESIGN_STUDY_PROBLEM_DIAGNOSTICS_PATH: _dumps(problem_diag),
         DESIGN_STUDY_CANDIDATE_VALIDATION_PATH: _dumps(candidate_diag),
     })
-    return {
+    result: dict[str, Any] = {
         "design_study_present": True,
         "problem_status": problem_diag["status"],
         "candidate_count": len(records),
         "candidate_status_tally": tally,
         "artifacts": [DESIGN_STUDY_PROBLEM_DIAGNOSTICS_PATH, DESIGN_STUDY_CANDIDATE_VALIDATION_PATH],
     }
+    if sampling_available:
+        result["sampling_available"] = True
+        result["sampling_suggestion"] = (
+            "No candidates found but safe-to-modify variables exist. "
+            "Use `opt.propose_candidates` / `aieng sample-candidates` / "
+            "`POST /api/projects/{id}/design-study/sample` to auto-generate candidates."
+        )
+    return result

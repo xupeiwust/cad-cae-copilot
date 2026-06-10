@@ -549,8 +549,13 @@ def test_list_tools_for_mcp_marks_approval_tools() -> None:
     assert entries["cad.edit_parameter"]["requires_approval"] is False
     assert entries["cad.edit_parameter"]["read_only"] is False
     assert entries["aieng.inspect_package"]["requires_approval"] is False
-    assert entries["opt.propose_candidates"]["requires_approval"] is True
+    # Candidate generation/execution write only derived candidate artifacts and
+    # never touch the baseline, so they stay inside the modeling-plan boundary
+    # rather than carrying a per-call approval gate (the hard gate is acceptance).
+    assert entries["opt.propose_candidates"]["requires_approval"] is False
     assert entries["opt.propose_candidates"]["read_only"] is False
+    assert entries["opt.run_candidates"]["requires_approval"] is False
+    assert entries["opt.run_candidates"]["read_only"] is False
     assert "opt.sample_candidates" not in entries
 
 

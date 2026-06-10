@@ -503,6 +503,46 @@ def register_project_workflow_routes(
         return {"project_id": project_id,
                 **execute_design_study_candidate(package_path, candidate_id, recompiler=recompiler)}
 
+    @app.post("/api/projects/{project_id}/design-study/run-candidates")
+    def run_design_study_candidates_batch_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """EXPLICITLY execute a fixed set of design-study candidates, each into its own
+        derived workspace (candidates/<cid>/...). Discovers the candidate set from the
+        package (optimization_study/variables candidate_ids + candidate patches on disk),
+        or runs an explicit ``candidate_ids`` list. Each patch is applied to a DERIVED
+        Shape IR only; the baseline is never overwritten and no candidate is auto-promoted.
+        Compiles each candidate in a throwaway copy when ``compile`` is enabled (default
+        true). A failed candidate is recorded cleanly and the batch CONTINUES. No
+        optimizer/search/loop and no CAE are run.
+
+        Body (all optional):
+          candidate_ids (list[str]): explicit ids to run (default: all discovered)
+          compile (bool): recompile each candidate (default true)
+          max_candidates (int): cap executed this call; remainder reported as skipped
+        """
+        from aieng.converters.design_study_batch import run_design_study_batch
+        from ..cad_generation import make_candidate_recompiler
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        do_compile = data.get("compile", True)
+        recompiler = make_candidate_recompiler(package_path) if do_compile else None
+        return {
+            "project_id": project_id,
+            **run_design_study_batch(
+                package_path,
+                candidate_ids=data.get("candidate_ids"),
+                recompiler=recompiler,
+                max_candidates=data.get("max_candidates"),
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/evaluate")
     def evaluate_design_study_candidate_endpoint(
         project_id: str,

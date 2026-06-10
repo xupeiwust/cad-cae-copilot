@@ -2650,6 +2650,57 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         read_only=False,
     )
 
+    def _tool_opt_accept_candidate(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Accept ONE ranked design-study candidate into a derived accepted workspace.
+        Copies the candidate's derived artifacts into accepted/<cid>/ and writes
+        analysis/design_study_acceptance.json. The candidate must be eligible
+        (feasible, and best_candidate_id + safe_to_accept unless override_unsafe).
+        Does NOT overwrite baseline geometry, does NOT auto-promote, and does NOT
+        claim production approval. APPROVAL REQUIRED."""
+        from aieng.converters.design_study_acceptance import accept_design_study_candidate
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        cid = str(inp.get("candidate_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        if not cid:
+            return {"status": "error", "code": "bad_input", "message": "candidate_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = accept_design_study_candidate(
+                pkg,
+                cid,
+                accepted_by=inp.get("accepted_by", "agent"),
+                reasoning=inp.get("reasoning"),
+                override_unsafe=bool(inp.get("override_unsafe", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "acceptance_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.accept_candidate", "acceptance_result": result}
+
+    _rt.register_tool(
+        "opt.accept_candidate",
+        _tool_opt_accept_candidate,
+        description=(
+            "[APPROVAL REQUIRED] Accept ONE ranked design-study candidate into a "
+            "derived accepted workspace (accepted/<cid>/). The candidate must be "
+            "eligible: feasible (not failed/infeasible/unknown), and the "
+            "best_candidate_id with safe_to_accept=true — otherwise override_unsafe "
+            "must be set explicitly. Copies the candidate's derived patch / Shape IR / "
+            "evaluation into accepted/<cid>/ and writes "
+            "analysis/design_study_acceptance.json + the acceptance report. Does NOT "
+            "overwrite baseline geometry, does NOT auto-promote into the baseline, and "
+            "does NOT claim production certification — acceptance is an advisory, "
+            "human-approved derived design artifact only."
+        ),
+        input_schema=_schema("opt.accept_candidate"),
+        requires_approval=True,
+    )
+
     _rt.register_tool(
         "cae.map_results",
         _tool_cae_map_results,

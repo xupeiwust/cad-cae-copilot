@@ -25,6 +25,11 @@ __all__ = [
 _ARTIFACT_PATTERN_CATALOG: list[tuple[str, str, str, str | None, str | None]] = [
     ("state/revalidation_status.json",           "state",               "state",          "cad.edit_parameter",              None),
     ("audit/events.jsonl",                       "audit_log",           "audit",          None,                              None),
+    ("analysis/optimization_study.json",         "optimization_study",  "analysis",       "opt.create_study",               None),
+    ("analysis/optimization_variables.json",     "optimization_input",  "analysis",       "opt.define_variables",           None),
+    ("analysis/optimization_objectives.json",    "optimization_input",  "analysis",       "opt.define_objectives",          None),
+    ("analysis/optimization_constraints.json",   "optimization_input",  "analysis",       "opt.define_constraints",         None),
+    ("analysis/optimization_decision_log.json",  "decision_log",        "audit",          None,                              None),
     ("results/result_summary.json",              "cae_result_summary",  "summary",        "postprocess.refresh_cae_summary", "llm_readable_postprocessing_summary"),
     ("results/evidence_index.json",              "evidence_index",      "evidence_index", "postprocess.refresh_cae_summary", "cae_evidence_catalog"),
     ("results/postprocessing_summary.md",        "markdown_summary",    "summary",        "postprocess.refresh_cae_summary", "human_llm_readable_summary"),

@@ -301,6 +301,50 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "NOT run CAE, accept any candidate, or modify the baseline."
         ),
     },
+    "opt.evaluate_candidates": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "candidate_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Explicit, ordered candidate ids to evaluate. Omit to evaluate "
+                    "all executed candidates (those with a derived workspace)."
+                ),
+            },
+            "cae": {
+                "type": "boolean",
+                "description": (
+                    "Derive each candidate's CAE setup and normalize CAE evidence "
+                    "before evaluating (default false). Solver execution stays "
+                    "disabled unless allow_solver_execution is set."
+                ),
+            },
+            "mode": {
+                "type": "string",
+                "description": "CAE evaluation mode (forwarded when cae=true; e.g. prepare_only).",
+            },
+            "allow_solver_execution": {
+                "type": "boolean",
+                "description": "Permit candidate-local solver execution when cae=true (best-effort/skipped in v0).",
+            },
+            "max_candidates": {
+                "type": "integer", "minimum": 0,
+                "description": "Hard cap on candidates evaluated this call; remainder is reported as skipped.",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Evaluate executed design-study candidates from candidate-local "
+            "evidence. Normalizes mass / volume / max_stress / max_deflection / "
+            "min_safety_factor, evaluates constraints, and classifies feasibility. "
+            "Missing CAE metrics are recorded honestly as unknown. Writes "
+            "candidates/<cid>/analysis/evaluation.json. Does NOT accept any "
+            "candidate or modify the baseline."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

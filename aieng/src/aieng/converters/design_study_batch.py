@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from aieng.converters.design_study_execution import (
+    CANDIDATE_WORKSPACE_ROOT,
     DESIGN_CANDIDATES_DIR,
     execute_design_study_candidate,
 )
@@ -240,6 +241,238 @@ def run_design_study_batch(
         "failed": failed,
         "rejected": rejected,
         "skipped": len(skipped_ids),
+        "results": results,
+        "skipped_candidate_ids": skipped_ids,
+        "warnings": warnings,
+        "baseline_modified": False,
+        "claim_advancement": "none",
+    }
+
+
+def discover_executed_candidate_ids(package_path: str | Path) -> list[str]:
+    """Return candidate ids that have a derived workspace (i.e. have been executed).
+
+    Evaluation targets candidates that actually have a ``candidates/<cid>/``
+    workspace — a proposed-but-not-executed patch has no metrics to evaluate.
+    Ordered to match :func:`discover_candidate_ids` where possible, with any
+    extra on-disk workspaces appended.
+    """
+    pkg = Path(package_path)
+    if not pkg.exists():
+        return []
+    workspace_ids: set[str] = set()
+    try:
+        with zipfile.ZipFile(pkg, "r") as zf:
+            for name in zf.namelist():
+                if name.startswith(CANDIDATE_WORKSPACE_ROOT) and name != CANDIDATE_WORKSPACE_ROOT:
+                    rest = name[len(CANDIDATE_WORKSPACE_ROOT):]
+                    cid = rest.split("/", 1)[0]
+                    if cid:
+                        workspace_ids.add(cid)
+    except Exception:  # noqa: BLE001 - unreadable package yields nothing
+        return []
+    if not workspace_ids:
+        return []
+    ordered = [cid for cid in discover_candidate_ids(pkg) if cid in workspace_ids]
+    seen = set(ordered)
+    for cid in sorted(workspace_ids):
+        if cid not in seen:
+            ordered.append(cid)
+    return ordered
+
+
+def run_design_study_evaluation_batch(
+    package_path: str | Path,
+    *,
+    candidate_ids: list[str] | None = None,
+    cae: bool = False,
+    cae_options: dict[str, Any] | None = None,
+    max_candidates: int | None = None,
+    cae_evaluator: Callable[..., dict[str, Any]] | None = None,
+    evaluator: Callable[[Any, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Evaluate a fixed set of executed candidates from candidate-local evidence.
+
+    For each candidate this runs the existing single-candidate evaluator
+    (``evaluate_design_study_candidate``), which normalizes mass / volume /
+    max_stress / max_deflection / min_safety_factor from candidate-local
+    artifacts, evaluates declared constraints, and classifies feasibility. When
+    a metric is absent the evaluator records it honestly (``unknown`` constraint
+    status / ``insufficient_data`` evaluation) — it never fabricates a value.
+
+    Parameters
+    ----------
+    candidate_ids:
+        Explicit, ordered ids to evaluate. When ``None``, all *executed*
+        candidates (those with a ``candidates/<cid>/`` workspace) are evaluated.
+    cae:
+        When True, first run the candidate-local CAE evaluation step
+        (``request_design_study_candidate_cae_evaluation``) to derive the
+        candidate's CAE setup and normalize any CAE evidence, then evaluate.
+        Solver execution stays disabled unless explicitly enabled via
+        ``cae_options`` (and is best-effort/skipped in v0).
+    cae_options:
+        Forwarded kwargs for the CAE evaluation step (e.g. ``mode``,
+        ``allow_solver_execution``). Ignored when ``cae`` is False.
+    max_candidates:
+        Optional hard cap; the remainder is reported as ``skipped``.
+    cae_evaluator / evaluator:
+        Injection seams for testing; default to the real backend functions.
+
+    Returns a summary dict mirroring :func:`run_design_study_batch`:
+    per-candidate ``results`` plus counts of ``complete`` / ``partial`` /
+    ``insufficient_data`` / ``failed`` evaluations and a feasibility tally.
+    Baseline is never modified.
+    """
+    pkg = Path(package_path)
+    if not pkg.exists():
+        return {
+            "status": "error",
+            "code": "package_not_found",
+            "message": "package not found",
+            "results": [],
+            "baseline_modified": False,
+            "claim_advancement": "none",
+        }
+    if max_candidates is not None and max_candidates < 0:
+        return {
+            "status": "error",
+            "code": "invalid_max_candidates",
+            "message": "max_candidates must be a non-negative integer",
+            "results": [],
+            "baseline_modified": False,
+            "claim_advancement": "none",
+        }
+    if candidate_ids is not None and not isinstance(candidate_ids, (list, tuple)):
+        return {
+            "status": "error",
+            "code": "invalid_candidate_ids",
+            "message": "candidate_ids must be a list of strings",
+            "results": [],
+            "baseline_modified": False,
+            "claim_advancement": "none",
+        }
+
+    if evaluator is None:
+        from aieng.converters.design_study_evaluation import evaluate_design_study_candidate as evaluator  # noqa: E501
+    if cae and cae_evaluator is None:
+        from aieng.converters.design_study_cae_evaluation import (
+            request_design_study_candidate_cae_evaluation as cae_evaluator,
+        )
+
+    requested = (
+        candidate_ids if candidate_ids is not None else discover_executed_candidate_ids(pkg)
+    )
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for cid in requested:
+        if isinstance(cid, str) and cid and cid not in seen:
+            seen.add(cid)
+            ordered.append(cid)
+
+    if not ordered:
+        return {
+            "status": "ok",
+            "requested": 0,
+            "evaluated": 0,
+            "complete": 0,
+            "partial": 0,
+            "insufficient_data": 0,
+            "failed": 0,
+            "skipped": 0,
+            "feasibility": {},
+            "results": [],
+            "skipped_candidate_ids": [],
+            "warnings": ["no executed candidates found to evaluate — run opt.run_candidates first"],
+            "baseline_modified": False,
+            "claim_advancement": "none",
+        }
+
+    to_run = ordered
+    skipped_ids: list[str] = []
+    if max_candidates is not None and len(ordered) > max_candidates:
+        to_run = ordered[:max_candidates]
+        skipped_ids = ordered[max_candidates:]
+
+    results: list[dict[str, Any]] = []
+    complete = partial = insufficient = failed = 0
+    feasibility_tally: dict[str, int] = {}
+
+    for cid in to_run:
+        reason_codes: list[str] = []
+        cae_status: str | None = None
+        try:
+            if cae:
+                cae_res = cae_evaluator(pkg, cid, **(cae_options or {})) or {}
+                cae_status = cae_res.get("status")
+            res = evaluator(pkg, cid) or {}
+        except Exception as exc:  # noqa: BLE001 - isolate one candidate's failure
+            failed += 1
+            results.append(
+                {
+                    "candidate_id": cid,
+                    "status": "failed",
+                    "evaluation_status": "failed",
+                    "feasibility": "unknown",
+                    "confidence": "low",
+                    "cae_status": cae_status,
+                    "reason_codes": ["candidate_evaluation_failed"],
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+
+        eval_status = res.get("evaluation_status")
+        feasibility = res.get("feasibility", "unknown")
+        feasibility_tally[feasibility] = feasibility_tally.get(feasibility, 0) + 1
+
+        if res.get("status") == "failed":
+            failed += 1
+            reason_codes.append("candidate_evaluation_failed")
+        elif eval_status == "complete":
+            complete += 1
+        elif eval_status == "partial":
+            partial += 1
+            reason_codes.append("missing_metric")
+        else:  # insufficient_data
+            insufficient += 1
+            reason_codes.append("missing_metric")
+
+        results.append(
+            {
+                "candidate_id": res.get("candidate_id", cid),
+                "status": res.get("status"),
+                "evaluation_status": eval_status,
+                "feasibility": feasibility,
+                "confidence": res.get("confidence"),
+                "cae_status": cae_status,
+                "reason_codes": reason_codes,
+            }
+        )
+
+    warnings: list[str] = []
+    if skipped_ids:
+        warnings.append(
+            f"max_candidates ({max_candidates}) reached; skipped {len(skipped_ids)} "
+            f"candidate(s). Re-run to evaluate the remainder."
+        )
+    if insufficient or partial:
+        warnings.append(
+            "some candidates have missing CAE metrics; their constraints/feasibility are "
+            "recorded as unknown rather than fabricated. Run opt.evaluate_candidates with "
+            "cae=true (or provide solver evidence) to complete them."
+        )
+
+    return {
+        "status": "ok",
+        "requested": len(ordered),
+        "evaluated": len(to_run),
+        "complete": complete,
+        "partial": partial,
+        "insufficient_data": insufficient,
+        "failed": failed,
+        "skipped": len(skipped_ids),
+        "feasibility": feasibility_tally,
         "results": results,
         "skipped_candidate_ids": skipped_ids,
         "warnings": warnings,

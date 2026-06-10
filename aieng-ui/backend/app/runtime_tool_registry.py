@@ -2512,6 +2512,61 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         read_only=False,
     )
 
+    def _tool_opt_evaluate_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate executed design-study candidates from candidate-local evidence.
+        For each candidate, normalizes mass / volume / max_stress / max_deflection /
+        min_safety_factor, evaluates declared constraints, and classifies feasibility.
+        Missing CAE metrics are recorded honestly as unknown — never fabricated. With
+        cae=true, first derives each candidate's CAE setup and normalizes CAE evidence
+        (solver stays disabled by default). Does NOT accept/promote a candidate or
+        modify the baseline. Feeds opt.rank_candidates."""
+        from aieng.converters.design_study_batch import run_design_study_evaluation_batch
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        cae_options: dict[str, Any] = {}
+        if inp.get("cae"):
+            if inp.get("mode") is not None:
+                cae_options["mode"] = inp.get("mode")
+            if inp.get("allow_solver_execution") is not None:
+                cae_options["allow_solver_execution"] = bool(inp.get("allow_solver_execution"))
+        try:
+            result = run_design_study_evaluation_batch(
+                pkg,
+                candidate_ids=inp.get("candidate_ids"),
+                cae=bool(inp.get("cae", False)),
+                cae_options=cae_options or None,
+                max_candidates=inp.get("max_candidates"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "evaluation_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.evaluate_candidates", "batch_result": result}
+
+    _rt.register_tool(
+        "opt.evaluate_candidates",
+        _tool_opt_evaluate_candidates,
+        description=(
+            "Evaluate executed design-study candidates from candidate-local "
+            "evidence (candidates/<cid>/). Normalizes mass / volume / max_stress / "
+            "max_deflection / min_safety_factor, evaluates declared constraints, and "
+            "classifies each candidate feasible / infeasible / unknown. MISSING CAE "
+            "metrics are recorded honestly as unknown — never fabricated. With "
+            "cae=true, first derives each candidate's CAE setup and normalizes any "
+            "CAE evidence (solver execution stays disabled by default). Writes "
+            "candidates/<cid>/analysis/evaluation.json. Does NOT accept/promote any "
+            "candidate or modify the baseline; feeds opt.rank_candidates."
+        ),
+        input_schema=_schema("opt.evaluate_candidates"),
+        requires_approval=False,
+        read_only=False,
+    )
+
     _rt.register_tool(
         "cae.map_results",
         _tool_cae_map_results,

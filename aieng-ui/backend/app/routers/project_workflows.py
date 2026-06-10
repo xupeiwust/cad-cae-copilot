@@ -543,6 +543,53 @@ def register_project_workflow_routes(
             ),
         }
 
+    @app.post("/api/projects/{project_id}/design-study/evaluate-candidates")
+    def evaluate_design_study_candidates_batch_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Evaluate a set of executed design-study candidates from candidate-local evidence.
+
+        For each candidate, normalizes mass / volume / max_stress / max_deflection /
+        min_safety_factor, evaluates declared constraints, and classifies feasibility.
+        Missing CAE metrics are recorded honestly as unknown — never fabricated. With
+        ``cae`` true, first derives each candidate's CAE setup and normalizes any CAE
+        evidence (solver execution stays disabled by default). Writes
+        candidates/<cid>/analysis/evaluation.json per candidate. Does NOT accept/promote
+        a candidate, run an optimizer loop, or modify the baseline.
+
+        Body (all optional):
+          candidate_ids (list[str]): explicit ids (default: all executed)
+          cae (bool): run candidate-local CAE evaluation first (default false)
+          mode (str): CAE evaluation mode (when cae=true)
+          allow_solver_execution (bool): permit solver (best-effort/skipped in v0)
+          max_candidates (int): cap evaluated this call; remainder reported as skipped
+        """
+        from aieng.converters.design_study_batch import run_design_study_evaluation_batch
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        cae_options: dict[str, Any] = {}
+        if data.get("cae"):
+            if data.get("mode") is not None:
+                cae_options["mode"] = data.get("mode")
+            if data.get("allow_solver_execution") is not None:
+                cae_options["allow_solver_execution"] = bool(data.get("allow_solver_execution"))
+        return {
+            "project_id": project_id,
+            **run_design_study_evaluation_batch(
+                package_path,
+                candidate_ids=data.get("candidate_ids"),
+                cae=bool(data.get("cae", False)),
+                cae_options=cae_options or None,
+                max_candidates=data.get("max_candidates"),
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/design-study/candidates/{candidate_id}/evaluate")
     def evaluate_design_study_candidate_endpoint(
         project_id: str,

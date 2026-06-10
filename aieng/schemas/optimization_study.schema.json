@@ -46,6 +46,17 @@
         "max_wall_time_seconds": {"type": ["number", "null"], "exclusiveMinimum": 0}
       }
     },
+    "convergence": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional Phase-2 iterative-loop stopping thresholds. Omitted fields use documented defaults.",
+      "properties": {
+        "min_rel_improvement": {"type": "number", "exclusiveMinimum": 0, "description": "Relative objective gain below which an iteration counts as no-progress."},
+        "patience": {"type": "integer", "minimum": 1, "description": "Consecutive no-progress iterations before declaring convergence."},
+        "feasible_patience": {"type": "integer", "minimum": 1, "description": "Iterations allowed with no feasible incumbent before asking the user."},
+        "max_consecutive_failures": {"type": "integer", "minimum": 1, "description": "Consecutive all-failed rounds before giving up."}
+      }
+    },
     "status": {"enum": ["draft", "defined", "sampling", "evaluating", "ranked", "accepted", "completed", "failed", "cancelled"]},
     "artifact_refs": {
       "type": "object",

@@ -190,3 +190,31 @@ def test_batch_missing_package_errors(tmp_path: Path):
     assert res["status"] == "error"
     assert res["code"] == "package_not_found"
     assert res["baseline_modified"] is False
+
+
+def test_batch_rejects_non_list_candidate_ids(tmp_path: Path):
+    pkg = _write_pkg(tmp_path, problem=_problem())
+    res = run_design_study_batch(pkg, candidate_ids="cand_0")  # type: ignore[arg-type]
+    assert res["status"] == "error"
+    assert res["code"] == "invalid_candidate_ids"
+    assert res["baseline_modified"] is False
+
+
+def test_batch_rejects_negative_max_candidates(tmp_path: Path):
+    cand = _candidate("cand_0", [{"variable_id": "wall_t", "new_value": 4.0}])
+    pkg = _write_pkg(tmp_path, problem=_problem(), candidates=[cand])
+    res = run_design_study_batch(pkg, max_candidates=-1)
+    assert res["status"] == "error"
+    assert res["code"] == "invalid_max_candidates"
+    assert res["baseline_modified"] is False
+    # nothing should have been executed
+    assert "candidates/cand_0/patch.json" not in _names(pkg)
+
+
+def test_batch_corrupt_package_errors_cleanly(tmp_path: Path):
+    pkg = tmp_path / "corrupt.aieng"
+    pkg.write_bytes(b"this is not a zip archive")
+    res = run_design_study_batch(pkg)
+    assert res["status"] == "ok"  # discovery yields no ids from an unreadable zip
+    assert res["executed"] == 0
+    assert res["baseline_modified"] is False

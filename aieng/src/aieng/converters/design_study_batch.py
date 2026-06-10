@@ -131,6 +131,28 @@ def run_design_study_batch(
             "claim_advancement": "none",
         }
 
+    if max_candidates is not None and max_candidates < 0:
+        return {
+            "status": "error",
+            "code": "invalid_max_candidates",
+            "message": "max_candidates must be a non-negative integer",
+            "results": [],
+            "baseline_modified": False,
+            "claim_advancement": "none",
+        }
+
+    if candidate_ids is not None and not isinstance(candidate_ids, (list, tuple)):
+        # Guard against a bare string slipping through (it would iterate into
+        # characters below); fail with a structured error, not garbage candidates.
+        return {
+            "status": "error",
+            "code": "invalid_candidate_ids",
+            "message": "candidate_ids must be a list of strings",
+            "results": [],
+            "baseline_modified": False,
+            "claim_advancement": "none",
+        }
+
     requested = candidate_ids if candidate_ids is not None else discover_candidate_ids(pkg)
     # de-dup while preserving order; drop blanks
     ordered: list[str] = []
@@ -158,7 +180,7 @@ def run_design_study_batch(
 
     to_run = ordered
     skipped_ids: list[str] = []
-    if max_candidates is not None and max_candidates >= 0 and len(ordered) > max_candidates:
+    if max_candidates is not None and len(ordered) > max_candidates:
         to_run = ordered[:max_candidates]
         skipped_ids = ordered[max_candidates:]
 

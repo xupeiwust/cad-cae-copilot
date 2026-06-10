@@ -370,6 +370,37 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "NOT accept a candidate, run CAE, or modify the baseline."
         ),
     },
+    "opt.accept_candidate": {
+        "type": "object",
+        "required": ["project_id", "candidate_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "candidate_id": {"type": "string"},
+            "accepted_by": {
+                "type": "string",
+                "description": "Who is accepting (recorded in provenance; default 'agent').",
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Optional human-readable rationale recorded with the acceptance.",
+            },
+            "override_unsafe": {
+                "type": "boolean",
+                "description": (
+                    "Force acceptance of a candidate that is not best_candidate_id or "
+                    "not safe_to_accept (default false). Recorded as a warning."
+                ),
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "[APPROVAL REQUIRED] Accept one ranked design-study candidate into a "
+            "derived accepted workspace (accepted/<cid>/). Eligible only when feasible "
+            "and best_candidate_id + safe_to_accept, unless override_unsafe is set. "
+            "Does NOT overwrite baseline geometry, auto-promote, or claim production "
+            "approval."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

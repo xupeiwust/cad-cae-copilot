@@ -86,12 +86,17 @@ def evaluate_convergence(
     config: dict[str, Any],
     *,
     proposer_exhausted: bool = False,
+    sense: str = "minimize",
 ) -> dict[str, Any]:
     """Pure convergence verdict over the iteration history.
 
     Each iteration record is expected to carry at least:
       ``index``, ``incumbent_objective`` (float|None), ``feasible`` (bool),
       ``evaluations_total`` (int), ``failures_this_round`` (int).
+
+    ``sense`` is the objective direction (``minimize`` / ``maximize``); the
+    objective-delta stagnation check is direction-aware — for ``maximize`` an
+    *increasing* incumbent objective counts as improvement.
 
     Returns ``{converged, verdict, reason_codes, details}``. ``converged`` is True
     when any criterion fires. ``verdict`` is one of ``continue`` / ``converged`` /
@@ -159,18 +164,22 @@ def evaluate_convergence(
         ]
         objs = [o for o in objs if o is not None]
         patience = int(cfg["patience"])
+        maximize = str(sense).lower().startswith("max")
         if len(objs) >= patience + 1:
             window = objs[-(patience + 1):]
             no_progress = True
             for prev, cur in zip(window, window[1:]):
                 denom = abs(prev) if prev not in (0, None) else 1.0
-                rel_gain = (prev - cur) / denom  # minimization: positive = improvement
+                # direction-aware relative improvement: for minimize a decrease is
+                # progress; for maximize an increase is progress.
+                rel_gain = ((cur - prev) if maximize else (prev - cur)) / denom
                 if rel_gain >= cfg["min_rel_improvement"]:
                     no_progress = False
                     break
             if no_progress:
                 reason_codes.append(RC_CONVERGED_DELTA)
                 details["objective_window"] = window
+                details["objective_sense"] = "maximize" if maximize else "minimize"
                 details["min_rel_improvement"] = cfg["min_rel_improvement"]
 
     if not reason_codes:
@@ -306,7 +315,11 @@ def record_iteration_and_check(
     iterations.append(record)
 
     config = resolve_convergence_config(study)
-    verdict = evaluate_convergence(iterations, config, proposer_exhausted=proposer_exhausted)
+    objective_obj = ranking.get("objective") if isinstance(ranking.get("objective"), dict) else {}
+    sense = str(objective_obj.get("sense") or "minimize")
+    verdict = evaluate_convergence(
+        iterations, config, proposer_exhausted=proposer_exhausted, sense=sense
+    )
     record["convergence_verdict"] = verdict["verdict"]
 
     history_doc = {

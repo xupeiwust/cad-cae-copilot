@@ -679,6 +679,70 @@ def register_project_workflow_routes(
             raise HTTPException(status_code=404, detail=".aieng package not found")
         return {"project_id": project_id, **build_optimization_report(package_path)}
 
+    @app.post("/api/projects/{project_id}/design-study/propose-next")
+    def propose_next_candidates_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Propose the next batch of candidates by trust-region local refinement.
+
+        Reads the ranking incumbent + optimization variables and samples within a
+        shrinking trust region (LHS fallback when no feasible incumbent); writes
+        candidate patches in the existing format. Deterministic given a seed. Does NOT
+        run/evaluate/accept candidates, run CAE, or modify the baseline.
+
+        Body (all optional): count (int), shrink (float 0-1), seed (int)."""
+        from aieng.converters.optimization_proposer import propose_next_candidates
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **propose_next_candidates(
+                package_path,
+                count=int(data.get("count", 4)),
+                shrink=float(data.get("shrink", 0.5)),
+                seed=int(data.get("seed", 0)),
+            ),
+        }
+
+    @app.post("/api/projects/{project_id}/design-study/check-convergence")
+    def check_convergence_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Record the current iteration's incumbent and return a convergence verdict.
+
+        Snapshots the ranking incumbent into analysis/optimization_iterations.json and
+        evaluates the deterministic, direction-aware stopping criteria. Advisory only —
+        it tells the agent whether to stop; it never accepts a candidate, runs CAE, or
+        modifies the baseline.
+
+        Body (all optional): evaluations_total (int), failures_this_round (int),
+        had_success (bool), proposer_exhausted (bool)."""
+        from aieng.converters.optimization_convergence import record_iteration_and_check
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **record_iteration_and_check(
+                package_path,
+                evaluations_total=data.get("evaluations_total"),
+                failures_this_round=int(data.get("failures_this_round", 0)),
+                had_success=bool(data.get("had_success", True)),
+                proposer_exhausted=bool(data.get("proposer_exhausted", False)),
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/design-study/hints")
     def build_design_study_candidate_hints_endpoint(
         project_id: str,

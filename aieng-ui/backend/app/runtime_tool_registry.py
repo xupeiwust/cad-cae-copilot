@@ -2567,6 +2567,89 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         read_only=False,
     )
 
+    def _tool_opt_rank_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Rank evaluated design-study candidates (advisory).
+        Reads per-candidate evaluations, classifies feasibility, scores against the
+        problem objective + constraints, and writes
+        analysis/design_study_candidate_ranking.json +
+        diagnostics/design_study_scoring_report.json. Selects best_candidate_id only
+        when feasible, improving, and high-confidence. Does NOT accept/promote a
+        candidate, run CAE, or modify the baseline."""
+        from aieng.converters.design_study_ranking import rank_design_study_candidates
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = rank_design_study_candidates(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "ranking_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.rank_candidates", "ranking_result": result}
+
+    _rt.register_tool(
+        "opt.rank_candidates",
+        _tool_opt_rank_candidates,
+        description=(
+            "Rank evaluated design-study candidates (advisory). Reads per-candidate "
+            "evaluations, classifies feasibility (feasible / infeasible / unknown / "
+            "failed), scores against the problem objective + constraints, and writes "
+            "analysis/design_study_candidate_ranking.json + the scoring report. "
+            "best_candidate_id is selected only when a candidate is feasible, improves "
+            "the objective, and is high-confidence; otherwise it is null and "
+            "safe_to_accept is false. Does NOT accept/promote a candidate, run CAE, or "
+            "modify the baseline."
+        ),
+        input_schema=_schema("opt.rank_candidates"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_explain_recommendation(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Explain the candidate ranking as an advisory, reason-coded recommendation.
+        Reads the existing ranking + scoring report and composes a human-readable
+        recommendation (why the top candidate, citing metrics + objective delta; why
+        none, when applicable; caveats for missing metrics / low confidence), written
+        to analysis/optimization_recommendation.json. Advisory only — does NOT accept a
+        candidate, run CAE, or modify the baseline. Run opt.rank_candidates first."""
+        from aieng.converters.optimization_recommendation import explain_recommendation
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = explain_recommendation(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "explain_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.explain_recommendation", "recommendation": result}
+
+    _rt.register_tool(
+        "opt.explain_recommendation",
+        _tool_opt_explain_recommendation,
+        description=(
+            "Explain a candidate ranking as an advisory, reason-coded recommendation. "
+            "Reads analysis/design_study_candidate_ranking.json (run opt.rank_candidates "
+            "first) and composes a human-readable recommendation: why the top candidate "
+            "is recommended (objective delta + metrics), or why none is, plus explicit "
+            "caveats for missing CAE metrics / low confidence. Writes "
+            "analysis/optimization_recommendation.json. Advisory only and human-approval "
+            "gated for acceptance — does NOT accept/promote a candidate, run CAE, or "
+            "modify the baseline."
+        ),
+        input_schema=_schema("opt.explain_recommendation"),
+        requires_approval=False,
+        read_only=False,
+    )
+
     _rt.register_tool(
         "cae.map_results",
         _tool_cae_map_results,

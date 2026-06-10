@@ -636,6 +636,28 @@ def register_project_workflow_routes(
             raise HTTPException(status_code=404, detail=".aieng package not found")
         return {"project_id": project_id, **rank_design_study_candidates(package_path)}
 
+    @app.post("/api/projects/{project_id}/design-study/recommendation")
+    def explain_design_study_recommendation_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Explain the candidate ranking as an advisory, reason-coded recommendation.
+
+        Reads analysis/design_study_candidate_ranking.json (run the rank endpoint
+        first) and writes analysis/optimization_recommendation.json: why the top
+        candidate is recommended (objective delta + metrics), or why none is, plus
+        explicit caveats for missing CAE metrics / low confidence. Advisory only and
+        human-approval-gated for acceptance — does NOT accept/promote a candidate, run
+        CAE, or modify the baseline."""
+        from aieng.converters.optimization_recommendation import explain_recommendation
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **explain_recommendation(package_path)}
+
     @app.post("/api/projects/{project_id}/design-study/hints")
     def build_design_study_candidate_hints_endpoint(
         project_id: str,

@@ -267,6 +267,40 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "execute candidates, recompile geometry, run CAE, or modify baseline."
         ),
     },
+    "opt.run_candidates": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "candidate_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Explicit, ordered candidate ids to execute. Omit to run all "
+                    "candidates discovered in the package."
+                ),
+            },
+            "compile": {
+                "type": "boolean",
+                "description": (
+                    "Recompile each candidate in a throwaway copy (default true). "
+                    "false applies the patch only, with honestly partial evaluation."
+                ),
+            },
+            "max_candidates": {
+                "type": "integer", "minimum": 0,
+                "description": "Hard cap on candidates executed this call; remainder is reported as skipped.",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Execute proposed design-study candidates into derived workspaces "
+            "(candidates/<cid>/). Applies each patch to a DERIVED copy of the "
+            "baseline Shape IR, optionally recompiling in a throwaway copy. "
+            "Failures are recorded per-candidate and the batch continues. Does "
+            "NOT run CAE, accept any candidate, or modify the baseline."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

@@ -2453,7 +2453,63 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             "new candidates. Deterministic given a seed."
         ),
         input_schema=_schema("opt.propose_candidates"),
-        requires_approval=True,
+        # Package-mutating but baseline-safe (writes only derived candidate
+        # patches). Kept inside the modeling-plan boundary like
+        # cad.execute_build123d / opt.writeback_to_shape_ir rather than carrying
+        # a per-call approval gate; the hard gate lives at acceptance.
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_run_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Execute proposed design-study candidates into derived workspaces.
+        Discovers candidates (or runs an explicit candidate_ids list) and runs
+        each through the single-shot executor, applying its patch to a DERIVED
+        copy of the baseline Shape IR in candidates/<cid>/. Optionally recompiles
+        each candidate in a throwaway copy (compile=true, default). Failures are
+        recorded per-candidate and the batch continues. Does NOT run CAE, accept
+        a candidate, or modify the baseline."""
+        from aieng.converters.design_study_batch import run_design_study_batch
+        from .cad_generation import make_candidate_recompiler
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        do_compile = bool(inp.get("compile", True))
+        recompiler = make_candidate_recompiler(pkg) if do_compile else None
+        try:
+            result = run_design_study_batch(
+                pkg,
+                candidate_ids=inp.get("candidate_ids"),
+                recompiler=recompiler,
+                max_candidates=inp.get("max_candidates"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "batch_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.run_candidates", "batch_result": result}
+
+    _rt.register_tool(
+        "opt.run_candidates",
+        _tool_opt_run_candidates,
+        description=(
+            "Execute proposed design-study candidates into isolated derived "
+            "workspaces (candidates/<cid>/). Discovers the candidate set from the "
+            "package (optimization_study/variables candidate_ids + any candidate "
+            "patches on disk), or runs an explicit candidate_ids list, applying "
+            "each patch to a DERIVED copy of the baseline Shape IR. With "
+            "compile=true (default) each candidate is recompiled in a throwaway "
+            "copy; a failed candidate is recorded cleanly and the batch CONTINUES. "
+            "Records each iteration in analysis/design_study_iterations.json. Does "
+            "NOT run CAE, accept/promote any candidate, or modify the baseline."
+        ),
+        input_schema=_schema("opt.run_candidates"),
+        requires_approval=False,
+        read_only=False,
     )
 
     _rt.register_tool(

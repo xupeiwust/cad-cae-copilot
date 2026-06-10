@@ -28,6 +28,9 @@ from .registry import available_converters, get_converter, register_converter
 # Sampling (Issue #38) — candidate parameter generation
 from .optimization_sampler import sample_candidates, sample_candidates_package
 
+# Batch execution (Issue #39) — run sampled candidates into derived workspaces
+from .design_study_batch import discover_candidate_ids, run_design_study_batch
+
 __all__ = [
     "CAPABILITY_LEVEL_NAMES",
     "CONVERTER_CLAIM_POLICY",
@@ -45,4 +48,6 @@ __all__ = [
     "register_converter",
     "sample_candidates",
     "sample_candidates_package",
+    "discover_candidate_ids",
+    "run_design_study_batch",
 ]

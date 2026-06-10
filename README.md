@@ -72,6 +72,14 @@ Inspect the generated model, named parts, verification results, and stable
 Packages the backend, built viewer, MCP HTTP server, build123d / OpenCASCADE
 dependencies, and CalculiX into one container.
 
+**Quick start with Docker Compose (recommended):**
+
+```bash
+docker compose up -d
+```
+
+**Or build and run manually:**
+
 ```bash
 docker build -t aieng/workbench:local .
 docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data aieng/workbench:local

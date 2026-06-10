@@ -1,0 +1,41 @@
+services:
+  aieng:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aieng/workbench:local
+    container_name: aieng-workbench
+    ports:
+      - "${AIENG_BACKEND_PORT:-8000}:8000"
+      - "${AIENG_MCP_PORT:-8765}:8765"
+    volumes:
+      - aieng_data:/data
+    environment:
+      - AIENG_PLATFORM_DATA=/data
+      - AIENG_ROOT=/opt/aieng/aieng
+      - AIENG_BACKEND_HOST=0.0.0.0
+      - AIENG_BACKEND_PORT=8000
+      - AIENG_MCP_HOST=0.0.0.0
+      - AIENG_MCP_PORT=8765
+      - AIENG_BACKEND_URL=http://127.0.0.1:8000
+      - AIENG_MCP_MANAGED_APPROVAL=${AIENG_MCP_MANAGED_APPROVAL:-1}
+      - AIENG_MCP_REQUIRE_GUIDES=${AIENG_MCP_REQUIRE_GUIDES:-1}
+      - AIENG_MCP_BLOCK_APPROVAL_TOOLS=${AIENG_MCP_BLOCK_APPROVAL_TOOLS:-0}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    mem_limit: 4g
+    mem_reservation: 1g
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  aieng_data:
+    name: aieng-data

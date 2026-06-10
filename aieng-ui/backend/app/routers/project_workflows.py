@@ -658,6 +658,27 @@ def register_project_workflow_routes(
             raise HTTPException(status_code=404, detail=".aieng package not found")
         return {"project_id": project_id, **explain_recommendation(package_path)}
 
+    @app.post("/api/projects/{project_id}/design-study/report")
+    def build_optimization_report_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Aggregate the optimization study into a single reproducible summary report.
+
+        Reads existing package artifacts (problem, variables/objectives/constraints,
+        all candidates + metrics, ranking, failed candidates, recommendation, acceptance,
+        decision log) and writes diagnostics/optimization_report.json. Read-only with
+        respect to engineering state: does NOT execute/evaluate/rank/accept candidates,
+        run CAE, or modify the baseline."""
+        from aieng.converters.optimization_report import build_optimization_report
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return {"project_id": project_id, **build_optimization_report(package_path)}
+
     @app.post("/api/projects/{project_id}/design-study/hints")
     def build_design_study_candidate_hints_endpoint(
         project_id: str,

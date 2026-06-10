@@ -401,6 +401,20 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "approval."
         ),
     },
+    "opt.write_report": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {"project_id": {"type": "string"}},
+        "additionalProperties": False,
+        "description": (
+            "Aggregate the optimization study into diagnostics/optimization_report.json "
+            "from existing package artifacts (problem, variables/objectives/constraints, "
+            "candidates + metrics, ranking, failed candidates, recommendation, "
+            "acceptance, decision log). Read-only with respect to engineering state; "
+            "does NOT execute/evaluate/rank/accept candidates, run CAE, or modify the "
+            "baseline."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

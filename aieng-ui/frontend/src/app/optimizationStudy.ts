@@ -78,18 +78,24 @@ export function shapeOptimizationStudy(
   // ── Candidate ranking ──
   if (rankingArtifact && typeof rankingArtifact === "object") {
     const r = rankingArtifact as Record<string, unknown>;
-    safe_to_accept = Boolean(r.safe_to_accept);
+    // Honesty: only an explicit boolean true is "safe to accept" — never coerce
+    // truthy strings/numbers (e.g. the string "false") into an accept-safe state.
+    safe_to_accept = r.safe_to_accept === true;
     baseline_modified = r.baseline_modified === true ? true : r.baseline_modified === false ? false : null;
 
     const rawCandidates = Array.isArray(r.candidates) ? r.candidates : [];
     for (const item of rawCandidates) {
       if (!item || typeof item !== "object") continue;
       const c = item as Record<string, unknown>;
+      // Drop malformed rows rather than coercing a missing id to "" or an invalid
+      // rank to 0 — those would sort to the top and produce bad accept drafts.
+      if (typeof c.candidate_id !== "string" || c.candidate_id.length === 0) continue;
+      if (typeof c.rank !== "number") continue;
       const feasibility = normalizeFeasibility(c.feasibility);
       const metrics = shapeMetrics(c.metrics);
       candidates.push({
-        candidate_id: typeof c.candidate_id === "string" ? c.candidate_id : String(c.candidate_id ?? ""),
-        rank: typeof c.rank === "number" ? c.rank : 0,
+        candidate_id: c.candidate_id,
+        rank: c.rank,
         feasibility,
         score: typeof c.score === "number" ? c.score : null,
         confidence: normalizeConfidence(c.confidence),

@@ -120,6 +120,29 @@ describe("shapeOptimizationStudy", () => {
     expect(result.candidates[0].candidate_id).toBe("c1");
   });
 
+  it("drops candidates with no string id or non-numeric rank (no coercion)", () => {
+    const ranking = {
+      candidates: [
+        { rank: 1, feasibility: "feasible" }, // missing id
+        { candidate_id: "", rank: 1, feasibility: "feasible" }, // empty id
+        { candidate_id: "c2", feasibility: "feasible" }, // missing rank
+        { candidate_id: "c3", rank: 2, feasibility: "feasible" }, // valid
+      ],
+      safe_to_accept: false,
+      baseline_modified: false,
+    };
+    const result = shapeOptimizationStudy(ranking, null, null);
+    expect(result.candidates.map((c) => c.candidate_id)).toEqual(["c3"]);
+  });
+
+  it("treats only an explicit boolean true as safe_to_accept", () => {
+    // a stray truthy string must NOT read as accept-safe
+    const ranking = { candidates: [], safe_to_accept: "false", baseline_modified: false };
+    expect(shapeOptimizationStudy(ranking, null, null).safe_to_accept).toBe(false);
+    const ranking2 = { candidates: [], safe_to_accept: true, baseline_modified: false };
+    expect(shapeOptimizationStudy(ranking2, null, null).safe_to_accept).toBe(true);
+  });
+
   it("normalizes unknown feasibility values", () => {
     const ranking = {
       candidates: [{ candidate_id: "c1", rank: 1, feasibility: "garbage" }],

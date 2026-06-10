@@ -5484,6 +5484,12 @@ textarea {
   border: 1px solid rgba(248, 113, 113, 0.2);
 }
 
+.optimization-honesty-neutral {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
 .optimization-group {
   display: flex;
   flex-direction: column;

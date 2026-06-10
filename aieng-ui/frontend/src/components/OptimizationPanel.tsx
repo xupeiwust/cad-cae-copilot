@@ -60,6 +60,16 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
           Baseline untouched
         </div>
       )}
+      {/* Explicit accept-readiness signal — advisory, human-approval-gated. */}
+      <div
+        className={`optimization-honesty ${
+          study.safe_to_accept ? "optimization-honesty-good" : "optimization-honesty-neutral"
+        }`}
+      >
+        {study.safe_to_accept
+          ? "A candidate is safe to accept (still requires approval)"
+          : "No candidate is accept-ready yet — advisory only"}
+      </div>
 
       {/* Candidate ranking */}
       {groups.map((group) => (

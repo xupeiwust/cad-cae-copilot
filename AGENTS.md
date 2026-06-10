@@ -55,6 +55,27 @@ all categories. Operators may explicitly disable this guard with
 
 ---
 
+## Workflow priority matrix
+
+Use this to pick the correct path when multiple options exist.
+
+| Situation | Preferred path | Skill / contract | Fallback |
+|-----------|---------------|------------------|----------|
+| Create or extend CAD geometry (new model, additive features, substantial edits) | MCP-first `cad.execute_build123d` | `aieng-cad-authoring` | Write build123d script locally, import STEP |
+| Pure dimensional tweak on existing editable model | `cad.edit_parameter` | `aieng-cad-authoring` | — |
+| Engineering audit / read-only critique | `cad.critique` | `aieng-cad-authoring` | — |
+| CAE readiness → solver → results | MCP-first `cae.*` pipeline | `aieng-cad-cae-copilot` | — |
+| Schema/tool implementation or legacy IR plan editing | `aieng/` core library CLI | (no skill) | — |
+| No MCP tools available (Kimi CLI, plain terminal) | Local script runner + STEP importer | — | See **Fallback mode** below |
+
+Rules:
+1. **MCP workbench first.** If `aieng.*` / `cad.*` / `cae.*` tools are in your tool list, use them. They provide live UI events, topology feedback, and incremental modeling.
+2. **Fallback only when MCP is unavailable.** Do not bypass the MCP tools just because a local script is faster to write.
+3. **Pick the right skill.** `aieng-cad-authoring` is for CAD mutation and read-only inspection. `aieng-cad-cae-copilot` is for evidence-first CAE workflows (setup, solver, results). Do not mix the two.
+4. **Never claim a solver ran unless `cae.run_solver` completed and result artifacts exist.** See the `aieng-cad-cae-copilot` hard rules.
+
+---
+
 ## Workspace layout
 
 | Path | Status | Purpose |

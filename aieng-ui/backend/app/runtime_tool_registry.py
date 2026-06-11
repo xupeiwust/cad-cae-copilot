@@ -17,6 +17,21 @@ from .logging_utils import log_exception
 LOGGER = logging.getLogger("app.app_factory")
 
 
+def _split_ccx_cmd(command: str, *, platform: str | None = None) -> list[str]:
+    """Split an operator-provided ccx command into subprocess argv."""
+    import os
+    import shlex
+
+    platform = platform or os.name
+    parts = shlex.split(command, posix=platform != "nt")
+    if platform == "nt":
+        parts = [
+            part[1:-1] if len(part) >= 2 and part[0] == part[-1] and part[0] in {"'", '"'} else part
+            for part in parts
+        ]
+    return parts
+
+
 def _sync_main_symbols() -> None:
     sync_main_symbols(globals())
 
@@ -29,12 +44,14 @@ def _resolve_ccx_cmd() -> list[str] | None:
     or None when it cannot be found.
     """
     import os
-    import shlex
     import shutil
 
     ccx_env = os.environ.get("AIENG_CCX_CMD")
     if ccx_env:
-        parts = shlex.split(ccx_env)
+        try:
+            parts = _split_ccx_cmd(ccx_env)
+        except ValueError:
+            return None
         if parts and shutil.which(parts[0]):
             return parts
         return None
@@ -919,7 +936,10 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
                 "tool": "cae.run_solver",
                 "status": "error",
                 "code": "solver_not_found",
-                "message": "CalculiX executable (ccx) not found on PATH and AIENG_CCX_CMD is not set.",
+                "message": (
+                    "CalculiX command unavailable; set a valid AIENG_CCX_CMD "
+                    "or ensure ccx is discoverable on PATH."
+                ),
                 "solver_execution_performed": False,
             }
 

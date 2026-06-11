@@ -51,6 +51,7 @@ from app.main import (
     _write_revalidation_status,
 )
 from app import runtime as _rt
+from app.runtime_tool_registry import _resolve_ccx_cmd, _split_ccx_cmd
 
 # Resolve workspace root relative to this test file
 # test_api.py -> backend/tests -> backend -> aieng-ui -> workspace_aieng
@@ -3993,6 +3994,27 @@ def test_run_solver_uses_aieng_ccx_cmd_env_var(tmp_path: Path, monkeypatch) -> N
     assert kwargs.get("shell") is False
 
 
+def test_split_ccx_cmd_preserves_windows_paths() -> None:
+    """Windows command parsing preserves backslashes and removes wrapping quotes."""
+    command = r'"C:\Program Files\CalculiX\ccx.exe" --solver-option'
+
+    assert _split_ccx_cmd(command, platform="nt") == [
+        r"C:\Program Files\CalculiX\ccx.exe",
+        "--solver-option",
+    ]
+
+
+def test_runtime_capabilities_treats_malformed_ccx_cmd_as_unavailable(tmp_path: Path, monkeypatch) -> None:
+    """Malformed AIENG_CCX_CMD does not crash the capabilities endpoint."""
+    monkeypatch.setenv("AIENG_CCX_CMD", '"unterminated')
+
+    client = TestClient(create_app(_make_patch_settings(tmp_path)))
+    response = client.get("/api/runtime/capabilities")
+
+    assert response.status_code == 200
+    assert response.json()["environment"]["ccx_available"] is False
+
+
 def test_run_solver_mocked_subprocess_success(tmp_path: Path) -> None:
     """cae.run_solver invokes ccx with shell=False and writes solver_run.json + solver_log.txt."""
     from unittest.mock import patch, MagicMock
@@ -4827,8 +4849,8 @@ def test_no_field_summaries_without_computed_metrics(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    shutil.which("ccx") is None and not os.environ.get("AIENG_CCX_CMD"),
-    reason="CalculiX executable (ccx) not found on PATH and AIENG_CCX_CMD not set — skipping real solver smoke test.",
+    _resolve_ccx_cmd() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver smoke test.",
 )
 def test_run_solver_real_ccx_skipped_if_unavailable(tmp_path: Path) -> None:
     """Real CalculiX smoke test: runs ccx against minimal cantilever fixture if available.

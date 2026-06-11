@@ -25,32 +25,32 @@ function mockFetch(delayMs = 0, signal?: AbortSignal) {
 }
 
 describe("api request abort controller", () => {
-  let originalFetch: typeof global.fetch;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    originalFetch = global.fetch;
+    originalFetch = globalThis.fetch;
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     vi.useRealTimers();
   });
 
   it("resolves on a successful JSON response", async () => {
-    global.fetch = vi.fn(() => mockFetch(0));
+    globalThis.fetch = vi.fn(() => mockFetch(0));
     const result = await api.getSettings();
     expect(result).toEqual({ foo: "bar" });
   });
 
   it("throws when the external signal is already aborted", async () => {
-    global.fetch = vi.fn(() => mockFetch(0));
+    globalThis.fetch = vi.fn(() => mockFetch(0));
     const controller = new AbortController();
     controller.abort();
     await expect(api.getSettings(controller.signal)).rejects.toThrow("Request aborted");
   });
 
   it("aborts an in-flight fetch when the external signal is aborted", async () => {
-    global.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
+    globalThis.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
     const controller = new AbortController();
     const promise = api.getSettings(controller.signal);
     await new Promise((r) => setTimeout(r, 10));
@@ -60,7 +60,7 @@ describe("api request abort controller", () => {
 
   it("throws a timeout error when fetch is slow and no external signal is given", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    global.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
+    globalThis.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
     const promise = api.getSettings();
     vi.advanceTimersByTime(30_001);
     await expect(promise).rejects.toThrow("Request timed out after 30s");
@@ -68,7 +68,7 @@ describe("api request abort controller", () => {
 
   it("throws 'Request aborted' instead of timeout when abort happens before timeout", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    global.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
+    globalThis.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
     const controller = new AbortController();
     const promise = api.getSettings(controller.signal);
     vi.advanceTimersByTime(100);
@@ -79,7 +79,7 @@ describe("api request abort controller", () => {
   });
 
   it("passes a linked signal through to GET helpers", async () => {
-    global.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
+    globalThis.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
     const controller = new AbortController();
     const promise = api.getProject("proj-1", controller.signal);
     await new Promise((r) => setTimeout(r, 10));
@@ -88,7 +88,7 @@ describe("api request abort controller", () => {
   });
 
   it("passes a linked signal through to POST helpers", async () => {
-    global.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
+    globalThis.fetch = vi.fn((_url: string, init?: RequestInit) => mockFetch(100_000, init?.signal));
     const controller = new AbortController();
     const promise = api.createProject("test", controller.signal);
     await new Promise((r) => setTimeout(r, 10));

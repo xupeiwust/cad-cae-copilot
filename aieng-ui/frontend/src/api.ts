@@ -52,13 +52,14 @@ async function request<T>(path: string, init?: RequestInit & { timeoutMs?: numbe
 
   let signal: AbortSignal = timeoutController.signal;
   const externalSignal = init?.signal;
+  const onExternalAbort = () => timeoutController.abort();
 
   if (externalSignal) {
     if (externalSignal.aborted) {
       clearTimeout(timer);
       throw new Error("Request aborted");
     }
-    externalSignal.addEventListener("abort", () => timeoutController.abort(), { once: true });
+    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
   }
 
   try {
@@ -86,6 +87,9 @@ async function request<T>(path: string, init?: RequestInit & { timeoutMs?: numbe
     throw err;
   } finally {
     clearTimeout(timer);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
   }
 }
 

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
+from filelock import FileLock
 
 from .config import ensure_aieng_on_path
 
@@ -1714,8 +1715,8 @@ def _geometry_report_for_response(report: dict[str, Any], response_detail: str) 
 
 
 _BUILD123D_CACHE_FORMAT_VERSION = "1"
-_BUILD123D_CACHE_MAX_ENTRIES = 64
-_BUILD123D_CACHE_MAX_BYTES = 512 * 1024 * 1024
+_BUILD123D_CACHE_MAX_ENTRIES = int(os.environ.get("AIENG_CACHE_MAX_ENTRIES", "64"))
+_BUILD123D_CACHE_MAX_BYTES = int(os.environ.get("AIENG_CACHE_MAX_BYTES", str(512 * 1024 * 1024)))
 
 
 def _package_version(name: str) -> str:
@@ -1791,16 +1792,41 @@ def _prune_build123d_cache(root: Path) -> None:
         sized = [(p, s) for p, s in sized if p != entry]
 
 
+_CACHE_REQUIRED_FILES = {
+    "metadata.json",
+    "generated.step",
+    "preview.stl",
+    "topology_map.json",
+    "feature_graph.json",
+    "geometry_report.json",
+}
+
+
 def _read_build123d_cache(settings: Any, cache_key: str) -> dict[str, Any] | None:
+    """Read a cached build123d result, validating integrity.
+
+    Verifies that all required artifact files exist and that the metadata
+    cache_key and cache_format_version match. Incomplete or corrupt entries
+    are treated as misses and removed so they do not poison future lookups.
+    """
     entry = _build123d_cache_root(settings) / cache_key
     if not (entry / ".complete").exists():
         return None
     try:
+        # Integrity: every required file must be present and readable.
+        missing = [name for name in _CACHE_REQUIRED_FILES if not (entry / name).is_file()]
+        if missing:
+            shutil.rmtree(entry, ignore_errors=True)
+            return None
+
         meta = json.loads((entry / "metadata.json").read_text(encoding="utf-8"))
         if meta.get("cache_key") != cache_key:
+            shutil.rmtree(entry, ignore_errors=True)
             return None
         if meta.get("cache_format_version") != _BUILD123D_CACHE_FORMAT_VERSION:
+            shutil.rmtree(entry, ignore_errors=True)
             return None
+
         return {
             "step_bytes": (entry / "generated.step").read_bytes(),
             "stl_bytes": (entry / "preview.stl").read_bytes(),
@@ -1815,6 +1841,7 @@ def _read_build123d_cache(settings: Any, cache_key: str) -> dict[str, Any] | Non
             ),
         }
     except Exception:
+        shutil.rmtree(entry, ignore_errors=True)
         return None
 
 
@@ -1830,35 +1857,154 @@ def _write_build123d_cache(
     feature_graph: dict[str, Any],
     geometry_report: dict[str, Any],
     mesh_meta: Any,
+    _already_locked: bool = False,
 ) -> None:
+    """Write a build123d result to the cache with per-key locking and atomic promotion.
+
+    Uses filelock so concurrent identical requests serialize writes. Writes to a
+    temporary directory first, then renames atomically so readers never observe
+    partial artifacts.
+
+    Pass ``_already_locked=True`` when the caller already holds the per-key lock
+    (e.g. inside ``_execute_build123d_cached``) to avoid reentrant-deadlock.
+    """
     if not step_bytes:
         return
     root = _build123d_cache_root(settings)
     entry = root / cache_key
-    try:
+
+    def _do_write() -> None:
         if (entry / ".complete").exists():
             return
-        entry.mkdir(parents=True, exist_ok=True)
+        # Atomic write: build in a temp sibling directory, then rename.
+        tmp_entry = root / (cache_key + ".tmp")
+        shutil.rmtree(tmp_entry, ignore_errors=True)
+        tmp_entry.mkdir(parents=True, exist_ok=True)
+
         metadata = {
             "cache_key": cache_key,
             "cache_format_version": _BUILD123D_CACHE_FORMAT_VERSION,
             "created_at": time.time(),
             "key_material": key_material,
         }
-        (entry / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
-        (entry / "generated.step").write_bytes(step_bytes)
-        (entry / "preview.stl").write_bytes(stl_bytes or b"")
+        (tmp_entry / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+        (tmp_entry / "generated.step").write_bytes(step_bytes)
+        (tmp_entry / "preview.stl").write_bytes(stl_bytes or b"")
         if glb_bytes:
-            (entry / "preview.glb").write_bytes(glb_bytes)
-        (entry / "topology_map.json").write_text(json.dumps(topology_map, indent=2), encoding="utf-8")
-        (entry / "feature_graph.json").write_text(json.dumps(feature_graph, indent=2), encoding="utf-8")
-        (entry / "geometry_report.json").write_text(json.dumps(geometry_report, indent=2), encoding="utf-8")
+            (tmp_entry / "preview.glb").write_bytes(glb_bytes)
+        (tmp_entry / "topology_map.json").write_text(json.dumps(topology_map, indent=2), encoding="utf-8")
+        (tmp_entry / "feature_graph.json").write_text(json.dumps(feature_graph, indent=2), encoding="utf-8")
+        (tmp_entry / "geometry_report.json").write_text(json.dumps(geometry_report, indent=2), encoding="utf-8")
         if mesh_meta is not None:
-            (entry / "mesh_meta.json").write_text(json.dumps(mesh_meta, indent=2), encoding="utf-8")
-        (entry / ".complete").write_text("ok", encoding="utf-8")
+            (tmp_entry / "mesh_meta.json").write_text(json.dumps(mesh_meta, indent=2), encoding="utf-8")
+        (tmp_entry / ".complete").write_text("ok", encoding="utf-8")
+
+        os.replace(str(tmp_entry), str(entry))
         _prune_build123d_cache(root)
+
+    try:
+        if _already_locked:
+            _do_write()
+        else:
+            lock_path = str(entry) + ".lock"
+            with FileLock(lock_path, timeout=30):
+                _do_write()
     except Exception:
         shutil.rmtree(entry, ignore_errors=True)
+        shutil.rmtree(root / (cache_key + ".tmp"), ignore_errors=True)
+
+
+def _execute_build123d_cached(
+    settings: Any,
+    code: str,
+    *,
+    mode: str = "replace",
+    model_kind: str = "auto",
+    timeout: int = 60,
+) -> dict[str, Any]:
+    """Execute build123d code with exact-content caching (shared by all mutation paths).
+
+    Checks the content-addressed cache first; on a miss, runs the non-streaming
+    executor, computes the feature graph and geometry report, writes the result
+    to cache, and returns everything the caller needs.
+
+    Returns a dict with keys:
+      step_bytes, stl_bytes, glb_bytes, topo, feature_graph, geometry_report,
+      mesh_meta, cache_hit
+    """
+    cache_key, cache_key_material = _build123d_cache_key(
+        code=code, mode=mode, model_kind=model_kind,
+    )
+    cached = _read_build123d_cache(settings, cache_key)
+    if cached is not None:
+        topo = cached["topology_map"]
+        mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+        # Restore mesh_meta from cache if it was stored separately.
+        if mesh_meta is None and cached.get("mesh_meta") is not None:
+            mesh_meta = cached["mesh_meta"]
+        return {
+            "step_bytes": cached["step_bytes"],
+            "stl_bytes": cached["stl_bytes"],
+            "glb_bytes": cached["glb_bytes"],
+            "topo": topo,
+            "feature_graph": cached["feature_graph"],
+            "geometry_report": cached.get("geometry_report") or _compute_geometry_report(topo),
+            "mesh_meta": mesh_meta,
+            "cache_hit": True,
+        }
+
+    # Double-checked locking: acquire per-key lock and re-check cache so only
+    # one thread pays the build123d execution cost for a given cache key.
+    root = _build123d_cache_root(settings)
+    entry = root / cache_key
+    lock_path = str(entry) + ".lock"
+    with FileLock(lock_path, timeout=60):
+        cached = _read_build123d_cache(settings, cache_key)
+        if cached is not None:
+            topo = cached["topology_map"]
+            mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+            if mesh_meta is None and cached.get("mesh_meta") is not None:
+                mesh_meta = cached["mesh_meta"]
+            return {
+                "step_bytes": cached["step_bytes"],
+                "stl_bytes": cached["stl_bytes"],
+                "glb_bytes": cached["glb_bytes"],
+                "topo": topo,
+                "feature_graph": cached["feature_graph"],
+                "geometry_report": cached.get("geometry_report") or _compute_geometry_report(topo),
+                "mesh_meta": mesh_meta,
+                "cache_hit": True,
+            }
+
+        step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(code, timeout=timeout)
+        mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+        feature_graph = _topology_to_feature_graph(
+            topo, source_code=code, model_kind=model_kind,
+        )
+        geometry_report = _compute_geometry_report(topo)
+        _write_build123d_cache(
+            settings,
+            cache_key,
+            cache_key_material,
+            step_bytes=step_bytes,
+            stl_bytes=stl_bytes or b"",
+            glb_bytes=glb_bytes or b"",
+            topology_map=topo,
+            feature_graph=feature_graph,
+            geometry_report=geometry_report,
+            mesh_meta=mesh_meta,
+            _already_locked=True,
+        )
+    return {
+        "step_bytes": step_bytes,
+        "stl_bytes": stl_bytes,
+        "glb_bytes": glb_bytes,
+        "topo": topo,
+        "feature_graph": feature_graph,
+        "geometry_report": geometry_report,
+        "mesh_meta": mesh_meta,
+        "cache_hit": False,
+    }
 
 
 def _finish_execute_build123d_response(
@@ -5904,8 +6050,8 @@ def edit_build123d_parameter(
         }
 
     try:
-        step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(
-            modified_source, timeout=timeout
+        cached_result = _execute_build123d_cached(
+            settings, modified_source, mode="replace", timeout=timeout,
         )
     except Exception as exc:
         # If the edit breaks the model, return the error but preserve the
@@ -5922,8 +6068,14 @@ def edit_build123d_parameter(
             "cad_parameter_name": cad_parameter_name,
         }
 
-    # 6. Build enriched feature_graph from the new topology + modified source
-    feature_graph = _topology_to_feature_graph(topo, source_code=modified_source)
+    step_bytes = cached_result["step_bytes"]
+    stl_bytes = cached_result["stl_bytes"]
+    glb_bytes = cached_result["glb_bytes"]
+    topo = cached_result["topo"]
+    feature_graph = cached_result["feature_graph"]
+    geometry_report_full = cached_result["geometry_report"]
+    mesh_meta = cached_result.get("mesh_meta")
+    cache_hit = cached_result["cache_hit"]
 
     # 6b. Geometry regression diff — confirm the edit changed only what it should.
     # The set of parts we EXPECT to move: for a named_part feature, just that
@@ -5962,7 +6114,7 @@ def edit_build123d_parameter(
     _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
     # 9. Render thumbnail so the caller can verify visually
-    mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+    # mesh_meta was already extracted from topo by _execute_build123d_cached.
     thumb = None
     if _should_render_thumbnail(thumbnail, response_detail):
         face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
@@ -5975,7 +6127,7 @@ def edit_build123d_parameter(
     solid = next(
         (e for e in topo.get("entities", []) if e.get("type") == "solid"), None
     )
-    geometry_report_full = _compute_geometry_report(topo)
+    # geometry_report_full already computed by _execute_build123d_cached.
 
     result = {
         "status": "ok",
@@ -6072,7 +6224,9 @@ def _rebuild_after_part_edit(
     """Execute ``new_source``, write artifacts, and assemble the response with a
     regression diff. Shared by remove_part / replace_part."""
     try:
-        step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(new_source, timeout=timeout)
+        cached_result = _execute_build123d_cached(
+            settings, new_source, mode="replace", timeout=timeout,
+        )
     except Exception as exc:
         return {
             "status": "error",
@@ -6081,7 +6235,11 @@ def _rebuild_after_part_edit(
             "label": label,
         }
 
-    feature_graph = _topology_to_feature_graph(topo, source_code=new_source)
+    step_bytes = cached_result["step_bytes"]
+    stl_bytes = cached_result["stl_bytes"]
+    glb_bytes = cached_result["glb_bytes"]
+    topo = cached_result["topo"]
+    feature_graph = cached_result["feature_graph"]
     regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
 
     _write_cad_artifacts(
@@ -6105,7 +6263,8 @@ def _rebuild_after_part_edit(
     _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
     response_detail = _normalize_response_detail(response_detail)
-    mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+    # mesh_meta was already extracted from topo by _execute_build123d_cached.
+    mesh_meta = cached_result.get("mesh_meta")
     thumb = None
     if _should_render_thumbnail(thumbnail, response_detail):
         thumb = render_mesh_thumbnail(
@@ -6115,7 +6274,8 @@ def _rebuild_after_part_edit(
         )
     solid = next((e for e in topo.get("entities", []) if e.get("type") == "solid"), None)
     named_parts = _named_parts_from_feature_graph(feature_graph)
-    geometry_report_full = _compute_geometry_report(topo)
+    # geometry_report_full already computed by _execute_build123d_cached.
+    geometry_report_full = cached_result.get("geometry_report") or _compute_geometry_report(topo)
 
     result = {
         "status": "ok",

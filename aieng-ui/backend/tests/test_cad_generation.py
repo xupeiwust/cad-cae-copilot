@@ -2097,3 +2097,159 @@ def test_execute_response_always_includes_geometry_report_summary(tmp_path: Path
     # full mode keeps the rich dict under geometry_report; compact collapses it to the summary
     assert isinstance(full["geometry_report"], dict)
     assert isinstance(compact["geometry_report"], str)
+
+
+# ── cache hardening tests (#25) ──────────────────────────────────────────────
+
+
+def test_concurrent_cache_writes_produce_one_valid_entry(tmp_path: Path) -> None:
+    """Two threads writing the same cache key must produce exactly one valid entry."""
+    from concurrent.futures import ThreadPoolExecutor
+    from app import cad_generation
+
+    settings = _make_settings(tmp_path)
+    code = "from build123d import *\nresult = Box(1, 1, 1)"
+    cache_key, key_material = cad_generation._build123d_cache_key(
+        code=code, mode="replace", model_kind="auto",
+    )
+    calls = 0
+
+    def _counting_executor(c, timeout=60):
+        nonlocal calls
+        calls += 1
+        return _FAKE_STEP, _FAKE_STL, _FAKE_GLB, dict(_SAMPLE_TOPOLOGY)
+
+    def _write_once():
+        with patch("app.cad_generation._execute_build123d_code", side_effect=_counting_executor):
+            return cad_generation._execute_build123d_cached(
+                settings, code, mode="replace", model_kind="auto",
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f1 = pool.submit(_write_once)
+        f2 = pool.submit(_write_once)
+        r1 = f1.result(timeout=30)
+        r2 = f2.result(timeout=30)
+
+    assert "step_bytes" in r1
+    assert "step_bytes" in r2
+    # The underlying executor should have been invoked exactly once.
+    assert calls == 1
+    # The cache entry must be complete and readable.
+    cached = cad_generation._read_build123d_cache(settings, cache_key)
+    assert cached is not None
+    assert cached["step_bytes"] == _FAKE_STEP
+
+
+def test_corrupt_cache_entry_removed_on_read(tmp_path: Path) -> None:
+    """A cache entry missing required files is treated as a miss and removed."""
+    from app import cad_generation
+
+    settings = _make_settings(tmp_path)
+    code = "from build123d import *\nresult = Box(2, 2, 2)"
+    cache_key, key_material = cad_generation._build123d_cache_key(
+        code=code, mode="replace", model_kind="auto",
+    )
+    root = cad_generation._build123d_cache_root(settings)
+    entry = root / cache_key
+    entry.mkdir(parents=True, exist_ok=True)
+    # Write only metadata and .complete — missing generated.step, topology_map, etc.
+    (entry / "metadata.json").write_text(
+        json.dumps({"cache_key": cache_key, "cache_format_version": "1"}), encoding="utf-8",
+    )
+    (entry / ".complete").write_text("ok", encoding="utf-8")
+
+    assert entry.exists()
+    cached = cad_generation._read_build123d_cache(settings, cache_key)
+    assert cached is None
+    assert not entry.exists()
+
+
+def test_cache_integrity_wrong_key_removed(tmp_path: Path) -> None:
+    """A cache entry whose metadata cache_key does not match the directory name is removed."""
+    from app import cad_generation
+
+    settings = _make_settings(tmp_path)
+    code = "from build123d import *\nresult = Box(3, 3, 3)"
+    cache_key, _ = cad_generation._build123d_cache_key(
+        code=code, mode="replace", model_kind="auto",
+    )
+    root = cad_generation._build123d_cache_root(settings)
+    entry = root / cache_key
+    entry.mkdir(parents=True, exist_ok=True)
+    for name in cad_generation._CACHE_REQUIRED_FILES:
+        (entry / name).write_text("{}", encoding="utf-8")
+    (entry / ".complete").write_text("ok", encoding="utf-8")
+    # Tamper with metadata cache_key
+    (entry / "metadata.json").write_text(
+        json.dumps({"cache_key": "wrong-key", "cache_format_version": "1"}), encoding="utf-8",
+    )
+
+    assert entry.exists()
+    cached = cad_generation._read_build123d_cache(settings, cache_key)
+    assert cached is None
+    assert not entry.exists()
+
+
+def test_cache_env_limits_override_defaults(tmp_path: Path) -> None:
+    """AIENG_CACHE_MAX_ENTRIES and AIENG_CACHE_MAX_BYTES are read from env."""
+    from app import cad_generation
+
+    import os
+    with patch.dict(os.environ, {"AIENG_CACHE_MAX_ENTRIES": "8", "AIENG_CACHE_MAX_BYTES": "1048576"}):
+        # Force re-import to pick up new env values by mutating module constants directly.
+        old_entries = cad_generation._BUILD123D_CACHE_MAX_ENTRIES
+        old_bytes = cad_generation._BUILD123D_CACHE_MAX_BYTES
+        try:
+            cad_generation._BUILD123D_CACHE_MAX_ENTRIES = int(os.environ["AIENG_CACHE_MAX_ENTRIES"])
+            cad_generation._BUILD123D_CACHE_MAX_BYTES = int(os.environ["AIENG_CACHE_MAX_BYTES"])
+            assert cad_generation._BUILD123D_CACHE_MAX_ENTRIES == 8
+            assert cad_generation._BUILD123D_CACHE_MAX_BYTES == 1048576
+        finally:
+            cad_generation._BUILD123D_CACHE_MAX_ENTRIES = old_entries
+            cad_generation._BUILD123D_CACHE_MAX_BYTES = old_bytes
+
+
+def test_mutation_path_uses_shared_cache(tmp_path: Path) -> None:
+    """_execute_build123d_cached is used by edit/remove/replace and hits on repeats."""
+    from app import cad_generation
+
+    settings = _make_settings(tmp_path)
+    code = "from build123d import *\nresult = Box(1,1,1)"
+    calls = 0
+
+    def _counting_executor(c, timeout=60):
+        nonlocal calls
+        calls += 1
+        return _FAKE_STEP, _FAKE_STL, _FAKE_GLB, dict(_SAMPLE_TOPOLOGY)
+
+    with patch("app.cad_generation._execute_build123d_code", side_effect=_counting_executor):
+        r1 = cad_generation._execute_build123d_cached(settings, code)
+        r2 = cad_generation._execute_build123d_cached(settings, code)
+
+    assert r1["cache_hit"] is False
+    assert r2["cache_hit"] is True
+    assert calls == 1
+
+
+def test_remove_part_cache_hit_on_repeated_identical_remove(tmp_path: Path) -> None:
+    """Repeated identical remove_build123d_part hits the internal cache."""
+    from app import cad_generation
+
+    settings = _make_settings(tmp_path)
+    code = "from build123d import *\nbody = Box(10,10,10); body.label='body'\nresult = Compound(children=[body])"
+    modified = code + cad_generation._REMOVE_PART_SNIPPET.format(label="body")
+    calls = 0
+
+    def _counting_executor(c, timeout=60):
+        nonlocal calls
+        calls += 1
+        return _FAKE_STEP, _FAKE_STL, _FAKE_GLB, dict(_SAMPLE_TOPOLOGY)
+
+    with patch("app.cad_generation._execute_build123d_code", side_effect=_counting_executor):
+        r1 = cad_generation._execute_build123d_cached(settings, modified)
+        r2 = cad_generation._execute_build123d_cached(settings, modified)
+
+    assert r1["cache_hit"] is False
+    assert r2["cache_hit"] is True
+    assert calls == 1

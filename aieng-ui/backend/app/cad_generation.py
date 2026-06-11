@@ -1767,11 +1767,20 @@ def _step_roundtrip_preserves_labels() -> bool:
 
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "probe.step"
-            part = b3d.Box(10, 10, 10)
-            part.label = "aieng_probe_label"
-            b3d.export_step(part, str(path))
+            left = b3d.Box(10, 10, 10)
+            left.label = "aieng_probe_left"
+            right = b3d.Box(10, 10, 10)
+            right = right.translate((20, 0, 0))
+            right.label = "aieng_probe_right"
+            probe = b3d.Compound(children=[left, right])
+            b3d.export_step(probe, str(path))
             imported = b3d.import_step(str(path))
-            _STEP_LABELS_SURVIVE_ROUNDTRIP = getattr(imported, "label", "") == "aieng_probe_label"
+            imported_children = list(getattr(imported, "children", None) or [])
+            imported_labels = {getattr(child, "label", "") for child in imported_children}
+            _STEP_LABELS_SURVIVE_ROUNDTRIP = {
+                "aieng_probe_left",
+                "aieng_probe_right",
+            }.issubset(imported_labels)
     except Exception:
         _STEP_LABELS_SURVIVE_ROUNDTRIP = False
     return _STEP_LABELS_SURVIVE_ROUNDTRIP

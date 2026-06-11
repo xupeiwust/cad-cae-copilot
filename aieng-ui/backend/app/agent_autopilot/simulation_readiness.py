@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 import yaml
 
+from ..cae_payload_profile import profile_payload
 from .mention_binding import bindings_to_targets, mention_status_word
 
 # --- Status vocabulary ------------------------------------------------------
@@ -287,6 +288,7 @@ def build_simulation_readiness_report(
         "targets": bindings_to_targets(mention_bindings),
     }
     report["summary"] = summarize_simulation_readiness(report)
+    profile_payload(report, label="simulation_readiness.report")
     return report
 
 

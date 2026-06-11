@@ -18,6 +18,7 @@ from . import computed_metrics as computed_metrics_module
 from . import design_targets as design_targets_module
 from . import target_comparison as target_comparison_module
 from .config import Settings, now_iso
+from .cae_payload_profile import compact_cae_block, profile_payload
 from .package_inspection import (
     PackageReadCache,
     _detect_cae_artifacts,
@@ -258,7 +259,7 @@ def _cae_block(
     cae = fallback.get("cae") if isinstance(fallback, dict) else None
     if not isinstance(cae, dict):
         cae = {}
-    return {
+    block = {
         "present": bool(cae.get("present")),
         "materials": cae.get("materials") or [],
         "loads": cae.get("loads") or [],
@@ -278,6 +279,9 @@ def _cae_block(
         "fea_setup_draft": summaries.get("fea_setup_draft"),
         "template_fixture": summaries.get("template_fixture"),
     }
+    # B4: profile and compact the CAE block if it grows unexpectedly large.
+    block = compact_cae_block(block, label="agent_context.cae_block")
+    return block
 
 
 def _compact_summary(summary: Any) -> Any:

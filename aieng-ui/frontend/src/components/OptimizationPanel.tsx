@@ -9,9 +9,13 @@ import {
   type OptimizationCandidate,
   type OptimizationStudy,
 } from "../app/optimizationStudy";
+import { isConvergenceMeaningful, type OptimizationConvergence } from "../app/optimizationConvergence";
+import { ConvergenceChart } from "./ConvergenceChart";
 
 type OptimizationPanelProps = {
-  study: OptimizationStudy;
+  study: OptimizationStudy | null;
+  /** Iterative-loop convergence history; rendered as a chart when available. */
+  convergence?: OptimizationConvergence | null;
   /** Prefill the composer with an approval-gated accept draft for a candidate. */
   onUseInChat?: (draft: string) => void;
 };
@@ -28,10 +32,10 @@ type OptimizationPanelProps = {
  * accept still flows through the existing approval-gated path; this panel never
  * mutates geometry directly.
  */
-export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps) {
-  const groups = useMemo(() => groupCandidatesByFeasibility(study.candidates), [study.candidates]);
+export function OptimizationPanel({ study, convergence, onUseInChat }: OptimizationPanelProps) {
+  if (!study || !isStudyMeaningful(study)) return null;
 
-  if (!isStudyMeaningful(study)) return null;
+  const groups = useMemo(() => groupCandidatesByFeasibility(study.candidates), [study.candidates]);
 
   return (
     <section className="optimization-card" aria-label="Optimization study">
@@ -70,6 +74,11 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
           ? "A candidate is safe to accept (still requires approval)"
           : "No candidate is accept-ready yet — advisory only"}
       </div>
+
+      {/* Convergence chart */}
+      {isConvergenceMeaningful(convergence ?? null) && (
+        <ConvergenceChart convergence={convergence!} title="Incumbent objective over iterations" />
+      )}
 
       {/* Candidate ranking */}
       {groups.map((group) => (

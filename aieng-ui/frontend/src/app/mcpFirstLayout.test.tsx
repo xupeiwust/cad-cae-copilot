@@ -34,6 +34,9 @@ vi.mock("../components/StandardPartsPanel", () => ({
 vi.mock("../components/BOMPanel", () => ({
   BOMPanel: () => null,
 }));
+vi.mock("../components/OptimizationPanel", () => ({
+  OptimizationPanel: () => null,
+}));
 vi.mock("../components/settings/GlobalSettingsDrawer", () => ({
   GlobalSettingsDrawer: () => null,
 }));
@@ -102,6 +105,8 @@ function createMockApp(): Parameters<typeof AppChrome>[0]["app"] {
     setLocalAgentConfig: vi.fn(),
     globalSettingsOpen: false,
     setGlobalSettingsOpen: vi.fn(),
+    optimizationStudy: null,
+    optimizationConvergence: null,
   } as unknown as Parameters<typeof AppChrome>[0]["app"];
 }
 

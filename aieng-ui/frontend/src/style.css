@@ -5736,6 +5736,143 @@ textarea {
   background: rgba(2, 6, 23, 0.32);
 }
 
+/* ── Convergence chart (#frontend-convergence-chart) ───────────────────────── */
+
+.convergence-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.15);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.32);
+}
+
+.convergence-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.convergence-chart-head strong {
+  font-size: 12px;
+  color: #e7f0ff;
+}
+
+.convergence-verdict {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.convergence-verdict-converged {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #b8f0d6;
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.convergence-verdict-running {
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #bfe3ff;
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.convergence-chart-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.convergence-axis-line {
+  stroke: rgba(148, 163, 184, 0.35);
+  stroke-width: 1;
+}
+
+.convergence-grid-line {
+  stroke: rgba(148, 163, 184, 0.12);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.convergence-axis-text {
+  font-size: 9px;
+  fill: #8ea4c5;
+}
+
+.convergence-axis-text-x {
+  text-anchor: middle;
+}
+
+.convergence-axis-text-y {
+  text-anchor: end;
+}
+
+.convergence-line {
+  stroke: #38bdf8;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.convergence-point {
+  stroke: #020617;
+  stroke-width: 1.5;
+}
+
+.convergence-point-feasible {
+  fill: #34d399;
+}
+
+.convergence-point-infeasible {
+  fill: #f87171;
+}
+
+.convergence-missing-point {
+  font-size: 10px;
+  fill: #94a3b8;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.convergence-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.convergence-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.convergence-legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.convergence-legend-dot-feasible {
+  background: #34d399;
+}
+
+.convergence-legend-dot-infeasible {
+  background: #f87171;
+}
+
+.convergence-legend-safe {
+  color: #b8f0d6;
+}
+
 .shapeir-head {
   display: flex;
   align-items: baseline;

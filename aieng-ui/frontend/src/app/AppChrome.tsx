@@ -10,6 +10,7 @@ import { ViewerPane } from "../components/ViewerPane";
 import { MaterialLibraryPanel } from "../components/MaterialLibraryPanel";
 import { StandardPartsPanel } from "../components/StandardPartsPanel";
 import { BOMPanel } from "../components/BOMPanel";
+import { OptimizationPanel } from "../components/OptimizationPanel";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
 import { isEmbedMode } from "./embed";
@@ -146,6 +147,12 @@ export function AppChrome({ app }: AppChromeProps) {
               (item) => !item.projectId || item.projectId === app.selectedId,
             )}
             onResolve={app.resolveApproval}
+          />
+
+          <OptimizationPanel
+            study={app.optimizationStudy}
+            convergence={app.optimizationConvergence}
+            onUseInChat={(draft) => app.setNotice({ tone: "info", title: "Draft ready", detail: draft })}
           />
 
           {libraryTab && !embed && (

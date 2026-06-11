@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from aieng import FORMAT_VERSION
+from aieng.converters.critique_engine import critique_geometry
 from aieng.converters.design_study import DESIGN_STUDY_PROBLEM_PATH
 
 CANDIDATE_WORKSPACE_ROOT = "candidates/"
@@ -27,6 +28,8 @@ CANDIDATE_EVALUATION_REL = "analysis/evaluation.json"
 CANDIDATE_EVALUATION_REPORT_REL = "diagnostics/evaluation_report.json"
 CANDIDATE_EVALUATION_FORMAT = "aieng.design_study_candidate_evaluation"
 CANDIDATE_EVALUATION_REPORT_FORMAT = "aieng.design_study_candidate_evaluation_report"
+CANDIDATE_TOPOLOGY_MAP_REL = "geometry/topology_map.json"
+CANDIDATE_FEATURE_GRAPH_REL = "graph/feature_graph.json"
 
 _STATIC_METRIC_RELS = (
     "analysis/static_metrics.json",
@@ -370,6 +373,46 @@ def _constraint_metric(constraint: dict[str, Any], flat: dict[str, Any]) -> tupl
     return None, None
 
 
+def _evaluate_critique_findings(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool, list[str]]:
+    """Map blocking ``cad.critique`` findings into constraint evidence.
+
+    Blocking findings are high-severity geometry problems (e.g. floating
+    components) and manufacturing-rule findings at high/medium severity
+    (e.g. min wall thickness).  Returns ``(evidence, has_blocking, reasons)``.
+    """
+    evidence: list[dict[str, Any]] = []
+    has_blocking = False
+    reasons: list[str] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        severity = str(finding.get("severity") or "")
+        category = str(finding.get("category") or "")
+        rule = str(finding.get("rule") or "")
+        is_blocking = (
+            (category == "manufacturing_rule" and severity in ("high", "medium"))
+            or (category == "geometry" and severity == "high")
+        )
+        if not is_blocking:
+            continue
+        has_blocking = True
+        reason = f"{rule}: {finding.get('observation') or finding.get('feature', '')}".strip()
+        reasons.append(reason)
+        evidence.append({
+            "id": f"critique_{rule}",
+            "type": "manufacturing_rule",
+            "rule": rule,
+            "feature": finding.get("feature"),
+            "feature_id": finding.get("feature_id"),
+            "severity": severity,
+            "actual": finding.get("observation"),
+            "status": "violated",
+            "source": "cad.critique",
+            "finding_id": finding.get("id"),
+        })
+    return evidence, has_blocking, reasons
+
+
 def _evaluate_constraints(problem: dict[str, Any] | None, flat: dict[str, Any]) -> tuple[list[dict[str, Any]], str, list[str]]:
     evidence: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -433,7 +476,16 @@ def _evaluate_constraints(problem: dict[str, Any] | None, flat: dict[str, Any]) 
 
 def _read_candidate_sources(zf: zipfile.ZipFile, names: set[str], ws: str) -> dict[str, Any]:
     docs: dict[str, Any] = {}
-    for rel in (*_STATIC_METRIC_RELS, *_COMPUTED_METRIC_RELS, *_FIELD_REGION_RELS, *_RESULT_MAP_RELS, *_MANIFEST_RELS, CANDIDATE_EVALUATION_REL):
+    for rel in (
+        *_STATIC_METRIC_RELS,
+        *_COMPUTED_METRIC_RELS,
+        *_FIELD_REGION_RELS,
+        *_RESULT_MAP_RELS,
+        *_MANIFEST_RELS,
+        CANDIDATE_EVALUATION_REL,
+        CANDIDATE_TOPOLOGY_MAP_REL,
+        CANDIDATE_FEATURE_GRAPH_REL,
+    ):
         path = f"{ws}{rel}"
         doc = _read_json(zf, path, names)
         if isinstance(doc, dict):
@@ -514,7 +566,35 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
 
     constraint_evidence, feasibility, c_warnings = _evaluate_constraints(problem if isinstance(problem, dict) else None, flat)
     warnings.extend(c_warnings)
-    if not flat:
+
+    # Run deterministic cad.critique on candidate workspace geometry if available.
+    topo = docs.get(f"{ws}{CANDIDATE_TOPOLOGY_MAP_REL}")
+    fg = docs.get(f"{ws}{CANDIDATE_FEATURE_GRAPH_REL}")
+    critique_result: dict[str, Any] | None = None
+    critique_blocking = False
+    critique_reasons: list[str] = []
+    critique_available = isinstance(topo, dict) and isinstance(fg, dict)
+    compile_status = docs.get(f"{ws}{CANDIDATE_EVALUATION_REL}", {}).get("compile_status", "not_run")
+    geometry_expected = compile_status in ("compile_succeeded", "compiled")
+    if critique_available:
+        critique_result = critique_geometry(topo, fg, mode="engineering")
+        if critique_result.get("status") == "ok":
+            critique_evidence, critique_blocking, critique_reasons = _evaluate_critique_findings(
+                critique_result.get("findings", [])
+            )
+            constraint_evidence.extend(critique_evidence)
+            if critique_blocking:
+                feasibility = "infeasible"
+        else:
+            warnings.append(f"cad.critique failed: {critique_result.get('message') or critique_result.get('code')}")
+            if geometry_expected and feasibility == "feasible":
+                feasibility = "unknown"
+    elif geometry_expected:
+        warnings.append("candidate workspace geometry not available for cad.critique; feasibility is unknown")
+        if feasibility == "feasible":
+            feasibility = "unknown"
+
+    if not flat and not critique_available:
         eval_status = "insufficient_data"
         feasibility = "unknown"
     elif errors:
@@ -555,6 +635,9 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
         },
         "baseline_modified": False,
         "reason": "candidate-local solver-neutral/static evidence normalized; no solver or geometry recompile was run",
+        "critique": critique_result,
+        "critique_blocking": critique_blocking,
+        "critique_reasons": critique_reasons,
     }
     report = {
         "format": CANDIDATE_EVALUATION_REPORT_FORMAT,
@@ -572,6 +655,12 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
             "violated": len([e for e in constraint_evidence if e.get("status") == "violated"]),
             "unknown": len([e for e in constraint_evidence if e.get("status") == "unknown"]),
             "warning_only": len([e for e in constraint_evidence if e.get("status") == "warning_only"]),
+        },
+        "critique": {
+            "available": critique_available,
+            "blocking": critique_blocking,
+            "reasons": critique_reasons,
+            "verdict": critique_result.get("verdict") if critique_result else None,
         },
         "source_artifact_paths": sorted(set(source_paths)),
         "warnings": evaluation["warnings"],
@@ -593,4 +682,6 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
         "confidence": confidence,
         "baseline_modified": False,
         "artifacts": [eval_path, report_path],
+        "critique_blocking": critique_blocking,
+        "critique_reasons": critique_reasons,
     }

@@ -71,6 +71,24 @@ def _read(pkg: Path, name: str):
         return json.loads(zf.read(name))
 
 
+def _topology_map(body_id="b1", name="base_plate", bbox=None, extra_entities=None):
+    entities = []
+    if bbox is not None:
+        entities.append({"id": body_id, "type": "solid", "name": name, "bounding_box": bbox})
+    if extra_entities:
+        entities.extend(extra_entities)
+    return {"entities": entities}
+
+
+def _feature_graph(*features):
+    return {"features": list(features)}
+
+
+def _named_part(name, body_id):
+    return {"id": f"feat_{body_id}", "type": "named_part", "name": name,
+            "geometry_refs": {"body": body_id}}
+
+
 def test_evaluate_candidate_normalizes_worst_case_neutral_metrics(tmp_path: Path):
     computed = {
         "format": "aieng.cae.computed_metrics",
@@ -136,6 +154,95 @@ def test_evaluate_candidate_marks_violations_and_proxy_confidence(tmp_path: Path
     assert ev["honesty"]["proxy_derived"] is True
     assert ev["honesty"]["contact_physics_modeled"] is False
     assert {c["id"] for c in ev["constraint_evidence"] if c["status"] == "violated"} == {"c_stress", "c_defl"}
+
+
+
+def test_evaluate_candidate_with_critique_violation_marks_infeasible(tmp_path: Path):
+    """A thin wall in candidate geometry becomes a constraint_violation."""
+    pkg = _write_pkg(tmp_path, members={
+        "candidates/c_thin/patch.json": {"candidate_id": "c_thin"},
+        "candidates/c_thin/analysis/evaluation.json": {
+            "compile_status": "compile_succeeded",
+            "metrics": {"mass_kg": 1.2},
+        },
+        "candidates/c_thin/analysis/static_metrics.json": {
+            "mass_kg": 1.2,
+            "max_stress": 80.0,
+            "max_deflection": 1.0,
+            "min_safety_factor": 2.0,
+        },
+        "candidates/c_thin/geometry/topology_map.json": _topology_map(
+            "b1", "back_plate", [0, 0, 0, 100, 80, 1.5]
+        ),
+        "candidates/c_thin/graph/feature_graph.json": _feature_graph(
+            _named_part("back_plate", "b1")
+        ),
+    })
+
+    res = evaluate_design_study_candidate(pkg, "c_thin")
+    assert res["status"] == "ok"
+    assert res["feasibility"] == "infeasible"
+    assert res["critique_blocking"] is True
+    ev = _read(pkg, "candidates/c_thin/analysis/evaluation.json")
+    assert ev["feasibility"] == "infeasible"
+    assert ev["critique_blocking"] is True
+    assert ev["critique"]["verdict"] == "fails_audit"
+    violated = [c for c in ev["constraint_evidence"] if c["status"] == "violated"]
+    assert any(c["rule"] == "min_wall_thickness" for c in violated)
+    report = _read(pkg, "candidates/c_thin/diagnostics/evaluation_report.json")
+    assert report["critique"]["blocking"] is True
+    assert report["constraint_summary"]["violated"] >= 1
+
+
+def test_evaluate_candidate_clean_geometry_unaffected(tmp_path: Path):
+    """A candidate that passes critique stays feasible."""
+    pkg = _write_pkg(tmp_path, members={
+        "candidates/c_clean/patch.json": {"candidate_id": "c_clean"},
+        "candidates/c_clean/analysis/evaluation.json": {
+            "compile_status": "compile_succeeded",
+            "metrics": {"mass_kg": 1.5},
+        },
+        "candidates/c_clean/analysis/static_metrics.json": {
+            "mass_kg": 1.5,
+            "max_stress": 80.0,
+            "max_deflection": 1.0,
+            "min_safety_factor": 2.0,
+        },
+        "candidates/c_clean/geometry/topology_map.json": _topology_map(
+            "b1", "base_plate", [0, 0, 0, 100, 80, 5.0]
+        ),
+        "candidates/c_clean/graph/feature_graph.json": _feature_graph(
+            _named_part("base_plate", "b1"),
+            {"id": "mh1", "type": "mounting_hole", "name": "hole_1",
+             "parameters": {"hole_diameter_mm": 6.0}, "geometry_refs": {"body": "b1"}},
+        ),
+    })
+
+    res = evaluate_design_study_candidate(pkg, "c_clean")
+    assert res["status"] == "ok"
+    assert res["feasibility"] == "feasible"
+    assert res["critique_blocking"] is False
+    ev = _read(pkg, "candidates/c_clean/analysis/evaluation.json")
+    assert ev["critique"]["verdict"] == "passes"
+
+
+def test_evaluate_candidate_missing_geometry_with_compile_expected_is_unknown(tmp_path: Path):
+    """If compile succeeded but topo/fg are missing, feasibility is honestly unknown."""
+    pkg = _write_pkg(tmp_path, members={
+        "candidates/c_nogeo/patch.json": {"candidate_id": "c_nogeo"},
+        "candidates/c_nogeo/analysis/evaluation.json": {
+            "compile_status": "compile_succeeded",
+            "metrics": {"mass_kg": 1.5},
+        },
+        "candidates/c_nogeo/analysis/static_metrics.json": {"mass_kg": 1.5},
+    })
+
+    res = evaluate_design_study_candidate(pkg, "c_nogeo")
+    assert res["status"] == "ok"
+    assert res["feasibility"] == "unknown"
+    ev = _read(pkg, "candidates/c_nogeo/analysis/evaluation.json")
+    assert ev["critique"] is None
+    assert any("not available for cad.critique" in w for w in ev["warnings"])
 
 
 def test_ranking_builds_candidate_evaluation_from_existing_static_metrics(tmp_path: Path):

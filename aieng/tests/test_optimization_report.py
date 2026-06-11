@@ -131,6 +131,47 @@ def test_full_study_report(tmp_path: Path):
     assert _read(pkg, "geometry/shape_ir.json") == _BASELINE
 
 
+def test_report_surfaces_shape_study(tmp_path: Path):
+    members = _full_members()
+    members["analysis/optimization_variables.json"] = {
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
+        "variables": [
+            {"id": "wall_t", "shape_bearing": False},
+            {"id": "fillet_r", "shape_bearing": True},
+            {"id": "hole_d", "shape_bearing": True},
+        ],
+    }
+    pkg = _write_pkg(tmp_path, members)
+    build_optimization_report(pkg)
+    doc = _read(pkg, OPTIMIZATION_REPORT_PATH)
+    assert doc["problem"]["shape_study"] is True
+    assert doc["problem"]["shape_bearing_variable_count"] == 2
+
+
+def test_report_shape_study_false_when_no_shape_vars(tmp_path: Path):
+    members = _full_members()
+    members["analysis/optimization_variables.json"] = {
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
+        "variables": [
+            {"id": "wall_t", "shape_bearing": False},
+        ],
+    }
+    pkg = _write_pkg(tmp_path, members)
+    build_optimization_report(pkg)
+    doc = _read(pkg, OPTIMIZATION_REPORT_PATH)
+    assert doc["problem"]["shape_study"] is False
+    assert doc["problem"]["shape_bearing_variable_count"] == 0
+
+
+def test_report_shape_study_false_when_no_variables_artifact(tmp_path: Path):
+    members = {k: v for k, v in _full_members().items() if k != "analysis/optimization_variables.json"}
+    pkg = _write_pkg(tmp_path, members)
+    build_optimization_report(pkg)
+    doc = _read(pkg, OPTIMIZATION_REPORT_PATH)
+    assert doc["problem"]["shape_study"] is False
+    assert doc["problem"]["shape_bearing_variable_count"] == 0
+
+
 # ── reproducibility: building twice yields the same artifact ─────────────────
 
 def test_report_is_reproducible(tmp_path: Path):

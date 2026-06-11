@@ -8,7 +8,7 @@
   "required": ["format", "schema_version", "study_id", "design_study_problem_ref", "variables", "candidate_ids", "provenance", "claim_policy"],
   "properties": {
     "format": {"const": "aieng.optimization_variables"},
-    "schema_version": {"const": "0.1"},
+    "schema_version": {"const": "0.2"},
     "study_id": {"type": "string", "minLength": 1},
     "design_study_problem_ref": {"const": "analysis/design_study_problem.json"},
     "design_study_problem_id": {"type": ["string", "null"]},
@@ -39,6 +39,7 @@
         "scope": {"enum": ["local", "global", "unscoped"]},
         "safe_to_modify": {"type": "boolean"},
         "semantic_role": {"type": ["string", "null"]},
+        "shape_bearing": {"type": "boolean"},
         "candidate_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
       },
       "allOf": [

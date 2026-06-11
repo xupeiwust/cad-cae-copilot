@@ -218,6 +218,13 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
         key = row.get("feasibility") or "unrated"
         feasibility_tally[key] = feasibility_tally.get(key, 0) + 1
 
+    # Phase-3 shape-bearing variable count (distinguishes shape vs sizing study)
+    variable_list = (variables or {}).get("variables") if isinstance(variables, dict) else []
+    shape_bearing_count = sum(
+        1 for v in variable_list if isinstance(v, dict) and v.get("shape_bearing") is True
+    )
+    shape_study = shape_bearing_count > 0
+
     objective = None
     if isinstance(ranking, dict):
         objective = ranking.get("objective")
@@ -264,6 +271,8 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             "variable_count": (
                 len(problem.get("variables") or []) if isinstance(problem, dict) else None
             ),
+            "shape_study": shape_study,
+            "shape_bearing_variable_count": shape_bearing_count,
         },
         "variables": (variables or {}).get("variables") if isinstance(variables, dict) else None,
         "objectives": (objectives or {}).get("objectives") if isinstance(objectives, dict) else None,

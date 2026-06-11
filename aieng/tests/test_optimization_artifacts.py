@@ -87,6 +87,7 @@ def valid_documents() -> dict[str, dict]:
         },
         "variables": {
             **copy.deepcopy(common),
+            "schema_version": "0.2",
             "format": "aieng.optimization_variables",
             "variables": [
                 {

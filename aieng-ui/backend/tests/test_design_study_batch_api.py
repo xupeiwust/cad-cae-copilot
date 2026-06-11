@@ -40,7 +40,7 @@ def _seed_sampled_package(settings, project_id: str) -> Path:
     }
     variables = {
         "format": "aieng.optimization_variables",
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "study_id": "opt_001",
         "design_study_problem_ref": "analysis/design_study_problem.json",
         "design_study_problem_id": "source_001",

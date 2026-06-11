@@ -1,0 +1,179 @@
+/**
+ * @vitest-environment happy-dom
+ */
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+
+import { OptimizationPanel } from "./OptimizationPanel";
+import type { OptimizationStudy } from "../app/optimizationStudy";
+
+afterEach(cleanup);
+
+function makeStudy(overrides: Partial<OptimizationStudy> = {}): OptimizationStudy {
+  return {
+    has_study: true,
+    candidates: [],
+    recommendation: null,
+    report: null,
+    safe_to_accept: false,
+    baseline_modified: null,
+    warnings: [],
+    ...overrides,
+  };
+}
+
+describe("OptimizationPanel", () => {
+  it("returns null when study is not meaningful", () => {
+    const { container } = render(<OptimizationPanel study={makeStudy({ has_study: false })} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders candidate groups and accept button", () => {
+    const study = makeStudy({
+      candidates: [
+        { candidate_id: "c1", rank: 1, feasibility: "feasible", score: 0.9, confidence: "high" },
+      ],
+      safe_to_accept: true,
+    });
+    render(<OptimizationPanel study={study} onUseInChat={vi.fn()} />);
+    expect(screen.getByText("Optimization study")).toBeTruthy();
+    expect(screen.getByText("#1")).toBeTruthy();
+    expect(screen.getByText("c1")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Accept/i })).toBeTruthy();
+  });
+
+  it("renders study overview with objective, constraints, and ranking summary", () => {
+    const study = makeStudy({
+      candidates: [
+        { candidate_id: "c1", rank: 1, feasibility: "feasible" },
+      ],
+      problem: {
+        objective: { metric: "mass", sense: "minimize" },
+        constraints: [{ type: "max_stress" }],
+        variable_count: 3,
+      },
+      ranking: { best_candidate_id: "c1", next_action: "accept_candidate" },
+      acceptance: { status: "pending" },
+      report: {
+        feasibility_summary: { feasible: 1, infeasible: 0 },
+      },
+    });
+    const { container } = render(<OptimizationPanel study={study} />);
+    expect(screen.getByText("Study overview")).toBeTruthy();
+    expect(screen.getByText("Objective")).toBeTruthy();
+    expect(screen.getByText("mass")).toBeTruthy();
+    expect(screen.getByText("Variables")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+    expect(screen.getByText("Constraints")).toBeTruthy();
+    // "1" appears in multiple places; scope to the overview grid
+    expect(container.querySelector(".optimization-overview-grid")?.textContent).toContain("1");
+    expect(screen.getByText("Best candidate")).toBeTruthy();
+    expect(screen.getByText("Next action")).toBeTruthy();
+    expect(screen.getByText("accept_candidate")).toBeTruthy();
+    expect(screen.getByText("Acceptance")).toBeTruthy();
+    expect(screen.getByText("pending")).toBeTruthy();
+    expect(screen.getByText("feasible: 1")).toBeTruthy();
+  });
+
+  it("expands candidate details on toggle click", () => {
+    const study = makeStudy({
+      candidates: [
+        {
+          candidate_id: "c1",
+          rank: 1,
+          feasibility: "infeasible",
+          constraint_violations: ["stress too high"],
+          objective_delta: { metric: "mass", delta_percent: -10 },
+          reasons: ["violated"],
+          metrics_missing: ["deflection"],
+          execution_status: "completed",
+        },
+      ],
+    });
+    render(<OptimizationPanel study={study} />);
+
+    // Details hidden initially
+    expect(screen.queryByText("Violations")).toBeNull();
+
+    const toggle = screen.getByRole("button", { name: /Expand details/i });
+    fireEvent.click(toggle);
+
+    expect(screen.getByText("Violations")).toBeTruthy();
+    expect(screen.getByText("stress too high")).toBeTruthy();
+    expect(screen.getByText("Objective delta")).toBeTruthy();
+    expect(screen.getByText(/mass:/)).toBeTruthy();
+    expect(screen.getByText("Notes")).toBeTruthy();
+    expect(screen.getByText("violated")).toBeTruthy();
+    expect(screen.getByText("Missing metrics")).toBeTruthy();
+    expect(screen.getByText("deflection")).toBeTruthy();
+    expect(screen.getByText("Execution")).toBeTruthy();
+    expect(screen.getByText("completed")).toBeTruthy();
+
+    // Collapse
+    fireEvent.click(toggle);
+    expect(screen.queryByText("Violations")).toBeNull();
+  });
+
+  it("renders iteration history when present", () => {
+    const study = makeStudy({
+      candidates: [],
+      report: {
+        iteration_history: [
+          { index: 0, incumbent_candidate_id: "c1", incumbent_objective: 1.2, feasible: true, evaluations_total: 3, convergence_verdict: "continue" },
+        ],
+      },
+    });
+    const { container } = render(<OptimizationPanel study={study} />);
+    expect(screen.getByText("Iteration history")).toBeTruthy();
+    expect(screen.getByText("#")).toBeTruthy();
+    expect(screen.getByText("Incumbent")).toBeTruthy();
+    // "Objective" also appears in the overview when present; here it's just the table header
+    expect(container.querySelector(".optimization-iteration-table")?.textContent).toContain("Objective");
+    expect(screen.getByText("Feasible")).toBeTruthy();
+    expect(screen.getByText("Evals")).toBeTruthy();
+    expect(screen.getByText("Verdict")).toBeTruthy();
+    expect(screen.getByText("continue")).toBeTruthy();
+    expect(screen.getByText("Yes")).toBeTruthy();
+  });
+
+  it("renders missing stages transparency", () => {
+    const study = makeStudy({
+      candidates: [],
+      report: { missing_stages: ["acceptance", "recommendation"] },
+    });
+    render(<OptimizationPanel study={study} />);
+    expect(screen.getByText("Missing stages")).toBeTruthy();
+    expect(screen.getByText("acceptance")).toBeTruthy();
+    expect(screen.getByText("recommendation")).toBeTruthy();
+  });
+
+  it("renders failed candidates from report", () => {
+    const study = makeStudy({
+      candidates: [],
+      report: {
+        failed_candidates: [
+          { candidate_id: "c2", execution_status: "compile_failed", feasibility: "failed", reasons: ["build error"] },
+        ],
+      },
+    });
+    render(<OptimizationPanel study={study} />);
+    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getByText("c2")).toBeTruthy();
+    expect(screen.getByText("compile_failed")).toBeTruthy();
+    expect(screen.getByText("build error")).toBeTruthy();
+  });
+
+  it("drafts accept command via onUseInChat", () => {
+    const onUseInChat = vi.fn();
+    const study = makeStudy({
+      candidates: [{ candidate_id: "c1", rank: 1, feasibility: "feasible" }],
+      safe_to_accept: true,
+    });
+    render(<OptimizationPanel study={study} onUseInChat={onUseInChat} />);
+    // There is only one enabled Accept button in this single-feasible-candidate study
+    const acceptBtn = screen.getAllByRole("button", { name: /Accept/i }).find((b) => !b.hasAttribute("disabled"));
+    expect(acceptBtn).toBeTruthy();
+    fireEvent.click(acceptBtn!);
+    expect(onUseInChat).toHaveBeenCalledWith("/design-study accept candidate c1");
+  });
+});

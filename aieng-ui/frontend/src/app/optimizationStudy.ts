@@ -8,6 +8,14 @@
 
 export type CandidateFeasibility = "feasible" | "infeasible" | "unknown" | "failed";
 
+export type ObjectiveDelta = {
+  metric?: string | null;
+  candidate_value?: number | null;
+  baseline_value?: number | null;
+  delta_percent?: number | null;
+  delta_absolute?: number | null;
+};
+
 export type OptimizationCandidate = {
   candidate_id: string;
   rank: number;
@@ -17,6 +25,13 @@ export type OptimizationCandidate = {
   metrics?: Record<string, number | string | null>;
   /** Honesty signal: true when metrics are incomplete or proxy-based. */
   has_unknown_metrics?: boolean;
+  /** Deepening: per-candidate engineering details surfaced for transparency. */
+  constraint_violations?: string[];
+  objective_delta?: ObjectiveDelta | null;
+  reasons?: string[];
+  metrics_missing?: string[];
+  recommendation?: string | null;
+  execution_status?: string | null;
 };
 
 export type OptimizationRecommendation = {
@@ -27,10 +42,45 @@ export type OptimizationRecommendation = {
   advisory_only: boolean;
 };
 
+export type IterationHistoryEntry = {
+  index?: number;
+  incumbent_candidate_id?: string | null;
+  incumbent_objective?: number | null;
+  feasible?: boolean | null;
+  evaluations_total?: number | null;
+  convergence_verdict?: string | null;
+};
+
 export type OptimizationReport = {
   summary?: string | null;
   variable_count?: number;
   candidate_count?: number;
+  /** Deepening: aggregated transparency from the optimization report. */
+  feasibility_summary?: Record<string, number>;
+  failed_candidates?: Array<{
+    candidate_id: string;
+    execution_status?: string | null;
+    feasibility?: string | null;
+    reasons?: string[];
+  }>;
+  iteration_history?: IterationHistoryEntry[];
+  missing_stages?: string[];
+};
+
+export type OptimizationProblem = {
+  objective?: unknown;
+  constraints?: unknown[];
+  variable_count?: number;
+};
+
+export type OptimizationRanking = {
+  best_candidate_id?: string | null;
+  next_action?: string | null;
+};
+
+export type OptimizationAcceptance = {
+  status?: string | null;
+  accepted_candidate_id?: string | null;
 };
 
 export type OptimizationStudy = {
@@ -43,6 +93,10 @@ export type OptimizationStudy = {
   /** Honesty signal: whether baseline was ever modified (should be false). */
   baseline_modified: boolean | null;
   warnings: string[];
+  /** Deepening: problem definition, ranking summary, acceptance state, and iteration history. */
+  problem?: OptimizationProblem | null;
+  ranking?: OptimizationRanking | null;
+  acceptance?: OptimizationAcceptance | null;
 };
 
 const FEASIBILITY_ORDER: CandidateFeasibility[] = ["feasible", "unknown", "infeasible", "failed"];
@@ -101,6 +155,12 @@ export function shapeOptimizationStudy(
         confidence: normalizeConfidence(c.confidence),
         metrics,
         has_unknown_metrics: detectUnknownMetrics(metrics),
+        constraint_violations: shapeStringArray(c.constraint_violations),
+        objective_delta: shapeObjectiveDelta(c.objective_delta),
+        reasons: shapeStringArray(c.reasons),
+        metrics_missing: shapeStringArray(c.metrics_missing),
+        recommendation: typeof c.recommendation === "string" ? c.recommendation : null,
+        execution_status: typeof c.execution_status === "string" ? c.execution_status : null,
       });
     }
 
@@ -124,13 +184,46 @@ export function shapeOptimizationStudy(
 
   // ── Report ──
   let report: OptimizationReport | null = null;
+  let problem: OptimizationProblem | null = null;
+  let ranking: OptimizationRanking | null = null;
+  let acceptance: OptimizationAcceptance | null = null;
+
   if (reportArtifact && typeof reportArtifact === "object") {
     const rep = reportArtifact as Record<string, unknown>;
     report = {
       summary: typeof rep.summary === "string" ? rep.summary : null,
       variable_count: typeof rep.variable_count === "number" ? rep.variable_count : undefined,
       candidate_count: typeof rep.candidate_count === "number" ? rep.candidate_count : undefined,
+      feasibility_summary: shapeFeasibilitySummary(rep.feasibility_summary),
+      failed_candidates: shapeFailedCandidates(rep.failed_candidates),
+      iteration_history: shapeIterationHistory(rep.iteration_history),
+      missing_stages: shapeStringArray(rep.missing_stages),
     };
+
+    const repProblem = rep.problem && typeof rep.problem === "object" ? (rep.problem as Record<string, unknown>) : null;
+    if (repProblem) {
+      problem = {
+        objective: repProblem.objective ?? undefined,
+        constraints: Array.isArray(repProblem.constraints) ? repProblem.constraints : undefined,
+        variable_count: typeof repProblem.variable_count === "number" ? repProblem.variable_count : undefined,
+      };
+    }
+
+    const repRanking = rep.ranking && typeof rep.ranking === "object" ? (rep.ranking as Record<string, unknown>) : null;
+    if (repRanking) {
+      ranking = {
+        best_candidate_id: typeof repRanking.best_candidate_id === "string" ? repRanking.best_candidate_id : null,
+        next_action: typeof repRanking.next_action === "string" ? repRanking.next_action : null,
+      };
+    }
+
+    const repAcceptance = rep.acceptance && typeof rep.acceptance === "object" ? (rep.acceptance as Record<string, unknown>) : null;
+    if (repAcceptance) {
+      acceptance = {
+        status: typeof repAcceptance.status === "string" ? repAcceptance.status : null,
+        accepted_candidate_id: typeof repAcceptance.accepted_candidate_id === "string" ? repAcceptance.accepted_candidate_id : null,
+      };
+    }
   }
 
   const has_study = candidates.length > 0 || recommendation != null || report != null;
@@ -143,6 +236,9 @@ export function shapeOptimizationStudy(
     safe_to_accept,
     baseline_modified,
     warnings,
+    problem,
+    ranking,
+    acceptance,
   };
 }
 
@@ -176,6 +272,69 @@ function shapeMetrics(raw: unknown): Record<string, number | string | null> | un
 function detectUnknownMetrics(metrics?: Record<string, number | string | null>): boolean {
   if (!metrics) return true;
   return Object.values(metrics).some((v) => v === null || v === undefined);
+}
+
+function shapeStringArray(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter((s): s is string => typeof s === "string");
+}
+
+function shapeObjectiveDelta(raw: unknown): ObjectiveDelta | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  return {
+    metric: typeof d.metric === "string" ? d.metric : null,
+    candidate_value: typeof d.candidate_value === "number" ? d.candidate_value : null,
+    baseline_value: typeof d.baseline_value === "number" ? d.baseline_value : null,
+    delta_percent: typeof d.delta_percent === "number" ? d.delta_percent : null,
+    delta_absolute: typeof d.delta_absolute === "number" ? d.delta_absolute : null,
+  };
+}
+
+function shapeFeasibilitySummary(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "number") out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function shapeFailedCandidates(raw: unknown): OptimizationReport["failed_candidates"] {
+  if (!Array.isArray(raw)) return undefined;
+  const out: NonNullable<OptimizationReport["failed_candidates"]> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const c = item as Record<string, unknown>;
+    if (typeof c.candidate_id !== "string") continue;
+    out.push({
+      candidate_id: c.candidate_id,
+      execution_status: typeof c.execution_status === "string" ? c.execution_status : null,
+      feasibility: typeof c.feasibility === "string" ? c.feasibility : null,
+      reasons: shapeStringArray(c.reasons),
+    });
+  }
+  return out.length ? out : undefined;
+}
+
+function shapeIterationHistory(raw: unknown): IterationHistoryEntry[] | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const hist = raw as Record<string, unknown>;
+  const items = Array.isArray(hist.iterations) ? hist.iterations : Array.isArray(raw) ? raw : [];
+  const out: IterationHistoryEntry[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const it = item as Record<string, unknown>;
+    out.push({
+      index: typeof it.index === "number" ? it.index : undefined,
+      incumbent_candidate_id: typeof it.incumbent_candidate_id === "string" ? it.incumbent_candidate_id : null,
+      incumbent_objective: typeof it.incumbent_objective === "number" ? it.incumbent_objective : null,
+      feasible: typeof it.feasible === "boolean" ? it.feasible : null,
+      evaluations_total: typeof it.evaluations_total === "number" ? it.evaluations_total : null,
+      convergence_verdict: typeof it.convergence_verdict === "string" ? it.convergence_verdict : null,
+    });
+  }
+  return out.length ? out : undefined;
 }
 
 /**

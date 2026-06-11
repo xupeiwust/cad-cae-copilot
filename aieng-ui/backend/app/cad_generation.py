@@ -6241,13 +6241,10 @@ def _rebuild_after_part_edit(
     regression diff. Shared by remove_part / replace_part."""
     # Preserve the original model_kind so cache key + heuristics stay consistent.
     model_kind = "auto"
-    try:
-        with zipfile.ZipFile(pkg_path, "r") as zf:
-            if "graph/feature_graph.json" in zf.namelist():
-                fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
-                model_kind = fg.get("model_kind", "auto")
-    except Exception:
-        pass
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        if "graph/feature_graph.json" in zf.namelist():
+            fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+            model_kind = fg.get("model_kind", "auto")
 
     try:
         cached_result = _execute_build123d_cached(

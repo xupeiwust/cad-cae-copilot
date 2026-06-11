@@ -167,3 +167,132 @@ def test_missing_package_errors(tmp_path: Path):
     res = propose_next_candidates(tmp_path / "nope.aieng", count=2)
     assert res["status"] == "error"
     assert res["code"] == "package_not_found"
+
+
+# ── genetic algorithm proposer ───────────────────────────────────────────────
+
+
+def _variables_doc_discrete():
+    return {
+        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "variables": [
+            {"id": "wall_t", "type": "continuous", "min_value": 2.0, "max_value": 8.0,
+             "current_value": 5.0, "safe_to_modify": True},
+            {"id": "material", "type": "categorical",
+             "allowed_values": ["al", "st", "ti"], "current_value": "al",
+             "safe_to_modify": True},
+        ],
+    }
+
+
+def _incumbent_patch_discrete(cid, wall, material):
+    return {"format": "aieng.design_candidate_patch", "candidate_id": cid,
+            "variable_changes": [{"variable_id": "wall_t", "new_value": wall},
+                                 {"variable_id": "material", "new_value": material}]}
+
+
+def _pkg_discrete(tmp_path, *, ranking=None, incumbent=None, history=None) -> Path:
+    pkg = tmp_path / "study_discrete.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", json.dumps({"name": "S"}))
+        zf.writestr("geometry/shape_ir.json", json.dumps({"parts": []}))
+        zf.writestr("analysis/optimization_variables.json", json.dumps(_variables_doc_discrete()))
+        if ranking is not None:
+            zf.writestr("analysis/design_study_candidate_ranking.json", json.dumps(ranking))
+        if incumbent is not None:
+            cid, wall, material = incumbent
+            zf.writestr(f"{DESIGN_CANDIDATES_DIR}{cid}.json",
+                        json.dumps(_incumbent_patch_discrete(cid, wall, material)))
+        if history is not None:
+            zf.writestr("analysis/optimization_iterations.json", json.dumps(history))
+    return pkg
+
+
+def test_auto_selects_genetic_for_discrete_variables(tmp_path: Path):
+    pkg = _pkg_discrete(
+        tmp_path,
+        ranking=_ranking("inc"),
+        incumbent=("inc", 5.0, "al"),
+    )
+    res = propose_next_candidates(pkg, count=4, seed=1)
+    assert res["status"] == "ok"
+    assert res["strategy"] == "genetic"
+    assert "select_genetic" in res["reason_codes"]
+    assert "discrete_variables_present" in res["reason_codes"]
+    assert res["baseline_modified"] is False
+    assert res["candidate_count"] == 4
+
+
+def test_genetic_respects_discrete_allowed_values(tmp_path: Path):
+    pkg = _pkg_discrete(
+        tmp_path,
+        ranking=_ranking("inc"),
+        incumbent=("inc", 5.0, "al"),
+    )
+    propose_next_candidates(pkg, count=8, seed=42)
+    for n, patch in _patches(pkg).items():
+        if "inc.json" in n:
+            continue
+        vals = _vals(patch)
+        assert 2.0 <= vals["wall_t"] <= 8.0
+        assert vals["material"] in {"al", "st", "ti"}
+
+
+def test_explicit_genetic_strategy_with_continuous_variables(tmp_path: Path):
+    pkg = _pkg(tmp_path, ranking=_ranking("inc"), incumbent=("inc", 5.0, 2.0))
+    res = propose_next_candidates(pkg, count=4, seed=1, strategy="genetic")
+    assert res["status"] == "ok"
+    assert res["strategy"] == "genetic"
+    assert "select_genetic" in res["reason_codes"]
+    assert res["candidate_count"] == 4
+    for n, patch in _patches(pkg).items():
+        if "inc.json" in n:
+            continue
+        vals = _vals(patch)
+        assert 2.0 <= vals["wall_t"] <= 8.0
+        assert 1.0 <= vals["fillet_r"] <= 4.0
+
+
+def test_genetic_deterministic_given_seed(tmp_path: Path):
+    a = tmp_path / "a"; a.mkdir()
+    b = tmp_path / "b"; b.mkdir()
+    pkg1 = _pkg_discrete(a, ranking=_ranking("inc"), incumbent=("inc", 5.0, "al"))
+    propose_next_candidates(pkg1, count=4, seed=42, strategy="genetic")
+    pkg2 = _pkg_discrete(b, ranking=_ranking("inc"), incumbent=("inc", 5.0, "al"))
+    propose_next_candidates(pkg2, count=4, seed=42, strategy="genetic")
+    v1 = sorted(_vals(p)["wall_t"] for n, p in _patches(pkg1).items() if "inc.json" not in n)
+    v2 = sorted(_vals(p)["wall_t"] for n, p in _patches(pkg2).items() if "inc.json" not in n)
+    assert v1 == v2 and len(v1) == 4
+
+
+def test_genetic_no_incumbent_falls_back_to_lhs(tmp_path: Path):
+    ranking = {"format": "aieng.design_study.candidate_ranking.v0", "status": "ranked",
+               "best_candidate_id": None, "candidates": []}
+    pkg = _pkg_discrete(tmp_path, ranking=ranking)
+    res = propose_next_candidates(pkg, count=3, seed=2)
+    assert res["status"] == "ok"
+    assert res["strategy"] == "lhs_fallback"
+    assert "no_incumbent_fallback" in res["reason_codes"]
+    assert "select_genetic" not in res["reason_codes"]
+
+
+def test_auto_continuous_variables_uses_trust_region(tmp_path: Path):
+    pkg = _pkg(tmp_path, ranking=_ranking("inc"), incumbent=("inc", 5.0, 2.0))
+    res = propose_next_candidates(pkg, count=4, seed=1)
+    assert res["status"] == "ok"
+    assert res["strategy"] == "trust_region"
+    assert "local_refinement" in res["reason_codes"]
+    assert "select_genetic" not in res["reason_codes"]
+
+
+def test_genetic_radius_shrinks_with_iteration(tmp_path: Path):
+    hist = {"iterations": [{"index": 1}, {"index": 2}]}
+    pkg = _pkg_discrete(
+        tmp_path,
+        ranking=_ranking("inc"),
+        incumbent=("inc", 5.0, "al"),
+        history=hist,
+    )
+    res = propose_next_candidates(pkg, count=4, seed=1, strategy="genetic")
+    assert res["radius_fraction"] == 0.25
+    assert "trust_region_shrink" in res["reason_codes"]

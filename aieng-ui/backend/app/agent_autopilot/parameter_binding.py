@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from aieng.converters.optimization_variables import is_shape_bearing
+
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 # Tokens that carry no naming signal (units, generic scaffolding) — dropped so

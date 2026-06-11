@@ -117,7 +117,7 @@ def _variables_doc(variables=None) -> dict:
     v = variables or _variables()
     return {
         "format": "aieng.optimization_variables",
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "study_id": "opt_study_001",
         "design_study_problem_ref": "analysis/design_study_problem.json",
         "variables": v,

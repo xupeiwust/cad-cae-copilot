@@ -17,7 +17,7 @@ from test_api import _make_patch_settings
 
 def _variables_doc():
     return {
-        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
         "design_study_problem_ref": "analysis/design_study_problem.json",
         "variables": [
             {"id": "wall_t", "type": "continuous", "min_value": 2.0, "max_value": 8.0,

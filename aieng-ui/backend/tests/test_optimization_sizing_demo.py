@@ -76,7 +76,7 @@ def _variables_doc(problem):
                 "cad_parameter_name": v["path"].split("/")[-1], "binding_status": "bound",
                 "allowed_values": None, "scope": "local", "candidate_ids": []}
     return {
-        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
         "study_id": "opt_bracket_001",
         "design_study_problem_ref": "analysis/design_study_problem.json",
         "design_study_problem_id": problem["id"],

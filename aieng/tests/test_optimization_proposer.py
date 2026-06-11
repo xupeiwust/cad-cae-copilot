@@ -13,7 +13,7 @@ from aieng.converters.optimization_proposer import (
 
 def _variables_doc():
     return {
-        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
         "variables": [
             {"id": "wall_t", "type": "continuous", "min_value": 2.0, "max_value": 8.0,
              "current_value": 5.0, "safe_to_modify": True},

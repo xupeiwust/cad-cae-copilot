@@ -226,7 +226,7 @@ def test_validate_signals_sampling_when_no_candidates_exist(tmp_path: Path) -> N
 
     problem = _problem()
     variables_doc = {
-        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
         "study_id": "test", "design_study_problem_ref": "analysis/design_study_problem.json",
         "variables": [
             {"id": "wall_t", "path": "shape_ir/params/WALL_THICKNESS", "type": "continuous",

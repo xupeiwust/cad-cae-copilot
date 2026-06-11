@@ -63,7 +63,7 @@ def _problem():
 
 def _variables_doc():
     return {
-        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
         "study_id": "opt_iter_001",
         "design_study_problem_ref": "analysis/design_study_problem.json",
         "design_study_problem_id": "bracket_iter_001",

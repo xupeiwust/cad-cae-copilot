@@ -687,12 +687,12 @@ def register_project_workflow_routes(
         """Propose the next batch of candidates by local refinement.
 
         Reads the ranking incumbent + optimization variables and samples within a
-        shrinking trust region (default) or runs an SLSQP local step.  Falls back to
-        whole-domain LHS when no feasible incumbent.  Deterministic given a seed. Does
+        shrinking trust region (default), runs an SLSQP local step, or uses a Bayesian
+        surrogate.  Falls back to whole-domain LHS when no feasible incumbent.  Deterministic given a seed. Does
         NOT run/evaluate/accept candidates, run CAE, or modify the baseline.
 
         Body (all optional):
-          algorithm (str): "trust_region" | "slsqp" (default "trust_region")
+          algorithm (str): "trust_region" | "slsqp" | "bayesian" (default "trust_region")
           count (int), shrink (float 0-1), seed (int)."""
         from aieng.converters.optimization_proposer import propose_next_candidates
         from ..project_io import get_project, resolve_project_path
@@ -703,10 +703,10 @@ def register_project_workflow_routes(
             raise HTTPException(status_code=404, detail=".aieng package not found")
         data = payload or {}
         algorithm = str(data.get("algorithm") or "trust_region")
-        if algorithm not in {"trust_region", "slsqp"}:
+        if algorithm not in {"trust_region", "slsqp", "bayesian"}:
             raise HTTPException(
                 status_code=422,
-                detail="algorithm must be one of: trust_region, slsqp",
+                detail="algorithm must be one of: trust_region, slsqp, bayesian",
             )
         return {
             "project_id": project_id,

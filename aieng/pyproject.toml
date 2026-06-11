@@ -75,6 +75,7 @@ benchmark = [
 geometry = []
 mcp = ["mcp>=1.0"]
 optimization = ["scipy>=1.10"]
+bayesian = ["scikit-optimize>=0.9"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]

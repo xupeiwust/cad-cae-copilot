@@ -420,8 +420,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["project_id"],
         "properties": {
             "project_id": {"type": "string"},
-            "algorithm": {"type": "string", "enum": ["trust_region", "slsqp"],
-                          "description": "Proposer algorithm: trust_region (default) or slsqp."},
+            "algorithm": {"type": "string", "enum": ["trust_region", "slsqp", "bayesian"],
+                          "description": "Proposer algorithm: trust_region (default), slsqp, or bayesian."},
             "count": {"type": "integer", "minimum": 1,
                       "description": "Number of candidates to propose this round (default 4)."},
             "shrink": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,

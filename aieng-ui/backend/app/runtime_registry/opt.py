@@ -1,0 +1,738 @@
+"""opt runtime tool registrations.
+
+Extracted from runtime_tool_registry.py to keep domain logic focused.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from ..legacy_app_symbols import sync_main_symbols
+
+LOGGER = logging.getLogger("app.app_factory")
+
+
+def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema: Any) -> dict[str, Any]:
+    """Register opt runtime tools."""
+    sync_main_symbols(globals())
+    _delete_project_everywhere = app_context.delete_project_everywhere
+    _load_project_feature_parameters = app_context.load_project_feature_parameters
+
+    def _tool_opt_derive_problem_from_cae(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Derive a 2D topology-optimization problem (grid + supports + loads + design
+        space) from a project's CAE setup + geometry. Read-only (no mutation)."""
+        from aieng.converters.topology_optimization import derive_topopt_problem_from_package
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        kw: dict[str, Any] = {"dimension": str(inp.get("dimension") or "2d").lower()}
+        for k in ("resolution", "resolution_3d", "max_iters"):
+            if inp.get(k) is not None:
+                kw[k] = int(inp[k])
+        for k in ("volfrac", "penalty", "rmin"):
+            if inp.get(k) is not None:
+                kw[k] = float(inp[k])
+        try:
+            problem = derive_topopt_problem_from_package(pkg, **kw)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "derive_failed", "message": f"{type(exc).__name__}: {exc}"}
+        # 3D derivation may honestly decline to guess BCs.
+        if problem.get("status") == "needs_user_input":
+            return {"status": "needs_user_input", "tool": "opt.derive_problem_from_cae",
+                    "problem": problem, "diagnostics": problem.get("diagnostics")}
+        return {"status": "ok", "tool": "opt.derive_problem_from_cae", "problem": problem,
+                "derivation": problem.get("derivation")}
+
+    def _tool_opt_run_topology_optimization(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Run topology optimization (built-in 2D SIMP) on a project's design space;
+        write analysis/topology_optimization.json. No external solver. If auto_derive
+        is set (or no problem is given), the problem is derived from the project's CAE
+        setup + geometry first."""
+        from aieng.converters.topology_optimization import (
+            derive_topopt_problem_from_package,
+            write_topology_optimization,
+        )
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        problem = inp.get("problem") if isinstance(inp.get("problem"), dict) else None
+        auto_derive = bool(inp.get("auto_derive")) or problem is None
+        dimension = str(inp.get("dimension") or "2d").lower()
+        # An explicit 3D optimizer implies 3D derivation.
+        if str(inp.get("optimizer") or "").lower() == "simp_3d":
+            dimension = "3d"
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        optimizer = str(inp.get("optimizer") or ("simp_3d" if dimension == "3d" else "simp_2d"))
+        try:
+            if auto_derive:
+                derived = derive_topopt_problem_from_package(pkg, dimension=dimension)
+                # 3D derivation may honestly decline to guess BCs — surface it, don't solve.
+                if derived.get("status") == "needs_user_input":
+                    return {"status": "needs_user_input", "tool": "opt.run_topology_optimization",
+                            "problem": derived, "diagnostics": derived.get("diagnostics")}
+                if isinstance(problem, dict):  # caller overrides (volfrac, grid, ...) win
+                    derived.update({k: v for k, v in problem.items() if k != "bcs"})
+                    if isinstance(problem.get("bcs"), dict):
+                        derived.setdefault("bcs", {}).update(problem["bcs"])
+                problem = derived
+            result = write_topology_optimization(pkg, problem, optimizer=optimizer)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "optimization_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": "ok", "tool": "opt.run_topology_optimization", "topology_optimization": result}
+
+    rt.register_tool(
+        "opt.run_topology_optimization",
+        _tool_opt_run_topology_optimization,
+        description=(
+            "Run topology optimization on a project's design space using the built-in "
+            "self-contained 2D SIMP (compliance minimization, pure numpy — no external "
+            "solver). Writes analysis/topology_optimization.json (optimizer provenance, "
+            "objective history, achieved volume fraction, density grid, honest 2D/coarse "
+            "limitations). Optimizer is pluggable; optimizer=precomputed accepts a density grid. "
+            "Set auto_derive=true (or omit problem) to derive supports/loads/design-space from "
+            "the project's CAE setup + geometry instead of a preset."
+        ),
+        input_schema=_schema("opt.run_topology_optimization"),
+    )
+
+    rt.register_tool(
+        "opt.derive_problem_from_cae",
+        _tool_opt_derive_problem_from_cae,
+        description=(
+            "Derive a 2D topology-optimization problem (grid + supports + loads + design "
+            "space) from a project's CAE setup (simulation/setup.yaml supports/loads) + "
+            "geometry (topology_map faces + design-space bbox). Read-only — returns the "
+            "problem + a 'derivation' block (projection plane, frame, source BC links, "
+            "warnings). 3D supports/loads are projected onto the plane of the two largest "
+            "design-space dimensions; out-of-plane components are dropped (plane-stress). "
+            "Inspect this, then pass it to opt.run_topology_optimization."
+        ),
+        input_schema=_schema("opt.derive_problem_from_cae"),
+    )
+
+    def _tool_opt_writeback_to_shape_ir(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Author a topology-optimization result back into the project's Shape IR
+        (one density_voxels node) and recompile through runtime routing — so the
+        optimized body meshes/views and gets verification + object_registry."""
+        from aieng.converters.topology_optimization import write_shape_ir_from_topology_optimization
+        from .. import cad_generation as _cad_generation
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+
+        # Detect a 3D result up front — it drives both the representation and method
+        # defaults (3D is a mesh preview, not a B-Rep / contour body).
+        _dim3 = False
+        try:
+            import zipfile as _zfd
+            with _zfd.ZipFile(pkg, "r") as _z:
+                if "analysis/topology_optimization.json" in _z.namelist():
+                    _topo = json.loads(_z.read("analysis/topology_optimization.json"))
+                    _dim3 = _topo.get("dimension") == "3d" or "density_grid_3d" in (_topo.get("result") or {})
+        except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to inspect topology optimization artifact; defaulting to 2D writeback mode.",
+                subsystem="app_factory.topology_writeback.dimension_detect",
+                context={"project_id": pid},
+            )
+            _dim3 = False
+        # Default to B-Rep for 2D (analytic faces an engineer picks / exports to STEP;
+        # manifold_mesh is the robust fallback, auto-used if the B-Rep build fails).
+        # 3D results default to manifold_mesh — a B-Rep Compound of hundreds of voxel
+        # boxes is heavy and beside the point; 3D is an explicitly meshed preview.
+        representation = str(inp.get("representation") or ("manifold_mesh" if _dim3 else "brep_build123d"))
+        # The optimized body is placed in the design space's derivation frame;
+        # cell_size/thickness/origin are honored only if the caller overrides.
+        cs = inp.get("cell_size")
+        cell_size = (float(cs[0]), float(cs[1] if len(cs) > 1 else cs[0])) if cs else None
+        thickness = inp.get("thickness")
+        org = inp.get("origin")
+        origin = (float(org[0]), float(org[1]), float(org[2])) if org else None
+        # 2D default: contour; 3D default: surface (smooth marching-cubes proxy).
+        method = str(inp.get("method") or ("surface" if _dim3 else "contour")).lower()
+        boundary = str(inp.get("boundary") or "spline").lower()
+        timeout = int(inp.get("timeout") or 120)
+
+        def _writeback(rep: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+            pay = write_shape_ir_from_topology_optimization(
+                pkg, representation=rep, cell_size=cell_size,
+                thickness=(float(thickness) if thickness is not None else None),
+                origin=origin,
+                node_id=(str(inp["node_id"]) if inp.get("node_id") else None),
+                use_frame=bool(inp.get("use_frame", True)),
+                method=method, boundary=boundary,
+            )
+            rc = _cad_generation.recompile_shape_ir_package(pkg, timeout=timeout)
+            return pay, rc
+
+        try:
+            payload, recompile = _writeback(representation)
+            # Safety net: if a non-mesh representation didn't actually execute, retry
+            # once as a watertight mesh so the writeback still yields a viewable body.
+            if representation != "manifold_mesh" and not (recompile or {}).get("executed", False):
+                payload, recompile = _writeback("manifold_mesh")
+                payload.setdefault("provenance", {})["representation_fallback"] = (
+                    f"{representation} did not execute; fell back to manifold_mesh")
+        except FileNotFoundError as exc:
+            return {"status": "error", "code": "no_topology_optimization", "message": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            # B-Rep build raised — fall back to mesh once before giving up.
+            if representation != "manifold_mesh":
+                try:
+                    payload, recompile = _writeback("manifold_mesh")
+                    payload.setdefault("provenance", {})["representation_fallback"] = (
+                        f"{representation} failed ({type(exc).__name__}); fell back to manifold_mesh")
+                except Exception as exc2:  # noqa: BLE001
+                    return {"status": "error", "code": "writeback_failed",
+                            "message": f"{type(exc2).__name__}: {exc2}"}
+            else:
+                return {"status": "error", "code": "writeback_failed", "message": f"{type(exc).__name__}: {exc}"}
+
+        # Publish the recompiled preview to viewer/model.* + set web_asset so the UI
+        # viewer actually shows the optimized body (the frontend's default viewer URL
+        # resolves to /assets/projects/{id}/{web_asset}; recompile only refreshes the
+        # in-package preview, not the on-disk viewer asset). Mirrors cad.execute_build123d.
+        try:
+            import zipfile as _zf
+            glb_bytes = stl_bytes = None
+            with _zf.ZipFile(pkg, "r") as zf:
+                names = zf.namelist()
+                if "geometry/preview.glb" in names:
+                    glb_bytes = zf.read("geometry/preview.glb")
+                if "geometry/preview.stl" in names:
+                    stl_bytes = zf.read("geometry/preview.stl")
+            proj = get_project(active_settings, pid)
+            if glb_bytes or stl_bytes:
+                proj["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
+                _cad_generation._publish_preview_to_viewer(active_settings, pid, proj, glb_bytes, stl_bytes)
+            proj["updated_at"] = now_iso()
+            save_project(active_settings, proj)
+        except Exception:
+            log_exception(
+                LOGGER,
+                "Failed to persist project metadata after topology optimization writeback.",
+                subsystem="app_factory.topology_writeback.project_update",
+                context={"project_id": pid},
+            )
+
+        return {
+            "status": "ok",
+            "tool": "opt.writeback_to_shape_ir",
+            "shape_ir": payload,
+            "recompile": recompile,
+        }
+
+    rt.register_tool(
+        "opt.writeback_to_shape_ir",
+        _tool_opt_writeback_to_shape_ir,
+        description=(
+            "Author the project's topology-optimization result (analysis/"
+            "topology_optimization.json) back into geometry/shape_ir.json as one "
+            "density_voxels node, then recompile through runtime routing. The optimized "
+            "density field becomes re-compilable, viewable geometry (default representation "
+            "manifold_mesh -> watertight voxel mesh; brep_build123d also supported) with "
+            "topology + verification + object_registry, linked to its design_space_node. "
+            "Run opt.run_topology_optimization first."
+        ),
+        input_schema=_schema("opt.writeback_to_shape_ir"),
+    )
+
+    def _tool_opt_run_assembly_topology_optimization(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Explicit assembly-aware topopt execution for one selected design part.
+        Uses the assembly topopt setup artifacts and writes selected-part derived
+        artifacts only; no package-level geometry overwrite."""
+        from aieng.converters.assembly_topopt import run_assembly_topology_optimization
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = run_assembly_topology_optimization(
+                pkg,
+                optimizer=(str(inp["optimizer"]) if inp.get("optimizer") else None),
+                writeback=bool(inp.get("writeback", True)),
+                method=(str(inp["method"]) if inp.get("method") else None),
+                representation=(str(inp["representation"]) if inp.get("representation") else None),
+                boundary=str(inp.get("boundary") or "spline"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "assembly_topopt_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {
+            "status": result.get("status"),
+            "tool": "opt.run_assembly_topology_optimization",
+            "assembly_topology_optimization": result,
+        }
+
+    rt.register_tool(
+        "opt.run_assembly_topology_optimization",
+        _tool_opt_run_assembly_topology_optimization,
+        description=(
+            "Explicitly run assembly-aware topology optimization for one selected design "
+            "part. Consumes assembly_topopt_problem + topology_optimization_problem, calls "
+            "the existing optimizer, writes assembly diagnostics/provenance and selected-part "
+            "derived artifacts, and never overwrites reference/frozen parts or package-level geometry."
+        ),
+        input_schema=_schema("opt.run_assembly_topology_optimization"),
+    )
+
+    def _tool_opt_propose_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Generate candidate parameter sets from optimization variables.
+        Reads analysis/optimization_variables.json (and optionally
+        optimization_study.json) from the project's .aieng package, runs
+        the requested sampler, and writes candidate patches to
+        patches/design_candidates/<cid>.json. Does NOT execute candidates,
+        recompile geometry, run CAE, or modify the baseline."""
+        from aieng.converters.optimization_sampler import sample_candidates_package
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = sample_candidates_package(
+                pkg,
+                algorithm=inp.get("algorithm"),
+                count=inp.get("count"),
+                seed=inp.get("seed"),
+                max_candidates=inp.get("max_candidates"),
+                overwrite=bool(inp.get("overwrite", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "sampling_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {
+            "status": result.get("status", "error"),
+            "tool": "opt.propose_candidates",
+            "sampler_result": result,
+        }
+
+    rt.register_tool(
+        "opt.propose_candidates",
+        _tool_opt_propose_candidates,
+        description=(
+            "Generate candidate parameter sets from optimization variables. "
+            "Reads analysis/optimization_variables.json (required) and optionally "
+            "analysis/optimization_study.json from the project's .aieng package, "
+            "runs the requested sampler (grid / random / latin_hypercube), and "
+            "writes candidate patches to patches/design_candidates/<cid>.json "
+            "in the format consumed by the candidate executor/evaluator/ranker. "
+            "Does NOT execute candidates, recompile geometry, run CAE, or modify "
+            "the baseline. The study's candidate_ids are updated to include the "
+            "new candidates. Deterministic given a seed."
+        ),
+        input_schema=_schema("opt.propose_candidates"),
+        # Package-mutating but baseline-safe (writes only derived candidate
+        # patches). Kept inside the modeling-plan boundary like
+        # cad.execute_build123d / opt.writeback_to_shape_ir rather than carrying
+        # a per-call approval gate; the hard gate lives at acceptance.
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_run_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Execute proposed design-study candidates into derived workspaces.
+        Discovers candidates (or runs an explicit candidate_ids list) and runs
+        each through the single-shot executor, applying its patch to a DERIVED
+        copy of the baseline Shape IR in candidates/<cid>/. Optionally recompiles
+        each candidate in a throwaway copy (compile=true, default). Failures are
+        recorded per-candidate and the batch continues. Does NOT run CAE, accept
+        a candidate, or modify the baseline."""
+        from aieng.converters.design_study_batch import run_design_study_batch
+        from ..cad_generation import make_candidate_recompiler
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        do_compile = bool(inp.get("compile", True))
+        recompiler = make_candidate_recompiler(pkg) if do_compile else None
+        try:
+            result = run_design_study_batch(
+                pkg,
+                candidate_ids=inp.get("candidate_ids"),
+                recompiler=recompiler,
+                max_candidates=inp.get("max_candidates"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "batch_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.run_candidates", "batch_result": result}
+
+    rt.register_tool(
+        "opt.run_candidates",
+        _tool_opt_run_candidates,
+        description=(
+            "Execute proposed design-study candidates into isolated derived "
+            "workspaces (candidates/<cid>/). Discovers the candidate set from the "
+            "package (optimization_study/variables candidate_ids + any candidate "
+            "patches on disk), or runs an explicit candidate_ids list, applying "
+            "each patch to a DERIVED copy of the baseline Shape IR. With "
+            "compile=true (default) each candidate is recompiled in a throwaway "
+            "copy; a failed candidate is recorded cleanly and the batch CONTINUES. "
+            "Records each iteration in analysis/design_study_iterations.json. Does "
+            "NOT run CAE, accept/promote any candidate, or modify the baseline."
+        ),
+        input_schema=_schema("opt.run_candidates"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_evaluate_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Evaluate executed design-study candidates from candidate-local evidence.
+        For each candidate, normalizes mass / volume / max_stress / max_deflection /
+        min_safety_factor, evaluates declared constraints, and classifies feasibility.
+        Missing CAE metrics are recorded honestly as unknown — never fabricated. With
+        cae=true, first derives each candidate's CAE setup and normalizes CAE evidence
+        (solver stays disabled by default). Does NOT accept/promote a candidate or
+        modify the baseline. Feeds opt.rank_candidates."""
+        from aieng.converters.design_study_batch import run_design_study_evaluation_batch
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        cae_options: dict[str, Any] = {}
+        if inp.get("cae"):
+            if inp.get("mode") is not None:
+                cae_options["mode"] = inp.get("mode")
+            if inp.get("allow_solver_execution") is not None:
+                cae_options["allow_solver_execution"] = bool(inp.get("allow_solver_execution"))
+        try:
+            result = run_design_study_evaluation_batch(
+                pkg,
+                candidate_ids=inp.get("candidate_ids"),
+                cae=bool(inp.get("cae", False)),
+                cae_options=cae_options or None,
+                max_candidates=inp.get("max_candidates"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "evaluation_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.evaluate_candidates", "batch_result": result}
+
+    rt.register_tool(
+        "opt.evaluate_candidates",
+        _tool_opt_evaluate_candidates,
+        description=(
+            "Evaluate executed design-study candidates from candidate-local "
+            "evidence (candidates/<cid>/). Normalizes mass / volume / max_stress / "
+            "max_deflection / min_safety_factor, evaluates declared constraints, and "
+            "classifies each candidate feasible / infeasible / unknown. MISSING CAE "
+            "metrics are recorded honestly as unknown — never fabricated. With "
+            "cae=true, first derives each candidate's CAE setup and normalizes any "
+            "CAE evidence (solver execution stays disabled by default). Writes "
+            "candidates/<cid>/analysis/evaluation.json. Does NOT accept/promote any "
+            "candidate or modify the baseline; feeds opt.rank_candidates."
+        ),
+        input_schema=_schema("opt.evaluate_candidates"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_rank_candidates(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Rank evaluated design-study candidates (advisory).
+        Reads per-candidate evaluations, classifies feasibility, scores against the
+        problem objective + constraints, and writes
+        analysis/design_study_candidate_ranking.json +
+        diagnostics/design_study_scoring_report.json. Selects best_candidate_id only
+        when feasible, improving, and high-confidence. Does NOT accept/promote a
+        candidate, run CAE, or modify the baseline."""
+        from aieng.converters.design_study_ranking import rank_design_study_candidates
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = rank_design_study_candidates(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "ranking_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.rank_candidates", "ranking_result": result}
+
+    rt.register_tool(
+        "opt.rank_candidates",
+        _tool_opt_rank_candidates,
+        description=(
+            "Rank evaluated design-study candidates (advisory). Reads per-candidate "
+            "evaluations, classifies feasibility (feasible / infeasible / unknown / "
+            "failed), scores against the problem objective + constraints, and writes "
+            "analysis/design_study_candidate_ranking.json + the scoring report. "
+            "best_candidate_id is selected only when a candidate is feasible, improves "
+            "the objective, and is high-confidence; otherwise it is null and "
+            "safe_to_accept is false. Does NOT accept/promote a candidate, run CAE, or "
+            "modify the baseline."
+        ),
+        input_schema=_schema("opt.rank_candidates"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_explain_recommendation(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Explain the candidate ranking as an advisory, reason-coded recommendation.
+        Reads the existing ranking + scoring report and composes a human-readable
+        recommendation (why the top candidate, citing metrics + objective delta; why
+        none, when applicable; caveats for missing metrics / low confidence), written
+        to analysis/optimization_recommendation.json. Advisory only — does NOT accept a
+        candidate, run CAE, or modify the baseline. Run opt.rank_candidates first."""
+        from aieng.converters.optimization_recommendation import explain_recommendation
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = explain_recommendation(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "explain_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.explain_recommendation", "recommendation": result}
+
+    rt.register_tool(
+        "opt.explain_recommendation",
+        _tool_opt_explain_recommendation,
+        description=(
+            "Explain a candidate ranking as an advisory, reason-coded recommendation. "
+            "Reads analysis/design_study_candidate_ranking.json (run opt.rank_candidates "
+            "first) and composes a human-readable recommendation: why the top candidate "
+            "is recommended (objective delta + metrics), or why none is, plus explicit "
+            "caveats for missing CAE metrics / low confidence. Writes "
+            "analysis/optimization_recommendation.json. Advisory only and human-approval "
+            "gated for acceptance — does NOT accept/promote a candidate, run CAE, or "
+            "modify the baseline."
+        ),
+        input_schema=_schema("opt.explain_recommendation"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_accept_candidate(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Accept ONE ranked design-study candidate into a derived accepted workspace.
+        Copies the candidate's derived artifacts into accepted/<cid>/ and writes
+        analysis/design_study_acceptance.json. The candidate must be eligible
+        (feasible, and best_candidate_id + safe_to_accept unless override_unsafe).
+        Does NOT overwrite baseline geometry, does NOT auto-promote, and does NOT
+        claim production approval. APPROVAL REQUIRED."""
+        from aieng.converters.design_study_acceptance import accept_design_study_candidate
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        cid = str(inp.get("candidate_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        if not cid:
+            return {"status": "error", "code": "bad_input", "message": "candidate_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = accept_design_study_candidate(
+                pkg,
+                cid,
+                accepted_by=inp.get("accepted_by", "agent"),
+                reasoning=inp.get("reasoning"),
+                override_unsafe=bool(inp.get("override_unsafe", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "acceptance_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.accept_candidate", "acceptance_result": result}
+
+    rt.register_tool(
+        "opt.accept_candidate",
+        _tool_opt_accept_candidate,
+        description=(
+            "[APPROVAL REQUIRED] Accept ONE ranked design-study candidate into a "
+            "derived accepted workspace (accepted/<cid>/). The candidate must be "
+            "eligible: feasible (not failed/infeasible/unknown), and the "
+            "best_candidate_id with safe_to_accept=true — otherwise override_unsafe "
+            "must be set explicitly. Copies the candidate's derived patch / Shape IR / "
+            "evaluation into accepted/<cid>/ and writes "
+            "analysis/design_study_acceptance.json + the acceptance report. Does NOT "
+            "overwrite baseline geometry, does NOT auto-promote into the baseline, and "
+            "does NOT claim production certification — acceptance is an advisory, "
+            "human-approved derived design artifact only."
+        ),
+        input_schema=_schema("opt.accept_candidate"),
+        requires_approval=True,
+    )
+
+    def _tool_opt_write_report(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Aggregate the optimization study into a single summary report.
+        Reads existing package artifacts (problem, variables/objectives/constraints,
+        candidates + metrics, ranking, failed candidates, recommendation, acceptance,
+        decision log) and writes diagnostics/optimization_report.json. Read-only with
+        respect to engineering state: does NOT execute/evaluate/rank/accept candidates,
+        run CAE, or modify the baseline. The report is reconstructable from artifacts."""
+        from aieng.converters.optimization_report import build_optimization_report
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = build_optimization_report(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "report_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.write_report", "report_result": result}
+
+    rt.register_tool(
+        "opt.write_report",
+        _tool_opt_write_report,
+        description=(
+            "Aggregate the optimization study into a single summary report. Reads the "
+            "existing package artifacts (problem definition, variables / objectives / "
+            "constraints, all candidates + metrics, ranking, failed candidates, the "
+            "advisory recommendation, acceptance state, and decision log) and writes "
+            "diagnostics/optimization_report.json. Read-only with respect to "
+            "engineering state — does NOT execute / evaluate / rank / accept "
+            "candidates, run CAE, or modify the baseline. The report is "
+            "reconstructable purely from on-disk artifacts."
+        ),
+        input_schema=_schema("opt.write_report"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_propose_next(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Propose the next batch of candidates by local refinement around the incumbent.
+        Reads the ranking incumbent + optimization variables and samples within a
+        trust region that shrinks each iteration; falls back to whole-domain LHS when
+        there is no feasible incumbent. Writes candidate patches in the existing
+        format. Deterministic given a seed. Does NOT run/evaluate/accept candidates,
+        run CAE, or modify the baseline."""
+        from aieng.converters.optimization_proposer import propose_next_candidates
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = propose_next_candidates(
+                pkg,
+                count=int(inp.get("count", 4)),
+                shrink=float(inp.get("shrink", 0.5)),
+                seed=int(inp.get("seed", 0)),
+                algorithm=inp.get("algorithm"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "propose_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.propose_next", "propose_result": result}
+
+    rt.register_tool(
+        "opt.propose_next",
+        _tool_opt_propose_next,
+        description=(
+            "Propose the next batch of design-study candidates by trust-region local "
+            "refinement around the current ranking incumbent (radius shrinks each "
+            "iteration); falls back to whole-domain Latin hypercube sampling when there "
+            "is no feasible incumbent. Writes candidate patches to "
+            "patches/design_candidates/<cid>.json in the format the executor consumes. "
+            "Deterministic given a seed. Does NOT run/evaluate/accept candidates, run "
+            "CAE, or modify the baseline — pair with opt.run_candidates + "
+            "opt.evaluate_candidates + opt.rank_candidates + opt.check_convergence."
+        ),
+        input_schema=_schema("opt.propose_next"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_check_convergence(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Record the current iteration's incumbent and return a convergence verdict.
+        Snapshots the ranking incumbent into analysis/optimization_iterations.json and
+        evaluates the deterministic stopping criteria (objective-delta stagnation,
+        budget, no-feasible-progress, consecutive failures). Advisory only — tells the
+        agent whether to stop; never accepts a candidate, runs CAE, or modifies the
+        baseline. Run opt.rank_candidates first."""
+        from aieng.converters.optimization_convergence import record_iteration_and_check
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = record_iteration_and_check(
+                pkg,
+                evaluations_total=inp.get("evaluations_total"),
+                failures_this_round=int(inp.get("failures_this_round", 0)),
+                had_success=bool(inp.get("had_success", True)),
+                proposer_exhausted=bool(inp.get("proposer_exhausted", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "convergence_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.check_convergence", "convergence_result": result}
+
+    rt.register_tool(
+        "opt.check_convergence",
+        _tool_opt_check_convergence,
+        description=(
+            "Record the current iteration's incumbent into "
+            "analysis/optimization_iterations.json and return a deterministic, advisory "
+            "convergence verdict (continue / converged / stop_budget / stop_no_feasible "
+            "/ stop_failures / stop_proposer_exhausted). The objective-delta check is "
+            "direction-aware (reads the objective sense). Advisory only — it tells the "
+            "agent whether to stop; it never accepts a candidate, runs CAE, or modifies "
+            "the baseline. Acceptance stays the only hard gate (opt.accept_candidate)."
+        ),
+        input_schema=_schema("opt.check_convergence"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    return {
+        "derive_topology_optimization_problem": _tool_opt_derive_problem_from_cae,
+        "run_topology_optimization": _tool_opt_run_topology_optimization,
+        "writeback_topology_optimization": _tool_opt_writeback_to_shape_ir,
+        "run_assembly_topology_optimization": _tool_opt_run_assembly_topology_optimization,
+    }

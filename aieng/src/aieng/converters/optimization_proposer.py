@@ -130,6 +130,7 @@ def propose_next_candidates(
     ``algorithm`` selects the proposer strategy:
       * ``"trust_region"`` (default) — shrunk-box local refinement.
       * ``"slsqp"`` — SLSQP local step on a quadratic model with FD gradients.
+      * ``"bayesian"`` — GP surrogate + Expected Improvement (scikit-optimize).
 
     Writes candidate patches to ``patches/design_candidates/<cid>.json`` and
     returns a summary. Baseline never modified.
@@ -138,6 +139,9 @@ def propose_next_candidates(
     if alg == "slsqp":
         from .optimization_proposer_slsqp import propose_slsqp_candidates
         return propose_slsqp_candidates(package_path, count=count, seed=seed)
+    if alg == "bayesian":
+        from .optimization_proposer_bayesian import propose_bayesian_candidates
+        return propose_bayesian_candidates(package_path, count=count, seed=seed)
     pkg = Path(package_path)
     if not pkg.exists():
         return {"status": "error", "code": "package_not_found", "message": "package not found",

@@ -68,7 +68,7 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
 
       {/* Honesty banner */}
       {study.warnings.length > 0 && (
-        <div className="optimization-warnings">
+        <div className="optimization-warnings" role="alert">
           {study.warnings.map((w, i) => (
             <span key={i} className="optimization-warning">⚠ {w}</span>
           ))}
@@ -89,6 +89,8 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
         className={`optimization-honesty ${
           study.safe_to_accept ? "optimization-honesty-good" : "optimization-honesty-neutral"
         }`}
+        role="status"
+        aria-live="polite"
       >
         {study.safe_to_accept
           ? "A candidate is safe to accept (still requires approval)"

@@ -32,24 +32,24 @@ export function useGeometryPointers({
   }, [selectedId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     if (!selectedId) return;
     void (async () => {
       try {
         let raw: Record<string, unknown>;
         try {
-          raw = await api.getBrepGraph(selectedId);
+          raw = await api.getBrepGraph(selectedId, controller.signal);
         } catch {
-          raw = await api.buildBrepGraph(selectedId);
+          raw = await api.buildBrepGraph(selectedId, controller.signal);
         }
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setBrepSnapshot(parseBrepGraphSnapshot(raw));
       } catch {
-        if (!cancelled) setBrepSnapshot(null);
+        if (!controller.signal.aborted) setBrepSnapshot(null);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
     // geometryVersion re-fetches the graph after an in-place geometry rebuild
     // (e.g. agent cad.execute_build123d) so highlight + pick track new faces.

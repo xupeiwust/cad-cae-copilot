@@ -22,19 +22,19 @@ export function useSimulationReadiness({ selectedId, geometryVersion = null }: U
   }, [selectedId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     if (!selectedId) return;
     void (async () => {
       try {
-        const data = await api.getSimulationReadiness(selectedId);
-        if (cancelled) return;
+        const data = await api.getSimulationReadiness(selectedId, controller.signal);
+        if (controller.signal.aborted) return;
         setReadiness(data ?? null);
       } catch {
-        if (!cancelled) setReadiness(null);
+        if (!controller.signal.aborted) setReadiness(null);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [selectedId, geometryVersion]);
 

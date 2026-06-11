@@ -44,11 +44,11 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
   const [apiKeyHydrated, setApiKeyHydrated] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     void (async () => {
       let key = "";
       try {
-        const record = await api.getSetting(API_KEY_BACKEND_KEY);
+        const record = await api.getSetting(API_KEY_BACKEND_KEY, controller.signal);
         if (record?.value && typeof record.value === "string") {
           key = record.value;
         }
@@ -69,17 +69,17 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
           // Corrupt or missing localStorage entry.
         }
       }
-      if (!cancelled) {
+      if (!controller.signal.aborted) {
         setApiKeyState(key);
         setApiKeyHydrated(true);
       }
     })();
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, []);
 
-  const hydrateStoredSettings = useCallback(async () => {
+  const hydrateStoredSettings = useCallback(async (signal?: AbortSignal) => {
     try {
-      const settings = await api.getSettings();
+      const settings = await api.getSettings(signal);
       const savedLlm = settings[LLM_CONFIG_KEY];
       if (savedLlm && typeof savedLlm === "object") {
         const normalized = normalizeLlmConfig(savedLlm as Record<string, unknown>);
@@ -138,12 +138,12 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     let retryTimer: number | null = null;
     const attemptHydration = async (attempt = 0) => {
-      const hydrated = await hydrateStoredSettings();
+      const hydrated = await hydrateStoredSettings(controller.signal);
       const nextDelay = SETTINGS_RETRY_SCHEDULE_MS[attempt];
-      if (!hydrated && !cancelled && typeof nextDelay === "number") {
+      if (!hydrated && !controller.signal.aborted && typeof nextDelay === "number") {
         retryTimer = window.setTimeout(() => {
           void attemptHydration(attempt + 1);
         }, nextDelay);
@@ -151,7 +151,7 @@ export function useRuntimeSettings({ setSummary }: UseRuntimeSettingsArgs) {
     };
     void attemptHydration();
     return () => {
-      cancelled = true;
+      controller.abort();
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
   }, [hydrateStoredSettings]);

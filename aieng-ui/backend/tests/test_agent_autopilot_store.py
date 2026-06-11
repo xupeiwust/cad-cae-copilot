@@ -120,3 +120,102 @@ def test_store_reports_corrupt_run_file(tmp_path: Path) -> None:
     (tmp_path / "runs" / "bad.json").write_text("{bad", encoding="utf-8")
     with pytest.raises(ValueError):
         store.load("bad")
+
+
+def test_store_caches_list_runs_and_invalidates_on_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = AutopilotStore(tmp_path / "runs")
+    state = AutopilotRunState(
+        run_id="run1",
+        status="running",
+        message="make a bracket",
+        adapter_id="fake",
+        project_id="p1",
+        session_id="s1",
+    )
+    store.save(state)
+
+    # Count how many times Path.read_text is called inside list_runs.
+    read_calls = 0
+    real_read_text = Path.read_text
+
+    def counting_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal read_calls
+        read_calls += 1
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    # First list_runs should hit disk.
+    runs1 = store.list_runs()
+    assert len(runs1) == 1
+    reads_after_first = read_calls
+    assert reads_after_first > 0
+
+    # Second list_runs should be served from cache.
+    runs2 = store.list_runs()
+    assert len(runs2) == 1
+    assert read_calls == reads_after_first
+
+    # save() must invalidate the cache.
+    state2 = AutopilotRunState(
+        run_id="run2",
+        status="running",
+        message="make a gear",
+        adapter_id="fake",
+        project_id="p1",
+        session_id="s1",
+    )
+    store.save(state2)
+
+    # After save, list_runs should see the new run (cache invalidated).
+    runs3 = store.list_runs()
+    assert len(runs3) == 2
+    assert read_calls > reads_after_first
+
+
+def test_store_caches_list_runs_with_filters(tmp_path: Path) -> None:
+    store = AutopilotStore(tmp_path / "runs")
+    store.save(AutopilotRunState(run_id="a", status="running", message="a", adapter_id="fake", project_id="p1", session_id="s1"))
+    store.save(AutopilotRunState(run_id="b", status="running", message="b", adapter_id="fake", project_id="p1", session_id="s2"))
+    store.save(AutopilotRunState(run_id="c", status="running", message="c", adapter_id="fake", project_id="p2", session_id="s1"))
+
+    # Each filter combination gets its own cache slot.
+    assert len(store.list_runs(project_id="p1")) == 2
+    assert len(store.list_runs(session_id="s1")) == 2
+    assert len(store.list_runs(project_id="p1", session_id="s1")) == 1
+    assert len(store.list_runs()) == 3
+
+
+def test_store_invalidate_cache_on_delete_run(tmp_path: Path) -> None:
+    store = AutopilotStore(tmp_path / "runs")
+    store.save(AutopilotRunState(run_id="run1", status="running", message="a", adapter_id="fake"))
+
+    # Warm cache.
+    assert len(store.list_runs()) == 1
+    assert len(store._list_runs_cache) == 1
+
+    store.delete_run("run1")
+    assert len(store._list_runs_cache) == 0
+    assert len(store.list_runs()) == 0
+
+
+def test_list_runs_returns_copy_not_cached_reference(tmp_path: Path) -> None:
+    """Mutating the returned list (or dropping items) must not corrupt the cache.
+
+    Cancellation paths iterate list_runs() and mutate each state; the cached
+    list must not be aliased by the returned one.
+    """
+    store = AutopilotStore(tmp_path / "runs")
+    store.save(AutopilotRunState(run_id="r1", status="running", message="a", adapter_id="fake"))
+    store.save(AutopilotRunState(run_id="r2", status="running", message="b", adapter_id="fake"))
+
+    first = store.list_runs()
+    assert len(first) == 2
+    # Caller mutates the returned container (e.g. filters it down).
+    first.clear()
+
+    # The cache must be unaffected — a fresh list still sees both runs.
+    second = store.list_runs()
+    assert len(second) == 2
+    # And the two returned lists are distinct objects.
+    assert first is not second

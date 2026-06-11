@@ -1,18 +1,31 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
 from pathlib import Path
 
+from filelock import FileLock, Timeout
+
 from .schema import AgentPlan, AutopilotRunState
+
+LOGGER = logging.getLogger(__name__)
+
+# Per-run read lock timeout for list_runs. Long enough to wait out a concurrent
+# save() (which holds the lock only for an atomic write), so an in-flight run is
+# not silently dropped from the listing — cleanup paths rely on completeness.
+_LIST_RUNS_LOCK_TIMEOUT = 5.0
 
 
 class AutopilotStore:
     def __init__(self, runs_dir: Path) -> None:
         self.runs_dir = runs_dir
         self.runs_dir.mkdir(parents=True, exist_ok=True)
+        # In-memory cache for list_runs keyed by (project_id, session_id).
+        # Invalidated on every mutating operation (save, delete_run, delete_runs).
+        self._list_runs_cache: dict[tuple[str | None, str | None], list[AutopilotRunState]] = {}
 
     def _path(self, run_id: str) -> Path:
         clean = "".join(ch for ch in run_id if ch.isalnum() or ch in {"-", "_"})
@@ -22,36 +35,50 @@ class AutopilotStore:
         clean = "".join(ch for ch in run_id if ch.isalnum() or ch in {"-", "_"})
         return self.runs_dir / f"{clean}.cancel"
 
+    def _lock_path(self, run_id: str) -> Path:
+        return self._path(run_id).with_suffix(".json.lock")
+
     def save(self, state: AutopilotRunState) -> None:
         path = self._path(state.run_id)
+        lock_path = self._lock_path(state.run_id)
         tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        tmp_path.write_text(
-            state.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
-        last_error: PermissionError | None = None
-        for attempt in range(8):
-            try:
-                os.replace(tmp_path, path)
-                return
-            except PermissionError as exc:
-                last_error = exc
-                time.sleep(0.025 * (attempt + 1))
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
-        if last_error is not None:
-            raise last_error
+
+        with FileLock(lock_path):
+            tmp_path.write_text(
+                state.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            last_error: PermissionError | None = None
+            for attempt in range(8):
+                try:
+                    os.replace(tmp_path, path)
+                    break
+                except PermissionError as exc:
+                    last_error = exc
+                    time.sleep(0.025 * (attempt + 1))
+            else:
+                try:
+                    tmp_path.unlink()
+                except FileNotFoundError:
+                    pass
+                if last_error is not None:
+                    raise last_error
+
+        # Invalidate cache on write so subsequent list_runs() reflects the change.
+        self._list_runs_cache.clear()
 
     def load(self, run_id: str) -> AutopilotRunState:
         path = self._path(run_id)
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            raise KeyError(f"Autopilot run not found: {run_id}") from None
-        except Exception as exc:
-            raise ValueError(f"Autopilot run file is unreadable: {exc}") from exc
+        lock_path = self._lock_path(run_id)
+
+        with FileLock(lock_path):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                raise KeyError(f"Autopilot run not found: {run_id}") from None
+            except Exception as exc:
+                raise ValueError(f"Autopilot run file is unreadable: {exc}") from exc
+
         try:
             return AutopilotRunState.model_validate(data)
         except Exception as exc:
@@ -61,19 +88,43 @@ class AutopilotStore:
         return self.load(run_id).plan
 
     def list_runs(self, *, project_id: str | None = None, session_id: str | None = None) -> list[AutopilotRunState]:
+        cache_key = (project_id, session_id)
+        if cache_key in self._list_runs_cache:
+            # Return a copy so callers mutating the result (e.g. cancellation
+            # paths that flip state.status) don't corrupt the cached list.
+            return list(self._list_runs_cache[cache_key])
+
         runs: list[AutopilotRunState] = []
         for path in sorted(self.runs_dir.glob("*.json")):
+            if path.suffix != ".json":
+                continue
+            lock_path = path.with_suffix(".json.lock")
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                # Block briefly so a run mid-save() is included, not silently
+                # dropped — cleanup/cancellation depends on a complete listing.
+                with FileLock(lock_path, timeout=_LIST_RUNS_LOCK_TIMEOUT):
+                    data = json.loads(path.read_text(encoding="utf-8"))
+            except Timeout:
+                # Could not acquire within the timeout — do NOT silently omit the
+                # run; surface it so a missed cancellation is debuggable.
+                LOGGER.warning("list_runs: timed out locking %s; omitting from listing", path.name)
+                continue
+            except Exception:
+                LOGGER.warning("list_runs: failed to read %s; skipping", path.name, exc_info=True)
+                continue
+            try:
                 state = AutopilotRunState.model_validate(data)
             except Exception:
+                LOGGER.warning("list_runs: invalid run state in %s; skipping", path.name)
                 continue
             if project_id is not None and state.project_id != project_id:
                 continue
             if session_id is not None and state.session_id != session_id:
                 continue
             runs.append(state)
-        return runs
+
+        self._list_runs_cache[cache_key] = runs
+        return list(runs)
 
     def delete_run(self, run_id: str) -> bool:
         deleted = False
@@ -83,6 +134,7 @@ class AutopilotStore:
                 deleted = True
             except FileNotFoundError:
                 pass
+        self._list_runs_cache.clear()
         return deleted
 
     def delete_runs(self, *, project_id: str | None = None, session_id: str | None = None) -> int:

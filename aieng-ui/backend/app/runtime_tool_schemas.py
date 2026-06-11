@@ -420,6 +420,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["project_id"],
         "properties": {
             "project_id": {"type": "string"},
+            "algorithm": {"type": "string", "enum": ["trust_region", "slsqp"],
+                          "description": "Proposer algorithm: trust_region (default) or slsqp."},
             "count": {"type": "integer", "minimum": 1,
                       "description": "Number of candidates to propose this round (default 4)."},
             "shrink": {"type": "number", "exclusiveMinimum": 0, "maximum": 1,
@@ -429,8 +431,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
         "description": (
             "Propose the next batch of candidates by trust-region local refinement "
-            "around the ranking incumbent (LHS fallback when none). Writes candidate "
-            "patches; does NOT run/evaluate/accept candidates or modify the baseline."
+            "or SLSQP local step. Writes candidate patches; does NOT run/evaluate/"
+            "accept candidates or modify the baseline."
         ),
     },
     "opt.check_convergence": {

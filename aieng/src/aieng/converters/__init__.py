@@ -46,6 +46,9 @@ from .optimization_report import build_optimization_report
 from .optimization_convergence import evaluate_convergence, record_iteration_and_check
 from .optimization_proposer import propose_next_candidates
 
+# SLSQP optimizer proposer (#65)
+from .optimization_proposer_slsqp import propose_slsqp_candidates
+
 __all__ = [
     "CAPABILITY_LEVEL_NAMES",
     "CONVERTER_CLAIM_POLICY",
@@ -72,4 +75,5 @@ __all__ = [
     "evaluate_convergence",
     "record_iteration_and_check",
     "propose_next_candidates",
+    "propose_slsqp_candidates",
 ]

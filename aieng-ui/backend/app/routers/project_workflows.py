@@ -684,14 +684,16 @@ def register_project_workflow_routes(
         project_id: str,
         payload: dict[str, Any] = Body(default=None),
     ) -> dict[str, Any]:
-        """Propose the next batch of candidates by trust-region local refinement.
+        """Propose the next batch of candidates by local refinement.
 
         Reads the ranking incumbent + optimization variables and samples within a
-        shrinking trust region (LHS fallback when no feasible incumbent); writes
-        candidate patches in the existing format. Deterministic given a seed. Does NOT
-        run/evaluate/accept candidates, run CAE, or modify the baseline.
+        shrinking trust region (default) or runs an SLSQP local step.  Falls back to
+        whole-domain LHS when no feasible incumbent.  Deterministic given a seed. Does
+        NOT run/evaluate/accept candidates, run CAE, or modify the baseline.
 
-        Body (all optional): count (int), shrink (float 0-1), seed (int)."""
+        Body (all optional):
+          algorithm (str): "trust_region" | "slsqp" (default "trust_region")
+          count (int), shrink (float 0-1), seed (int)."""
         from aieng.converters.optimization_proposer import propose_next_candidates
         from ..project_io import get_project, resolve_project_path
 
@@ -700,6 +702,12 @@ def register_project_workflow_routes(
         if package_path is None or not package_path.exists():
             raise HTTPException(status_code=404, detail=".aieng package not found")
         data = payload or {}
+        algorithm = str(data.get("algorithm") or "trust_region")
+        if algorithm not in {"trust_region", "slsqp"}:
+            raise HTTPException(
+                status_code=422,
+                detail="algorithm must be one of: trust_region, slsqp",
+            )
         return {
             "project_id": project_id,
             **propose_next_candidates(
@@ -707,6 +715,7 @@ def register_project_workflow_routes(
                 count=int(data.get("count", 4)),
                 shrink=float(data.get("shrink", 0.5)),
                 seed=int(data.get("seed", 0)),
+                algorithm=algorithm,
             ),
         }
 

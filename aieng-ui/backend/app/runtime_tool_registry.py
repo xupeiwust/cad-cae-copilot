@@ -2781,10 +2781,10 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
     def _tool_opt_propose_next(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         """Propose the next batch of candidates by local refinement around the incumbent.
         Reads the ranking incumbent + optimization variables and samples within a
-        trust region that shrinks each iteration; falls back to whole-domain LHS when
-        there is no feasible incumbent. Writes candidate patches in the existing
-        format. Deterministic given a seed. Does NOT run/evaluate/accept candidates,
-        run CAE, or modify the baseline."""
+        trust region that shrinks each iteration, or runs an SLSQP local step. Falls
+        back to whole-domain LHS when there is no feasible incumbent. Writes candidate
+        patches in the existing format. Deterministic given a seed. Does NOT
+        run/evaluate/accept candidates, run CAE, or modify the baseline."""
         from aieng.converters.optimization_proposer import propose_next_candidates
         from .project_io import get_project, resolve_project_path
 
@@ -2801,6 +2801,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
                 count=int(inp.get("count", 4)),
                 shrink=float(inp.get("shrink", 0.5)),
                 seed=int(inp.get("seed", 0)),
+                algorithm=str(inp.get("algorithm", "trust_region")),
             )
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "code": "propose_failed", "message": f"{type(exc).__name__}: {exc}"}
@@ -2811,13 +2812,13 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         _tool_opt_propose_next,
         description=(
             "Propose the next batch of design-study candidates by trust-region local "
-            "refinement around the current ranking incumbent (radius shrinks each "
-            "iteration); falls back to whole-domain Latin hypercube sampling when there "
-            "is no feasible incumbent. Writes candidate patches to "
-            "patches/design_candidates/<cid>.json in the format the executor consumes. "
-            "Deterministic given a seed. Does NOT run/evaluate/accept candidates, run "
-            "CAE, or modify the baseline — pair with opt.run_candidates + "
-            "opt.evaluate_candidates + opt.rank_candidates + opt.check_convergence."
+            "refinement or SLSQP local step around the current ranking incumbent. Falls "
+            "back to whole-domain Latin hypercube sampling when there is no feasible "
+            "incumbent. Writes candidate patches to patches/design_candidates/<cid>.json "
+            "in the format the executor consumes. Deterministic given a seed. Does NOT "
+            "run/evaluate/accept candidates, run CAE, or modify the baseline — pair with "
+            "opt.run_candidates + opt.evaluate_candidates + opt.rank_candidates + "
+            "opt.check_convergence."
         ),
         input_schema=_schema("opt.propose_next"),
         requires_approval=False,

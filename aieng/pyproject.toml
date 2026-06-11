@@ -74,6 +74,7 @@ benchmark = [
 # Do not add cadquery to this list until cross-platform CI is confirmed.
 geometry = []
 mcp = ["mcp>=1.0"]
+optimization = ["scipy>=1.10"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]

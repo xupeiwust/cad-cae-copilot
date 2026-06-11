@@ -1,6 +1,6 @@
 """Tests for the candidate parameter generation (sampler) module (Issue #38).
 
-Covers all three sampling algorithms, bound respect, cap behaviour,
+Covers all four sampling algorithms, bound respect, cap behaviour,
 determinism, and package I/O.
 """
 
@@ -13,6 +13,7 @@ from pathlib import Path
 from aieng.converters.optimization_sampler import (
     OPTIMIZATION_VARIABLES_PATH,
     SAMPLE_CANDIDATES_DIR,
+    genetic_sample,
     grid_sample,
     latin_hypercube_sample,
     random_sample,
@@ -414,6 +415,98 @@ def test_lhs_sampler_stratified_coverage() -> None:
     assert max(wall_values) > 6.0, "LHS should sample above midpoint"
 
 
+# ── genetic sampler ──────────────────────────────────────────────────────────
+
+
+def test_genetic_sampler_emits_candidates() -> None:
+    result = genetic_sample(_variables(), count=10, seed=42)
+    assert len(result) == 10
+    for c in result:
+        assert c["candidate_id"].startswith("cand_genetic_")
+        assert c["format"] == "aieng.design_candidate_patch"
+        assert len(c["variable_changes"]) > 0
+
+
+def test_genetic_sampler_skips_unsafe_variables() -> None:
+    result = genetic_sample(_variables(), count=10, seed=42)
+    for c in result:
+        vids = [v["variable_id"] for v in c["variable_changes"]]
+        assert "bolt_dia" not in vids
+
+
+def test_genetic_sampler_values_respect_bounds() -> None:
+    result = genetic_sample(_variables(), count=20, seed=42)
+    for c in result:
+        for vc in c["variable_changes"]:
+            vid = vc["variable_id"]
+            val = vc["new_value"]
+            if vid == "wall_t":
+                assert 2.0 <= val <= 8.0
+            elif vid == "rib_t":
+                assert 3.0 <= val <= 10.0
+            elif vid == "fillet_r":
+                assert 1.0 <= val <= 6.0
+            elif vid == "count":
+                assert 2 <= val <= 8
+                assert isinstance(val, int)
+
+
+def test_genetic_sampler_deterministic() -> None:
+    a = genetic_sample(_variables(), count=10, seed=42)
+    b = genetic_sample(_variables(), count=10, seed=42)
+    assert a == b
+
+
+def test_genetic_sampler_different_seed_gives_different_results() -> None:
+    a = genetic_sample(_variables(), count=10, seed=1)
+    b = genetic_sample(_variables(), count=10, seed=2)
+    a_vals = [c["variable_changes"][0]["new_value"] for c in a]
+    b_vals = [c["variable_changes"][0]["new_value"] for c in b]
+    assert a_vals != b_vals
+
+
+def test_genetic_sampler_discrete_variables() -> None:
+    vars_disc = [
+        {
+            "id": "material",
+            "type": "categorical",
+            "safe_to_modify": True,
+            "current_value": "al",
+            "allowed_values": ["al", "st", "ti"],
+            "min_value": None,
+            "max_value": None,
+        },
+    ]
+    result = genetic_sample(vars_disc, count=9, seed=42)
+    assert len(result) == 9
+    for c in result:
+        val = c["variable_changes"][0]["new_value"]
+        assert val in {"al", "st", "ti"}
+
+
+def test_genetic_sampler_boolean_variable() -> None:
+    vars_bool = [
+        {"id": "flag", "type": "boolean", "safe_to_modify": True,
+         "current_value": False, "min_value": None, "max_value": None,
+         "allowed_values": None},
+    ]
+    result = genetic_sample(vars_bool, count=8, seed=42)
+    assert len(result) == 8
+    vals = {c["variable_changes"][0]["new_value"] for c in result}
+    assert vals <= {False, True}
+
+
+def test_genetic_sampler_no_variables() -> None:
+    assert genetic_sample([], count=5, seed=42) == []
+
+
+def test_genetic_sampler_respects_population_size() -> None:
+    result = genetic_sample(
+        _variables(), count=4, seed=42, population_size=8, generations=2
+    )
+    assert len(result) == 4
+
+
 # ── sample_candidates (public entrypoint) ────────────────────────────────────
 
 
@@ -435,6 +528,12 @@ def test_sample_candidates_random() -> None:
 def test_sample_candidates_lhs() -> None:
     result = sample_candidates(_variables(), algorithm="latin_hypercube", count=8, seed=42)
     assert result["algorithm"] == "latin_hypercube"
+    assert len(result["candidates"]) == 8
+
+
+def test_sample_candidates_genetic() -> None:
+    result = sample_candidates(_variables(), algorithm="genetic", count=8, seed=42)
+    assert result["algorithm"] == "genetic"
     assert len(result["candidates"]) == 8
 
 
@@ -503,9 +602,10 @@ def test_sample_candidates_empty_variables() -> None:
 
 
 def test_sample_candidates_unknown_algorithm() -> None:
-    result = sample_candidates(_variables(), algorithm="bayesian")
+    result = sample_candidates(_variables(), algorithm="not_real")
     assert len(result["candidates"]) == 0
     assert any("unknown algorithm" in w for w in result["warnings"])
+    assert any("genetic" in w for w in result["warnings"])
 
 
 def test_sample_candidates_grid_includes_all_safe_variables() -> None:
@@ -574,6 +674,36 @@ def test_sample_candidates_package_from_study_config(tmp_path: Path) -> None:
     assert result["status"] == "ok"
     assert len(result["candidates"]) == 6
     assert all(c["candidate_id"].startswith("cand_lhs_") for c in result["candidates"])
+
+
+def test_sample_candidates_package_genetic_from_study_config(tmp_path: Path) -> None:
+    """Genetic algorithm settings are read from optimization_study.json."""
+    study = _study_doc(algorithm="genetic", count=6, seed=99)
+    study["algorithm"]["settings"] = {
+        "population_size": 8,
+        "generations": 2,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.15,
+        "elitism": 1,
+    }
+    pkg = _write_variables_package(tmp_path, study=study)
+    result = sample_candidates_package(pkg)
+    assert result["status"] == "ok"
+    assert len(result["candidates"]) == 6
+    assert all(c["candidate_id"].startswith("cand_genetic_") for c in result["candidates"])
+
+
+def test_sample_candidates_package_genetic_explicit_options(tmp_path: Path) -> None:
+    """Explicit genetic_options override study settings."""
+    study = _study_doc(algorithm="genetic", count=4, seed=99)
+    study["algorithm"]["settings"] = {"population_size": 20, "generations": 10}
+    pkg = _write_variables_package(tmp_path, study=study)
+    result = sample_candidates_package(
+        pkg,
+        genetic_options={"population_size": 6, "generations": 1},
+    )
+    assert result["status"] == "ok"
+    assert len(result["candidates"]) == 4
 
 
 def test_sample_candidates_package_updates_study_ids(tmp_path: Path) -> None:
@@ -695,6 +825,32 @@ def test_sample_candidates_cli_writes_candidates(tmp_path: Path, capsys) -> None
             if name.startswith(SAMPLE_CANDIDATES_DIR)
         ]
     assert len(candidate_paths) == 3
+
+
+def test_sample_candidates_cli_genetic(tmp_path: Path, capsys) -> None:
+    pkg = _write_variables_package(tmp_path)
+
+    exit_code = main([
+        "sample-candidates",
+        str(pkg),
+        "--algorithm",
+        "genetic",
+        "--count",
+        "4",
+        "--seed",
+        "42",
+    ])
+
+    assert exit_code == 0
+    captured = capsys.readouterr().out
+    assert "PASS sampled candidates (genetic): 4 written" in captured
+    with zipfile.ZipFile(pkg) as package:
+        candidate_paths = [
+            name
+            for name in package.namelist()
+            if name.startswith(SAMPLE_CANDIDATES_DIR)
+        ]
+    assert len(candidate_paths) == 4
 
 
 def test_sample_candidates_package_collision_avoidance(tmp_path: Path) -> None:

@@ -75,6 +75,7 @@ OPTIMIZATION_REASON_CODES: frozenset[str] = frozenset(
         "select_bayesian",
         "select_genetic",
         "no_surrogate_available",
+        "continuous_smooth_problem",
     }
 )
 

@@ -708,7 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample_candidates_parser.add_argument(
         "--algorithm",
         default=None,
-        choices=["grid", "random", "latin_hypercube", "lhs"],
+        choices=["grid", "random", "latin_hypercube", "lhs", "genetic"],
         help="Sampling algorithm (default: from optimization_study.json or grid)",
     )
     sample_candidates_parser.add_argument(

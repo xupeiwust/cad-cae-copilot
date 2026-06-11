@@ -98,7 +98,8 @@
                 "select_slsqp",
                 "select_bayesian",
                 "select_genetic",
-                "no_surrogate_available"
+                "no_surrogate_available",
+                "continuous_smooth_problem"
               ]
             }
           },

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
@@ -191,3 +193,62 @@ def test_unknown_topic_reports_available_topics() -> None:
     assert result["status"] == "error"
     assert result["code"] == "unknown_guide_topic"
     assert "cad" in result["available_topics"]
+def test_guide_result_caches_topic_extractions() -> None:
+    from app import agent_guides
+
+    agent_guides.clear_guide_cache()
+    result1 = agent_guides.guide_result("pointers")
+    assert "pointers" in agent_guides._topic_extract_cache
+    result2 = agent_guides.guide_result("pointers")
+    assert result1["content"] == result2["content"]
+    assert result1["path"] == result2["path"]
+
+
+def test_read_full_guide_caches_content() -> None:
+    from app import agent_guides
+
+    agent_guides.clear_guide_cache()
+    content1, path1 = agent_guides.read_full_guide()
+    assert agent_guides._guide_content_cache is not None
+    content2, path2 = agent_guides.read_full_guide()
+    assert content1 is content2
+    assert path1 is path2
+
+
+def test_clear_guide_cache_resets_state() -> None:
+    from app import agent_guides
+
+    agent_guides.read_full_guide()
+    agent_guides.guide_result("cad")
+    assert agent_guides._guide_content_cache is not None
+    assert "cad" in agent_guides._topic_extract_cache
+
+    agent_guides.clear_guide_cache()
+
+    assert agent_guides._guide_content_cache is None
+    assert agent_guides._guide_content_mtime == 0.0
+    assert not agent_guides._topic_extract_cache
+
+
+def test_guide_cache_invalidates_when_file_mtime_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import time
+    from app import agent_guides
+
+    guide_path = tmp_path / "AGENTS.md"
+    guide_path.write_text("## Hello\nworld\n", encoding="utf-8")
+    monkeypatch.setattr(agent_guides, "canonical_agents_path", lambda: guide_path)
+    agent_guides.clear_guide_cache()
+
+    content1, _ = agent_guides.read_full_guide()
+    assert content1 == "## Hello\nworld\n"
+
+    # Ensure mtime changes even on coarse-resolution filesystems (e.g., FAT with 2s granularity).
+    time.sleep(2.0)
+    guide_path.write_text("## Hello\nupdated\n", encoding="utf-8")
+    content2, _ = agent_guides.read_full_guide()
+    assert content2 == "## Hello\nupdated\n"
+
+    result1 = agent_guides.full_result()
+    assert "updated" in result1["content"]

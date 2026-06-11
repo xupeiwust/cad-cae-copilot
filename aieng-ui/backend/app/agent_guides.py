@@ -142,6 +142,12 @@ TOPIC_SECTIONS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# In-memory cache for guide content and topic extractions to avoid repeated
+# disk reads and markdown parsing.
+_guide_content_cache: tuple[str, Path] | None = None
+_guide_content_mtime: float = 0.0
+_topic_extract_cache: dict[str, str] = {}
+
 
 def canonical_agents_path() -> Path:
     parents = Path(__file__).resolve().parents
@@ -151,11 +157,33 @@ def canonical_agents_path() -> Path:
     return next((path for path in candidates if path.exists()), candidates[0])
 
 
+def clear_guide_cache() -> None:
+    """Invalidate in-memory guide caches.
+
+    Call after AGENTS.md is edited on disk or in tests that mock the canonical
+    guide path so subsequent reads reflect the latest content.
+    """
+    global _guide_content_cache, _guide_content_mtime
+    _guide_content_cache = None
+    _guide_content_mtime = 0.0
+    _topic_extract_cache.clear()
+
+
 def read_full_guide() -> tuple[str, Path]:
+    global _guide_content_cache, _guide_content_mtime
     path = canonical_agents_path()
-    if not path.exists():
-        return "AGENTS.md not found.", path
-    return path.read_text(encoding="utf-8"), path
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    if _guide_content_cache is None or mtime != _guide_content_mtime:
+        if path.exists():
+            _guide_content_cache = path.read_text(encoding="utf-8"), path
+        else:
+            _guide_content_cache = "AGENTS.md not found.", path
+        _guide_content_mtime = mtime
+        _topic_extract_cache.clear()
+    return _guide_content_cache
 
 
 def available_topics() -> list[str]:
@@ -196,7 +224,10 @@ def guide_result(topic: str) -> dict[str, Any]:
             "available_topics": available_topics(),
         }
     content, path = read_full_guide()
-    extracted = _extract_sections(content, sections)
+    extracted = _topic_extract_cache.get(normalized)
+    if extracted is None:
+        extracted = _extract_sections(content, sections)
+        _topic_extract_cache[normalized] = extracted
     return {
         "content": extracted,
         "path": str(path),

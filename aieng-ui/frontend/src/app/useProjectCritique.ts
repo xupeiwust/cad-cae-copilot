@@ -22,19 +22,19 @@ export function useProjectCritique({ selectedId, geometryVersion = null }: UsePr
   }, [selectedId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     if (!selectedId) return;
     void (async () => {
       try {
-        const data = await api.getProjectCritique(selectedId);
-        if (cancelled) return;
+        const data = await api.getProjectCritique(selectedId, controller.signal);
+        if (controller.signal.aborted) return;
         setFindings(Array.isArray(data.findings) ? data.findings : []);
       } catch {
-        if (!cancelled) setFindings([]);
+        if (!controller.signal.aborted) setFindings([]);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [selectedId, geometryVersion]);
 

@@ -22,20 +22,20 @@ export function useGeometryReport({ selectedId, geometryVersion = null }: UseGeo
   }, [selectedId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     if (!selectedId) return;
     void (async () => {
       try {
-        const data = await api.getGeometryReport(selectedId);
-        if (cancelled) return;
+        const data = await api.getGeometryReport(selectedId, controller.signal);
+        if (controller.signal.aborted) return;
         setReport(data && data.available ? data : null);
       } catch {
         // No package / no topology — leave the report empty (overlay hidden).
-        if (!cancelled) setReport(null);
+        if (!controller.signal.aborted) setReport(null);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [selectedId, geometryVersion]);
 

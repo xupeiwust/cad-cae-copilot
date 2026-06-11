@@ -27,18 +27,18 @@ export function useOptimizationStudy({ selectedId, geometryVersion = null }: Use
   }, [selectedId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     if (!selectedId) return;
 
     void (async () => {
       try {
         const [rankingRes, recommendationRes, reportRes] = await Promise.all([
-          api.getProjectArtifact(selectedId, RANKING_PATH).catch(() => null),
-          api.getProjectArtifact(selectedId, RECOMMENDATION_PATH).catch(() => null),
-          api.getProjectArtifact(selectedId, REPORT_PATH).catch(() => null),
+          api.getProjectArtifact(selectedId, RANKING_PATH, controller.signal).catch(() => null),
+          api.getProjectArtifact(selectedId, RECOMMENDATION_PATH, controller.signal).catch(() => null),
+          api.getProjectArtifact(selectedId, REPORT_PATH, controller.signal).catch(() => null),
         ]);
 
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
 
         const ranking = rankingRes?.parsed_json ?? null;
         const recommendation = recommendationRes?.parsed_json ?? null;
@@ -47,12 +47,12 @@ export function useOptimizationStudy({ selectedId, geometryVersion = null }: Use
         const shaped = shapeOptimizationStudy(ranking, recommendation, report);
         setStudy(shaped.has_study ? shaped : null);
       } catch {
-        if (!cancelled) setStudy(null);
+        if (!controller.signal.aborted) setStudy(null);
       }
     })();
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [selectedId, geometryVersion]);
 

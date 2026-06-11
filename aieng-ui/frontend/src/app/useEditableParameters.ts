@@ -23,20 +23,20 @@ export function useEditableParameters({ selectedId, geometryVersion = null }: Us
   }, [selectedId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     if (!selectedId) return;
     void (async () => {
       try {
-        const data = await api.getEditableParameters(selectedId);
-        if (cancelled) return;
+        const data = await api.getEditableParameters(selectedId, controller.signal);
+        if (controller.signal.aborted) return;
         setParameters(Array.isArray(data.parameters) ? data.parameters : []);
       } catch {
         // No package / no feature graph — leave the listing empty (panel hidden).
-        if (!cancelled) setParameters([]);
+        if (!controller.signal.aborted) setParameters([]);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [selectedId, geometryVersion]);
 

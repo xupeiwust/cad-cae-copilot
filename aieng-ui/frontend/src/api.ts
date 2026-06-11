@@ -47,8 +47,19 @@ export type PersistedAgentEvent = {
 
 async function request<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const timeoutMs = init?.timeoutMs ?? 30000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  let signal: AbortSignal = timeoutController.signal;
+  const externalSignal = init?.signal;
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(timer);
+      throw new Error("Request aborted");
+    }
+    externalSignal.addEventListener("abort", () => timeoutController.abort(), { once: true });
+  }
 
   try {
     const response = await fetch(`${API}${path}`, {
@@ -56,7 +67,7 @@ async function request<T>(path: string, init?: RequestInit & { timeoutMs?: numbe
         ...(init?.headers ?? {}),
       },
       ...init,
-      signal: controller.signal,
+      signal,
     });
 
     if (!response.ok) {
@@ -67,6 +78,9 @@ async function request<T>(path: string, init?: RequestInit & { timeoutMs?: numbe
     return response.json() as Promise<T>;
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
+      if (externalSignal?.aborted) {
+        throw new Error("Request aborted");
+      }
       throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
     }
     throw err;
@@ -91,9 +105,9 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  getSettings: () => request<Record<string, unknown>>("/api/settings"),
-  getSetting: (key: string) =>
-    request<{ key: string; value: unknown }>(`/api/settings/${encodeURIComponent(key)}`),
+  getSettings: (signal?: AbortSignal) => request<Record<string, unknown>>("/api/settings", { signal }),
+  getSetting: (key: string, signal?: AbortSignal) =>
+    request<{ key: string; value: unknown }>(`/api/settings/${encodeURIComponent(key)}`, { signal }),
   updateSetting: (key: string, value: unknown) =>
     request<{ key: string; value: unknown; updated_at: string }>(`/api/settings/${encodeURIComponent(key)}`, {
       method: "PUT",
@@ -158,8 +172,8 @@ export const api = {
   listAgentConnections: () => request<ChatConnection[]>("/api/agent/connections"),
   listLocalAgentCapabilities: () =>
     request<{ adapters: LocalAgentCapability[]; available: LocalAgentCapability[] }>("/api/local-agents/capabilities"),
-  getAutopilotRun: (runId: string) =>
-    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}`),
+  getAutopilotRun: (runId: string, signal?: AbortSignal) =>
+    request<AutopilotRunState>(`/api/agent/autopilot/runs/${runId}`, { signal }),
   // Approach A: resolve a gated-tool approval for an agentic Claude session.
   resolveAgenticPermission: (permissionId: string, approved: boolean, message?: string) =>
     request<{ status: string; approved: boolean; decision: Record<string, unknown> }>(
@@ -203,30 +217,31 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   getBenchmarkRun: (runId: string) => request<BenchmarkRun>(`/api/benchmarks/runs/${runId}`),
-  listProjects: () => request<ProjectRecord[]>("/api/projects"),
-  createProject: (name: string) =>
+  listProjects: (signal?: AbortSignal) => request<ProjectRecord[]>("/api/projects", { signal }),
+  createProject: (name: string, signal?: AbortSignal) =>
     request<ProjectRecord>("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
+      signal,
     }),
   createSampleProject: () => request<ProjectRecord>("/api/projects/sample", { method: "POST" }),
-  getProject: (projectId: string) => request<ProjectSummary>(`/api/projects/${projectId}`),
+  getProject: (projectId: string, signal?: AbortSignal) => request<ProjectSummary>(`/api/projects/${projectId}`, { signal }),
   deleteProject: (projectId: string) =>
     request<{ deleted: boolean; project_id: string; chat_rows_removed: number }>(
       `/api/projects/${projectId}`,
       { method: "DELETE" },
     ),
-  getObjectRegistry: (projectId: string) =>
-    request<ObjectRegistryResponse>(`/api/projects/${projectId}/object-registry`),
-  getEditableParameters: (projectId: string) =>
-    request<EditableParametersResponse>(`/api/projects/${projectId}/editable-parameters`),
-  getGeometryReport: (projectId: string) =>
-    request<GeometryReportResponse>(`/api/projects/${projectId}/geometry-report`),
-  getProjectCritique: (projectId: string) =>
-    request<CritiqueResponse>(`/api/projects/${projectId}/critique`),
-  getSimulationReadiness: (projectId: string) =>
-    request<SimulationReadinessResponse>(`/api/projects/${projectId}/simulation-readiness`),
+  getObjectRegistry: (projectId: string, signal?: AbortSignal) =>
+    request<ObjectRegistryResponse>(`/api/projects/${projectId}/object-registry`, { signal }),
+  getEditableParameters: (projectId: string, signal?: AbortSignal) =>
+    request<EditableParametersResponse>(`/api/projects/${projectId}/editable-parameters`, { signal }),
+  getGeometryReport: (projectId: string, signal?: AbortSignal) =>
+    request<GeometryReportResponse>(`/api/projects/${projectId}/geometry-report`, { signal }),
+  getProjectCritique: (projectId: string, signal?: AbortSignal) =>
+    request<CritiqueResponse>(`/api/projects/${projectId}/critique`, { signal }),
+  getSimulationReadiness: (projectId: string, signal?: AbortSignal) =>
+    request<SimulationReadinessResponse>(`/api/projects/${projectId}/simulation-readiness`, { signal }),
   getProjectHealthCheck: (projectId: string) =>
     request<ProjectHealthCheckResponse>(`/api/projects/${projectId}/health-check`),
   getFreeCadAdapterPreflight: () =>
@@ -478,13 +493,14 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ x, y, z }),
     }),
-  getBrepGraph: (projectId: string) =>
-    request<Record<string, unknown>>(`/api/projects/${projectId}/brep-graph`),
-  buildBrepGraph: (projectId: string) =>
+  getBrepGraph: (projectId: string, signal?: AbortSignal) =>
+    request<Record<string, unknown>>(`/api/projects/${projectId}/brep-graph`, { signal }),
+  buildBrepGraph: (projectId: string, signal?: AbortSignal) =>
     request<Record<string, unknown>>(`/api/projects/${projectId}/brep-graph/build`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
+      signal,
     }),
   runSimulation: (projectId: string, body: Record<string, unknown>) =>
     request<Record<string, unknown>>(`/api/projects/${projectId}/run-simulation`, {
@@ -535,8 +551,8 @@ export const api = {
         body: JSON.stringify({ message, history, ...(apiKey ? { api_key: apiKey } : {}), ...(sessionId ? { session_id: sessionId } : {}) }),
       },
     ),
-  getProjectArtifact: (projectId: string, path: string) =>
-    request<ArtifactResponse>(`/api/projects/${projectId}/artifact?path=${encodeURIComponent(path)}`),
+  getProjectArtifact: (projectId: string, path: string, signal?: AbortSignal) =>
+    request<ArtifactResponse>(`/api/projects/${projectId}/artifact?path=${encodeURIComponent(path)}`, { signal }),
   diffArtifactJson: (projectId: string, before: unknown, after: unknown) =>
     request<ArtifactDiffResponse>(`/api/projects/${projectId}/artifact/diff`, {
       method: "POST",

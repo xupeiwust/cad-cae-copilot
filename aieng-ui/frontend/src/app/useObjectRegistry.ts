@@ -25,24 +25,24 @@ export function useObjectRegistry({ selectedId, geometryVersion = null }: UseObj
   }, [selectedId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     if (!selectedId) return;
     void (async () => {
       try {
-        const data = await api.getObjectRegistry(selectedId);
-        if (cancelled) return;
+        const data = await api.getObjectRegistry(selectedId, controller.signal);
+        if (controller.signal.aborted) return;
         setRegistry(data.object_registry ?? null);
         setVerification(data.verification ?? null);
       } catch {
         // 404 = not a Shape IR package; that's fine — no registry panel shown.
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setRegistry(null);
           setVerification(null);
         }
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [selectedId, geometryVersion]);
 

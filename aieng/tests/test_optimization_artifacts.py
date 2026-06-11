@@ -391,3 +391,15 @@ def test_single_objective_rejects_extra_optimization_objectives() -> None:
     problem = _design_study_problem()
     issues = validate_optimization_artifact_set(documents, design_study_problem=problem)
     assert any("objectives[1]: no corresponding objective" in issue for issue in issues)
+
+
+def test_objectives_array_takes_precedence_over_single_objective() -> None:
+    """When both objective and objectives are present, objectives takes precedence."""
+    documents = _valid_documents_multi_objective()
+    problem = _design_study_problem_multi_objective()
+    # Add a conflicting single objective that would fail if checked
+    problem["objective"] = {"sense": "maximize", "metric": "stress"}
+
+    # Should validate against objectives array, not the single objective
+    issues = validate_optimization_artifact_set(documents, design_study_problem=problem)
+    assert issues == []

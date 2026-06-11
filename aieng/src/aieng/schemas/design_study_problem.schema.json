@@ -41,12 +41,12 @@
     },
     "objective": {
       "type": "object",
-      "description": "Recorded, NOT executed. Single-objective mode (back-compat); use objectives[] for multi-objective.",
+      "description": "Recorded, NOT executed. Single-objective mode (back-compat); use objectives[] for multi-objective. If both objective and objectives are present, objectives takes precedence.",
       "additionalProperties": true
     },
     "objectives": {
       "type": "array",
-      "description": "Multi-objective mode. When present, each objective is validated individually against the optimization_objectives artifact.",
+      "description": "Multi-objective mode. When present, each objective is validated individually against the optimization_objectives artifact. Takes precedence over the single objective field if both are present.",
       "items": {
         "type": "object",
         "additionalProperties": true

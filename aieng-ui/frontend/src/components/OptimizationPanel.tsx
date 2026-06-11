@@ -10,9 +10,13 @@ import {
   type OptimizationCandidate,
   type OptimizationStudy,
 } from "../app/optimizationStudy";
+import { isConvergenceMeaningful, type OptimizationConvergence } from "../app/optimizationConvergence";
+import { ConvergenceChart } from "./ConvergenceChart";
 
 type OptimizationPanelProps = {
   study: OptimizationStudy;
+  /** Iterative-loop convergence history; rendered as a chart when available. */
+  convergence?: OptimizationConvergence | null;
   /** Prefill the composer with an approval-gated accept draft for a candidate. */
   onUseInChat?: (draft: string) => void;
 };
@@ -36,7 +40,7 @@ type OptimizationPanelProps = {
  * - Missing-stages transparency.
  * - Failed-candidates transparency.
  */
-export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps) {
+export function OptimizationPanel({ study, convergence, onUseInChat }: OptimizationPanelProps) {
   const groups = useMemo(() => groupCandidatesByFeasibility(study.candidates), [study.candidates]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
@@ -96,6 +100,10 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
           ? "A candidate is safe to accept (still requires approval)"
           : "No candidate is accept-ready yet — advisory only"}
       </div>
+
+      {isConvergenceMeaningful(convergence ?? null) && (
+        <ConvergenceChart convergence={convergence!} title="Incumbent objective over iterations" />
+      )}
 
       {/* ── Study overview (deepening) ── */}
       {hasDeepData && (

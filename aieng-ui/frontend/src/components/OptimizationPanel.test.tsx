@@ -5,6 +5,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 
 import { OptimizationPanel } from "./OptimizationPanel";
+import type { OptimizationConvergence } from "../app/optimizationConvergence";
 import type { OptimizationStudy } from "../app/optimizationStudy";
 
 afterEach(cleanup);
@@ -19,6 +20,31 @@ function makeStudy(overrides: Partial<OptimizationStudy> = {}): OptimizationStud
     baseline_modified: null,
     warnings: [],
     ...overrides,
+  };
+}
+
+function makeConvergence(
+  iterations: Array<{ index: number; objective: number | null; feasible: boolean }>,
+): OptimizationConvergence {
+  return {
+    has_data: iterations.length > 0,
+    iterations: iterations.map((it) => ({
+      index: it.index,
+      incumbent_candidate_id: `c${it.index}`,
+      incumbent_objective: it.objective,
+      feasible: it.feasible,
+      evaluations_total: it.index * 4,
+      failures_this_round: 0,
+      convergence_verdict: "continue",
+      safe_to_accept: false,
+    })),
+    latest_verdict: {
+      converged: false,
+      verdict: "continue",
+      reason_codes: [],
+      iteration_count: iterations.length,
+    },
+    config_used: { max_iterations: 20 },
   };
 }
 
@@ -175,5 +201,34 @@ describe("OptimizationPanel", () => {
     expect(acceptBtn).toBeTruthy();
     fireEvent.click(acceptBtn!);
     expect(onUseInChat).toHaveBeenCalledWith("/design-study accept candidate c1");
+  });
+
+  it("renders the convergence chart when convergence data is provided", () => {
+    const study = makeStudy({
+      candidates: [{ candidate_id: "c1", rank: 1, feasibility: "feasible" }],
+      safe_to_accept: true,
+    });
+    const convergence = makeConvergence([
+      { index: 1, objective: 1.0, feasible: true },
+      { index: 2, objective: 0.9, feasible: true },
+    ]);
+
+    render(<OptimizationPanel study={study} convergence={convergence} />);
+    expect(screen.getByRole("img", { name: "Incumbent objective over iterations" })).toBeTruthy();
+  });
+
+  it("omits the convergence chart when convergence has no iterations", () => {
+    const study = makeStudy({
+      candidates: [{ candidate_id: "c1", rank: 1, feasibility: "feasible" }],
+    });
+    const convergence: OptimizationConvergence = {
+      has_data: false,
+      iterations: [],
+      latest_verdict: null,
+      config_used: null,
+    };
+
+    const { container } = render(<OptimizationPanel study={study} convergence={convergence} />);
+    expect(container.querySelector('[role="img"]')).toBeNull();
   });
 });

@@ -25,6 +25,8 @@ import { useProjectState } from "./useProjectState";
 import { useSettingsUI } from "./useSettingsUI";
 import { useApprovalState } from "./useApprovalState";
 import { useWorkbenchStages } from "./useWorkbenchStages";
+import { useOptimizationStudy } from "./useOptimizationStudy";
+import { useOptimizationConvergence } from "./useOptimizationConvergence";
 
 export function useWorkbenchApp() {
   const {
@@ -123,6 +125,11 @@ export function useWorkbenchApp() {
     setNotice,
     executePreprocessFromPrompt: async () => undefined,
   });
+
+  const geometryVersion = projects.find((item) => item.id === selectedId)?.updated_at ?? null;
+
+  const { optimizationStudy } = useOptimizationStudy({ selectedId, geometryVersion });
+  const { optimizationConvergence } = useOptimizationConvergence({ selectedId, geometryVersion });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
   const heatmapUrl = heatmapActive && selectedId ? `/api/projects/${selectedId}/stress-heatmap` : null;
@@ -406,5 +413,7 @@ export function useWorkbenchApp() {
     setLocalAgentConfig,
     globalSettingsOpen,
     setGlobalSettingsOpen,
+    optimizationStudy,
+    optimizationConvergence,
   };
 }

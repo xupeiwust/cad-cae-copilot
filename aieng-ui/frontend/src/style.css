@@ -10714,3 +10714,135 @@ textarea:focus,
     padding: 8px 10px;
   }
 }
+
+/* Convergence chart */
+.convergence-chart {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.35);
+  padding: 12px;
+  margin: 10px 0 12px;
+}
+
+.convergence-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.convergence-chart-head strong {
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.convergence-verdict {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.convergence-verdict-converged {
+  color: #bbf7d0;
+  background: rgba(22, 163, 74, 0.16);
+  border-color: rgba(34, 197, 94, 0.28);
+}
+
+.convergence-verdict-running {
+  color: #bfdbfe;
+  background: rgba(37, 99, 235, 0.16);
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+.convergence-chart-svg {
+  display: block;
+  width: 100%;
+  min-height: 170px;
+}
+
+.convergence-axis-line {
+  stroke: rgba(148, 163, 184, 0.5);
+  stroke-width: 1;
+}
+
+.convergence-grid-line {
+  stroke: rgba(148, 163, 184, 0.16);
+  stroke-width: 1;
+}
+
+.convergence-axis-text {
+  fill: #94a3b8;
+  font-size: 10px;
+}
+
+.convergence-axis-text-x {
+  text-anchor: middle;
+}
+
+.convergence-axis-text-y {
+  text-anchor: end;
+}
+
+.convergence-line {
+  fill: none;
+  stroke: #38bdf8;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.convergence-point {
+  stroke: #0f172a;
+  stroke-width: 1.5;
+}
+
+.convergence-point-feasible {
+  fill: #22c55e;
+}
+
+.convergence-point-infeasible {
+  fill: #f97316;
+}
+
+.convergence-missing-point {
+  fill: transparent;
+  stroke: rgba(148, 163, 184, 0.65);
+  stroke-dasharray: 3 3;
+}
+
+.convergence-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  color: #cbd5e1;
+  font-size: 11px;
+}
+
+.convergence-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.convergence-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.convergence-legend-dot-feasible {
+  background: #22c55e;
+}
+
+.convergence-legend-dot-infeasible {
+  background: #f97316;
+}
+
+.convergence-legend-safe {
+  color: #bbf7d0;
+}

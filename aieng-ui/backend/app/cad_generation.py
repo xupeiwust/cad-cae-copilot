@@ -1715,8 +1715,15 @@ def _geometry_report_for_response(report: dict[str, Any], response_detail: str) 
 
 
 _BUILD123D_CACHE_FORMAT_VERSION = "1"
-_BUILD123D_CACHE_MAX_ENTRIES = int(os.environ.get("AIENG_CACHE_MAX_ENTRIES", "64"))
-_BUILD123D_CACHE_MAX_BYTES = int(os.environ.get("AIENG_CACHE_MAX_BYTES", str(512 * 1024 * 1024)))
+def _parse_cache_env(key: str, default: int) -> int:
+    try:
+        return int(os.environ[key])
+    except (ValueError, KeyError):
+        return default
+
+
+_BUILD123D_CACHE_MAX_ENTRIES = _parse_cache_env("AIENG_CACHE_MAX_ENTRIES", 64)
+_BUILD123D_CACHE_MAX_BYTES = _parse_cache_env("AIENG_CACHE_MAX_BYTES", 512 * 1024 * 1024)
 
 
 def _package_version(name: str) -> str:
@@ -1767,7 +1774,7 @@ def _cache_entry_size(path: Path) -> int:
 
 def _prune_build123d_cache(root: Path) -> None:
     try:
-        entries = [p for p in root.iterdir() if p.is_dir()]
+        entries = [p for p in root.iterdir() if p.is_dir() and not p.name.endswith(".tmp")]
     except OSError:
         return
     if not entries:
@@ -1958,7 +1965,7 @@ def _execute_build123d_cached(
     root = _build123d_cache_root(settings)
     entry = root / cache_key
     lock_path = str(entry) + ".lock"
-    with FileLock(lock_path, timeout=60):
+    with FileLock(lock_path, timeout=timeout):
         cached = _read_build123d_cache(settings, cache_key)
         if cached is not None:
             topo = cached["topology_map"]

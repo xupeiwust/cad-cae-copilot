@@ -2109,7 +2109,7 @@ def test_concurrent_cache_writes_produce_one_valid_entry(tmp_path: Path) -> None
 
     settings = _make_settings(tmp_path)
     code = "from build123d import *\nresult = Box(1, 1, 1)"
-    cache_key, key_material = cad_generation._build123d_cache_key(
+    cache_key, _ = cad_generation._build123d_cache_key(
         code=code, mode="replace", model_kind="auto",
     )
     calls = 0
@@ -2147,7 +2147,7 @@ def test_corrupt_cache_entry_removed_on_read(tmp_path: Path) -> None:
 
     settings = _make_settings(tmp_path)
     code = "from build123d import *\nresult = Box(2, 2, 2)"
-    cache_key, key_material = cad_generation._build123d_cache_key(
+    cache_key, _ = cad_generation._build123d_cache_key(
         code=code, mode="replace", model_kind="auto",
     )
     root = cad_generation._build123d_cache_root(settings)
@@ -2192,22 +2192,26 @@ def test_cache_integrity_wrong_key_removed(tmp_path: Path) -> None:
 
 
 def test_cache_env_limits_override_defaults(tmp_path: Path) -> None:
-    """AIENG_CACHE_MAX_ENTRIES and AIENG_CACHE_MAX_BYTES are read from env."""
-    from app import cad_generation
+    """AIENG_CACHE_MAX_ENTRIES and AIENG_CACHE_MAX_BYTES are read from env at import time."""
+    import subprocess
+    import sys
 
-    import os
-    with patch.dict(os.environ, {"AIENG_CACHE_MAX_ENTRIES": "8", "AIENG_CACHE_MAX_BYTES": "1048576"}):
-        # Force re-import to pick up new env values by mutating module constants directly.
-        old_entries = cad_generation._BUILD123D_CACHE_MAX_ENTRIES
-        old_bytes = cad_generation._BUILD123D_CACHE_MAX_BYTES
-        try:
-            cad_generation._BUILD123D_CACHE_MAX_ENTRIES = int(os.environ["AIENG_CACHE_MAX_ENTRIES"])
-            cad_generation._BUILD123D_CACHE_MAX_BYTES = int(os.environ["AIENG_CACHE_MAX_BYTES"])
-            assert cad_generation._BUILD123D_CACHE_MAX_ENTRIES == 8
-            assert cad_generation._BUILD123D_CACHE_MAX_BYTES == 1048576
-        finally:
-            cad_generation._BUILD123D_CACHE_MAX_ENTRIES = old_entries
-            cad_generation._BUILD123D_CACHE_MAX_BYTES = old_bytes
+    script = '''
+import os, sys
+sys.path.insert(0, r"''' + str(_WORKSPACE_ROOT / "aieng-ui" / "backend") + '''")
+os.environ["AIENG_CACHE_MAX_ENTRIES"] = "8"
+os.environ["AIENG_CACHE_MAX_BYTES"] = "1048576"
+from app.cad_generation import _BUILD123D_CACHE_MAX_ENTRIES, _BUILD123D_CACHE_MAX_BYTES
+print(_BUILD123D_CACHE_MAX_ENTRIES, _BUILD123D_CACHE_MAX_BYTES)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    entries, bytes_val = result.stdout.strip().split()
+    assert int(entries) == 8
+    assert int(bytes_val) == 1048576
 
 
 def test_mutation_path_uses_shared_cache(tmp_path: Path) -> None:

@@ -28,7 +28,9 @@ def _resolve_ccx_cmd() -> list[str] | None:
     ["conda", "run", "-n", "calculix-env", "ccx"]) when ccx is available,
     or None when it cannot be found.
     """
+    import os
     import shlex
+    import shutil
 
     ccx_env = os.environ.get("AIENG_CCX_CMD")
     if ccx_env:
@@ -678,7 +680,9 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             deck_hint = f" (or external: {input_deck_path_str})" if input_deck_path_str else ""
             missing_items.append(f"simulation/runs/{run_id}/solver_input.inp{deck_hint}")
         if not ccx_available:
-            missing_items.append("CalculiX executable (ccx) not found on PATH")
+            missing_items.append(
+                "CalculiX command unavailable (set AIENG_CCX_CMD or ensure ccx is discoverable on PATH)."
+            )
 
         ready_to_run = len(missing_items) == 0
 

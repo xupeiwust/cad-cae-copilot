@@ -4827,7 +4827,7 @@ def test_no_field_summaries_without_computed_metrics(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    shutil.which("ccx") is None and os.environ.get("AIENG_CCX_CMD") is None,
+    shutil.which("ccx") is None and not os.environ.get("AIENG_CCX_CMD"),
     reason="CalculiX executable (ccx) not found on PATH and AIENG_CCX_CMD not set — skipping real solver smoke test.",
 )
 def test_run_solver_real_ccx_skipped_if_unavailable(tmp_path: Path) -> None:

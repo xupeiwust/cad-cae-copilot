@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "../api";
 import type { Notice } from "../appTypes";

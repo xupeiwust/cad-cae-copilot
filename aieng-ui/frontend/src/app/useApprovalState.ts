@@ -26,7 +26,7 @@ export function useApprovalState({ setNotice }: { setNotice: SetNotice }) {
         detail: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [setNotice, setPendingApprovals]);
+  }, [setNotice]);
 
   return {
     pendingApprovals,

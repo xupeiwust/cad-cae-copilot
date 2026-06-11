@@ -869,11 +869,15 @@ def _validate_cad_parameter_edit_contract(
         if max_value is not None and new_value > max_value:
             raise ValueError(f"new_value {new_value!r} is above max_value {max_value!r}")
 
+    _model_kind = feature_graph.get("model_kind", "auto")
+    if _model_kind not in ("mechanical", "organic", "auto"):
+        _model_kind = "auto"
     return {
         "feature": feature,
         "parameter": param,
         "cad_object_name": feature.get("cad_object_name") or feature_id,
         "cad_parameter_name": param.get("cad_parameter_name") or parameter_name,
+        "model_kind": _model_kind,
     }
 
 

@@ -2260,3 +2260,99 @@ def test_remove_part_cache_hit_on_repeated_identical_remove(tmp_path: Path) -> N
     assert r1["cache_hit"] is False
     assert r2["cache_hit"] is True
     assert calls == 1
+
+
+# ── append-step-cache spike (#91) ─────────────────────────────────────────────
+
+def test_step_roundtrip_preserves_labels() -> None:
+    """Sanity check for the STEP roundtrip probe; skips when build123d absent."""
+    pytest.importorskip("build123d")
+    from app.cad_generation import _step_roundtrip_preserves_labels
+
+    result = _step_roundtrip_preserves_labels()
+    assert isinstance(result, bool)
+
+
+def test_execute_build123d_append_step_cache_mocked(tmp_path: Path) -> None:
+    """When append_step_cache=True and labels survive, execution uses STEP prefix."""
+    from unittest.mock import patch
+
+    from app.cad_generation import execute_build123d_code, read_cad_source
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "append-cache")
+
+    # Build a base package so append has something to read.
+    base = "result = Box(40, 40, 10)\n"
+    with patch("app.cad_generation._execute_build123d_code_streaming", side_effect=_fake_stream_ok):
+        execute_build123d_code(settings, pid, {"code": base, "thumbnail": False})
+
+    captured_code: str | None = None
+
+    def _capture_stream(code: str, timeout: int = 60):
+        nonlocal captured_code
+        captured_code = code
+        yield from _fake_stream_ok(code, timeout)
+
+    add = "result = previous_result + Cylinder(3, 30)\n"
+    with (
+        patch("app.cad_generation._step_roundtrip_preserves_labels", return_value=True),
+        patch("app.cad_generation._execute_build123d_code_streaming", side_effect=_capture_stream),
+    ):
+        out = execute_build123d_code(
+            settings,
+            pid,
+            {"code": add, "mode": "append", "thumbnail": False, "append_step_cache": True},
+        )
+
+    assert out["status"] == "ok"
+    assert captured_code is not None
+    # The execution code must import the prior STEP rather than replay the full script.
+    assert "_aieng_build123d.import_step" in captured_code
+    # The full prior source should NOT be re-executed.
+    assert "Box(40, 40, 10)" not in captured_code
+    # geometry/source.py still stores the full accumulated script for reproducibility.
+    source = read_cad_source(settings, pid)
+    assert source["has_base"] is True
+    assert "Box(40, 40, 10)" in source["source"]
+
+
+def test_execute_build123d_append_step_cache_regression(tmp_path: Path) -> None:
+    """append_step_cache produces identical topology/feature graph to full re-exec."""
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+
+    base = (
+        "from build123d import *\n"
+        "body = Box(40, 40, 10); body.label = 'fuselage'\n"
+        "result = Compound(children=[body])\n"
+    )
+    add = (
+        "from build123d import *\n"
+        "arm = Cylinder(3, 30); arm.label = 'motor_pod_FL'\n"
+        "result = Compound(children=[previous_result, arm])\n"
+    )
+
+    # Path A: default append (full re-execution)
+    pid_a = _make_project(settings, "append-default")
+    execute_build123d_code(settings, pid_a, {"code": base, "thumbnail": False})
+    out_a = execute_build123d_code(settings, pid_a, {"code": add, "mode": "append", "thumbnail": False})
+
+    # Path B: append with prefix reuse
+    pid_b = _make_project(settings, "append-cache")
+    execute_build123d_code(settings, pid_b, {"code": base, "thumbnail": False})
+    out_b = execute_build123d_code(
+        settings,
+        pid_b,
+        {"code": add, "mode": "append", "thumbnail": False, "append_step_cache": True},
+    )
+
+    assert out_a["status"] == "ok"
+    assert out_b["status"] == "ok"
+    assert out_a["named_parts"] == out_b["named_parts"]
+    assert out_a["parts_added"] == out_b["parts_added"]
+    assert out_a["topology_summary"]["face_count"] == out_b["topology_summary"]["face_count"]
+    # Feature graphs should be structurally equivalent.
+    assert len(out_a["feature_graph"]["features"]) == len(out_b["feature_graph"]["features"])

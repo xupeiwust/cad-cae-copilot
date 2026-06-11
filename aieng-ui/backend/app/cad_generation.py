@@ -1748,6 +1748,44 @@ def _build123d_cache_versions() -> dict[str, str]:
     }
 
 
+_STEP_LABELS_SURVIVE_ROUNDTRIP: bool | None = None
+
+
+def _step_roundtrip_preserves_labels() -> bool:
+    """Check whether build123d preserves part labels through STEP export/import.
+
+    Cached per-process so the probe runs at most once. Returns ``False`` when
+    build123d is unavailable or the roundtrip drops the label.
+    """
+    global _STEP_LABELS_SURVIVE_ROUNDTRIP
+    if _STEP_LABELS_SURVIVE_ROUNDTRIP is not None:
+        return _STEP_LABELS_SURVIVE_ROUNDTRIP
+    try:
+        import build123d as b3d
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "probe.step"
+            left = b3d.Box(10, 10, 10)
+            left.label = "aieng_probe_left"
+            right = b3d.Box(10, 10, 10)
+            right = right.translate((20, 0, 0))
+            right.label = "aieng_probe_right"
+            probe = b3d.Compound(children=[left, right])
+            b3d.export_step(probe, str(path))
+            imported = b3d.import_step(str(path))
+            imported_children = list(getattr(imported, "children", None) or [])
+            imported_labels = {getattr(child, "label", "") for child in imported_children}
+            _STEP_LABELS_SURVIVE_ROUNDTRIP = {
+                "aieng_probe_left",
+                "aieng_probe_right",
+            }.issubset(imported_labels)
+    except Exception:
+        _STEP_LABELS_SURVIVE_ROUNDTRIP = False
+    return _STEP_LABELS_SURVIVE_ROUNDTRIP
+
+
 def _build123d_cache_key(*, code: str, mode: str, model_kind: str) -> tuple[str, dict[str, Any]]:
     material = {
         "cache_format_version": _BUILD123D_CACHE_FORMAT_VERSION,
@@ -4246,10 +4284,15 @@ def execute_build123d_code(
     mode = str(payload.get("mode") or "replace").lower()
     used_base = False
     prior_named_parts: list[str] = []
+    storage_code = code  # what we persist in geometry/source.py
+    execution_code = code  # what we actually run
+    prior_step_path: str | None = None
+    append_step_cache = bool(payload.get("append_step_cache", False))
     if mode == "append":
         existing_pkg = project.get("aieng_file")
         pkg = resolve_project_path(settings, project_id, existing_pkg) if existing_pkg else None
         prior_source: str | None = None
+        prior_step_bytes: bytes | None = None
         if pkg is not None and pkg.exists():
             try:
                 with zipfile.ZipFile(pkg, "r") as zf:
@@ -4259,8 +4302,11 @@ def execute_build123d_code(
                     if "graph/feature_graph.json" in names:
                         prior_fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
                         prior_named_parts = _named_parts_from_feature_graph(prior_fg)
+                    if "geometry/generated.step" in names:
+                        prior_step_bytes = zf.read("geometry/generated.step")
             except Exception:
                 prior_source = None
+                prior_step_bytes = None
         if not prior_source:
             return {
                 "status": "error",
@@ -4271,44 +4317,98 @@ def execute_build123d_code(
                 ),
             }
         used_base = True
-        code = (
+        storage_code = (
             prior_source
             + "\n\n# --- aieng append: previous step exposed as `previous_result` ---\n"
             + "previous_result = result.part if hasattr(result, 'part') else result\n"
             + "# --- new code (must reassign `result`) ---\n"
             + code
         )
+        # Prefix-reuse optimization: import prior STEP instead of re-executing
+        # the full accumulated script. Only when labels survive roundtrip.
+        if append_step_cache and prior_step_bytes and _step_roundtrip_preserves_labels():
+            try:
+                import tempfile as _tmpf
+                prior_step_path = _tmpf.NamedTemporaryFile(suffix=".step", delete=False).name
+                Path(prior_step_path).write_bytes(prior_step_bytes)
+                execution_code = (
+                    "previous_result = _aieng_build123d.import_step("
+                    + repr(prior_step_path)
+                    + ")\n"
+                    + "if hasattr(previous_result, 'part'):\n"
+                    + "    previous_result = previous_result.part\n"
+                    + "if isinstance(previous_result, (list, tuple)) or type(previous_result).__name__ == 'ShapeList':\n"
+                    + "    _items = list(previous_result)\n"
+                    + "    if len(_items) == 1:\n"
+                    + "        previous_result = _items[0]\n"
+                    + "    elif _items:\n"
+                    + "        previous_result = Compound(children=_items)\n"
+                    + "# --- aieng append: new code (must reassign `result`) ---\n"
+                    + code
+                )
+            except Exception:
+                execution_code = storage_code
+                prior_step_path = None
+        else:
+            execution_code = storage_code
 
-    cache_key, cache_key_material = _build123d_cache_key(code=code, mode=mode, model_kind=model_kind)
+    if mode == "append" and execution_code != storage_code and prior_step_bytes is not None:
+        # Custom cache key for prefix-reuse: stable across temp-file paths.
+        prior_step_hash = hashlib.sha256(prior_step_bytes).hexdigest()
+        new_code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        storage_code_hash = hashlib.sha256(storage_code.encode("utf-8")).hexdigest()
+        cache_key_material = {
+            "cache_format_version": _BUILD123D_CACHE_FORMAT_VERSION,
+            "executor": "build123d_streaming",
+            "mode": mode,
+            "model_kind": model_kind,
+            "prior_step_sha256": prior_step_hash,
+            "new_code_sha256": new_code_hash,
+            "storage_code_sha256": storage_code_hash,
+            "prefix_reuse": True,
+            "versions": _build123d_cache_versions(),
+        }
+        encoded = json.dumps(cache_key_material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        cache_key = hashlib.sha256(encoded).hexdigest()
+    else:
+        cache_key, cache_key_material = _build123d_cache_key(code=execution_code, mode=mode, model_kind=model_kind)
+
     cached = _read_build123d_cache(settings, cache_key)
     if cached is not None:
-        return _finish_execute_build123d_response(
-            settings=settings,
-            project_id=project_id,
-            project=project,
-            payload=payload,
-            code=code,
-            mode=mode,
-            used_base=used_base,
-            prior_named_parts=prior_named_parts,
-            step_bytes=cached["step_bytes"],
-            stl_bytes=cached["stl_bytes"],
-            glb_bytes=cached["glb_bytes"],
-            topo=cached["topology_map"],
-            feature_graph=cached["feature_graph"],
-            mesh_meta=cached.get("mesh_meta"),
-            geometry_report_full=cached.get("geometry_report") or _compute_geometry_report(cached["topology_map"]),
-            write_files=write_files,
-            response_detail=response_detail,
-            cache_hit=True,
-            emit=_emit,
-        )
+        try:
+            return _finish_execute_build123d_response(
+                settings=settings,
+                project_id=project_id,
+                project=project,
+                payload=payload,
+                code=storage_code,
+                mode=mode,
+                used_base=used_base,
+                prior_named_parts=prior_named_parts,
+                step_bytes=cached["step_bytes"],
+                stl_bytes=cached["stl_bytes"],
+                glb_bytes=cached["glb_bytes"],
+                topo=cached["topology_map"],
+                feature_graph=cached["feature_graph"],
+                mesh_meta=cached.get("mesh_meta"),
+                geometry_report_full=cached.get("geometry_report") or _compute_geometry_report(cached["topology_map"]),
+                write_files=write_files,
+                response_detail=response_detail,
+                cache_hit=True,
+                emit=_emit,
+            )
+        finally:
+            if prior_step_path:
+                try:
+                    os.unlink(prior_step_path)
+                except Exception:
+                    pass
 
     # Drain the streaming executor; forward heartbeats to on_progress so a
     # subscribed UI sees the build advance in real time.
     last_error: str | None = None
     result_evt: dict[str, Any] | None = None
-    for evt in _execute_build123d_code_streaming(code, timeout=timeout):
+    for evt in _execute_build123d_code_streaming(execution_code, timeout=timeout):
         kind = evt.get("kind")
         if kind == "heartbeat":
             _emit({"phase": "building", "elapsed_s": evt.get("elapsed_s", 0)})
@@ -4318,11 +4418,18 @@ def execute_build123d_code(
             result_evt = evt
 
     if result_evt is None:
-        return {
-            "status": "error",
-            "code": "execution_failed",
-            "message": last_error or "build123d produced no result",
-        }
+        try:
+            return {
+                "status": "error",
+                "code": "execution_failed",
+                "message": last_error or "build123d produced no result",
+            }
+        finally:
+            if prior_step_path:
+                try:
+                    os.unlink(prior_step_path)
+                except Exception:
+                    pass
 
     step_bytes = result_evt["step_bytes"]
     stl_bytes = result_evt["stl_bytes"]
@@ -4332,7 +4439,7 @@ def execute_build123d_code(
     # doesn't get written to topology_map.json on disk.
     mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
     feature_graph = _topology_to_feature_graph(
-        topo, source_code=code, model_kind=model_kind,
+        topo, source_code=storage_code, model_kind=model_kind,
     )
     geometry_report_full = _compute_geometry_report(topo)
     _write_build123d_cache(
@@ -4368,7 +4475,7 @@ def execute_build123d_code(
             stl_bytes=stl_bytes or b"",
             topology_map=topo,
             feature_graph=feature_graph,
-            generated_code=code,
+            generated_code=storage_code,
             glb_bytes=glb_bytes,
         )
         # Clear stale-artifact warnings: a fresh build invalidates any previous
@@ -4462,7 +4569,14 @@ def execute_build123d_code(
         if thumb:
             result["thumbnail_png_base64"] = thumb
 
-    return result
+    try:
+        return result
+    finally:
+        if prior_step_path:
+            try:
+                os.unlink(prior_step_path)
+            except Exception:
+                pass
 
 
 # ── streaming variant ───────────────────────────────────────────────────────────

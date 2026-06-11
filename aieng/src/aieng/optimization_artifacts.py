@@ -70,6 +70,9 @@ OPTIMIZATION_REASON_CODES: frozenset[str] = frozenset(
         "local_refinement",
         "no_incumbent_fallback",
         "trust_region_shrink",
+        # Issue #66 — Bayesian optimisation
+        "select_bayesian",
+        "no_surrogate_available",
     }
 )
 

@@ -119,6 +119,7 @@ def propose_next_candidates(
     count: int = 4,
     shrink: float = 0.5,
     seed: int = 0,
+    algorithm: str = "trust_region",
 ) -> dict[str, Any]:
     """Propose the next batch of candidates by local refinement around the incumbent.
 
@@ -126,9 +127,17 @@ def propose_next_candidates(
     read from ``optimization_iterations.json``), so later rounds search closer to
     the incumbent. With no feasible incumbent, falls back to whole-domain LHS.
 
+    ``algorithm`` selects the proposer strategy:
+      * ``"trust_region"`` (default) — shrunk-box local refinement.
+      * ``"bayesian"`` — GP surrogate + Expected Improvement (scikit-optimize).
+
     Writes candidate patches to ``patches/design_candidates/<cid>.json`` and
     returns a summary. Baseline never modified.
     """
+    alg = algorithm.lower().replace("-", "_")
+    if alg == "bayesian":
+        from .optimization_proposer_bayesian import propose_bayesian_candidates
+        return propose_bayesian_candidates(package_path, count=count, seed=seed)
     pkg = Path(package_path)
     if not pkg.exists():
         return {"status": "error", "code": "package_not_found", "message": "package not found",

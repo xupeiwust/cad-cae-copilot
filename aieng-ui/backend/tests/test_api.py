@@ -3947,6 +3947,52 @@ def test_run_solver_ccx_unavailable_returns_error(tmp_path: Path) -> None:
     assert "ccx" in result["message"].lower()
 
 
+def test_run_solver_uses_aieng_ccx_cmd_env_var(tmp_path: Path, monkeypatch) -> None:
+    """cae.run_solver uses AIENG_CCX_CMD when set, bypassing PATH lookup."""
+    from unittest.mock import patch, MagicMock
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    monkeypatch.setenv("AIENG_CCX_CMD", "conda run -n calculix-env ccx")
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("solver-ccx-cmd"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "solver.aieng"
+    _make_preflight_package(pkg_path, input_deck=True)
+    project["aieng_file"] = "solver.aieng"
+    save_project(settings, project)
+
+    def fake_run(cmd, **kwargs):
+        cwd = Path(kwargs.get("cwd", "."))
+        frd_path = cwd / "solver_input.frd"
+        frd_path.write_text(_make_test_frd({1: [1.0, 0.0, 0.0, 1.0]}, None), encoding="utf-8")
+        return MagicMock(returncode=0, stdout="solver completed\n", stderr="")
+
+    with patch("app.main.shutil.which", return_value="/fake/conda"), \
+         patch("subprocess.run", side_effect=fake_run) as mock_run:
+        data = _execute_run_solver(client, project_id, {
+            "project_id": project_id,
+            "input_deck_path": "simulation/runs/run_001/solver_input.inp",
+            "extract_results": False,
+            "refresh_summary": False,
+        })
+
+    assert data["status"] == "completed"
+    result = data["tool_results"][0]["output"]
+    assert result["ok"] is True
+    assert result["solver_execution_performed"] is True
+    assert result["return_code"] == 0
+
+    assert len(mock_run.call_args_list) == 1
+    args, kwargs = mock_run.call_args_list[0]
+    assert args[0] == ["conda", "run", "-n", "calculix-env", "ccx", "solver_input"]
+    assert kwargs.get("shell") is False
+
+
 def test_run_solver_mocked_subprocess_success(tmp_path: Path) -> None:
     """cae.run_solver invokes ccx with shell=False and writes solver_run.json + solver_log.txt."""
     from unittest.mock import patch, MagicMock
@@ -4781,8 +4827,8 @@ def test_no_field_summaries_without_computed_metrics(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    shutil.which("ccx") is None,
-    reason="CalculiX executable (ccx) not found on PATH — skipping real solver smoke test.",
+    shutil.which("ccx") is None and not os.environ.get("AIENG_CCX_CMD"),
+    reason="CalculiX executable (ccx) not found on PATH and AIENG_CCX_CMD not set — skipping real solver smoke test.",
 )
 def test_run_solver_real_ccx_skipped_if_unavailable(tmp_path: Path) -> None:
     """Real CalculiX smoke test: runs ccx against minimal cantilever fixture if available.

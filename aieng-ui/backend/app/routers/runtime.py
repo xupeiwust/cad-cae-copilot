@@ -10,7 +10,6 @@ applying. ``active_settings`` is passed in from create_app.
 from __future__ import annotations
 
 import logging
-import shutil
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -22,6 +21,7 @@ from .. import runtime as _rt
 from ..config import now_iso
 from ..logging_utils import log_exception
 from ..project_io import _CAE_RESULT_FIELDS, _TOOL_CAPABILITY_PROFILE, write_audit_log
+from ..runtime_tool_registry import _resolve_ccx_cmd
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def register_runtime_routes(app: FastAPI, *, active_settings: Any) -> None:
         Distinguishes implemented capabilities from environment availability.
         Read-only. Does not execute tools or advance claims.
         """
-        ccx_available: bool = shutil.which("ccx") is not None
+        ccx_available: bool = _resolve_ccx_cmd() is not None
         registered: set[str] = set(_rt.registered_tool_names())
 
         tool_caps: list[dict[str, Any]] = []

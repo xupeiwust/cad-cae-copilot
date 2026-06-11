@@ -100,6 +100,7 @@ go-to-market calls for the owner — recorded here, not turned into code issues.
 4. Owner decisions to make deliberately (not code): CLA adoption, Open-Core
    timing, vertical/China GTM, pricing.
 
-> Provenance: synthesized from `deepresearch_result/cad_copilot_direction.agent.final.md`
+> Provenance: synthesized from the archived deep-research report
+> [`research/cad_copilot_direction_research_2026.md`](research/cad_copilot_direction_research_2026.md)
 > (executive summary, §1 positioning, §3 technical directions, §7 roadmap/risks).
 > Market/competitive citations live in that report; this doc carries the decisions.

@@ -107,6 +107,37 @@ def test_batch_eval_marks_violation_infeasible(tmp_path: Path):
 
 # ── honest missing-metric handling (the #40 core requirement) ────────────────
 
+
+
+def test_batch_eval_marks_critique_violation_infeasible(tmp_path: Path):
+    """A thin wall in candidate geometry yields constraint_violation reason code."""
+    pkg = _write_pkg(
+        tmp_path, problem=_problem(),
+        workspaces=[("cand_thin", {"mass_kg": 1.0, "max_stress": 150.0})],
+    )
+    # Inject candidate geometry maps so critique can run.
+    import zipfile as _zf
+    with _zf.ZipFile(pkg, "a") as zf:
+        zf.writestr(
+            "candidates/cand_thin/geometry/topology_map.json",
+            json.dumps({"entities": [{"id": "b1", "type": "solid", "name": "base_plate",
+                                       "bounding_box": [0, 0, 0, 100, 80, 1.5]}]}),
+        )
+        zf.writestr(
+            "candidates/cand_thin/graph/feature_graph.json",
+            json.dumps({"features": [{"id": "f1", "type": "named_part", "name": "base_plate",
+                                      "geometry_refs": {"body": "b1"}}]}),
+        )
+
+    res = run_design_study_evaluation_batch(pkg)
+    assert res["evaluated"] == 1
+    assert res["feasibility"].get("infeasible") == 1
+    by_id = {r["candidate_id"]: r for r in res["results"]}
+    assert "constraint_violation" in by_id["cand_thin"]["reason_codes"]
+    ev = json.loads(_zf.ZipFile(pkg).read("candidates/cand_thin/analysis/evaluation.json"))
+    assert ev["critique_blocking"] is True
+    assert any(c["rule"] == "min_wall_thickness" for c in ev["constraint_evidence"] if c["status"] == "violated")
+
 def test_batch_eval_missing_cae_metric_is_unknown_not_fabricated(tmp_path: Path):
     # mass present but the stress constraint's metric is absent -> partial + unknown
     pkg = _write_pkg(

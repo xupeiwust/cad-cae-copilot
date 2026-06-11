@@ -324,12 +324,18 @@ def execute_design_study_candidate(
         metrics = res.get("metrics") or {}
         ge = res.get("geometry_execution")
         verification = res.get("verification")
+        topo = res.get("topology_map")
+        feature_graph = res.get("feature_graph")
         evaluation.update(compile_status=compile_status, metrics=metrics,
                           errors=list(res.get("errors") or []), warnings=list(res.get("warnings") or []))
         if ge is not None:
             members[f"{ws}provenance/geometry_execution_manifest.json"] = _dumps(ge)
         if verification is not None:
             members[f"{ws}diagnostics/verification.json"] = _dumps(verification)
+        if isinstance(topo, dict):
+            members[f"{ws}geometry/topology_map.json"] = _dumps(topo)
+        if isinstance(feature_graph, dict):
+            members[f"{ws}graph/feature_graph.json"] = _dumps(feature_graph)
 
         if compile_status == "compile_succeeded":
             execution_status = EXEC_COMPILE_SUCCEEDED

@@ -170,6 +170,27 @@ def test_compile_success_records_manifest_and_verification(tmp_path: Path):
     assert _baseline_unchanged(pkg)
 
 
+
+
+def test_compile_success_writes_topology_and_feature_graph(tmp_path: Path):
+    cand = _candidate("c", [{"variable_id": "wall_t", "new_value": 4.0}])
+    pkg = _write_pkg(tmp_path, problem=_problem(), candidates=[cand])
+
+    def fake_recompiler(shape_ir, ctx):
+        return {
+            "compile_status": "compile_succeeded",
+            "geometry_execution": {"executed": True, "geometry_kind": "brep"},
+            "topology_map": {"entities": [{"id": "b1", "type": "solid", "bounding_box": [0, 0, 0, 10, 10, 10]}]},
+            "feature_graph": {"features": [{"id": "f1", "type": "named_part", "name": "body"}]},
+            "metrics": {"executed": True, "volume_mm3": 1000.0},
+        }
+
+    execute_design_study_candidate(pkg, "c", recompiler=fake_recompiler)
+    topo = _read(pkg, "candidates/c/geometry/topology_map.json")
+    assert topo["entities"][0]["id"] == "b1"
+    fg = _read(pkg, "candidates/c/graph/feature_graph.json")
+    assert fg["features"][0]["name"] == "body"
+
 def test_compile_success_without_metrics_needs_more(tmp_path: Path):
     cand = _candidate("c", [{"variable_id": "wall_t", "new_value": 4.0}])
     pkg = _write_pkg(tmp_path, problem=_problem(), candidates=[cand])

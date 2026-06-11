@@ -429,6 +429,16 @@ def run_design_study_evaluation_batch(
         if res.get("status") == "failed":
             failed += 1
             reason_codes.append("candidate_evaluation_failed")
+        elif feasibility == "infeasible" or res.get("critique_blocking"):
+            reason_codes.append("constraint_violation")
+            if eval_status == "complete":
+                complete += 1
+            elif eval_status == "partial":
+                partial += 1
+                reason_codes.append("missing_metric")
+            else:  # insufficient_data
+                insufficient += 1
+                reason_codes.append("missing_metric")
         elif eval_status == "complete":
             complete += 1
         elif eval_status == "partial":

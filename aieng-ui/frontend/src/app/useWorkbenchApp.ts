@@ -1,48 +1,72 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
+import type { ChatHistoryItem } from "../appTypes";
+
 import { api } from "../api";
 import {
-  BASE_STAGES,
   EMPTY_CAE_FIELDS,
 } from "../appConstants";
-import type { ChatHistoryItem, Notice, StageItem, StageState } from "../appTypes";
 import {
   projectViewerUrl,
   resolveAssetFormat,
   withAssetVersion,
 } from "../appUtils";
 import type {
-  ProjectRecord,
-  ProjectSummary,
   RuntimeConfigSnapshot,
   SolverFieldDescriptor,
 } from "../types";
 import { useAgentActivityStream } from "./useAgentActivityStream";
-import type { AgentTranscriptEvent } from "./chatTranscript";
-import type { PendingApproval } from "./pendingApprovals";
-import { applyApprovalEvent } from "./pendingApprovals";
-import { isEmbedMode, requestedProjectId } from "./embed";
+import { requestedProjectId } from "./embed";
 import { buildFallbackSummary } from "./projectSummary";
 import { useEngineeringActions } from "./useEngineeringActions";
 import { useGeometryPointers } from "./useGeometryPointers";
-
 import { useRuntimeSettings } from "./useRuntimeSettings";
-
+import { useProjectState } from "./useProjectState";
+import { useSettingsUI } from "./useSettingsUI";
+import { useApprovalState } from "./useApprovalState";
+import { useWorkbenchStages } from "./useWorkbenchStages";
 
 export function useWorkbenchApp() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
-  const [projects, setProjects] = useState<ProjectRecord[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(isEmbedMode());
-  const [summary, setSummary] = useState<ProjectSummary | null>(null);
-  const [projectName, setProjectName] = useState("STEP workbench project");
-  const [busy, setBusy] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [stages, setStages] = useState<StageItem[]>(BASE_STAGES);
-  const [selectedCaeField, setSelectedCaeField] = useState("stress");
-  const [fieldDescriptor, setFieldDescriptor] = useState<SolverFieldDescriptor | null>(null);
+  const {
+    projects,
+    setProjects,
+    selectedId,
+    setSelectedId,
+    summary,
+    setSummary,
+    projectName,
+    setProjectName,
+    busy,
+    setBusy,
+    selectedFile,
+    setSelectedFile,
+    notice,
+    setNotice,
+    selectedProject,
+    refreshProjects,
+  } = useProjectState();
+
+  const {
+    settingsOpen,
+    setSettingsOpen,
+    globalSettingsOpen,
+    setGlobalSettingsOpen,
+    sidebarCollapsed,
+    setSidebarCollapsed,
+  } = useSettingsUI();
+
+  const {
+    pendingApprovals,
+    handleAgentEvent,
+    resolveApproval,
+  } = useApprovalState({ setNotice });
+
+  const {
+    stages,
+    resetStages,
+    patchStage,
+  } = useWorkbenchStages();
+
   const runtimeSettings = useRuntimeSettings({ setSummary });
   const {
     runtime,
@@ -94,19 +118,12 @@ export function useWorkbenchApp() {
     pointerContextValue,
   } = useGeometryPointers({
     selectedId,
-    // Bumps whenever the selected project's geometry is rebuilt (e.g. an agent
-    // cad.execute_build123d). Forces the B-Rep snapshot to re-fetch so the
-    // face highlight + pick work on freshly-built geometry without re-selecting.
     geometryVersion: projects.find((item) => item.id === selectedId)?.updated_at ?? null,
     setMessage: (() => undefined) as Dispatch<SetStateAction<string>>,
     setNotice,
     executePreprocessFromPrompt: async () => undefined,
   });
 
-  const selectedProject = useMemo(
-    () => projects.find((item) => item.id === selectedId) ?? null,
-    [projects, selectedId],
-  );
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
   const heatmapUrl = heatmapActive && selectedId ? `/api/projects/${selectedId}/stress-heatmap` : null;
   const rawViewerUrl = heatmapUrl ?? cadPreviewUrl ?? summary?.viewer_url ?? fallbackViewerUrl;
@@ -119,25 +136,6 @@ export function useWorkbenchApp() {
   const effectiveViewerFormat = heatmapActive
     ? "glb"
     : (cadPreviewUrl ? cadPreviewFormat : null) ?? resolveAssetFormat(rawViewerUrl, summaryViewerFormat ?? selectedProject?.web_asset_format ?? null);
-  // MCP-first approval surface (#17): pending gated-tool approvals raised by an
-  // external MCP agent, shown in the viewer for the human to approve/deny.
-  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
-  const handleAgentEvent = useCallback((event: AgentTranscriptEvent) => {
-    setPendingApprovals((current) => applyApprovalEvent(current, event));
-  }, []);
-  const resolveApproval = useCallback(async (permissionId: string, approved: boolean) => {
-    // Optimistically drop it; the approval_resolved event also clears it.
-    setPendingApprovals((current) => current.filter((item) => item.permissionId !== permissionId));
-    try {
-      await api.resolveAgenticPermission(permissionId, approved);
-    } catch (error) {
-      setNotice({
-        tone: "error",
-        title: "Approval action failed",
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }, [setNotice]);
 
   const {
     liveSyncStatus,
@@ -163,34 +161,12 @@ export function useWorkbenchApp() {
     setCadGenerationProgress,
     clearStreamingState: () => undefined,
   });
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
 
   useEffect(() => {
     if (!runtimeNotice) return;
     const timer = window.setTimeout(() => setRuntimeNotice(null), 5000);
     return () => window.clearTimeout(timer);
   }, [runtimeNotice]);
-
-  async function refreshProjects(nextSelectedId?: string | null, runtimeSnapshot: RuntimeConfigSnapshot | null = runtime) {
-    const list = await api.listProjects();
-    setProjects(list);
-    const candidate = nextSelectedId ?? selectedId ?? list[0]?.id ?? null;
-    setSelectedId(candidate);
-    if (candidate) {
-      try {
-        setSummary(await api.getProject(candidate));
-      } catch {
-        const project = list.find((item) => item.id === candidate) ?? null;
-        setSummary(project ? buildFallbackSummary(project, runtimeSnapshot) : null);
-      }
-    } else {
-      setSummary(null);
-    }
-  }
 
   useEffect(() => {
     let cancelled = false;
@@ -228,36 +204,6 @@ export function useWorkbenchApp() {
     resetProjectDerivedState();
   }, [selectedId, resetProjectDerivedState]);
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-
-    const previousOverflow = document.body.style.overflow;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSettingsOpen(false);
-      }
-    };
-
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [settingsOpen]);
-
-  function resetStages() {
-    setStages(BASE_STAGES.map((item) => ({ ...item, state: "idle" })));
-  }
-
-  function patchStage(key: string, state: StageState, detail?: string) {
-    setStages((current) =>
-      current.map((item) =>
-        item.key === key ? { ...item, state, detail: detail ?? item.detail } : item,
-      ),
-    );
-  }
-
   async function runBusyTask(task: () => Promise<void>) {
     setBusy(true);
     try {
@@ -274,7 +220,7 @@ export function useWorkbenchApp() {
     if (selectedId) return selectedId;
     const baseName = selectedFile?.name.replace(/\.(step|stp|aieng)$/i, "") || projectName || "STEP workbench project";
     const created = await api.createProject(baseName);
-    await refreshProjects(created.id);
+    await refreshProjects(created.id, runtime);
     return created.id;
   }
 
@@ -321,7 +267,7 @@ export function useWorkbenchApp() {
 
       patchStage("semantic", "active", "Validating package semantics");
       await api.validate(projectId);
-      await refreshProjects(projectId);
+      await refreshProjects(projectId, runtime);
       patchStage("semantic", "done", "Semantic validation complete");
 
       setNotice({
@@ -335,6 +281,9 @@ export function useWorkbenchApp() {
       });
     });
   }
+
+  const [selectedCaeField, setSelectedCaeField] = useState("stress");
+  const [fieldDescriptor, setFieldDescriptor] = useState<SolverFieldDescriptor | null>(null);
 
   const caeSummary = summary?.cae ?? null;
   const caeFields = caeSummary?.available_fields ?? EMPTY_CAE_FIELDS;
@@ -352,7 +301,6 @@ export function useWorkbenchApp() {
     [caeFields, hasCaeResultArtifacts],
   );
   const activeFieldDescriptor = hasCaeResultArtifacts ? fieldDescriptor : null;
-
 
   useEffect(() => {
     if (!renderableCaeFields.length) return;
@@ -391,7 +339,6 @@ export function useWorkbenchApp() {
       .catch(() => { if (!cancelled) setFieldDescriptor(null); });
     return () => { cancelled = true; };
   }, [selectedId, selectedCaeField, hasCaeResultArtifacts, renderableCaeFields]);
-
 
   const copyPointerText = useCallback((text: string) => {
     if (!text.trim()) return;

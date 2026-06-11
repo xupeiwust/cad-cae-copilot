@@ -26,7 +26,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": {"enum": ["initial_mvp", "user_selected", "no_gradient_available", "discrete_variables_present", "small_number_of_design_variables", "expensive_cae_eval", "cae_evaluation_available", "static_metrics_only", "constraint_violation", "candidate_build_failed", "candidate_evaluation_failed", "candidate_out_of_bounds", "protected_parameter", "duplicate_candidate", "candidate_cap_reached", "missing_metric", "unknown_feasibility", "needs_more_evaluation", "converged_objective_delta", "budget_exhausted", "needs_user_input", "human_approval_required", "advisory_recommendation"]}
+            "items": {"enum": ["initial_mvp", "user_selected", "no_gradient_available", "discrete_variables_present", "small_number_of_design_variables", "expensive_cae_eval", "cae_evaluation_available", "static_metrics_only", "constraint_violation", "candidate_build_failed", "candidate_evaluation_failed", "candidate_out_of_bounds", "protected_parameter", "duplicate_candidate", "candidate_cap_reached", "missing_metric", "unknown_feasibility", "needs_more_evaluation", "converged_objective_delta", "budget_exhausted", "needs_user_input", "human_approval_required", "advisory_recommendation", "proposer_exhausted", "max_consecutive_failures", "local_refinement", "no_incumbent_fallback", "trust_region_shrink"]}
           },
           "requires_human_review": {"type": "boolean"},
           "candidate_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},

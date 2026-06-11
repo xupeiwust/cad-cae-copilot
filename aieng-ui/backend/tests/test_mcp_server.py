@@ -567,6 +567,10 @@ def test_list_tools_for_mcp_marks_approval_tools() -> None:
     assert entries["opt.accept_candidate"]["read_only"] is False
     assert entries["opt.write_report"]["requires_approval"] is False
     assert entries["opt.write_report"]["read_only"] is False
+    assert entries["opt.propose_next"]["requires_approval"] is False
+    assert entries["opt.propose_next"]["read_only"] is False
+    assert entries["opt.check_convergence"]["requires_approval"] is False
+    assert entries["opt.check_convergence"]["read_only"] is False
     assert "opt.sample_candidates" not in entries
 
 

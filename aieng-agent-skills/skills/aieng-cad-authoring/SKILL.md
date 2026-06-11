@@ -83,6 +83,24 @@ result = Compound(children=[screw, brg])
 
 You may also `from bd_warehouse.fastener import SocketHeadCapScrew` explicitly.
 
+**Clearance / tapped holes — pass a Fastener OBJECT, never a size string.**
+`ClearanceHole` / `TapHole` / `InsertHole` take the actual fastener instance as
+their `fastener=` argument (so they can look up the correct drill diameter), plus
+a `fit` of `"Close"` / `"Normal"` / `"Loose"`. Passing a string like
+`fastener="M6"` raises `AttributeError: 'str' object has no attribute
+'clearance_hole_diameters'`. Build them inside the part so they cut the bolt
+pattern:
+```python
+with BuildPart() as bp:
+    Box(80, 60, 8, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    screw = fastener.SocketHeadCapScrew(size="M6-1", length=16, simple=True)
+    with Locations((30, 20, 8), (-30, 20, 8), (30, -20, 8), (-30, -20, 8)):
+        fastener.ClearanceHole(fastener=screw, fit="Normal")   # object, not "M6"
+    result = bp.part
+```
+If you only need the hole (no fastener semantics), a plain `Hole(radius=...)` is
+fine — but it will not carry `standard_part` ISO designation in the feature graph.
+
 - Use `simple=True` on threaded fasteners unless real thread geometry is required
   (real threads add many faces → larger STEP/STL and slower viewer load).
 - Label standard parts with semantic roles (`screw`, `bolt`, `washer`, `bearing`,

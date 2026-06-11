@@ -21,6 +21,30 @@ def _sync_main_symbols() -> None:
     sync_main_symbols(globals())
 
 
+def _resolve_ccx_cmd() -> list[str] | None:
+    """Resolve the CalculiX (ccx) command, respecting AIENG_CCX_CMD.
+
+    Returns a list of command parts (e.g. ["/usr/bin/ccx"] or
+    ["conda", "run", "-n", "calculix-env", "ccx"]) when ccx is available,
+    or None when it cannot be found.
+    """
+    import os
+    import shlex
+    import shutil
+
+    ccx_env = os.environ.get("AIENG_CCX_CMD")
+    if ccx_env:
+        parts = shlex.split(ccx_env)
+        if parts and shutil.which(parts[0]):
+            return parts
+        return None
+    for candidate in ("ccx", "ccx_linux", "ccx2.21", "ccx_static"):
+        path = shutil.which(candidate)
+        if path:
+            return [path]
+    return None
+
+
 @dataclass(frozen=True)
 class RuntimeToolHandlers:
     apply_shape_ir_patch: Any
@@ -643,12 +667,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             has_input_deck = f"simulation/runs/{run_id}/solver_input.inp" in names
 
         # Check ccx availability without executing it
-        ccx_available = bool(
-            shutil.which("ccx")
-            or shutil.which("ccx_linux")
-            or shutil.which("ccx2.21")
-            or shutil.which("ccx_static")
-        )
+        ccx_available = _resolve_ccx_cmd() is not None
 
         missing_items: list[str] = []
         if not has_mesh:
@@ -661,7 +680,9 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             deck_hint = f" (or external: {input_deck_path_str})" if input_deck_path_str else ""
             missing_items.append(f"simulation/runs/{run_id}/solver_input.inp{deck_hint}")
         if not ccx_available:
-            missing_items.append("CalculiX executable (ccx) not found on PATH")
+            missing_items.append(
+                "CalculiX command unavailable (set AIENG_CCX_CMD or ensure ccx is discoverable on PATH)."
+            )
 
         ready_to_run = len(missing_items) == 0
 
@@ -890,20 +911,15 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
                 "solver_execution_performed": False,
             }
 
-        # Locate ccx
-        ccx_cmd = None
-        for candidate in ("ccx", "ccx_linux", "ccx2.21", "ccx_static"):
-            ccx_cmd = shutil.which(candidate)
-            if ccx_cmd:
-                break
-
-        if not ccx_cmd:
+        # Locate ccx (respects AIENG_CCX_CMD for cross-env launches)
+        ccx_parts = _resolve_ccx_cmd()
+        if not ccx_parts:
             return {
                 "ok": False,
                 "tool": "cae.run_solver",
                 "status": "error",
                 "code": "solver_not_found",
-                "message": "CalculiX executable (ccx) not found on PATH.",
+                "message": "CalculiX executable (ccx) not found on PATH and AIENG_CCX_CMD is not set.",
                 "solver_execution_performed": False,
             }
 
@@ -927,7 +943,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
 
             try:
                 proc = _subprocess.run(
-                    [ccx_cmd, stem],
+                    ccx_parts + [stem],
                     cwd=str(work_dir),
                     capture_output=True,
                     text=True,
@@ -2738,6 +2754,98 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             "reconstructable purely from on-disk artifacts."
         ),
         input_schema=_schema("opt.write_report"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_propose_next(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Propose the next batch of candidates by local refinement around the incumbent.
+        Reads the ranking incumbent + optimization variables and samples within a
+        trust region that shrinks each iteration; falls back to whole-domain LHS when
+        there is no feasible incumbent. Writes candidate patches in the existing
+        format. Deterministic given a seed. Does NOT run/evaluate/accept candidates,
+        run CAE, or modify the baseline."""
+        from aieng.converters.optimization_proposer import propose_next_candidates
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = propose_next_candidates(
+                pkg,
+                count=int(inp.get("count", 4)),
+                shrink=float(inp.get("shrink", 0.5)),
+                seed=int(inp.get("seed", 0)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "propose_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.propose_next", "propose_result": result}
+
+    _rt.register_tool(
+        "opt.propose_next",
+        _tool_opt_propose_next,
+        description=(
+            "Propose the next batch of design-study candidates by trust-region local "
+            "refinement around the current ranking incumbent (radius shrinks each "
+            "iteration); falls back to whole-domain Latin hypercube sampling when there "
+            "is no feasible incumbent. Writes candidate patches to "
+            "patches/design_candidates/<cid>.json in the format the executor consumes. "
+            "Deterministic given a seed. Does NOT run/evaluate/accept candidates, run "
+            "CAE, or modify the baseline — pair with opt.run_candidates + "
+            "opt.evaluate_candidates + opt.rank_candidates + opt.check_convergence."
+        ),
+        input_schema=_schema("opt.propose_next"),
+        requires_approval=False,
+        read_only=False,
+    )
+
+    def _tool_opt_check_convergence(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Record the current iteration's incumbent and return a convergence verdict.
+        Snapshots the ranking incumbent into analysis/optimization_iterations.json and
+        evaluates the deterministic stopping criteria (objective-delta stagnation,
+        budget, no-feasible-progress, consecutive failures). Advisory only — tells the
+        agent whether to stop; never accepts a candidate, runs CAE, or modifies the
+        baseline. Run opt.rank_candidates first."""
+        from aieng.converters.optimization_convergence import record_iteration_and_check
+        from .project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = record_iteration_and_check(
+                pkg,
+                evaluations_total=inp.get("evaluations_total"),
+                failures_this_round=int(inp.get("failures_this_round", 0)),
+                had_success=bool(inp.get("had_success", True)),
+                proposer_exhausted=bool(inp.get("proposer_exhausted", False)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "convergence_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.check_convergence", "convergence_result": result}
+
+    _rt.register_tool(
+        "opt.check_convergence",
+        _tool_opt_check_convergence,
+        description=(
+            "Record the current iteration's incumbent into "
+            "analysis/optimization_iterations.json and return a deterministic, advisory "
+            "convergence verdict (continue / converged / stop_budget / stop_no_feasible "
+            "/ stop_failures / stop_proposer_exhausted). The objective-delta check is "
+            "direction-aware (reads the objective sense). Advisory only — it tells the "
+            "agent whether to stop; it never accepts a candidate, runs CAE, or modifies "
+            "the baseline. Acceptance stays the only hard gate (opt.accept_candidate)."
+        ),
+        input_schema=_schema("opt.check_convergence"),
         requires_approval=False,
         read_only=False,
     )

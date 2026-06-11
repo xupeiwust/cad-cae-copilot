@@ -42,6 +42,10 @@ from .optimization_recommendation import explain_recommendation
 # Study summary report (Issue #43)
 from .optimization_report import build_optimization_report
 
+# Phase 2 iterative loop (#60): convergence (#61) + local-refinement proposer (#62)
+from .optimization_convergence import evaluate_convergence, record_iteration_and_check
+from .optimization_proposer import propose_next_candidates
+
 __all__ = [
     "CAPABILITY_LEVEL_NAMES",
     "CONVERTER_CLAIM_POLICY",
@@ -65,4 +69,7 @@ __all__ = [
     "run_design_study_evaluation_batch",
     "explain_recommendation",
     "build_optimization_report",
+    "evaluate_convergence",
+    "record_iteration_and_check",
+    "propose_next_candidates",
 ]

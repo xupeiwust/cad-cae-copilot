@@ -826,6 +826,24 @@ result = Compound(children=[base_plate, rib])
 
 Linear static analysis pipeline — see workflow C below.
 
+**Installing CalculiX.** `cae.run_solver` needs the `ccx` executable available at runtime.
+
+- **Windows + conda (recommended):** create a dedicated environment so installing
+  CalculiX does not downgrade the main env's OpenSSL:
+  ```powershell
+  conda create -n calculix-env -c conda-forge calculix
+  ```
+  Then point the backend at it with the `AIENG_CCX_CMD` environment variable:
+  ```powershell
+  $env:AIENG_CCX_CMD = "conda run -n calculix-env ccx"
+  ```
+  Do **not** install `calculix` directly into `aieng311` — it downgrades OpenSSL and breaks SSL.
+
+- **Linux/macOS:** use the system package (`apt install calculix-ccx`, `brew install calculix`)
+  or a separate conda env. If `ccx` is already on the activated PATH, `AIENG_CCX_CMD` is optional.
+
+- **Docker image:** already bundles `ccx`; no extra setup needed.
+
 ---
 
 ## Pointer syntax — `@kind:id`

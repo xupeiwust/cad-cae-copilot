@@ -18,11 +18,27 @@ from test_api import _make_patch_settings
 def _variables_doc():
     return {
         "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "study_id": "opt_study_001",
         "design_study_problem_ref": "analysis/design_study_problem.json",
+        "design_study_problem_id": "study_source_001",
         "variables": [
-            {"id": "wall_t", "type": "continuous", "min_value": 2.0, "max_value": 8.0,
-             "current_value": 5.0, "safe_to_modify": True},
+            {"id": "wall_t", "type": "continuous", "path": "parts/0/params/WALL_THICKNESS",
+             "featureId": "feat_wall", "parameterName": "thickness",
+             "cad_parameter_name": "WALL_THICKNESS", "binding_status": "bound",
+             "min_value": 2.0, "max_value": 8.0, "current_value": 5.0,
+             "allowed_values": None, "unit": "mm", "scope": "local",
+             "safe_to_modify": True, "candidate_ids": []},
         ],
+        "candidate_ids": [],
+        "provenance": {
+            "created_at": "2026-06-10T00:00:00Z", "created_by": "test",
+            "claim_advancement": "none",
+        },
+        "claim_policy": {
+            "advisory_only": True, "baseline_unchanged": True,
+            "human_approval_required_for_acceptance": True,
+            "claim_advancement": "none",
+        },
     }
 
 
@@ -137,3 +153,83 @@ def test_report_includes_iteration_history(tmp_path: Path) -> None:
     assert doc["iteration_history"]["iteration_count"] == 1
     assert doc["sources_present"]["optimization_iterations"] is True
     assert doc["iteration_history"]["iterations"][0]["incumbent_candidate_id"] == "inc"
+
+
+def test_select_optimizer_endpoint_chooses_slsqp(tmp_path: Path) -> None:
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("select-opt"))
+    project_id = project["id"]
+    package_path = _seed(settings, project_id)
+    project["aieng_file"] = "study.aieng"
+    save_project(settings, project)
+
+    resp = client.post(f"/api/projects/{project_id}/design-study/select-optimizer", json={})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["optimizer"] == "slsqp"
+    assert body["baseline_modified"] is False
+
+    with zipfile.ZipFile(package_path) as p:
+        assert "analysis/optimization_decision_log.json" in p.namelist()
+        doc = json.loads(p.read("analysis/optimization_decision_log.json"))
+        assert len(doc["entries"]) == 1
+        assert doc["entries"][0]["decision"] == "select_slsqp"
+        assert "select_slsqp" in doc["entries"][0]["reason_codes"]
+
+
+def test_select_optimizer_endpoint_honors_override(tmp_path: Path) -> None:
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("select-override"))
+    project_id = project["id"]
+    package_path = _seed(settings, project_id)
+    project["aieng_file"] = "study.aieng"
+    save_project(settings, project)
+
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/select-optimizer",
+        json={"optimizer": "genetic"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["optimizer"] == "genetic"
+    assert "user_selected" in body["reason_codes"]
+
+
+def test_select_optimizer_endpoint_appends_to_existing_log(tmp_path: Path) -> None:
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("select-append"))
+    project_id = project["id"]
+    package_path = _seed(settings, project_id)
+    project["aieng_file"] = "study.aieng"
+    save_project(settings, project)
+
+    client.post(f"/api/projects/{project_id}/design-study/select-optimizer", json={})
+    resp = client.post(
+        f"/api/projects/{project_id}/design-study/select-optimizer",
+        json={"optimizer": "bayesian"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["optimizer"] == "bayesian"
+
+    with zipfile.ZipFile(package_path) as p:
+        doc = json.loads(p.read("analysis/optimization_decision_log.json"))
+        assert len(doc["entries"]) == 2
+
+
+def test_select_optimizer_endpoint_returns_404_without_package(tmp_path: Path) -> None:
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("select-nopkg"))
+    project_id = project["id"]
+    project["aieng_file"] = "study.aieng"
+    save_project(settings, project)
+
+    resp = client.post(f"/api/projects/{project_id}/design-study/select-optimizer", json={})
+    assert resp.status_code == 404

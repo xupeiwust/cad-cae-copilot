@@ -455,6 +455,30 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "or modifies the baseline."
         ),
     },
+    "opt.select_optimizer": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "optimizer": {
+                "type": "string",
+                "enum": ["trust_region", "slsqp", "bayesian", "genetic"],
+                "description": (
+                    "Optional explicit override. When omitted the chooser reads "
+                    "optimization_variables.json + optimization_study.json and picks "
+                    "deterministically."
+                ),
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Deterministically select an optimizer for the design study and append a "
+            "reason-coded entry to analysis/optimization_decision_log.json. Chooses "
+            "trust_region (default), slsqp, bayesian, or genetic based on variable types, "
+            "dimensionality, and CAE-availability. Honors explicit optimizer override. "
+            "No search runs inside the call."
+        ),
+    },
     "opt.run_assembly_topology_optimization": {
         "type": "object",
         "required": ["project_id"],

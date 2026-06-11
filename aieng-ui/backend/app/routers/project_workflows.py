@@ -743,6 +743,36 @@ def register_project_workflow_routes(
             ),
         }
 
+    @app.post("/api/projects/{project_id}/design-study/select-optimizer")
+    def select_optimizer_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Deterministically select an optimizer for the design study.
+
+        Reads ``analysis/optimization_variables.json`` and
+        ``analysis/optimization_study.json``, applies the selection policy, appends
+        one reason-coded entry to ``analysis/optimization_decision_log.json``, and
+        returns the chosen optimizer. Body (optional): optimizer (str) to override.
+
+        No search runs inside the call; the baseline is never modified.
+        """
+        from aieng.converters.optimizer_selector import select_optimizer
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **select_optimizer(
+                package_path,
+                user_selected=data.get("optimizer") if data.get("optimizer") else None,
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/design-study/hints")
     def build_design_study_candidate_hints_endpoint(
         project_id: str,

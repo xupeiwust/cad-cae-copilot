@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from .cae_payload_profile import profile_payload
 from .config import Settings
 from .external_adapters import AdapterPreflightResult, ExternalToolCapability
 from .project_io import get_project, resolve_project_path
@@ -207,7 +208,7 @@ def preflight_structural_adapter(settings: Settings) -> dict[str, Any]:
         "is_ci": _is_ci(),
     }
 
-    return {
+    result = {
         "schema_version": "0.1",
         "adapter_id": ADAPTER_ID,
         "adapter_label": ADAPTER_LABEL,
@@ -218,6 +219,8 @@ def preflight_structural_adapter(settings: Settings) -> dict[str, Any]:
         "safety_note": _SAFETY_NOTE,
         "claim_boundary": _CLAIM_BOUNDARY_PREFLIGHT_NOTE,
     }
+    profile_payload(result, label="structural_adapter.preflight")
+    return result
 
 
 def prepare_structural_run_preview(
@@ -362,7 +365,7 @@ def prepare_structural_run_preview(
     if not ready_to_run:
         warnings.append(f"Run is not ready: {len(missing_items)} item(s) missing.")
 
-    return {
+    result = {
         "ok": True,
         "tool": "structural.prepare_solver_run",
         "status": "completed",
@@ -390,4 +393,6 @@ def prepare_structural_run_preview(
         "claim_advancement": "none",
         "claim_boundary": _CLAIM_BOUNDARY_PREFLIGHT_NOTE,
     }
+    profile_payload(result, label="structural_adapter.prepare_preview")
+    return result
 

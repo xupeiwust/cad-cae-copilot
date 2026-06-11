@@ -84,3 +84,6 @@ aieng-ui/backend/start.bat
 # local machine-specific MCP launcher
 run-aieng-mcp.cmd
 .aieng_cache/
+
+# Local deep-research scratch dir (the canonical .md is tracked at aieng/docs/research/)
+deepresearch_result/

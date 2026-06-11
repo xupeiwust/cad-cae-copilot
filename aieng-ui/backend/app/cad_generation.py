@@ -1803,6 +1803,12 @@ def _build123d_cache_root(settings: Any) -> Path:
     return Path(settings.data_root) / "cache" / "build123d"
 
 
+def _ensure_build123d_cache_root(settings: Any) -> Path:
+    root = _build123d_cache_root(settings)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _cache_entry_size(path: Path) -> int:
     total = 0
     for item in path.rglob("*"):
@@ -1919,7 +1925,7 @@ def _write_build123d_cache(
     """
     if not step_bytes:
         return
-    root = _build123d_cache_root(settings)
+    root = _ensure_build123d_cache_root(settings)
     entry = root / cache_key
 
     def _do_write() -> None:
@@ -2005,7 +2011,7 @@ def _execute_build123d_cached(
 
     # Double-checked locking: acquire per-key lock and re-check cache so only
     # one thread pays the build123d execution cost for a given cache key.
-    root = _build123d_cache_root(settings)
+    root = _ensure_build123d_cache_root(settings)
     entry = root / cache_key
     lock_path = str(entry) + ".lock"
     with FileLock(lock_path, timeout=timeout + _BUILD123D_CACHE_LOCK_GRACE_SECONDS):

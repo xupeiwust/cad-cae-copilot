@@ -2284,7 +2284,10 @@ def test_execute_build123d_append_step_cache_mocked(tmp_path: Path) -> None:
 
     # Build a base package so append has something to read.
     base = "result = Box(40, 40, 10)\n"
-    with patch("app.cad_generation._execute_build123d_code_streaming", side_effect=_fake_stream_ok):
+    with (
+        patch("app.cad_generation.Build123dBackend.can_generate", return_value=True),
+        patch("app.cad_generation._execute_build123d_code_streaming", side_effect=_fake_stream_ok),
+    ):
         execute_build123d_code(settings, pid, {"code": base, "thumbnail": False})
 
     captured_code: str | None = None
@@ -2296,6 +2299,7 @@ def test_execute_build123d_append_step_cache_mocked(tmp_path: Path) -> None:
 
     add = "result = previous_result + Cylinder(3, 30)\n"
     with (
+        patch("app.cad_generation.Build123dBackend.can_generate", return_value=True),
         patch("app.cad_generation._step_roundtrip_preserves_labels", return_value=True),
         patch("app.cad_generation._execute_build123d_code_streaming", side_effect=_capture_stream),
     ):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -76,8 +77,13 @@ class TestProfilePayload:
     def test_warns_when_threshold_exceeded(self, caplog: pytest.LogCaptureFixture) -> None:
         # Create a payload large enough to trigger the warning.
         data = {"items": [{"id": i, "text": "x" * 100} for i in range(200)]}
-        with caplog.at_level("WARNING", logger="app.cae_payload_profile"):
-            profile = profile_payload(data, label="large_test")
+        logger = logging.getLogger("app.cae_payload_profile")
+        logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level("WARNING", logger="app.cae_payload_profile"):
+                profile = profile_payload(data, label="large_test")
+        finally:
+            logger.removeHandler(caplog.handler)
         assert profile["estimated_tokens"] >= WARN_TOKENS
         assert "large_test" in caplog.text
         assert "bytes" in caplog.text

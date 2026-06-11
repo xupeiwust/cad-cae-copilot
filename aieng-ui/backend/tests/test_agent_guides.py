@@ -244,8 +244,8 @@ def test_guide_cache_invalidates_when_file_mtime_changes(
     content1, _ = agent_guides.read_full_guide()
     assert content1 == "## Hello\nworld\n"
 
-    # Ensure mtime changes even on coarse-resolution filesystems.
-    time.sleep(0.15)
+    # Ensure mtime changes even on coarse-resolution filesystems (e.g., FAT with 2s granularity).
+    time.sleep(2.0)
     guide_path.write_text("## Hello\nupdated\n", encoding="utf-8")
     content2, _ = agent_guides.read_full_guide()
     assert content2 == "## Hello\nupdated\n"

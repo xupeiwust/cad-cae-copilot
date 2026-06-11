@@ -177,9 +177,10 @@ def read_full_guide() -> tuple[str, Path]:
     except OSError:
         mtime = 0.0
     if _guide_content_cache is None or mtime != _guide_content_mtime:
-        if path.exists():
-            _guide_content_cache = path.read_text(encoding="utf-8"), path
-        else:
+        try:
+            content = path.read_text(encoding="utf-8")
+            _guide_content_cache = content, path
+        except (FileNotFoundError, OSError):
             _guide_content_cache = "AGENTS.md not found.", path
         _guide_content_mtime = mtime
         _topic_extract_cache.clear()

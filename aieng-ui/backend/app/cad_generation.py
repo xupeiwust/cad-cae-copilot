@@ -4347,6 +4347,7 @@ def execute_build123d_code(
         # Custom cache key for prefix-reuse: stable across temp-file paths.
         prior_step_hash = hashlib.sha256(prior_step_bytes).hexdigest()
         new_code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        storage_code_hash = hashlib.sha256(storage_code.encode("utf-8")).hexdigest()
         cache_key_material = {
             "cache_format_version": _BUILD123D_CACHE_FORMAT_VERSION,
             "executor": "build123d_streaming",
@@ -4354,6 +4355,7 @@ def execute_build123d_code(
             "model_kind": model_kind,
             "prior_step_sha256": prior_step_hash,
             "new_code_sha256": new_code_hash,
+            "storage_code_sha256": storage_code_hash,
             "prefix_reuse": True,
             "versions": _build123d_cache_versions(),
         }

@@ -141,4 +141,5 @@ class TestCompactCaeBlock:
         profile = result["_payload_profile"]
         assert profile["label"] == "profile_test"
         assert profile["compacted"] is True
-        assert "post_compaction_tokens" in profile or estimate_tokens(result) <= COMPACT_TOKENS
+        assert "post_compaction_tokens" in profile
+        assert profile["post_compaction_tokens"] <= COMPACT_TOKENS

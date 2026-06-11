@@ -93,6 +93,7 @@ def compact_cae_block(
             }
 
     if estimate_tokens(compacted) <= max_tokens:
+        profile["post_compaction_tokens"] = estimate_tokens(compacted)
         compacted["_payload_profile"] = profile
         LOGGER.info("CAE block %s compacted (draft/fixture) from ~%d to ~%d tokens", label, original_tokens, estimate_tokens(compacted))
         return compacted

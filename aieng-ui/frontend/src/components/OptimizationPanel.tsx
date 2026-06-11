@@ -14,7 +14,7 @@ import { isConvergenceMeaningful, type OptimizationConvergence } from "../app/op
 import { ConvergenceChart } from "./ConvergenceChart";
 
 type OptimizationPanelProps = {
-  study: OptimizationStudy;
+  study: OptimizationStudy | null;
   /** Iterative-loop convergence history; rendered as a chart when available. */
   convergence?: OptimizationConvergence | null;
   /** Prefill the composer with an approval-gated accept draft for a candidate. */
@@ -41,7 +41,8 @@ type OptimizationPanelProps = {
  * - Failed-candidates transparency.
  */
 export function OptimizationPanel({ study, convergence, onUseInChat }: OptimizationPanelProps) {
-  const groups = useMemo(() => groupCandidatesByFeasibility(study.candidates), [study.candidates]);
+  const candidates = study?.candidates ?? [];
+  const groups = useMemo(() => groupCandidatesByFeasibility(candidates), [candidates]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const toggleExpand = (id: string) => {
@@ -53,7 +54,7 @@ export function OptimizationPanel({ study, convergence, onUseInChat }: Optimizat
     });
   };
 
-  if (!isStudyMeaningful(study)) return null;
+  if (!study || !isStudyMeaningful(study)) return null;
 
   const hasDeepData =
     study.problem != null ||

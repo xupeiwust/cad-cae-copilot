@@ -333,7 +333,7 @@ def propose_next_candidates(
     count: int = 4,
     shrink: float = 0.5,
     seed: int = 0,
-    algorithm: str = "trust_region",
+    algorithm: str = "auto",
     strategy: str | None = None,
 ) -> dict[str, Any]:
     """Propose the next batch of candidates for an optimization study.
@@ -361,7 +361,9 @@ def propose_next_candidates(
         ``"trust_region"`` forces the existing trust-region refinement.
 
     ``algorithm`` also selects non-local optimizers:
-      * ``"trust_region"`` (default) — shrunk-box local refinement.
+      * ``"auto"`` (default) — select genetic for discrete/categorical spaces,
+        otherwise use trust-region/LHS refinement.
+      * ``"trust_region"`` — shrunk-box local refinement.
       * ``"genetic"`` — genetic algorithm local refinement.
       * ``"slsqp"`` — SLSQP local step on a quadratic model with FD gradients.
       * ``"bayesian"`` — GP surrogate + Expected Improvement (scikit-optimize).
@@ -369,7 +371,7 @@ def propose_next_candidates(
     Writes candidate patches to ``patches/design_candidates/<cid>.json`` and
     returns a summary. Baseline never modified.
     """
-    alg = (strategy or algorithm).lower().replace("-", "_")
+    alg = (strategy or algorithm or "auto").lower().replace("-", "_")
     if alg == "slsqp":
         from .optimization_proposer_slsqp import propose_slsqp_candidates
         return propose_slsqp_candidates(package_path, count=count, seed=seed)

@@ -174,7 +174,7 @@ def test_missing_package_errors(tmp_path: Path):
 
 def _variables_doc_discrete():
     return {
-        "format": "aieng.optimization_variables", "schema_version": "0.1",
+        "format": "aieng.optimization_variables", "schema_version": "0.2",
         "variables": [
             {"id": "wall_t", "type": "continuous", "min_value": 2.0, "max_value": 8.0,
              "current_value": 5.0, "safe_to_modify": True},

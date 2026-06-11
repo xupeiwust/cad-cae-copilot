@@ -326,8 +326,11 @@ def execute_design_study_candidate(
         verification = res.get("verification")
         topo = res.get("topology_map")
         feature_graph = res.get("feature_graph")
+        regression_diff = res.get("regression_diff")
         evaluation.update(compile_status=compile_status, metrics=metrics,
                           errors=list(res.get("errors") or []), warnings=list(res.get("warnings") or []))
+        if regression_diff is not None:
+            evaluation["regression_diff"] = regression_diff
         if ge is not None:
             members[f"{ws}provenance/geometry_execution_manifest.json"] = _dumps(ge)
         if verification is not None:

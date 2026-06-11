@@ -5,6 +5,7 @@ import json
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -2360,3 +2361,110 @@ def test_execute_build123d_append_step_cache_regression(tmp_path: Path) -> None:
     assert out_a["topology_summary"]["face_count"] == out_b["topology_summary"]["face_count"]
     # Feature graphs should be structurally equivalent.
     assert len(out_a["feature_graph"]["features"]) == len(out_b["feature_graph"]["features"])
+
+def _write_baseline_package(path: Path, shape_ir: dict, topology_map: dict) -> None:
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("geometry/shape_ir.json", json.dumps(shape_ir).encode())
+        zf.writestr("geometry/topology_map.json", json.dumps(topology_map).encode())
+
+
+def _replace_package_member(pkg_path: Path, member_name: str, data: bytes) -> None:
+    """Replace an existing package member or append it if absent."""
+    tmp = pkg_path.with_suffix(".replace.tmp.aieng")
+    replaced = False
+    with zipfile.ZipFile(pkg_path, "r") as src, zipfile.ZipFile(tmp, "w") as dst:
+        for item in src.infolist():
+            if item.filename == member_name:
+                dst.writestr(item, data)
+                replaced = True
+            else:
+                dst.writestr(item, src.read(item.filename))
+        if not replaced:
+            dst.writestr(member_name, data)
+    tmp.replace(pkg_path)
+
+
+def _write_conversion_manifest(pkg_path: Path) -> None:
+    manifest = {
+        "format": "aieng.geometry_execution_manifest",
+        "geometry_execution": {
+            "executed": True,
+            "geometry_kind": "brep",
+            "representation_kind": "brep",
+        },
+    }
+    _replace_package_member(pkg_path, "provenance/conversion_manifest.json",
+                            json.dumps(manifest).encode())
+
+
+def test_make_candidate_recompiler_flags_collateral_change(tmp_path: Path) -> None:
+    """A candidate whose regression_diff verdict is collateral_change is rejected."""
+    from app import cad_generation
+
+    baseline = tmp_path / "base.aieng"
+    shape_ir = {"representation": "brep_build123d", "parts": [{"id": "base", "type": "box"}]}
+    before_topo = {
+        "entities": [
+            {"id": "base", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 100.0, 50.0, 10.0]},
+            {"id": "rib", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 10.0, 50.0, 10.0]},
+        ]
+    }
+    after_topo = {
+        "entities": [
+            {"id": "base", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 100.0, 50.0, 10.0]},
+            {"id": "rib", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 20.0, 50.0, 10.0]},
+        ]
+    }
+    _write_baseline_package(baseline, shape_ir, before_topo)
+
+    def fake_recompile(pkg_path: Path, **kwargs: Any) -> dict[str, Any]:
+        _replace_package_member(pkg_path, "geometry/topology_map.json",
+                                json.dumps(after_topo).encode())
+        _write_conversion_manifest(pkg_path)
+        return {"executed": True, "geometry_kind": "brep"}
+
+    with patch("app.cad_generation.recompile_shape_ir_package", side_effect=fake_recompile):
+        recompiler = cad_generation.make_candidate_recompiler(baseline)
+        result = recompiler(shape_ir, {"candidate_id": "c1", "selected_part_id": "base"})
+
+    assert result["compile_status"] == "compile_failed"
+    diff = result["regression_diff"]
+    assert diff["verdict"] == "collateral_change"
+    assert diff["collateral_parts"] == ["rib"]
+    assert any("collateral_change" in e for e in result["errors"])
+
+
+def test_make_candidate_recompiler_clean_diff_passes(tmp_path: Path) -> None:
+    """A candidate whose regression_diff verdict is clean keeps compile_succeeded."""
+    from app import cad_generation
+
+    baseline = tmp_path / "base.aieng"
+    shape_ir = {"representation": "brep_build123d", "parts": [{"id": "base", "type": "box"}]}
+    before_topo = {
+        "entities": [
+            {"id": "base", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 100.0, 50.0, 10.0]},
+            {"id": "rib", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 10.0, 50.0, 10.0]},
+        ]
+    }
+    after_topo = {
+        "entities": [
+            {"id": "base", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 120.0, 50.0, 10.0]},
+            {"id": "rib", "type": "solid", "bounding_box": [0.0, 0.0, 0.0, 10.0, 50.0, 10.0]},
+        ]
+    }
+    _write_baseline_package(baseline, shape_ir, before_topo)
+
+    def fake_recompile(pkg_path: Path, **kwargs: Any) -> dict[str, Any]:
+        _replace_package_member(pkg_path, "geometry/topology_map.json",
+                                json.dumps(after_topo).encode())
+        _write_conversion_manifest(pkg_path)
+        return {"executed": True, "geometry_kind": "brep"}
+
+    with patch("app.cad_generation.recompile_shape_ir_package", side_effect=fake_recompile):
+        recompiler = cad_generation.make_candidate_recompiler(baseline)
+        result = recompiler(shape_ir, {"candidate_id": "c1", "selected_part_id": "base"})
+
+    assert result["compile_status"] == "compile_succeeded"
+    diff = result["regression_diff"]
+    assert diff["verdict"] == "clean"
+    assert diff["collateral_parts"] == []

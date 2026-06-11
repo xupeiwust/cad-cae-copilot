@@ -231,6 +231,64 @@ def test_recompiler_exception_is_contained(tmp_path: Path):
     assert _baseline_unchanged(pkg)
 
 
+def test_regression_diff_collateral_change_fails_candidate(tmp_path: Path):
+    cand = _candidate("c", [{"variable_id": "wall_t", "new_value": 4.0}])
+    pkg = _write_pkg(tmp_path, problem=_problem(), candidates=[cand])
+
+    def fake(shape_ir, ctx):
+        # make_candidate_recompiler would downgrade compile_status when it sees
+        # collateral_change; emulate that contract here.
+        return {
+            "compile_status": "compile_failed",
+            "geometry_execution": {"executed": True, "geometry_kind": "brep"},
+            "metrics": {"executed": True, "volume_mm3": 1234.0},
+            "errors": ["regression_diff flagged collateral_change on ['base_plate']"],
+            "regression_diff": {
+                "verdict": "collateral_change",
+                "headline": "WARNING: unrelated part moved",
+                "changed": [{"part": "base_plate", "expected": False}],
+                "collateral_parts": ["base_plate"],
+                "added": [], "removed": [], "unchanged_count": 0,
+            },
+        }
+
+    res = execute_design_study_candidate(pkg, "c", recompiler=fake)
+    assert res["execution_status"] == "compile_failed"
+    assert res["recommendation"] == "compile_failed"
+    ev = _read(pkg, "candidates/c/analysis/evaluation.json")
+    assert ev["evaluation_status"] == "failed"
+    assert ev["compile_status"] == "compile_failed"
+    assert ev["regression_diff"]["verdict"] == "collateral_change"
+    assert "collateral_change" in ev["errors"][0]
+    assert _baseline_unchanged(pkg)
+
+
+def test_regression_diff_clean_passes_candidate(tmp_path: Path):
+    cand = _candidate("c", [{"variable_id": "wall_t", "new_value": 4.0}])
+    pkg = _write_pkg(tmp_path, problem=_problem(), candidates=[cand])
+
+    def fake(shape_ir, ctx):
+        return {
+            "compile_status": "compile_succeeded",
+            "geometry_execution": {"executed": True, "geometry_kind": "brep"},
+            "metrics": {"executed": True, "volume_mm3": 1234.0},
+            "regression_diff": {
+                "verdict": "clean",
+                "headline": "1 part(s) changed as expected",
+                "changed": [{"part": "base_plate", "expected": True}],
+                "collateral_parts": [],
+                "added": [], "removed": [], "unchanged_count": 1,
+            },
+        }
+
+    res = execute_design_study_candidate(pkg, "c", recompiler=fake)
+    assert res["execution_status"] == "evaluation_complete"
+    ev = _read(pkg, "candidates/c/analysis/evaluation.json")
+    assert ev["regression_diff"]["verdict"] == "clean"
+    assert ev["compile_status"] == "compile_succeeded"
+    assert _baseline_unchanged(pkg)
+
+
 # ── iteration tracking + report ──────────────────────────────────────────────
 
 def test_iterations_append_deterministically(tmp_path: Path):

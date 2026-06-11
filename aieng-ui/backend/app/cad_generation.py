@@ -1724,6 +1724,10 @@ def _parse_cache_env(key: str, default: int) -> int:
 
 _BUILD123D_CACHE_MAX_ENTRIES = _parse_cache_env("AIENG_CACHE_MAX_ENTRIES", 64)
 _BUILD123D_CACHE_MAX_BYTES = _parse_cache_env("AIENG_CACHE_MAX_BYTES", 512 * 1024 * 1024)
+# Grace seconds added to FileLock timeout so followers can wait through the
+# build + post-build work (feature graph, geometry report, cache write/prune)
+# that the lock holder performs after _execute_build123d_code returns.
+_BUILD123D_CACHE_LOCK_GRACE_SECONDS = 30
 
 
 def _package_version(name: str) -> str:
@@ -1965,7 +1969,7 @@ def _execute_build123d_cached(
     root = _build123d_cache_root(settings)
     entry = root / cache_key
     lock_path = str(entry) + ".lock"
-    with FileLock(lock_path, timeout=timeout):
+    with FileLock(lock_path, timeout=timeout + _BUILD123D_CACHE_LOCK_GRACE_SECONDS):
         cached = _read_build123d_cache(settings, cache_key)
         if cached is not None:
             topo = cached["topology_map"]

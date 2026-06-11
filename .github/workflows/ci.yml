@@ -71,3 +71,12 @@ jobs:
 
       - name: CAD generation tests (labels / named parts / append)
         run: pytest tests/test_cad_generation.py -q -k "label or named_parts or append_preserves or single_labeled"
+
+  docs:
+    name: Docs / agent onboarding anti-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check agent docs alignment
+        run: python scripts/check_agent_docs.py

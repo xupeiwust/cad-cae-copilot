@@ -57,7 +57,7 @@ dependencies = [
   "jsonschema>=4.0",
   "trimesh>=4.0",
   "aieng-format>=0.1.0a2",
-  "filelock>=3.0",
+  "filelock>=3.20.3",
 ]
 
 [project.optional-dependencies]

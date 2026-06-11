@@ -197,3 +197,25 @@ def test_store_invalidate_cache_on_delete_run(tmp_path: Path) -> None:
     store.delete_run("run1")
     assert len(store._list_runs_cache) == 0
     assert len(store.list_runs()) == 0
+
+
+def test_list_runs_returns_copy_not_cached_reference(tmp_path: Path) -> None:
+    """Mutating the returned list (or dropping items) must not corrupt the cache.
+
+    Cancellation paths iterate list_runs() and mutate each state; the cached
+    list must not be aliased by the returned one.
+    """
+    store = AutopilotStore(tmp_path / "runs")
+    store.save(AutopilotRunState(run_id="r1", status="running", message="a", adapter_id="fake"))
+    store.save(AutopilotRunState(run_id="r2", status="running", message="b", adapter_id="fake"))
+
+    first = store.list_runs()
+    assert len(first) == 2
+    # Caller mutates the returned container (e.g. filters it down).
+    first.clear()
+
+    # The cache must be unaffected — a fresh list still sees both runs.
+    second = store.list_runs()
+    assert len(second) == 2
+    # And the two returned lists are distinct objects.
+    assert first is not second

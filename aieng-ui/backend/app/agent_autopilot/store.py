@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
 from pathlib import Path
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from .schema import AgentPlan, AutopilotRunState
+
+LOGGER = logging.getLogger(__name__)
+
+# Per-run read lock timeout for list_runs. Long enough to wait out a concurrent
+# save() (which holds the lock only for an atomic write), so an in-flight run is
+# not silently dropped from the listing — cleanup paths rely on completeness.
+_LIST_RUNS_LOCK_TIMEOUT = 5.0
 
 
 class AutopilotStore:
@@ -82,7 +90,9 @@ class AutopilotStore:
     def list_runs(self, *, project_id: str | None = None, session_id: str | None = None) -> list[AutopilotRunState]:
         cache_key = (project_id, session_id)
         if cache_key in self._list_runs_cache:
-            return self._list_runs_cache[cache_key]
+            # Return a copy so callers mutating the result (e.g. cancellation
+            # paths that flip state.status) don't corrupt the cached list.
+            return list(self._list_runs_cache[cache_key])
 
         runs: list[AutopilotRunState] = []
         for path in sorted(self.runs_dir.glob("*.json")):
@@ -90,13 +100,22 @@ class AutopilotStore:
                 continue
             lock_path = path.with_suffix(".json.lock")
             try:
-                with FileLock(lock_path, timeout=0.5):
+                # Block briefly so a run mid-save() is included, not silently
+                # dropped — cleanup/cancellation depends on a complete listing.
+                with FileLock(lock_path, timeout=_LIST_RUNS_LOCK_TIMEOUT):
                     data = json.loads(path.read_text(encoding="utf-8"))
+            except Timeout:
+                # Could not acquire within the timeout — do NOT silently omit the
+                # run; surface it so a missed cancellation is debuggable.
+                LOGGER.warning("list_runs: timed out locking %s; omitting from listing", path.name)
+                continue
             except Exception:
+                LOGGER.warning("list_runs: failed to read %s; skipping", path.name, exc_info=True)
                 continue
             try:
                 state = AutopilotRunState.model_validate(data)
             except Exception:
+                LOGGER.warning("list_runs: invalid run state in %s; skipping", path.name)
                 continue
             if project_id is not None and state.project_id != project_id:
                 continue
@@ -105,7 +124,7 @@ class AutopilotStore:
             runs.append(state)
 
         self._list_runs_cache[cache_key] = runs
-        return runs
+        return list(runs)
 
     def delete_run(self, run_id: str) -> bool:
         deleted = False

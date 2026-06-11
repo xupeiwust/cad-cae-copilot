@@ -271,3 +271,136 @@ def test_package_validation_rejects_design_study_fork(tmp_path: Path) -> None:
         and "max_value does not match design study" in message.text
         for message in report.messages
     )
+
+
+def _design_study_problem_multi_objective() -> dict:
+    return {
+        "format": "aieng.design_study_problem",
+        "schema_version": "0.1",
+        "id": "study_source_001",
+        "variables": [
+            {
+                "id": "wall_t",
+                "path": "parts/0/params/WALL_THICKNESS",
+                "type": "continuous",
+                "current_value": 3.0,
+                "min_value": 2.0,
+                "max_value": 8.0,
+                "unit": "mm",
+                "safe_to_modify": True,
+            }
+        ],
+        "objectives": [
+            {"sense": "minimize", "metric": "volume"},
+            {"sense": "minimize", "metric": "mass"},
+        ],
+        "constraints": [
+            {"id": "c_stress", "type": "max_stress", "limit": 200.0, "unit": "MPa"}
+        ],
+    }
+
+
+def _valid_documents_multi_objective() -> dict[str, dict]:
+    common = {
+        "schema_version": "0.1",
+        "study_id": "opt_study_001",
+        "design_study_problem_ref": "analysis/design_study_problem.json",
+        "design_study_problem_id": "study_source_001",
+        "candidate_ids": ["candidate_001"],
+        "provenance": _provenance(),
+        "claim_policy": _claim_policy(),
+    }
+    return {
+        "objectives": {
+            **copy.deepcopy(common),
+            "format": "aieng.optimization_objectives",
+            "objectives": [
+                {
+                    "id": "objective_volume",
+                    "metric": "volume",
+                    "direction": "minimize",
+                    "weight": 0.6,
+                    "unit": "mm3",
+                    "candidate_ids": ["candidate_001"],
+                    "evidence_refs": ["candidates/candidate_001/analysis/evaluation.json"],
+                },
+                {
+                    "id": "objective_mass",
+                    "metric": "mass",
+                    "direction": "minimize",
+                    "weight": 0.4,
+                    "unit": "kg",
+                    "candidate_ids": ["candidate_001"],
+                    "evidence_refs": ["candidates/candidate_001/analysis/evaluation.json"],
+                },
+            ],
+        },
+    }
+
+
+def test_multi_objective_problem_validates_and_checks_consistency() -> None:
+    documents = _valid_documents_multi_objective()
+    assert validate_optimization_artifact("objectives", documents["objectives"]) == []
+    assert validate_optimization_artifact_set(
+        documents,
+        design_study_problem=_design_study_problem_multi_objective(),
+    ) == []
+
+
+def test_multi_objective_rejects_direction_mismatch() -> None:
+    documents = _valid_documents_multi_objective()
+    documents["objectives"]["objectives"][1]["direction"] = "maximize"
+    issues = validate_optimization_artifact_set(
+        documents,
+        design_study_problem=_design_study_problem_multi_objective(),
+    )
+    assert any("objectives[1]: direction does not match" in issue for issue in issues)
+
+
+def test_multi_objective_rejects_metric_mismatch() -> None:
+    documents = _valid_documents_multi_objective()
+    documents["objectives"]["objectives"][0]["metric"] = "compliance"
+    issues = validate_optimization_artifact_set(
+        documents,
+        design_study_problem=_design_study_problem_multi_objective(),
+    )
+    assert any("objectives[0]: metric does not match" in issue for issue in issues)
+
+
+def test_multi_objective_rejects_extra_optimization_objective() -> None:
+    documents = _valid_documents_multi_objective()
+    documents["objectives"]["objectives"].append(
+        {
+            "id": "objective_stress",
+            "metric": "max_stress",
+            "direction": "minimize",
+            "weight": 1.0,
+            "candidate_ids": ["candidate_001"],
+            "evidence_refs": [],
+        }
+    )
+    issues = validate_optimization_artifact_set(
+        documents,
+        design_study_problem=_design_study_problem_multi_objective(),
+    )
+    assert any("objectives[2]: no corresponding objective" in issue for issue in issues)
+
+
+def test_single_objective_rejects_extra_optimization_objectives() -> None:
+    """Back-compat: a single problem objective does not allow extra opt objectives."""
+    documents = _valid_documents_multi_objective()
+    problem = _design_study_problem()
+    issues = validate_optimization_artifact_set(documents, design_study_problem=problem)
+    assert any("objectives[1]: no corresponding objective" in issue for issue in issues)
+
+
+def test_objectives_array_takes_precedence_over_single_objective() -> None:
+    """When both objective and objectives are present, objectives takes precedence."""
+    documents = _valid_documents_multi_objective()
+    problem = _design_study_problem_multi_objective()
+    # Add a conflicting single objective that would fail if checked
+    problem["objective"] = {"sense": "maximize", "metric": "stress"}
+
+    # Should validate against objectives array, not the single objective
+    issues = validate_optimization_artifact_set(documents, design_study_problem=problem)
+    assert issues == []

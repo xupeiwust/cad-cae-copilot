@@ -16,9 +16,9 @@ export function useApprovalState({ setNotice }: { setNotice: SetNotice }) {
   }, []);
 
   const resolveApproval = useCallback(async (permissionId: string, approved: boolean) => {
-    setPendingApprovals((current) => current.filter((item) => item.permissionId !== permissionId));
     try {
       await api.resolveAgenticPermission(permissionId, approved);
+      setPendingApprovals((current) => current.filter((item) => item.permissionId !== permissionId));
     } catch (error) {
       setNotice({
         tone: "error",
@@ -26,7 +26,7 @@ export function useApprovalState({ setNotice }: { setNotice: SetNotice }) {
         detail: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [setNotice]);
+  }, [setNotice, setPendingApprovals]);
 
   return {
     pendingApprovals,

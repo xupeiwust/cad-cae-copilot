@@ -25,7 +25,7 @@ export function useProjectState() {
   ) => {
     const list = await api.listProjects();
     setProjects(list);
-    const candidate = nextSelectedId ?? selectedId ?? list[0]?.id ?? null;
+    const candidate = nextSelectedId ?? (selectedId && list.some((item) => item.id === selectedId) ? selectedId : null) ?? list[0]?.id ?? null;
     setSelectedId(candidate);
     if (candidate) {
       try {

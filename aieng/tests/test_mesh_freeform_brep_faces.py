@@ -226,6 +226,7 @@ def test_artifacts_written_into_package(tmp_path: Path):
 
 def test_plan_annotated_with_face_generation_status(tmp_path: Path):
     """Reconstruction plan includes face generation annotations when faces are generated."""
+    pytest.importorskip("OCP", reason="OCP/CadQuery not installed")
     verts, faces = _saddle_mesh(n=20)
     pkg = _write_pkg(tmp_path, verts, faces)
     write_mesh_region_graph(pkg)

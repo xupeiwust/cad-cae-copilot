@@ -131,7 +131,6 @@ class GeometryCache:
     def set(self, shape_ir_hash: str, result: CachedGeometry) -> None:
         """Store a compilation result in both memory and disk caches."""
         result.shape_ir_hash = shape_ir_hash
-        result.created_at = time.time()
         with self._lock:
             self._memory[shape_ir_hash] = result
             self._memory.move_to_end(shape_ir_hash)

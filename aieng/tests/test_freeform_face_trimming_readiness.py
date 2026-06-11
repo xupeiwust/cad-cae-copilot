@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from aieng.converters.mesh_freeform_surface_fitting import (
     FREEFORM_SURFACE_FIT_PATH,
@@ -128,6 +129,7 @@ def test_score_boundary_good():
 # ── Part B: trimming readiness assessment ─────────────────────────────────────
 
 def test_ready_saddle_assessed(tmp_path: Path):
+    pytest.importorskip("OCP", reason="OCP/CadQuery not installed")
     verts, faces = _saddle_mesh(n=20)
     pkg = _write_pkg(tmp_path, verts, faces)
     write_mesh_region_graph(pkg)
@@ -191,6 +193,7 @@ def test_artifact_written_into_package(tmp_path: Path):
 # ── Part D: reconstruction plan annotation ────────────────────────────────────
 
 def test_plan_annotated_with_trimming_readiness(tmp_path: Path):
+    pytest.importorskip("OCP", reason="OCP/CadQuery not installed")
     verts, faces = _saddle_mesh(n=20)
     pkg = _write_pkg(tmp_path, verts, faces)
     write_mesh_region_graph(pkg)

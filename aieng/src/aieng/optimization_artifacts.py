@@ -186,21 +186,38 @@ def _validate_design_study_consistency(
             )
 
     objective_doc = documents.get("objectives")
-    source_objective = problem.get("objective")
-    if objective_doc and isinstance(source_objective, dict):
-        objectives = objective_doc.get("objectives") or []
-        if objectives:
-            objective = objectives[0]
-            if isinstance(objective, dict):
-                direction = objective.get("direction")
-                if direction != source_objective.get("sense"):
-                    issues.append(
-                        "objectives: primary direction does not match design-study objective sense"
-                    )
-                if objective.get("metric") != source_objective.get("metric"):
-                    issues.append(
-                        "objectives: primary metric does not match design-study objective metric"
-                    )
+    if objective_doc:
+        problem_objectives = problem.get("objectives")
+        if isinstance(problem_objectives, list):
+            source_objectives = problem_objectives
+        else:
+            source_objective = problem.get("objective")
+            source_objectives = [source_objective] if isinstance(source_objective, dict) else []
+
+        opt_objectives = objective_doc.get("objectives") or []
+        for idx, objective in enumerate(opt_objectives):
+            if not isinstance(objective, dict):
+                continue
+            source = source_objectives[idx] if idx < len(source_objectives) else None
+            if source is None:
+                issues.append(
+                    f"objectives[{idx}]: no corresponding objective in design-study problem"
+                )
+                continue
+            if not isinstance(source, dict):
+                issues.append(
+                    f"objectives[{idx}]: design-study objective at index {idx} is not an object"
+                )
+                continue
+            direction = objective.get("direction")
+            if direction != source.get("sense"):
+                issues.append(
+                    f"objectives[{idx}]: direction does not match design-study objective sense"
+                )
+            if objective.get("metric") != source.get("metric"):
+                issues.append(
+                    f"objectives[{idx}]: metric does not match design-study objective metric"
+                )
 
     constraint_doc = documents.get("constraints")
     if constraint_doc:

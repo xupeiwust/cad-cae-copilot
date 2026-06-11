@@ -41,8 +41,16 @@
     },
     "objective": {
       "type": "object",
-      "description": "Recorded, NOT executed.",
+      "description": "Recorded, NOT executed. Single-objective mode (back-compat); use objectives[] for multi-objective.",
       "additionalProperties": true
+    },
+    "objectives": {
+      "type": "array",
+      "description": "Multi-objective mode. When present, each objective is validated individually against the optimization_objectives artifact.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
     },
     "settings": {
       "type": "object",

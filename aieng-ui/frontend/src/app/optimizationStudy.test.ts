@@ -108,6 +108,96 @@ describe("shapeOptimizationStudy", () => {
     });
   });
 
+  it("shapes deep candidate fields from ranking", () => {
+    const ranking = {
+      candidates: [
+        {
+          candidate_id: "c1",
+          rank: 1,
+          feasibility: "infeasible",
+          score: -0.5,
+          confidence: "low",
+          constraint_violations: ["max_stress 200 > limit 150"],
+          objective_delta: { metric: "mass", candidate_value: 1.2, baseline_value: 1.5, delta_percent: -20, delta_absolute: -0.3 },
+          reasons: ["constraint violated"],
+          metrics_missing: ["max_deflection"],
+          recommendation: "reject_candidate",
+          execution_status: "completed",
+        },
+      ],
+      safe_to_accept: false,
+      baseline_modified: false,
+    };
+
+    const result = shapeOptimizationStudy(ranking, null, null);
+    const c = result.candidates[0];
+    expect(c.constraint_violations).toEqual(["max_stress 200 > limit 150"]);
+    expect(c.objective_delta).toMatchObject({ metric: "mass", delta_percent: -20 });
+    expect(c.reasons).toEqual(["constraint violated"]);
+    expect(c.metrics_missing).toEqual(["max_deflection"]);
+    expect(c.recommendation).toBe("reject_candidate");
+    expect(c.execution_status).toBe("completed");
+  });
+
+  it("shapes deep report fields (feasibility summary, failed candidates, iteration history, missing stages)", () => {
+    const report = {
+      summary: "Study complete",
+      feasibility_summary: { feasible: 2, infeasible: 1 },
+      failed_candidates: [
+        { candidate_id: "c2", execution_status: "compile_failed", feasibility: "failed", reasons: ["compile error"] },
+      ],
+      iteration_history: {
+        iterations: [
+          { index: 0, incumbent_candidate_id: "c1", incumbent_objective: 1.2, feasible: true, evaluations_total: 3, convergence_verdict: "continue" },
+        ],
+      },
+      missing_stages: ["acceptance"],
+      problem: { objective: { metric: "mass" }, constraints: [{ type: "max_stress" }], variable_count: 2 },
+      ranking: { best_candidate_id: "c1", next_action: "accept_candidate" },
+      acceptance: { status: "pending", accepted_candidate_id: null },
+    };
+
+    const result = shapeOptimizationStudy(null, null, report);
+    expect(result.report?.feasibility_summary).toEqual({ feasible: 2, infeasible: 1 });
+    expect(result.report?.failed_candidates).toHaveLength(1);
+    expect(result.report?.failed_candidates?.[0].candidate_id).toBe("c2");
+    expect(result.report?.iteration_history).toHaveLength(1);
+    expect(result.report?.iteration_history?.[0].convergence_verdict).toBe("continue");
+    expect(result.report?.missing_stages).toEqual(["acceptance"]);
+    expect(result.problem).toMatchObject({ variable_count: 2 });
+    expect(result.ranking).toMatchObject({ best_candidate_id: "c1", next_action: "accept_candidate" });
+    expect(result.acceptance).toMatchObject({ status: "pending" });
+  });
+
+  it("tolerates malformed deep fields without crashing", () => {
+    const ranking = {
+      candidates: [
+        {
+          candidate_id: "c1",
+          rank: 1,
+          feasibility: "feasible",
+          constraint_violations: ["ok", 123, null],
+          objective_delta: "not-an-object",
+          reasons: ["ok", 456],
+          metrics_missing: [null, "mass"],
+          recommendation: 42,
+          execution_status: true,
+        },
+      ],
+      safe_to_accept: false,
+      baseline_modified: false,
+    };
+
+    const result = shapeOptimizationStudy(ranking, null, null);
+    const c = result.candidates[0];
+    expect(c.constraint_violations).toEqual(["ok"]);
+    expect(c.objective_delta).toBeNull();
+    expect(c.reasons).toEqual(["ok"]);
+    expect(c.metrics_missing).toEqual(["mass"]);
+    expect(c.recommendation).toBeNull();
+    expect(c.execution_status).toBeNull();
+  });
+
   it("ignores malformed candidates gracefully", () => {
     const ranking = {
       candidates: [null, "bad", { candidate_id: "c1", rank: 1, feasibility: "feasible" }],

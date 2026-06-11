@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 import {
   acceptDraftForCandidate,
@@ -27,11 +28,34 @@ type OptimizationPanelProps = {
  * The Accept action drafts a /design-study command into the composer — the actual
  * accept still flows through the existing approval-gated path; this panel never
  * mutates geometry directly.
+ *
+ * Deepening additions:
+ * - Study overview (objective, constraints, feasibility tally, best candidate, next action, acceptance).
+ * - Per-candidate expand/collapse for constraint violations, objective delta, reasons, missing metrics, execution status.
+ * - Iteration history table when present.
+ * - Missing-stages transparency.
+ * - Failed-candidates transparency.
  */
 export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps) {
   const groups = useMemo(() => groupCandidatesByFeasibility(study.candidates), [study.candidates]);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   if (!isStudyMeaningful(study)) return null;
+
+  const hasDeepData =
+    study.problem != null ||
+    study.ranking != null ||
+    study.acceptance != null ||
+    study.report?.feasibility_summary != null;
 
   return (
     <section className="optimization-card" aria-label="Optimization study">
@@ -71,6 +95,64 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
           : "No candidate is accept-ready yet — advisory only"}
       </div>
 
+      {/* ── Study overview (deepening) ── */}
+      {hasDeepData && (
+        <div className="optimization-overview">
+          <strong className="optimization-overview-title">Study overview</strong>
+          <div className="optimization-overview-grid">
+            {study.problem?.objective != null && (
+              <div className="optimization-overview-item">
+                <span className="optimization-overview-key">Objective</span>
+                <span className="optimization-overview-value">
+                  {typeof study.problem.objective === "object"
+                    ? String((study.problem.objective as Record<string, unknown>).metric ?? "—")
+                    : String(study.problem.objective)}
+                </span>
+              </div>
+            )}
+            {typeof study.problem?.variable_count === "number" && (
+              <div className="optimization-overview-item">
+                <span className="optimization-overview-key">Variables</span>
+                <span className="optimization-overview-value">{study.problem.variable_count}</span>
+              </div>
+            )}
+            {Array.isArray(study.problem?.constraints) && (
+              <div className="optimization-overview-item">
+                <span className="optimization-overview-key">Constraints</span>
+                <span className="optimization-overview-value">{study.problem.constraints.length}</span>
+              </div>
+            )}
+            {study.ranking?.best_candidate_id && (
+              <div className="optimization-overview-item">
+                <span className="optimization-overview-key">Best candidate</span>
+                <code className="optimization-overview-value">{study.ranking.best_candidate_id}</code>
+              </div>
+            )}
+            {study.ranking?.next_action && (
+              <div className="optimization-overview-item">
+                <span className="optimization-overview-key">Next action</span>
+                <span className="optimization-overview-value">{study.ranking.next_action}</span>
+              </div>
+            )}
+            {study.acceptance?.status && (
+              <div className="optimization-overview-item">
+                <span className="optimization-overview-key">Acceptance</span>
+                <span className="optimization-overview-value">{study.acceptance.status}</span>
+              </div>
+            )}
+          </div>
+          {study.report?.feasibility_summary && (
+            <div className="optimization-feasibility-summary">
+              {Object.entries(study.report.feasibility_summary).map(([key, count]) => (
+                <span key={key} className={`optimization-feasibility-pill optimization-feasibility-pill-${key}`}>
+                  {key}: {count}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Candidate ranking */}
       {groups.map((group) => (
         <div key={group.feasibility} className="optimization-group">
@@ -85,10 +167,37 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
               candidate={candidate}
               safeToAccept={study.safe_to_accept}
               onUseInChat={onUseInChat}
+              expanded={expandedIds.has(candidate.candidate_id)}
+              onToggleExpand={() => toggleExpand(candidate.candidate_id)}
             />
           ))}
         </div>
       ))}
+
+      {/* Failed candidates (deepening) */}
+      {study.report?.failed_candidates && study.report.failed_candidates.length > 0 && (
+        <div className="optimization-group">
+          <div className="optimization-feasibility optimization-feasibility-failed">
+            Failed
+            <span className="optimization-feasibility-count">{study.report.failed_candidates.length}</span>
+          </div>
+          {study.report.failed_candidates.map((fc) => (
+            <div key={fc.candidate_id} className="optimization-row optimization-row-failed">
+              <div className="optimization-row-main">
+                <code className="optimization-candidate-id">{fc.candidate_id}</code>
+                {fc.execution_status && <span className="optimization-execution-status">{fc.execution_status}</span>}
+              </div>
+              {fc.reasons && fc.reasons.length > 0 && (
+                <div className="optimization-failed-reasons">
+                  {fc.reasons.map((r, i) => (
+                    <span key={i} className="optimization-failed-reason">{r}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Recommendation */}
       {study.recommendation && (
@@ -120,6 +229,45 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
         </div>
       )}
 
+      {/* Iteration history (deepening) */}
+      {study.report?.iteration_history && study.report.iteration_history.length > 0 && (
+        <div className="optimization-iteration-history">
+          <strong className="optimization-iteration-history-title">Iteration history</strong>
+          <div className="optimization-iteration-table-wrap">
+            <table className="optimization-iteration-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Incumbent</th>
+                  <th>Objective</th>
+                  <th>Feasible</th>
+                  <th>Evals</th>
+                  <th>Verdict</th>
+                </tr>
+              </thead>
+              <tbody>
+                {study.report.iteration_history.map((it, idx) => (
+                  <tr key={idx}>
+                    <td>{it.index ?? idx + 1}</td>
+                    <td>
+                      {it.incumbent_candidate_id ? (
+                        <code>{it.incumbent_candidate_id}</code>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>{it.incumbent_objective != null ? formatMetricValue(it.incumbent_objective) : "—"}</td>
+                    <td>{it.feasible === true ? "Yes" : it.feasible === false ? "No" : "—"}</td>
+                    <td>{it.evaluations_total ?? "—"}</td>
+                    <td>{it.convergence_verdict ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Report summary */}
       {study.report?.summary ? (
         <div className="optimization-report">
@@ -127,6 +275,18 @@ export function OptimizationPanel({ study, onUseInChat }: OptimizationPanelProps
           <p className="optimization-report-text">{study.report.summary}</p>
         </div>
       ) : null}
+
+      {/* Missing stages (deepening) */}
+      {study.report?.missing_stages && study.report.missing_stages.length > 0 && (
+        <div className="optimization-missing-stages">
+          <strong>Missing stages</strong>
+          <div className="optimization-missing-list">
+            {study.report.missing_stages.map((stage, i) => (
+              <span key={i} className="optimization-missing-stage">{stage}</span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="optimization-foot">
         Click <strong>Accept</strong> to draft a <code>/design-study</code> — acceptance stays approval-gated.
@@ -139,12 +299,22 @@ function CandidateRow({
   candidate,
   safeToAccept,
   onUseInChat,
+  expanded,
+  onToggleExpand,
 }: {
   candidate: OptimizationCandidate;
   safeToAccept: boolean;
   onUseInChat?: (draft: string) => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
 }) {
   const metricEntries = useMemo(() => Object.entries(candidate.metrics ?? {}), [candidate.metrics]);
+  const hasDetails =
+    (candidate.constraint_violations && candidate.constraint_violations.length > 0) ||
+    candidate.objective_delta != null ||
+    (candidate.reasons && candidate.reasons.length > 0) ||
+    (candidate.metrics_missing && candidate.metrics_missing.length > 0) ||
+    candidate.execution_status != null;
 
   const draft = acceptDraftForCandidate(candidate.candidate_id);
   const canAccept = safeToAccept && candidate.feasibility === "feasible";
@@ -152,6 +322,24 @@ function CandidateRow({
   return (
     <div className={`optimization-row ${candidate.has_unknown_metrics ? "optimization-row-unknown" : ""}`}>
       <div className="optimization-row-main">
+        <button
+          type="button"
+          className="optimization-expand-toggle"
+          onClick={onToggleExpand}
+          disabled={!hasDetails}
+          title={hasDetails ? (expanded ? "Collapse details" : "Expand details") : "No additional details"}
+          aria-expanded={expanded}
+        >
+          {hasDetails ? (
+            expanded ? (
+              <ChevronUp size={14} />
+            ) : (
+              <ChevronDown size={14} />
+            )
+          ) : (
+            <span className="optimization-expand-placeholder" />
+          )}
+        </button>
         <span className="optimization-rank">#{candidate.rank}</span>
         <code className="optimization-candidate-id" title={`candidate ${candidate.candidate_id}`}>
           {candidate.candidate_id}
@@ -181,6 +369,65 @@ function CandidateRow({
               <span className="optimization-metric-value">{formatMetricValue(value)}</span>
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Expanded candidate details (deepening) */}
+      {expanded && hasDetails && (
+        <div className="optimization-candidate-details">
+          {candidate.execution_status && (
+            <div className="optimization-detail-row">
+              <span className="optimization-detail-key">Execution</span>
+              <span className="optimization-detail-value">{candidate.execution_status}</span>
+            </div>
+          )}
+          {candidate.objective_delta && (
+            <div className="optimization-detail-row">
+              <span className="optimization-detail-key">Objective delta</span>
+              <span className="optimization-detail-value">
+                {candidate.objective_delta.metric ?? "—"}: {" "}
+                {candidate.objective_delta.delta_percent != null
+                  ? `${candidate.objective_delta.delta_percent > 0 ? "+" : ""}${formatMetricValue(candidate.objective_delta.delta_percent)}%`
+                  : "—"}
+                {candidate.objective_delta.delta_absolute != null && (
+                  <span className="optimization-delta-absolute">
+                    {" "}({candidate.objective_delta.delta_absolute > 0 ? "+" : ""}
+                    {formatMetricValue(candidate.objective_delta.delta_absolute)})
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+          {candidate.constraint_violations && candidate.constraint_violations.length > 0 && (
+            <div className="optimization-detail-row">
+              <span className="optimization-detail-key">Violations</span>
+              <div className="optimization-violations">
+                {candidate.constraint_violations.map((v, i) => (
+                  <span key={i} className="optimization-violation">{v}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {candidate.metrics_missing && candidate.metrics_missing.length > 0 && (
+            <div className="optimization-detail-row">
+              <span className="optimization-detail-key">Missing metrics</span>
+              <div className="optimization-missing-metrics">
+                {candidate.metrics_missing.map((m, i) => (
+                  <span key={i} className="optimization-missing-metric">{m}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {candidate.reasons && candidate.reasons.length > 0 && (
+            <div className="optimization-detail-row">
+              <span className="optimization-detail-key">Notes</span>
+              <ul className="optimization-reason-list">
+                {candidate.reasons.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

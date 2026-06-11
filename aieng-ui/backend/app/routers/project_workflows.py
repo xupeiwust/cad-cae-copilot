@@ -692,7 +692,7 @@ def register_project_workflow_routes(
         NOT run/evaluate/accept candidates, run CAE, or modify the baseline.
 
         Body (all optional):
-          algorithm (str): "trust_region" | "slsqp" | "bayesian" (default "trust_region")
+          algorithm (str): "trust_region" | "slsqp" | "bayesian" | "genetic" (default "trust_region")
           count (int), shrink (float 0-1), seed (int)."""
         from aieng.converters.optimization_proposer import propose_next_candidates
         from ..project_io import get_project, resolve_project_path
@@ -703,10 +703,10 @@ def register_project_workflow_routes(
             raise HTTPException(status_code=404, detail=".aieng package not found")
         data = payload or {}
         algorithm = str(data.get("algorithm") or "trust_region")
-        if algorithm not in {"trust_region", "slsqp", "bayesian"}:
+        if algorithm not in {"trust_region", "slsqp", "bayesian", "genetic"}:
             raise HTTPException(
                 status_code=422,
-                detail="algorithm must be one of: trust_region, slsqp, bayesian",
+                detail="algorithm must be one of: trust_region, slsqp, bayesian, genetic",
             )
         return {
             "project_id": project_id,
@@ -749,6 +749,36 @@ def register_project_workflow_routes(
                 failures_this_round=int(data.get("failures_this_round", 0)),
                 had_success=bool(data.get("had_success", True)),
                 proposer_exhausted=bool(data.get("proposer_exhausted", False)),
+            ),
+        }
+
+    @app.post("/api/projects/{project_id}/design-study/select-optimizer")
+    def select_optimizer_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Deterministically select an optimizer for the design study.
+
+        Reads ``analysis/optimization_variables.json`` and
+        ``analysis/optimization_study.json``, applies the selection policy, appends
+        one reason-coded entry to ``analysis/optimization_decision_log.json``, and
+        returns the chosen optimizer. Body (optional): optimizer (str) to override.
+
+        No search runs inside the call; the baseline is never modified.
+        """
+        from aieng.converters.optimizer_selector import select_optimizer
+        from ..project_io import get_project, resolve_project_path
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        data = payload or {}
+        return {
+            "project_id": project_id,
+            **select_optimizer(
+                package_path,
+                user_selected=data.get("optimizer") if data.get("optimizer") else None,
             ),
         }
 

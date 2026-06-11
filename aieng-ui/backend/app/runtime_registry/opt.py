@@ -684,6 +684,43 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         read_only=False,
     )
 
+    def _tool_opt_select_optimizer(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Deterministically select an optimizer and log the reason-coded decision."""
+        from aieng.converters.optimizer_selector import select_optimizer
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = select_optimizer(
+                pkg,
+                user_selected=inp.get("optimizer") if inp.get("optimizer") else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "select_optimizer_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status", "error"), "tool": "opt.select_optimizer", "select_result": result}
+
+    rt.register_tool(
+        "opt.select_optimizer",
+        _tool_opt_select_optimizer,
+        description=(
+            "Deterministically select an optimizer for the design study and append a "
+            "reason-coded decision to analysis/optimization_decision_log.json. Chooses "
+            "trust_region (default), slsqp, bayesian, or genetic based on variable types, "
+            "count, and CAE-availability. Honors explicit optimizer override. No search "
+            "runs inside the call; pair with opt.propose_next or the phase-appropriate "
+            "candidate generator."
+        ),
+        input_schema=_schema("opt.select_optimizer"),
+        requires_approval=False,
+        read_only=False,
+    )
+
     def _tool_opt_check_convergence(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         """Record the current iteration's incumbent and return a convergence verdict.
         Snapshots the ranking incumbent into analysis/optimization_iterations.json and

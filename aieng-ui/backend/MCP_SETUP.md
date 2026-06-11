@@ -267,8 +267,20 @@ AIENG_MCP_MANAGED_APPROVAL=1
 ```
 
 That means generated projects persist in the Docker volume and approval-gated
-tools route through the workbench approval broker. Disable managed approval only
-when using a trusted client-managed approval flow; set
+tools route through the workbench approval broker.
+
+**Running the CalculiX solver from a separate conda env (Windows).**
+Installing `calculix` directly into `aieng311` downgrades OpenSSL and breaks SSL.
+Create a dedicated env and point the MCP server / backend at it:
+
+```text
+AIENG_CCX_CMD="conda run -n calculix-env ccx"
+```
+
+The command is parsed with `shlex.split` and invoked with `shell=False`.
+On Linux/macOS, leave `AIENG_CCX_CMD` unset if `ccx` is already on PATH.
+For container deployments, `ccx` is bundled and no extra variable is needed.
+Disable managed approval only when using a trusted client-managed approval flow; set
 `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` for planning/inspection-only containers.
 
 MCP-over-HTTP client snippet:

@@ -21,6 +21,28 @@ def _sync_main_symbols() -> None:
     sync_main_symbols(globals())
 
 
+def _resolve_ccx_cmd() -> list[str] | None:
+    """Resolve the CalculiX (ccx) command, respecting AIENG_CCX_CMD.
+
+    Returns a list of command parts (e.g. ["/usr/bin/ccx"] or
+    ["conda", "run", "-n", "calculix-env", "ccx"]) when ccx is available,
+    or None when it cannot be found.
+    """
+    import shlex
+
+    ccx_env = os.environ.get("AIENG_CCX_CMD")
+    if ccx_env:
+        parts = shlex.split(ccx_env)
+        if parts and shutil.which(parts[0]):
+            return parts
+        return None
+    for candidate in ("ccx", "ccx_linux", "ccx2.21", "ccx_static"):
+        path = shutil.which(candidate)
+        if path:
+            return [path]
+    return None
+
+
 @dataclass(frozen=True)
 class RuntimeToolHandlers:
     apply_shape_ir_patch: Any
@@ -643,12 +665,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
             has_input_deck = f"simulation/runs/{run_id}/solver_input.inp" in names
 
         # Check ccx availability without executing it
-        ccx_available = bool(
-            shutil.which("ccx")
-            or shutil.which("ccx_linux")
-            or shutil.which("ccx2.21")
-            or shutil.which("ccx_static")
-        )
+        ccx_available = _resolve_ccx_cmd() is not None
 
         missing_items: list[str] = []
         if not has_mesh:
@@ -890,20 +907,15 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
                 "solver_execution_performed": False,
             }
 
-        # Locate ccx
-        ccx_cmd = None
-        for candidate in ("ccx", "ccx_linux", "ccx2.21", "ccx_static"):
-            ccx_cmd = shutil.which(candidate)
-            if ccx_cmd:
-                break
-
-        if not ccx_cmd:
+        # Locate ccx (respects AIENG_CCX_CMD for cross-env launches)
+        ccx_parts = _resolve_ccx_cmd()
+        if not ccx_parts:
             return {
                 "ok": False,
                 "tool": "cae.run_solver",
                 "status": "error",
                 "code": "solver_not_found",
-                "message": "CalculiX executable (ccx) not found on PATH.",
+                "message": "CalculiX executable (ccx) not found on PATH and AIENG_CCX_CMD is not set.",
                 "solver_execution_performed": False,
             }
 
@@ -927,7 +939,7 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
 
             try:
                 proc = _subprocess.run(
-                    [ccx_cmd, stem],
+                    ccx_parts + [stem],
                     cwd=str(work_dir),
                     capture_output=True,
                     text=True,

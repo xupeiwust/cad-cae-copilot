@@ -26,7 +26,11 @@ from .base import (
 from .registry import available_converters, get_converter, register_converter
 
 # Sampling (Issue #38) — candidate parameter generation
-from .optimization_sampler import sample_candidates, sample_candidates_package
+from .optimization_sampler import (
+    genetic_sample,
+    sample_candidates,
+    sample_candidates_package,
+)
 
 # Batch execution (Issue #39) + batch evaluation (Issue #40)
 from .design_study_batch import (
@@ -61,6 +65,7 @@ __all__ = [
     "available_converters",
     "get_converter",
     "register_converter",
+    "genetic_sample",
     "sample_candidates",
     "sample_candidates_package",
     "discover_candidate_ids",

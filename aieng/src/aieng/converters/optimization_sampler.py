@@ -4,10 +4,13 @@ Reads ``analysis/optimization_variables.json`` (resolved variable bindings) and
 emits candidate patches into ``patches/design_candidates/<cid>.json`` in the
 existing format consumed by the executor/evaluator/ranker pipeline.
 
-Supports three sampling algorithms:
+Supports four sampling algorithms:
 - **grid** — Cartesian product of discretised values per variable.
 - **random** — Uniform random draw from each variable's domain.
 - **latin_hypercube** — Stratified random sampling (LHS) for better coverage.
+- **genetic** — Population-based evolutionary sampler. Particularly useful for
+  mixed discrete/continuous spaces; uses selection, crossover, and mutation in
+  normalised gene space with a diversity objective.
 
 All algorithms are deterministic given a seed and respect variable bounds,
 types, and ``safe_to_modify``. The sampler never modifies the baseline.
@@ -97,6 +100,44 @@ def _sample_value(
         return allowed[idx]
 
     return normalised_frac
+
+
+def _normalise_variable_value(var: dict[str, Any], value: Any) -> float:
+    """Encode a variable value as a normalised float in ``[0, 1]``.
+
+    Continuous/integer variables are mapped linearly between bounds. Discrete
+    and categorical variables are mapped by index into ``allowed_values``.
+    Boolean values map to ``0.0``/``1.0``.
+    """
+    vtype = var.get("type", "continuous")
+    if vtype == "boolean":
+        return 1.0 if value else 0.0
+
+    if vtype in _BOUNDED_TYPES:
+        lo = _bound(var, "min_value", 0.0)
+        hi = _bound(var, "max_value", 1.0)
+        if hi <= lo:
+            return 0.0
+        num = _num(value)
+        if num is None:
+            return 0.0
+        return min(1.0, max(0.0, (num - lo) / (hi - lo)))
+
+    if vtype in _DISCRETE_TYPES:
+        allowed = var.get("allowed_values") or []
+        if not allowed:
+            return 0.0
+        try:
+            return allowed.index(value) / max(1, len(allowed) - 1)
+        except ValueError:
+            return 0.0
+
+    return 0.0
+
+
+def _denormalise_variable_value(var: dict[str, Any], frac: float) -> Any:
+    """Decode a normalised float back to a typed variable value."""
+    return _sample_value(var, normalised_frac=min(1.0, max(0.0, frac)))
 
 
 def _grid_values(var: dict[str, Any], *, n: int = 5) -> list[Any]:
@@ -284,6 +325,195 @@ def latin_hypercube_sample(
     return candidates
 
 
+# ── genetic algorithm sampler ────────────────────────────────────────────────
+
+
+def _genome_to_candidate(
+    variables: list[dict[str, Any]],
+    genome: list[float],
+    candidate_id: str,
+    reasoning: str,
+) -> dict[str, Any]:
+    """Convert a normalised genome back into a design-candidate patch."""
+    changes = [
+        {
+            "variable_id": var["id"],
+            "new_value": _denormalise_variable_value(var, frac),
+        }
+        for var, frac in zip(variables, genome)
+    ]
+    return {
+        "format": "aieng.design_candidate_patch",
+        "candidate_id": candidate_id,
+        "variable_changes": changes,
+        "reasoning": reasoning,
+    }
+
+
+def _diversity_fitness(population: list[list[float]]) -> list[float]:
+    """Return a diversity score for each individual.
+
+    The score is the mean normalised Euclidean distance to every other
+    individual. Higher scores indicate individuals that occupy less crowded
+    regions of the search space. This is used as the objective in the absence
+    of real engineering evaluations, producing a spread initial population.
+    """
+    n = len(population)
+    if n <= 1:
+        return [1.0] * n
+
+    scores: list[float] = []
+    for i, individual in enumerate(population):
+        total = 0.0
+        for j, other in enumerate(population):
+            if i == j:
+                continue
+            total += math.sqrt(
+                sum((a - b) ** 2 for a, b in zip(individual, other))
+            )
+        scores.append(total / max(1, n - 1))
+    return scores
+
+
+def _tournament_select(
+    population: list[list[float]],
+    fitness: list[float],
+    rng: random.Random,
+    *,
+    tournament_size: int = 3,
+) -> list[float]:
+    """Select one individual by k-tournament selection."""
+    best = rng.randrange(len(population))
+    for _ in range(tournament_size - 1):
+        contender = rng.randrange(len(population))
+        if fitness[contender] > fitness[best]:
+            best = contender
+    return population[best][:]
+
+
+def _uniform_crossover(
+    parent_a: list[float],
+    parent_b: list[float],
+    rng: random.Random,
+) -> tuple[list[float], list[float]]:
+    """Produce two offspring via uniform crossover."""
+    child_a: list[float] = []
+    child_b: list[float] = []
+    for a, b in zip(parent_a, parent_b):
+        if rng.random() < 0.5:
+            child_a.append(a)
+            child_b.append(b)
+        else:
+            child_a.append(b)
+            child_b.append(a)
+    return child_a, child_b
+
+
+def _mutate(genome: list[float], rng: random.Random, rate: float) -> None:
+    """Apply uniform mutation in place with probability ``rate`` per gene."""
+    for i in range(len(genome)):
+        if rng.random() < rate:
+            genome[i] = rng.random()
+
+
+def genetic_sample(
+    variables: list[dict[str, Any]],
+    *,
+    count: int,
+    seed: int = 0,
+    generations: int | None = None,
+    population_size: int | None = None,
+    crossover_rate: float = 0.8,
+    mutation_rate: float = 0.1,
+    elitism: int = 1,
+) -> list[dict[str, Any]]:
+    """Genetic-algorithm candidate generation.
+
+    Produces a diverse population of candidate patches using tournament
+    selection, uniform crossover, and mutation in normalised gene space. A
+    diversity objective (mean distance to the rest of the population) drives
+    selection, so the algorithm is useful even before real engineering
+    evaluations are available. It handles continuous, integer, discrete,
+    categorical, and boolean variables via the normalisation helpers.
+
+    Parameters
+    ----------
+    count:
+        Number of candidate patches to emit.
+    seed:
+        Random seed for reproducibility.
+    generations:
+        Number of evolutionary generations. Defaults to ``max(1, count // 2)``.
+    population_size:
+        Size of the evolving population. Defaults to ``max(count, 4)``.
+    crossover_rate:
+        Probability that two parents produce offspring by crossover.
+    mutation_rate:
+        Per-gene mutation probability.
+    elitism:
+        Number of top individuals copied unchanged each generation.
+
+    Deterministic given ``seed``. Baseline is never modified.
+    """
+    safe = _filter_safe_variables(variables)
+    if not safe or count < 1:
+        return []
+
+    rng = random.Random(seed)
+    n_vars = len(safe)
+
+    pop_size = population_size if population_size is not None else max(count, 4)
+    pop_size = max(2, pop_size)
+    n_gens = generations if generations is not None else max(1, count // 2)
+    elitism = max(0, min(elitism, pop_size // 2))
+
+    # Initialise population with random genomes.
+    population: list[list[float]] = [
+        [rng.random() for _ in range(n_vars)] for _ in range(pop_size)
+    ]
+
+    for _ in range(n_gens):
+        fitness = _diversity_fitness(population)
+        ranked = sorted(range(pop_size), key=lambda i: fitness[i], reverse=True)
+        new_population: list[list[float]] = [
+            population[i][:] for i in ranked[:elitism]
+        ]
+
+        while len(new_population) < pop_size:
+            parent_a = _tournament_select(population, fitness, rng)
+            parent_b = _tournament_select(population, fitness, rng)
+            if rng.random() < crossover_rate:
+                child_a, child_b = _uniform_crossover(parent_a, parent_b, rng)
+            else:
+                child_a, child_b = parent_a[:], parent_b[:]
+            _mutate(child_a, rng, mutation_rate)
+            _mutate(child_b, rng, mutation_rate)
+            new_population.append(child_a)
+            if len(new_population) < pop_size:
+                new_population.append(child_b)
+
+        population = new_population
+
+    # Emit the most diverse individuals from the final population.
+    final_fitness = _diversity_fitness(population)
+    ranked = sorted(range(pop_size), key=lambda i: final_fitness[i], reverse=True)
+
+    candidates: list[dict[str, Any]] = []
+    for idx, rank in enumerate(ranked[:count]):
+        candidates.append(
+            _genome_to_candidate(
+                safe,
+                population[rank],
+                candidate_id=f"cand_genetic_{idx:04d}",
+                reasoning=(
+                    f"Genetic algorithm: generation {n_gens}, "
+                    f"individual {idx + 1} of {count}."
+                ),
+            )
+        )
+    return candidates
+
+
 # ── public entrypoint ────────────────────────────────────────────────────────
 
 
@@ -295,6 +525,7 @@ def sample_candidates(
     seed: int = 0,
     max_candidates: int = 50,
     counts: dict[str, int] | None = None,
+    genetic_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate candidate patches from resolved optimization variables.
 
@@ -305,17 +536,21 @@ def sample_candidates(
         Each must carry at minimum ``id``, ``type``, bounds/allowed_values,
         and ``safe_to_modify``.
     algorithm:
-        One of ``"grid"``, ``"random"``, ``"latin_hypercube"``.
+        One of ``"grid"``, ``"random"``, ``"latin_hypercube"``, ``"genetic"``.
     count:
-        Number of candidates for random/LHS. Auto-computed for grid from
-        the Cartesian product size. Clamped to ``max_candidates``.
+        Number of candidates for random/LHS/genetic. Auto-computed for grid
+        from the Cartesian product size. Clamped to ``max_candidates``.
     seed:
-        Random seed for reproducibility (used by random and LHS; grid ignores
-        seed because it is purely deterministic).
+        Random seed for reproducibility (used by random, LHS, and genetic;
+        grid ignores seed because it is purely deterministic).
     max_candidates:
         Hard cap on emitted candidates beyond which sampling is truncated.
     counts:
         Per-variable level counts for grid search (default 5 per variable).
+    genetic_options:
+        Optional dict passed to :func:`genetic_sample` when
+        ``algorithm == "genetic"``. Supported keys: ``population_size``,
+        ``generations``, ``crossover_rate``, ``mutation_rate``, ``elitism``.
 
     Returns
     -------
@@ -387,6 +622,16 @@ def sample_candidates(
         n = count if count is not None else len(safe) * 3
         total = n
         candidates = latin_hypercube_sample(safe, count=min(n, max_candidates), seed=seed)
+    elif alg == "genetic":
+        n = count if count is not None else max(10, len(safe) * 3)
+        total = n
+        genetic_opts = genetic_options if genetic_options is not None else {}
+        candidates = genetic_sample(
+            safe,
+            count=min(n, max_candidates),
+            seed=seed,
+            **genetic_opts,
+        )
     else:
         return {
             "algorithm": algorithm,
@@ -395,7 +640,7 @@ def sample_candidates(
             "total_generated": 0,
             "capped": False,
             "dropped_count": 0,
-            "warnings": [f"unknown algorithm '{algorithm}' — use grid, random, or latin_hypercube"],
+            "warnings": [f"unknown algorithm '{algorithm}' — use grid, random, latin_hypercube, or genetic"],
         }
 
     capped = total > max_candidates
@@ -429,13 +674,14 @@ def sample_candidates_package(
     max_candidates: int | None = None,
     overwrite: bool = False,
     counts: dict[str, int] | None = None,
+    genetic_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read a package's optimization variables, run the sampler, write candidates.
 
     The sampler reads ``analysis/optimization_variables.json`` (required) and
     optionally ``analysis/optimization_study.json`` to discover the algorithm,
-    requested count, max count, and seed.  Explicit parameters override the
-    study config.
+    requested count, max count, seed, and algorithm-specific settings.
+    Explicit parameters override the study config.
 
     Candidate patches are written to ``patches/design_candidates/<cid>.json``.
 
@@ -497,6 +743,7 @@ def sample_candidates_package(
     resolved_count: int = 10
     resolved_seed: int = 0
     resolved_max: int = 50
+    resolved_genetic_options: dict[str, Any] = {}
 
     if study and isinstance(study, dict):
         if study.get("algorithm") and isinstance(study["algorithm"], dict):
@@ -505,6 +752,13 @@ def sample_candidates_package(
                 resolved_algo = study_algo if study_algo else "grid"
             if study["algorithm"].get("seed") is not None and seed is None:
                 resolved_seed = int(study["algorithm"]["seed"])
+            algo_settings = study["algorithm"].get("settings")
+            if isinstance(algo_settings, dict):
+                resolved_genetic_options = {
+                    k: v for k, v in algo_settings.items()
+                    if k in ("population_size", "generations", "crossover_rate",
+                             "mutation_rate", "elitism")
+                }
         if study.get("sampling") and isinstance(study["sampling"], dict):
             sampling = study["sampling"]
             if count is None:
@@ -531,6 +785,8 @@ def sample_candidates_package(
             budget_max = study["budget"].get("max_candidates")
             if budget_max is not None:
                 resolved_max = min(resolved_max, int(budget_max))
+    if genetic_options is not None:
+        resolved_genetic_options = {**resolved_genetic_options, **genetic_options}
 
     result = sample_candidates(
         variables,
@@ -539,6 +795,7 @@ def sample_candidates_package(
         seed=resolved_seed,
         max_candidates=resolved_max,
         counts=counts,
+        genetic_options=resolved_genetic_options,
     )
 
     if not result["candidates"]:

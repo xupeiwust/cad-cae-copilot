@@ -3911,6 +3911,15 @@ def make_candidate_recompiler(baseline_package_path: Path) -> Any:
         sid = context.get("candidate_id", "candidate")
         tmp = baseline_package_path.with_suffix(f".dscand_{sid}.tmp.aieng")
         try:
+            # Baseline topology for the regression diff (before the edit).
+            baseline_topo: dict[str, Any] | None = None
+            try:
+                with zipfile.ZipFile(baseline_package_path, "r") as zf:
+                    if "geometry/topology_map.json" in zf.namelist():
+                        baseline_topo = json.loads(zf.read("geometry/topology_map.json"))
+            except Exception:  # noqa: BLE001 - diff is best-effort evidence
+                baseline_topo = None
+
             # throwaway copy with geometry/shape_ir.json swapped for the candidate's derived IR
             with (
                 zipfile.ZipFile(baseline_package_path, "r") as src,
@@ -3923,6 +3932,7 @@ def make_candidate_recompiler(baseline_package_path: Path) -> Any:
                              json.dumps(candidate_shape_ir).encode())
             summary = recompile_shape_ir_package(tmp)
             ge, verification, metrics = {}, None, {}
+            candidate_topo: dict[str, Any] | None = None
             with zipfile.ZipFile(tmp, "r") as zf:
                 names = set(zf.namelist())
                 if "provenance/conversion_manifest.json" in names:
@@ -3930,17 +3940,42 @@ def make_candidate_recompiler(baseline_package_path: Path) -> Any:
                           .get("geometry_execution") or {})
                 if "diagnostics/shape_ir_verification.json" in names:
                     verification = json.loads(zf.read("diagnostics/shape_ir_verification.json"))
+                if "geometry/topology_map.json" in names:
+                    candidate_topo = json.loads(zf.read("geometry/topology_map.json"))
             executed = bool(ge.get("executed"))
+
+            # Regression diff: compare before/after topology by named part.
+            selected_part_id = context.get("selected_part_id")
+            expected_parts = {str(selected_part_id)} if selected_part_id else None
+            regression_diff: dict[str, Any] | None = None
+            if isinstance(baseline_topo, dict) and isinstance(candidate_topo, dict):
+                regression_diff = _diff_topology(
+                    baseline_topo, candidate_topo, expected_parts=expected_parts
+                )
+
+            compile_status = "compile_succeeded" if executed else "compile_failed"
+            errors: list[str] = list(ge.get("errors") or [])
+            if summary.get("error"):
+                errors.append(summary["error"])
+            if regression_diff is not None and regression_diff.get("verdict") == "collateral_change":
+                compile_status = "compile_failed"
+                collateral = regression_diff.get("collateral_parts") or []
+                errors.append(
+                    f"regression_diff flagged collateral_change on {collateral!r}; "
+                    "candidate rejected to protect baseline geometry."
+                )
+
             metrics = {"executed": executed, "geometry_kind": ge.get("geometry_kind"),
                        "representation_kind": ge.get("representation_kind"),
                        "artifacts": ge.get("artifacts")}
             return {
-                "compile_status": "compile_succeeded" if executed else "compile_failed",
+                "compile_status": compile_status,
                 "geometry_execution": ge or None,
                 "verification": verification,
                 "metrics": metrics,
-                "errors": list(ge.get("errors") or []) + ([summary["error"]] if summary.get("error") else []),
+                "errors": errors,
                 "warnings": list(ge.get("warnings") or []),
+                "regression_diff": regression_diff,
             }
         except Exception as exc:  # noqa: BLE001
             return {"compile_status": "compile_failed", "errors": [f"{type(exc).__name__}: {exc}"]}

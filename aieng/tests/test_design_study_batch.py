@@ -164,6 +164,40 @@ def test_batch_records_compile_failure_as_build_failed(tmp_path: Path):
     assert _baseline_unchanged(pkg)
 
 
+def test_batch_records_collateral_change_as_build_failed(tmp_path: Path):
+    cands = [_candidate("cand_clean", [{"variable_id": "wall_t", "new_value": 4.0}]),
+             _candidate("cand_collateral", [{"variable_id": "wall_t", "new_value": 5.0}])]
+    pkg = _write_pkg(tmp_path, problem=_problem(), candidates=cands)
+
+    def _recompiler(shape_ir, ctx):
+        if ctx["candidate_id"] == "cand_collateral":
+            # make_candidate_recompiler downgrades compile_status when it sees
+            # collateral_change.
+            return {
+                "compile_status": "compile_failed",
+                "metrics": {"mass": 12.3},
+                "errors": ["regression_diff flagged collateral_change"],
+                "regression_diff": {
+                    "verdict": "collateral_change",
+                    "collateral_parts": ["base_plate"],
+                    "changed": [{"part": "base_plate", "expected": False}],
+                    "added": [], "removed": [], "unchanged_count": 0,
+                },
+            }
+        return {"compile_status": "compile_succeeded", "metrics": {"mass": 12.3},
+                "regression_diff": {"verdict": "clean", "collateral_parts": []}}
+
+    res = run_design_study_batch(pkg, recompiler=_recompiler)
+    assert res["executed"] == 2
+    assert res["succeeded"] == 1
+    assert res["failed"] == 1
+    by_id = {r["candidate_id"]: r for r in res["results"]}
+    assert by_id["cand_collateral"]["execution_status"] == "compile_failed"
+    assert "candidate_build_failed" in by_id["cand_collateral"]["reason_codes"]
+    assert by_id["cand_clean"]["execution_status"] == "evaluation_complete"
+    assert _baseline_unchanged(pkg)
+
+
 def test_batch_caps_and_reports_skipped(tmp_path: Path):
     cands = [_candidate(f"cand_{i}", [{"variable_id": "wall_t", "new_value": 3.0 + i}])
              for i in range(4)]

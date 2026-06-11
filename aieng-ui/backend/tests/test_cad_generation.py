@@ -2270,13 +2270,18 @@ def _write_baseline_package(path: Path, shape_ir: dict, topology_map: dict) -> N
 
 
 def _replace_package_member(pkg_path: Path, member_name: str, data: bytes) -> None:
+    """Replace an existing package member or append it if absent."""
     tmp = pkg_path.with_suffix(".replace.tmp.aieng")
+    replaced = False
     with zipfile.ZipFile(pkg_path, "r") as src, zipfile.ZipFile(tmp, "w") as dst:
         for item in src.infolist():
             if item.filename == member_name:
                 dst.writestr(item, data)
+                replaced = True
             else:
                 dst.writestr(item, src.read(item.filename))
+        if not replaced:
+            dst.writestr(member_name, data)
     tmp.replace(pkg_path)
 
 

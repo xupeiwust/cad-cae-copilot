@@ -1921,7 +1921,8 @@ def _write_build123d_cache(
             with FileLock(lock_path, timeout=30):
                 _do_write()
     except Exception:
-        shutil.rmtree(entry, ignore_errors=True)
+        # Only clean up the temp directory; do NOT delete a finalized entry
+        # that may have been valid before this write attempt.
         shutil.rmtree(root / (cache_key + ".tmp"), ignore_errors=True)
 
 
@@ -6062,7 +6063,11 @@ def edit_build123d_parameter(
 
     try:
         cached_result = _execute_build123d_cached(
-            settings, modified_source, mode="replace", timeout=timeout,
+            settings,
+            modified_source,
+            mode="replace",
+            model_kind=contract.get("model_kind", "auto"),
+            timeout=timeout,
         )
     except Exception as exc:
         # If the edit breaks the model, return the error but preserve the
@@ -6234,9 +6239,23 @@ def _rebuild_after_part_edit(
 ) -> dict[str, Any]:
     """Execute ``new_source``, write artifacts, and assemble the response with a
     regression diff. Shared by remove_part / replace_part."""
+    # Preserve the original model_kind so cache key + heuristics stay consistent.
+    model_kind = "auto"
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            if "graph/feature_graph.json" in zf.namelist():
+                fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+                model_kind = fg.get("model_kind", "auto")
+    except Exception:
+        pass
+
     try:
         cached_result = _execute_build123d_cached(
-            settings, new_source, mode="replace", timeout=timeout,
+            settings,
+            new_source,
+            mode="replace",
+            model_kind=model_kind,
+            timeout=timeout,
         )
     except Exception as exc:
         return {

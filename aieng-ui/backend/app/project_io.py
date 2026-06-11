@@ -874,6 +874,7 @@ def _validate_cad_parameter_edit_contract(
         "parameter": param,
         "cad_object_name": feature.get("cad_object_name") or feature_id,
         "cad_parameter_name": param.get("cad_parameter_name") or parameter_name,
+        "model_kind": feature_graph.get("model_kind", "auto"),
     }
 
 

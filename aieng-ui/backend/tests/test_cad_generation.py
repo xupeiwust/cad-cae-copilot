@@ -2135,6 +2135,9 @@ def test_concurrent_cache_writes_produce_one_valid_entry(tmp_path: Path) -> None
     assert "step_bytes" in r2
     # The underlying executor should have been invoked exactly once.
     assert calls == 1
+    # Both threads must receive the same cached result (cache coherence).
+    assert r1["step_bytes"] == r2["step_bytes"]
+    assert r1["topo"] == r2["topo"]
     # The cache entry must be complete and readable.
     cached = cad_generation._read_build123d_cache(settings, cache_key)
     assert cached is not None

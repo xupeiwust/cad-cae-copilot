@@ -29,21 +29,11 @@ from .optimization_proposer import (
     _incumbent_variable_values,
 )
 
-_BLANKET_REASON_CODES = frozenset(
-    {
-        "select_slsqp",
-        "select_bayesian",
-        "select_genetic",
-        "no_surrogate_available",
-    }
-)
-
-
 def _has_scipy() -> bool:
     try:
         import scipy.optimize  # noqa: F401
         return True
-    except Exception:  # noqa: BLE001
+    except (ImportError, ModuleNotFoundError):
         return False
 
 
@@ -109,12 +99,6 @@ def _compute_gradient_fd(
     """Compute central/one-sided FD gradients.  Returns (gradient, missing_vids)."""
     gradient: dict[str, float | None] = {}
     missing: list[str] = []
-    inc_score = None
-    for cid, data in evaluated.items():
-        if cid == "incumbent":
-            continue
-        # We don't use a special incumbent key; the caller passes incumbent_id separately.
-        pass
 
     for var in safe_vars:
         vid = var["id"]
@@ -163,20 +147,42 @@ def _compute_gradient_fd(
         if f_score is not None and b_score is not None:
             gradient[vid] = (f_score - b_score) / (2 * dx)
         elif f_score is not None:
-            inc_score = next(
-                (d["score"] for d in evaluated.values() if d.get("score") is not None),
-                None,
-            )
+            inc_score = evaluated.get("inc", {}).get("score")
+            if inc_score is None:
+                inc_score = next(
+                    (
+                        d["score"]
+                        for d in evaluated.values()
+                        if d.get("score") is not None
+                        and all(
+                            abs(_num(d["values"].get(v2["id"])) - _num(incumbent_values.get(v2["id"]))) < 1e-6
+                            for v2 in safe_vars
+                            if _num(incumbent_values.get(v2["id"])) is not None
+                        )
+                    ),
+                    None,
+                )
             if inc_score is not None:
                 gradient[vid] = (f_score - inc_score) / dx
             else:
                 gradient[vid] = None
                 missing.append(vid)
         elif b_score is not None:
-            inc_score = next(
-                (d["score"] for d in evaluated.values() if d.get("score") is not None),
-                None,
-            )
+            inc_score = evaluated.get("inc", {}).get("score")
+            if inc_score is None:
+                inc_score = next(
+                    (
+                        d["score"]
+                        for d in evaluated.values()
+                        if d.get("score") is not None
+                        and all(
+                            abs(_num(d["values"].get(v2["id"])) - _num(incumbent_values.get(v2["id"]))) < 1e-6
+                            for v2 in safe_vars
+                            if _num(incumbent_values.get(v2["id"])) is not None
+                        )
+                    ),
+                    None,
+                )
             if inc_score is not None:
                 gradient[vid] = (inc_score - b_score) / dx
             else:
@@ -277,7 +283,7 @@ def propose_slsqp_candidates(
             with zipfile.ZipFile(pkg, "r") as zf:
                 names = set(zf.namelist())
                 variables_doc = _read_json(zf, OPTIMIZATION_VARIABLES_PATH, names)
-        except Exception as exc:  # noqa: BLE001
+        except (zipfile.BadZipFile, KeyError, json.JSONDecodeError, OSError) as exc:
             return {
                 "status": "error",
                 "code": "read_failed",
@@ -330,7 +336,7 @@ def propose_slsqp_candidates(
             patches = _read_all_patches(zf, names)
             incumbent_id = ranking.get("best_candidate_id") if isinstance(ranking, dict) else None
             incumbent_values = _incumbent_variable_values(zf, names, incumbent_id)
-    except Exception as exc:  # noqa: BLE001
+    except (zipfile.BadZipFile, KeyError, json.JSONDecodeError, OSError) as exc:
         return {
             "status": "error",
             "code": "read_failed",

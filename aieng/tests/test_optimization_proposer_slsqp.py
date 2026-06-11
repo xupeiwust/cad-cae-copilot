@@ -300,7 +300,8 @@ def test_slsqp_step_integer_rounding(tmp_path: Path):
     assert res["status"] == "ok"
     assert res["strategy"] == "slsqp"
     patches = _patches(pkg)
-    slsqp_name = [n for n in patches if "cand_slsqp_iter" in n][0]
+    slsqp_name = next((n for n in patches if "cand_slsqp_iter" in n), None)
+    assert slsqp_name is not None, "No SLSQP candidate found in patches"
     n_holes = _vals(patches[slsqp_name]).get("n_holes")
     assert isinstance(n_holes, int)
 

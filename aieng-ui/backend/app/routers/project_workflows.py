@@ -702,6 +702,12 @@ def register_project_workflow_routes(
         if package_path is None or not package_path.exists():
             raise HTTPException(status_code=404, detail=".aieng package not found")
         data = payload or {}
+        algorithm = str(data.get("algorithm") or "trust_region")
+        if algorithm not in {"trust_region", "slsqp"}:
+            raise HTTPException(
+                status_code=422,
+                detail="algorithm must be one of: trust_region, slsqp",
+            )
         return {
             "project_id": project_id,
             **propose_next_candidates(
@@ -709,7 +715,7 @@ def register_project_workflow_routes(
                 count=int(data.get("count", 4)),
                 shrink=float(data.get("shrink", 0.5)),
                 seed=int(data.get("seed", 0)),
-                algorithm=str(data.get("algorithm", "trust_region")),
+                algorithm=algorithm,
             ),
         }
 

@@ -16,6 +16,7 @@ For a higher-level showcase with demo talking points and visual guidance, see [`
 | Mesh-to-CAD B-Rep reconstruction | Mesh → analytic CAD | `aieng/tests/test_mesh_brep_*.py` | `pytest aieng/tests/test_mesh_brep_solidification.py -q` | `geometry/reconstructed.step`, `diagnostics/mesh_brep_sewing.json`, `graph/mesh_brep_stitching_plan.json` | Closed shell → valid solid → STEP export when possible | Stable | Mesh-derived/lossy; not production CAD; freeform/NURBS future work |
 | Assembly-aware topology optimization | Multi-part assembly optimization | `aieng-ui/backend/tests/test_assembly_topopt_demo.py` | `pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q` | `analysis/assembly_topology_optimization.json`, `parts/bracket/geometry/optimized_shape_ir.json`, `diagnostics/assembly_post_optimization_verification.json` | Derived part artifact written, frozen parts untouched, verification passed | Stable | Proxy connections only; no real contact; no bolt preload; one design part only |
 | Agent-guided parameter design study | Parameter exploration + evaluation + hints + ranking + acceptance | `aieng-ui/backend/tests/test_design_study_demo.py` | `pytest aieng-ui/backend/tests/test_design_study_demo.py -q` | `candidates/candidate_good/analysis/evaluation.json`, `analysis/design_study_candidate_hints.json`, `analysis/design_study_candidate_ranking.json`, `analysis/design_study_acceptance.json`, `accepted/candidate_good/geometry/shape_ir.json` | Best candidate evaluated, hints generated, ranked, accepted into derived workspace; baseline untouched | Stable | Candidate-local static/neutral evidence only; no autonomous optimization; no baseline overwrite |
+| 2D topology → sizing → CAE | Topology writeback → auto-parameterization → sizing → validation → acceptance | `aieng-ui/backend/tests/test_topology_sizing_backend_demo.py` | `pytest aieng-ui/backend/tests/test_topology_sizing_backend_demo.py -q` | `analysis/design_study_problem.json`, `analysis/optimization_study.json`, `analysis/optimization_decision_log.json`, `analysis/design_study_candidate_ranking.json`, `analysis/design_study_acceptance.json`, `diagnostics/optimization_report.json`, `provenance/tool_trace.json` | Full chain runs, chain preserved, `production_ready:false`, baseline untouched, acceptance approval-gated | Experimental | No external solver; volume/mass analytical only; stress/displacement absent; 3D/non-extruded refused |
 
 ---
 
@@ -248,6 +249,65 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 
 ---
 
+## 5. 2D Topology → Sizing → CAE End-to-End Demo
+
+**Purpose:** Validate the full Phase 4 bridge on a plate-with-loads 2D case: topology optimization result → contour writeback → auto-parameterization → sizing study → candidate sampling → CAE validation → ranking → recommendation → approval-gated acceptance.
+
+**Test files:**
+- `aieng-ui/backend/tests/test_topology_sizing_backend_demo.py` (3 tests)
+- `aieng/scripts/run_topology_sizing_demo.py` (scripted demo)
+
+**Run:**
+```bash
+pytest aieng-ui/backend/tests/test_topology_sizing_backend_demo.py -q
+python aieng/scripts/run_topology_sizing_demo.py --out build/topology_sizing_demo.aieng
+```
+
+**Expected artifacts:**
+- `analysis/topology_optimization.json` — source topology result (2D, `dimension: 2d`)
+- `geometry/shape_ir.json` — baseline contour writeback as `extruded_region`
+- `analysis/design_study_problem.json` — sizing problem with `extrusion_thickness` variable
+- `analysis/optimization_variables.json` — resolved variable binding to `parts/0/thickness`
+- `analysis/optimization_objectives.json`, `analysis/optimization_constraints.json`, `analysis/optimization_study.json` — sizing-study envelope
+- `analysis/optimization_decision_log.json` — chain-linkage entry with `production_ready=false`
+- `patches/design_candidates/*.json` — sampled thickness candidates
+- `candidates/<id>/geometry/shape_ir.json` — derived candidate geometry
+- `candidates/<id>/analysis/evaluation.json` — candidate-local feasibility evaluation
+- `analysis/design_study_candidate_ranking.json` — ranked candidates
+- `analysis/optimization_recommendation.json` — advisory recommendation
+- `analysis/design_study_acceptance.json` — explicit acceptance record
+- `accepted/<id>/geometry/shape_ir.json` — accepted derived geometry
+- `diagnostics/optimization_report.json` — aggregated report with `topology_to_sizing_chain`
+- `provenance/tool_trace.json` — tool-trace entries for `parameterize_topology_writeback` and `topology_to_sizing`
+
+**Expected behavior:**
+- `test_topology_sizing_backend_demo_end_to_end`
+  - `POST /api/projects/{id}/topology-optimization/sizing` returns `status: ok`
+  - Sampler produces candidates from `extrusion_thickness`
+  - Candidates execute without external CAD (`compile: false`)
+  - Deterministic analytical volume/mass metrics injected per candidate
+  - Ranking finds a feasible best candidate with `safe_to_accept: true`
+  - Recommendation is advisory-only
+  - Acceptance closes the loop on the best candidate; baseline geometry untouched
+  - Report aggregates the full chain and surfaces `topology_to_sizing_chain`
+  - Tool trace records both parameterization and sizing steps
+- `test_topology_sizing_refuses_3d_honestly`
+  - 3D topology result returns `status: needs_user_input`, `code: 3d_or_non_2d_not_supported`
+  - No sizing artifacts are written
+- `test_topology_sizing_refuses_non_extruded_body_honestly`
+  - Non-extruded writeback returns `status: needs_user_input`, `code: no_stable_parameter`
+  - No sizing artifacts are written
+
+**Honesty boundaries:**
+- Only 2D contour `extruded_region` writebacks are supported; 3D/voxel/non-extruded bodies are refused
+- `production_ready: false` and `human_approval_required_for_acceptance: true` are explicit
+- No external solver is executed; metrics are analytical stand-ins
+- Volume/mass are present; stress/displacement are absent (not fabricated)
+- Baseline `geometry/shape_ir.json` is never overwritten
+- Acceptance is approval-gated and produces a derived-only workspace
+
+---
+
 ## Suggested Smoke Commands
 
 Run all canonical demos:
@@ -264,12 +324,15 @@ pytest aieng-ui/backend/tests/test_assembly_topopt_demo.py -q
 
 # Agent-guided parameter design study (PR1–PR6)
 pytest aieng-ui/backend/tests/test_design_study_demo.py -q
+
+# 2D topology → sizing → CAE end-to-end
+pytest aieng-ui/backend/tests/test_topology_sizing_backend_demo.py -q
 ```
 
 Run the full backend design-study suite:
 
 ```bash
-pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_study_demo.py -q
+pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_study_demo.py aieng-ui/backend/tests/test_topology_sizing_backend_demo.py -q
 ```
 
 ---
@@ -286,6 +349,8 @@ pytest aieng/tests/test_design_study*.py aieng-ui/backend/tests/test_design_stud
 | Design study | Candidate evaluation reads existing static/neutral/proxy artifacts only | No solver/recompile/promotion during evaluation |
 | Design study | Candidate hints are advisory only | No patch generation, execution, CAE, ranking, acceptance, or geometry mutation |
 | Design study | Candidate CAE evaluation request is explicit and candidate-local | Solver execution disabled by default; baseline artifacts never overwritten |
+| Topology → sizing | 2D contour extrusions only; 3D/voxel/non-extruded refused | `production_ready: False`; human approval required |
+| Topology → sizing | Analytical volume/mass only; no stress/displacement | Static/neutral evidence; external solver not executed |
 
 ---
 

@@ -844,6 +844,16 @@ Linear static analysis pipeline — see workflow C below.
 
 - **Docker image:** already bundles `ccx`; no extra setup needed.
 
+**`cae.prepare_solver_run` returns `recommended_next_calls`.** When the package is
+not ready, the response includes a `recommended_next_calls` list. Each entry is
+either a tool call (`tool`, `input`, `reason`) or an environment/action item
+(`action`, `reason`). Present these as the next actionable steps. A tool entry can
+be invoked directly; the solver itself (`cae.run_solver`) remains approval-gated
+and is only recommended once every preflight item passes. If topology validation
+reports stale face references, the first recommendation will be to rebind via
+`ai_preprocessing.run_ai_preprocessing` (or `cae.apply_setup_patch`) before the
+solver is offered.
+
 **Topology revision validation.** CAE loads and boundary conditions are bound to
 `@face:*` pointers that live in `geometry/topology_map.json`. Every time AI
 preprocessing writes `simulation/setup.yaml` and `simulation/cae_mapping.json`, it
@@ -915,7 +925,7 @@ fixture and load on flat interfaces.
 | `aieng.read_audit_log` | Recent agent/user actions on this project |
 | `aieng.validate` | Schema + rule validation report (no mutation) |
 | `aieng.write_completeness_report` | What is missing before simulation |
-| `cae.prepare_solver_run` | Solver preflight — checks readiness, runs nothing |
+| `cae.prepare_solver_run` | Solver preflight — checks readiness, runs nothing. Returns `recommended_next_calls` with tool/input/reason entries for missing artifacts and stale face references |
 | `cad.get_source` | Accumulated build123d source + `{named_parts, has_base}` — call before an incremental edit |
 | `cad.list_editable_parameters` | List the parameters editable fast via `cad.edit_parameter` (the "point" of point-and-shoot): per-parameter `featureId`/`parameterName`/`cad_parameter_name`/current/min-max + `scope` (`local`/`global`/`unscoped`) + a summary. Answers "what can I change here?" |
 | `cad.critique` | Deterministic engineering audit (min wall, hole sizes, floating components) — call after building an engineering part |
@@ -1079,6 +1089,11 @@ whole script each time.
 7. cae.extract_field_regions  { project_id }
 8. postprocess.refresh_cae_summary { project_id }
 ```
+
+If step 3 reports missing artifacts or stale topology references, follow the
+`recommended_next_calls` list before proceeding to step 4. The solver
+(`cae.run_solver`) is only recommended once the preflight is fully ready and
+remains subject to the normal approval gate.
 
 ### D — Inspect results and explain findings
 ```

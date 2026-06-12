@@ -1,4 +1,4 @@
-﻿import hashlib
+import hashlib
 import json
 import os
 import shutil
@@ -3838,6 +3838,87 @@ def test_prepare_solver_run_no_solver_subprocess(tmp_path: Path) -> None:
 
     assert resp.status_code == 200
     mock_run.assert_not_called()
+
+
+def test_prepare_solver_run_recommended_next_calls(tmp_path: Path) -> None:
+    """cae.prepare_solver_run returns actionable next-call recommendations for missing artifacts."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("preflight-recs"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "preflight.aieng"
+    _make_preflight_package(
+        pkg_path,
+        mesh=False,
+        solver_settings=False,
+        load_case=False,
+        input_deck=False,
+    )
+    project["aieng_file"] = "preflight.aieng"
+    save_project(settings, project)
+
+    resp = client.post("/api/runtime/runs", json={
+        "message": "prepare solver run",
+        "project_id": project_id,
+        "tool_input": {"project_id": project_id, "run_id": "run_001", "load_case_id": "load_case_001"},
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["ok"] is True
+    assert "recommended_next_calls" in result
+
+    recs = result["recommended_next_calls"]
+    tools = [r["tool"] for r in recs]
+    assert "cae.write_mesh_handoff" in tools
+    assert "cae.apply_setup_patch" in tools
+    assert "cae.generate_solver_input" in tools
+
+    # ccx is unavailable in this environment, so a non-tool environment action is present
+    env_recs = [r for r in recs if r.get("tool") is None]
+    assert env_recs
+    assert any("ccx" in r["action"].lower() or "calculix" in r["action"].lower() for r in env_recs)
+
+    # Solver run is NOT recommended until everything is present
+    assert "cae.run_solver" not in tools
+
+
+def test_prepare_solver_run_recommends_run_solver_when_ready(tmp_path: Path) -> None:
+    """When all artifacts are present and ccx is available, the final recommendation is cae.run_solver."""
+    from unittest.mock import patch
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("preflight-ready"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "preflight.aieng"
+    _make_preflight_package(pkg_path, mesh=True, solver_settings=True, load_case=True, input_deck=True)
+    project["aieng_file"] = "preflight.aieng"
+    save_project(settings, project)
+
+    with patch("app.main.shutil.which", return_value="/fake/ccx"):
+        resp = client.post("/api/runtime/runs", json={
+            "message": "prepare solver run",
+            "project_id": project_id,
+            "tool_input": {"project_id": project_id, "run_id": "run_001", "load_case_id": "load_case_001"},
+        })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["ok"] is True
+    assert result["ready_to_run"] is True
+
+    run_recs = [r for r in result["recommended_next_calls"] if r.get("tool") == "cae.run_solver"]
+    assert len(run_recs) == 1
+    assert run_recs[0].get("requires_approval") is True
+    assert run_recs[0]["input"]["input_deck_path"] == "simulation/runs/run_001/solver_input.inp"
 
 
 def _execute_run_solver(client, project_id, tool_input):

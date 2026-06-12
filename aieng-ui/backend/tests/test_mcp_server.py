@@ -92,6 +92,20 @@ def test_high_frequency_tools_carry_curated_schema(mcp_server) -> None:
             assert "project_id" in props, f"{name}: expected project_id in schema properties"
 
 
+def test_cae_tools_advertise_guided_workflow(mcp_server) -> None:
+    """cae.prepare_solver_run and cae.apply_setup_patch mention recommended_next_calls and linear_static examples."""
+    tools = _tool_dict(mcp_server)
+    prepare = tools.get(_mcp_name("cae.prepare_solver_run"))
+    assert prepare is not None
+    assert "recommended_next_calls" in prepare.description.lower()
+
+    patch = tools.get(_mcp_name("cae.apply_setup_patch"))
+    assert patch is not None
+    assert "linear_static" in patch.description.lower()
+    params = patch.parameters or {}
+    assert "project_id" in params.get("properties", {})
+
+
 def test_tools_without_curated_schema_get_permissive_default(mcp_server) -> None:
     """A registered tool that has no entry in TOOL_SCHEMAS should still expose
     a usable (permissive) object schema, never a missing one."""

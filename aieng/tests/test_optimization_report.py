@@ -305,7 +305,7 @@ def test_report_surfaces_pareto_front_from_ranking(tmp_path: Path):
     assert by_id["cand_heavy_strong"]["objective_values"] == {"mass": 1.1, "max_stress": 120.0}
 
 
-def test_report_falls_back_to_ranking_pareto_when_artifact_is_malformed(tmp_path: Path):
+def test_report_falls_back_to_ranking_pareto_when_artifact_is_malformed(tmp_path: Path) -> None:
     members = {
         "analysis/design_study_problem.json": {
             "format": "aieng.design_study_problem", "schema_version": "0.1", "id": "study_pareto",

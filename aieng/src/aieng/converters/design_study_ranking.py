@@ -185,12 +185,16 @@ def _has_critical_metrics(problem: dict[str, Any] | None,
         return False
 
     # Multi-objective studies use the explicit objectives array.
-    objectives = problem.get("objectives")
-    if isinstance(objectives, list) and objectives:
-        return any(
-            any(k in metrics and metrics[k] is not None for k in _objective_to_metric_keys(obj.get("metric", "")))
-            for obj in objectives
+    raw_objectives = problem.get("objectives")
+    if isinstance(raw_objectives, list) and raw_objectives:
+        objective_metrics = [
+            obj.get("metric")
+            for obj in raw_objectives
             if isinstance(obj, dict) and obj.get("metric")
+        ]
+        return bool(objective_metrics) and all(
+            any(k in metrics and metrics[k] is not None for k in _objective_to_metric_keys(metric))
+            for metric in objective_metrics
         )
 
     objective = problem.get("objective")
@@ -965,6 +969,10 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
             "limitations": pareto_result["limitations"],
         }
         if pareto_result["status"] == "ok":
+            # Multi-objective mode: there is no single global winner.
+            ranking["best_candidate_id"] = None
+            ranking["safe_to_accept"] = False
+            ranking["next_action"] = NEXT_REQUEST_INPUT
             # Replace the generic single-objective limitation with the honest frontier text.
             ranking["limitations"] = [
                 "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."

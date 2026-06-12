@@ -9,8 +9,11 @@ from __future__ import annotations
 import json
 import zipfile
 from datetime import datetime, timezone
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
+
+from jsonschema import Draft202012Validator
 
 from aieng import FORMAT_VERSION
 from aieng.converters.design_study import DESIGN_STUDY_PROBLEM_PATH
@@ -51,6 +54,26 @@ def _get_metric(metrics: dict[str, Any], *keys: str) -> Any:
 
 def _dumps(obj: Any) -> bytes:
     return (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _load_schema(schema_name: str) -> dict[str, Any]:
+    resource = files("aieng.schemas").joinpath(schema_name)
+    return json.loads(resource.read_text(encoding="utf-8"))
+
+
+_PARETO_SCHEMA = _load_schema("pareto_front.schema.json")
+_PARETO_VALIDATOR = Draft202012Validator(_PARETO_SCHEMA)
+
+
+def _validate_pareto_document(doc: dict[str, Any]) -> None:
+    """Validate a pareto_front document against its schema; raise on failure."""
+    errors = sorted(_PARETO_VALIDATOR.iter_errors(doc), key=lambda e: list(e.path))
+    if errors:
+        messages = [
+            f"{'$' + ''.join(f'[{p}]' if isinstance(p, int) else f'.{p}' for p in e.path)}: {e.message}"
+            for e in errors
+        ]
+        raise ValueError(f"Pareto front document schema validation failed: {'; '.join(messages)}")
 
 
 def _rewrite_package_members(package_path: Path, members: dict[str, bytes]) -> None:
@@ -333,5 +356,6 @@ def write_pareto_front_artifact(
         design_study_problem_ref=design_study_problem_ref,
         design_study_problem_id=design_study_problem_id,
     )
+    _validate_pareto_document(doc)
     _rewrite_package_members(package_path, {PARETO_FRONT_PATH: _dumps(doc)})
     return package_path

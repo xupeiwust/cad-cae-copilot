@@ -257,6 +257,22 @@ a tool is added/removed or its description / approval flag / input schema change
 so a mismatch against a freshly-started server means the session is stale —
 restart it.
 
+### Version surface and compatibility contract
+
+`aieng.agent_readme` also returns a `version_surface` block describing the three
+external-agent surfaces:
+
+- `mcp_tool_surface` — tool names + input schemas.
+- `artifact_schemas` — `.aieng` package / runtime artifact JSON schemas.
+- `skill_prompts` — agent skill instructions.
+
+Each surface carries a `version`, `policy`, and `sha256` hash. During alpha the
+policy is `unstable`: breaking changes are allowed, but the hash changes whenever
+the surface changes, so a connecting agent can detect drift instead of silently
+breaking. See [`aieng/docs/version_contract.md`](../../aieng/docs/version_contract.md)
+for the full contract and how to regenerate `aieng/src/aieng/schemas/version_surface.json`
+after changes.
+
 ### Docker all-in-one (recommended packaged viewer mode)
 
 Build and run from the repository root:

@@ -120,3 +120,116 @@ def test_generate_bom_returns_error_when_package_missing(tmp_path: Path) -> None
     result = generate_bom(settings, project_id=None, package_path=str(tmp_path / "missing.aieng"))
     assert result["status"] == "error"
     assert result["code"] == "missing_package"
+
+
+def test_generate_bom_warns_on_feature_missing_type(tmp_path: Path) -> None:
+    """A feature with a name but no type is surfaced as a skipped_missing_type warning."""
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-typeless.aieng"
+    _make_bom_package(pkg_path, [
+        {
+            "id": "feat_untyped",
+            "name": " Mystery bracket ",
+            "parameters": {"material": "aluminium"},
+        },
+        {
+            "id": "feat_bolt",
+            "type": "standard_part",
+            "name": "mounting_bolt_M6",
+            "canonical_type": "screw",
+            "parameters": {},
+        },
+    ])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path))
+    assert result["status"] == "ok"
+    assert result["warnings"] == [
+        {
+            "kind": "skipped_missing_type",
+            "identifier": " Mystery bracket ",
+            "message": "Feature ' Mystery bracket ' skipped because it has no type.",
+        }
+    ]
+    assert result["unique_parts"] == 1
+    assert result["items"][0]["part_name"] == "mounting_bolt_M6"
+    assert result["limitations"] == "Best-effort semantic recognition; not a supplier BOM or validation claim."
+
+
+def test_generate_bom_warns_on_dedup_merge_and_keeps_different_materials_separate(tmp_path: Path) -> None:
+    """Same-name/same-material parts are merged with a warning; same-name/different-material parts stay separate."""
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-dedup.aieng"
+    _make_bom_package(pkg_path, [
+        {
+            "id": "feat_bracket_alu_1",
+            "type": "named_part",
+            "name": "bracket",
+            "parameters": {"material": "aluminium"},
+        },
+        {
+            "id": "feat_bracket_alu_2",
+            "type": "named_part",
+            "name": "bracket",
+            "parameters": {"material": "aluminium"},
+        },
+        {
+            "id": "feat_bracket_steel",
+            "type": "named_part",
+            "name": "bracket",
+            "parameters": {"material": "steel"},
+        },
+    ])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path))
+    assert result["status"] == "ok"
+    assert result["total_parts"] == 3
+    assert result["unique_parts"] == 2
+
+    aluminium_brackets = [i for i in result["items"] if i["material"] == "aluminium"]
+    steel_brackets = [i for i in result["items"] if i["material"] == "steel"]
+    assert len(aluminium_brackets) == 1
+    assert aluminium_brackets[0]["quantity"] == 2
+    assert len(steel_brackets) == 1
+    assert steel_brackets[0]["quantity"] == 1
+
+    merge_warnings = [w for w in result["warnings"] if w["kind"] == "dedup_merge"]
+    assert len(merge_warnings) == 1
+    assert merge_warnings[0]["part_name"] == "bracket"
+    assert merge_warnings[0]["key"] == {
+        "name": "bracket",
+        "type": "named_part",
+        "material": "aluminium",
+    }
+    assert merge_warnings[0]["merged_quantity"] == 2
+
+
+def test_generate_bom_empty_warnings_when_nothing_skipped_or_merged(tmp_path: Path) -> None:
+    """When no features are skipped and no dedup occurs, warnings is an empty list."""
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-clean.aieng"
+    _make_bom_package(pkg_path, [
+        {
+            "id": "feat_bolt",
+            "type": "standard_part",
+            "name": "mounting_bolt_M6",
+            "canonical_type": "screw",
+            "parameters": {},
+        },
+        {
+            "id": "feat_washer",
+            "type": "standard_part",
+            "name": "washer_M6",
+            "canonical_type": "washer",
+            "parameters": {},
+        },
+    ])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path))
+    assert result["status"] == "ok"
+    assert result["warnings"] == []

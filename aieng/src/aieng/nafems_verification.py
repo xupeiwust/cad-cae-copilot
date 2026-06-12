@@ -99,6 +99,35 @@ REFERENCE_CASES: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "fixed_fixed_udl": {
+        "description": "Fixed-fixed beam under uniformly distributed downward load",
+        "metrics": {
+            "max_displacement": {
+                # w*L^4 / (384*E*I), w=1 N/mm, L=100 mm, E=210000 MPa, I=6666.667 mm^4.
+                "value": 0.00018601190476190477,
+                "unit": "mm",
+                "tolerance_percent": 10.0,
+            },
+            "max_von_mises_stress": {
+                # M_max = w*L^2/12 at the fixed ends; c = h/2 = 10 mm.
+                "value": 1.25,
+                "unit": "MPa",
+                "tolerance_percent": 10.0,
+            },
+        },
+    },
+    "fixed_fixed_center_load": {
+        "description": "Fixed-fixed beam with center point load on top face",
+        "metrics": {
+            "max_displacement": {
+                # P*L^3 / (192*E*I), P=100 N. Stress at the point load is mesh-sensitive,
+                # so this case focuses on displacement convergence.
+                "value": 0.00037202380952380954,
+                "unit": "mm",
+                "tolerance_percent": 10.0,
+            },
+        },
+    },
 }
 
 
@@ -408,19 +437,109 @@ def verify_case(
     }
 
 
+def _convergence_summary(levels: list[dict[str, Any]]) -> str:
+    """Return a human-readable summary of a mesh-convergence study."""
+    ok_levels = [lvl for lvl in levels if lvl.get("status") == "ok"]
+    if not ok_levels:
+        return "No refinement level produced usable metrics."
+
+    disp_key = "max_displacement"
+    disp_devs: list[tuple[tuple[int, int, int], float]] = []
+    for lvl in ok_levels:
+        divisions = tuple(lvl.get("divisions", [0, 0, 0]))
+        for m in lvl.get("metrics", []):
+            if m.get("metric") == disp_key and m.get("deviation_percent") is not None:
+                disp_devs.append((divisions, float(m["deviation_percent"])))
+                break
+
+    if len(disp_devs) < 2:
+        return (
+            f"{len(ok_levels)} refinement level(s) completed; "
+            "not enough displacement data to establish a trend."
+        )
+
+    coarse_div, coarse_dev = disp_devs[0]
+    fine_div, fine_dev = disp_devs[-1]
+    trend = "decreased" if abs(fine_dev) < abs(coarse_dev) else "increased"
+    return (
+        f"Displacement deviation from reference {trend} from {coarse_dev:.2f}% "
+        f"on the {coarse_div} mesh to {fine_dev:.2f}% on the {fine_div} mesh. "
+        "This trend is numerical and geometry-specific; it is not a certification or "
+        "a proof of mesh independence for arbitrary models."
+    )
+
+
+def run_mesh_convergence_study(
+    case_id: str,
+    level_packages: dict[tuple[int, int, int], str | Path],
+    *,
+    run_id_prefix: str = "mesh_conv",
+) -> dict[str, Any]:
+    """Run the same NAFEMS case at several mesh refinements and compare trends.
+
+    Args:
+        case_id: One of the keys in :data:`REFERENCE_CASES`.
+        level_packages: Mapping from ``(nx, ny, nz)`` divisions to the ``.aieng``
+            package path built with those divisions.
+        run_id_prefix: Prefix for solver run IDs.
+
+    Returns:
+        Dict with ``case_id``, ``division_levels``, ``levels``, and ``summary``.
+        Each level records the verification verdict and metric deviations.
+    """
+    if case_id not in REFERENCE_CASES:
+        raise KeyError(f"unknown NAFEMS case_id: {case_id}")
+
+    reference = REFERENCE_CASES[case_id]
+    levels: list[dict[str, Any]] = []
+
+    for divisions in sorted(level_packages.keys()):
+        pkg_path = Path(level_packages[divisions])
+        run_id = f"{run_id_prefix}_{divisions[0]}x{divisions[1]}x{divisions[2]}"
+        run_result = run_case(pkg_path, run_id=run_id)
+
+        if run_result["status"] != "ok" or run_result.get("computed_metrics") is None:
+            levels.append({
+                "divisions": list(divisions),
+                "run_id": run_id,
+                "status": run_result.get("status", "error"),
+                "message": run_result.get("message"),
+            })
+            continue
+
+        verification = verify_case(case_id, run_result["computed_metrics"], reference=reference)
+        levels.append({
+            "divisions": list(divisions),
+            "run_id": run_id,
+            "status": "ok",
+            "verdict": verification["verdict"],
+            "metrics": verification["metrics"],
+        })
+
+    return {
+        "case_id": case_id,
+        "division_levels": [list(d) for d in sorted(level_packages.keys())],
+        "levels": levels,
+        "summary": _convergence_summary(levels),
+    }
+
+
 def run_nafems_suite(
     package_path_or_dir: str | Path,
     *,
     run_id: str = "nafems_run_001",
+    mesh_convergence: dict[str, dict[tuple[int, int, int], str | Path]] | None = None,
 ) -> dict[str, Any]:
-    """Build (if necessary), run, and verify all three NAFEMS-style cases.
+    """Build (if necessary), run, and verify all NAFEMS-style cases.
 
     Args:
         package_path_or_dir: Either a directory containing ``*.aieng`` packages
-            named ``tension_rod.aieng``, ``cantilever_end_load.aieng``, and
-            ``cantilever_udl.aieng``, or a single package path (in which case only
-            that case is run).
+            named after the keys in :data:`REFERENCE_CASES`, or a single package
+            path (in which case only that case is run).
         run_id: Solver run identifier.
+        mesh_convergence: Optional mapping ``{case_id: {(nx, ny, nz): package_path}}``
+            for mesh-refinement studies. Results are attached to the corresponding
+            case entry in the report.
 
     Returns:
         Aggregated verification report dict ready to be written by
@@ -475,6 +594,19 @@ def run_nafems_suite(
         verification = verify_case(case_id, run_result["computed_metrics"])
         if verification["verdict"] != "pass":
             any_fail = True
+
+        if mesh_convergence and case_id in mesh_convergence:
+            try:
+                verification["mesh_convergence"] = run_mesh_convergence_study(
+                    case_id, mesh_convergence[case_id]
+                )
+            except Exception as exc:
+                verification["mesh_convergence"] = {
+                    "case_id": case_id,
+                    "status": "error",
+                    "message": f"Mesh convergence study failed: {type(exc).__name__}: {exc}",
+                }
+
         case_results.append(verification)
 
     if any_fail:
@@ -495,6 +627,7 @@ def run_nafems_suite(
             "Linear-static verification only; no modal, buckling, nonlinear, or dynamic checks.",
             "Reference values are analytical beam/rod theory for the documented geometry and loads.",
             "Meshes are intentionally coarse for fast CI runtime; tolerance bands reflect mesh discretisation.",
+            "Mesh convergence studies show numerical trend toward the analytical reference on the documented geometry; they do not establish general mesh independence or certification.",
             "Verified against reference values within tolerance; this is not a certification.",
             "Not an official NAFEMS benchmark certificate and not ASME V&V 10 certified.",
             "Results depend on CalculiX version, element formulation, and numerical tolerances.",

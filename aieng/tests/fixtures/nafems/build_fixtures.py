@@ -1,10 +1,12 @@
 """NAFEMS-style V&V fixture builder.
 
-Generates three linear-static reference cases as runnable ``.aieng`` packages:
+Generates five linear-static reference cases as runnable ``.aieng`` packages:
 
-* ``tension_rod``         — axial tension of a square rod.
-* ``cantilever_end_load`` — end-loaded cantilever beam.
-* ``cantilever_udl``      — uniformly distributed downward load on cantilever.
+* ``tension_rod``              — axial tension of a square rod.
+* ``cantilever_end_load``      — end-loaded cantilever beam.
+* ``cantilever_udl``           — uniformly distributed downward load on cantilever.
+* ``fixed_fixed_udl``          — fixed-fixed beam under uniformly distributed load.
+* ``fixed_fixed_center_load``  — fixed-fixed beam with a center point load.
 
 Each package contains the minimal artifacts required by
 :mod:`aieng.simulation.deck_generator`:
@@ -221,11 +223,36 @@ def _build_package(
     return out_path
 
 
-def build_tension_rod_fixture(out_path: Path | str) -> Path:
+def _both_ends_fixed_nset(nodes: list[tuple[int, float, float, float]], lx: float) -> set[int]:
+    """Return node IDs on both X=0 and X=Lx faces."""
+    return {
+        nid for nid, x, _, _ in nodes
+        if math.isclose(x, 0.0, abs_tol=1e-9) or math.isclose(x, lx, abs_tol=1e-9)
+    }
+
+
+def _top_center_node(
+    nodes: list[tuple[int, float, float, float]], lx: float, ly: float, lz: float
+) -> set[int]:
+    """Return the single top-face (Z=Lz) center node."""
+    candidates = [
+        (nid, abs(x - lx / 2.0) + abs(y - ly / 2.0))
+        for nid, x, y, z in nodes
+        if math.isclose(z, lz, abs_tol=1e-9)
+    ]
+    if not candidates:
+        return set()
+    return {min(candidates, key=lambda item: item[1])[0]}
+
+
+def build_tension_rod_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
     """Build the ``tension_rod`` NAFEMS-style reference case."""
     out_path = Path(out_path)
     lx, ly, lz = 100.0, 10.0, 10.0
-    nx, ny, nz = 20, 2, 2
+    nx, ny, nz = mesh_divisions or (20, 2, 2)
     nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
 
     # Total 1000 N tensile load in +X on the X=L end face.
@@ -251,11 +278,14 @@ def build_tension_rod_fixture(out_path: Path | str) -> Path:
     )
 
 
-def build_cantilever_end_load_fixture(out_path: Path | str) -> Path:
+def build_cantilever_end_load_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
     """Build the ``cantilever_end_load`` NAFEMS-style reference case."""
     out_path = Path(out_path)
     lx, ly, lz = 100.0, 10.0, 20.0
-    nx, ny, nz = 20, 4, 4
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
     nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
 
     # Total 100 N in -Z on the X=L end face.
@@ -281,11 +311,14 @@ def build_cantilever_end_load_fixture(out_path: Path | str) -> Path:
     )
 
 
-def build_cantilever_udl_fixture(out_path: Path | str) -> Path:
+def build_cantilever_udl_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
     """Build the ``cantilever_udl`` NAFEMS-style reference case."""
     out_path = Path(out_path)
     lx, ly, lz = 100.0, 10.0, 20.0
-    nx, ny, nz = 20, 4, 4
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
     nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
 
     # Total 100 N distributed over all top-face (Z=lz) nodes.
@@ -311,16 +344,93 @@ def build_cantilever_udl_fixture(out_path: Path | str) -> Path:
     )
 
 
+def build_fixed_fixed_udl_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
+    """Build a fixed-fixed beam under uniformly distributed load.
+
+    Both ends (X=0 and X=Lx) are fully fixed; the total 100 N load is distributed
+    over the top face (Z=Lz). This is a regression case only, not a certification.
+    """
+    out_path = Path(out_path)
+    lx, ly, lz = 100.0, 10.0, 20.0
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
+    nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
+
+    nsets["N_FIX"] = _both_ends_fixed_nset(nodes, lx)
+    top_face_nodes = len(nsets["N_TOP"])
+    load_per_node = 100.0 / top_face_nodes
+
+    source_deck = _write_source_deck(
+        nodes=nodes,
+        elements=elements,
+        nsets=nsets,
+        active_nsets=["N_FIX", "N_TOP"],
+    )
+
+    return _build_package(
+        out_path,
+        model_id="nafems_fixed_fixed_udl",
+        bc_target_feature="feat_fix",
+        load_target_feature="feat_top",
+        load_value_n=load_per_node,
+        load_direction=[0, 0, -1],
+        cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix"), ("N_TOP", "feat_top")),
+        source_deck=source_deck,
+    )
+
+
+def build_fixed_fixed_center_load_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
+    """Build a fixed-fixed beam with a center point load on the top face.
+
+    Both ends are fully fixed; the 100 N point load is applied to the single
+    top-center node. Stress at the load point is mesh-sensitive, so the reference
+    focuses on mid-span displacement. This is a regression case only.
+    """
+    out_path = Path(out_path)
+    lx, ly, lz = 100.0, 10.0, 20.0
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
+    nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
+
+    nsets["N_FIX"] = _both_ends_fixed_nset(nodes, lx)
+    nsets["N_CENTER"] = _top_center_node(nodes, lx, ly, lz)
+    load_per_node = 100.0  # single node takes the full load
+
+    source_deck = _write_source_deck(
+        nodes=nodes,
+        elements=elements,
+        nsets=nsets,
+        active_nsets=["N_FIX", "N_CENTER"],
+    )
+
+    return _build_package(
+        out_path,
+        model_id="nafems_fixed_fixed_center_load",
+        bc_target_feature="feat_fix",
+        load_target_feature="feat_load",
+        load_value_n=load_per_node,
+        load_direction=[0, 0, -1],
+        cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix"), ("N_CENTER", "feat_load")),
+        source_deck=source_deck,
+    )
+
+
 # Catalog of supported cases for runners/tests.
 CASE_BUILDERS: dict[str, Any] = {
     "tension_rod": build_tension_rod_fixture,
     "cantilever_end_load": build_cantilever_end_load_fixture,
     "cantilever_udl": build_cantilever_udl_fixture,
+    "fixed_fixed_udl": build_fixed_fixed_udl_fixture,
+    "fixed_fixed_center_load": build_fixed_fixed_center_load_fixture,
 }
 
 
 def build_all_fixtures(out_dir: Path | str) -> dict[str, Path]:
-    """Build all three NAFEMS-style fixtures into ``out_dir``.
+    """Build all NAFEMS-style fixtures into ``out_dir``.
 
     Returns a mapping from case_id to ``.aieng`` path.
     """

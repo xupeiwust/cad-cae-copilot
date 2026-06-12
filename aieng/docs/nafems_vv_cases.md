@@ -15,6 +15,20 @@ Never: "certified" or "validated to NAFEMS standards".
 
 ---
 
+## Mesh convergence study
+
+The suite supports running the same case at multiple mesh refinements (e.g.
+`(nx, ny, nz)` = `(10, 2, 2)`, `(20, 4, 4)`, `(40, 8, 8)`) and recording how the
+computed metric deviations trend toward the analytical reference. A decreasing
+deviation is a *numerical* indicator that the discretisation error is reducing
+for the documented geometry and load case.
+
+This study is **not** a certification of mesh independence for arbitrary
+geometries. It only demonstrates convergence behaviour on the specific reference
+case under the documented assumptions.
+
+---
+
 ## Shared modeling assumptions
 
 All cases use:
@@ -159,6 +173,96 @@ Euler-Bernoulli analytical deflection. The nodal-force lumping on the top face
 approximates a uniform pressure rather than matching it exactly. The ±10 %
 tolerance band absorbs discretisation error, shear locking, and load-lumping
 effects.
+
+---
+
+## Case 4: `fixed_fixed_udl`
+
+### Geometry and mesh
+
+Same beam as the cantilever cases:
+
+| Parameter | Value |
+|-----------|-------|
+| Length `L` | 100 mm |
+| Width `b` (Y) | 10 mm |
+| Height `h` (Z) | 20 mm |
+| Mesh divisions | `nx = 20`, `ny = 4`, `nz = 4` |
+| Elements | 320 C3D8 |
+
+### Loading
+
+Uniformly distributed downward load `w = 1 N/mm`, total `F = 100 N`, applied in
+`-Z` and distributed equally over all top-face nodes (`Z = h`).
+
+### Boundary conditions
+
+Both ends (`X = 0` and `X = L`) are fully fixed (DOFs 1–3 = 0).
+
+### Analytical reference (Euler-Bernoulli beam theory)
+
+* Second moment of area `I = b·h³ / 12 ≈ 6666.67 mm⁴`
+* Maximum deflection at mid-span `δ = w·L⁴ / (384·E·I)`
+  `δ = 1 · 100⁴ / (384 · 210000 · 6666.67) ≈ 1.86 × 10⁻⁴ mm`
+* Maximum bending moment at the fixed ends `M = w·L² / 12 = 833.33 N·mm`
+* Maximum bending stress at the fixed ends `σ = M·(h/2) / I`
+  `σ = 833.33 · 10 / 6666.67 ≈ 1.25 MPa`
+
+### Verified metrics and tolerance
+
+| Metric | Reference | Tolerance |
+|--------|-----------|-----------|
+| `max_displacement` | 1.86 × 10⁻⁴ mm | ±10 % |
+| `max_von_mises_stress` | 1.25 MPa | ±10 % |
+
+### Mesh note
+
+The mid-span deflection is very small because the fixed-fixed beam is much
+stiffer than a cantilever. The coarse mesh may only weakly resolve the central
+deflection; the ±10 % band is honest for this discretisation.
+
+---
+
+## Case 5: `fixed_fixed_center_load`
+
+### Geometry and mesh
+
+Same beam as the cantilever cases:
+
+| Parameter | Value |
+|-----------|-------|
+| Length `L` | 100 mm |
+| Width `b` (Y) | 10 mm |
+| Height `h` (Z) | 20 mm |
+| Mesh divisions | `nx = 20`, `ny = 4`, `nz = 4` |
+| Elements | 320 C3D8 |
+
+### Loading
+
+A single 100 N point load in `-Z` is applied to the top-center node
+(`X = L/2`, `Y = b/2`, `Z = h`).
+
+### Boundary conditions
+
+Both ends (`X = 0` and `X = L`) are fully fixed (DOFs 1–3 = 0).
+
+### Analytical reference (Euler-Bernoulli beam theory)
+
+* Second moment of area `I = b·h³ / 12 ≈ 6666.67 mm⁴`
+* Maximum deflection at mid-span `δ = P·L³ / (192·E·I)`
+  `δ = 100 · 100³ / (192 · 210000 · 6666.67) ≈ 3.72 × 10⁻⁴ mm`
+* Maximum bending moment at the fixed ends and mid-span `M = P·L / 8 = 1250 N·mm`
+* Theoretical maximum bending stress `σ = M·(h/2) / I ≈ 1.875 MPa`
+
+Because the load is applied to a single node, the local stress is
+mesh-sensitive and not a meaningful convergence target. This case therefore
+focuses on displacement.
+
+### Verified metrics and tolerance
+
+| Metric | Reference | Tolerance |
+|--------|-----------|-----------|
+| `max_displacement` | 3.72 × 10⁻⁴ mm | ±10 % |
 
 ---
 

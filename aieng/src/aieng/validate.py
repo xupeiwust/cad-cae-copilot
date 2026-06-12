@@ -82,6 +82,7 @@ SCHEMA_FILES = {
     "analysis/optimization_objectives.json": "optimization_objectives.schema.json",
     "analysis/optimization_constraints.json": "optimization_constraints.schema.json",
     "analysis/optimization_decision_log.json": "optimization_decision_log.schema.json",
+    "analysis/pareto_front.json": "pareto_front.schema.json",
 }
 
 TEXT_RESOURCES = (

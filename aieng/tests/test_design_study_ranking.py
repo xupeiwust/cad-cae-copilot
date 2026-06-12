@@ -12,6 +12,7 @@ from pathlib import Path
 from aieng.converters.design_study_ranking import (
     DESIGN_STUDY_CANDIDATE_RANKING_PATH,
     DESIGN_STUDY_SCORING_REPORT_PATH,
+    PARETO_FRONT_PATH,
     _build_ranking,
     _build_scoring_report,
     _classify_feasibility,
@@ -604,3 +605,79 @@ def test_rank_is_deterministic(tmp_path: Path):
     for c1, c2 in zip(ranking1["candidates"], ranking2["candidates"]):
         assert c1["score"] == c2["score"]
         assert c1["feasibility"] == c2["feasibility"]
+
+
+# ── multi-objective Pareto integration ────────────────────────────────────────
+
+def test_rank_multi_objective_writes_pareto_front(tmp_path: Path):
+    """A two-objective problem triggers Pareto-front computation and artifact writing."""
+    problem = _problem(
+        objectives=[
+            {"sense": "minimize", "metric": "mass"},
+            {"sense": "minimize", "metric": "stress"},
+        ],
+        constraints=[],  # keep candidates feasible so dominated set is non-empty
+        baseline_metrics={"mass_kg": 1.0, "max_stress": 150.0},
+    )
+    iters = [
+        _iteration("c1", "evaluation_complete",
+                   metrics={"mass_kg": 1.0, "max_stress": 200.0}),
+        _iteration("c2", "evaluation_complete",
+                   metrics={"mass_kg": 2.0, "max_stress": 100.0}),
+        _iteration("c3", "evaluation_complete",
+                   metrics={"mass_kg": 3.0, "max_stress": 300.0}),
+    ]
+    pkg = _write_pkg(tmp_path, problem=problem, iterations=iters)
+    res = rank_design_study_candidates(pkg)
+
+    assert PARETO_FRONT_PATH in res["artifacts"]
+    ranking = _read(pkg, DESIGN_STUDY_CANDIDATE_RANKING_PATH)
+    assert ranking["pareto_front"]["status"] == "ok"
+    assert set(ranking["pareto_front"]["front_candidate_ids"]) == {"c1", "c2"}
+    assert ranking["pareto_front"]["dominated_candidate_ids"] == ["c3"]
+    assert ranking["pareto_front"]["objective_metrics"] == ["mass", "stress"]
+    assert any("not a proven surface" in lim for lim in ranking["limitations"])
+
+    pareto = _read(pkg, PARETO_FRONT_PATH)
+    assert pareto["format"] == "aieng.pareto_front"
+    assert pareto["candidate_count"] == 3
+
+
+def test_rank_single_objective_unchanged(tmp_path: Path):
+    """Single-objective studies remain unchanged and do not write a Pareto artifact."""
+    iters = [
+        _iteration("c1", "evaluation_complete",
+                   metrics={"mass_kg": 0.8, "max_stress": 150.0}),
+        _iteration("c2", "evaluation_complete",
+                   metrics={"mass_kg": 1.1, "max_stress": 150.0}),
+    ]
+    pkg = _write_pkg(tmp_path, problem=_problem(baseline_metrics={"mass_kg": 1.0}), iterations=iters)
+    res = rank_design_study_candidates(pkg)
+
+    assert PARETO_FRONT_PATH not in res["artifacts"]
+    ranking = _read(pkg, DESIGN_STUDY_CANDIDATE_RANKING_PATH)
+    assert "pareto_front" not in ranking
+    # Classic single-objective limitation remains present.
+    assert any("No Pareto optimization or search is performed" in lim for lim in ranking["limitations"])
+
+
+def test_rank_multi_objective_infeasible_excluded_from_front(tmp_path: Path):
+    """Infeasible candidates are excluded from the Pareto frontier."""
+    problem = _problem(
+        objectives=[
+            {"sense": "minimize", "metric": "mass"},
+            {"sense": "minimize", "metric": "stress"},
+        ],
+    )
+    iters = [
+        _iteration("c_feas", "evaluation_complete",
+                   metrics={"mass_kg": 1.0, "max_stress": 150.0}),
+        _iteration("c_infeas", "evaluation_complete",
+                   metrics={"mass_kg": 0.5, "max_stress": 250.0}),  # stress violation
+    ]
+    pkg = _write_pkg(tmp_path, problem=problem, iterations=iters)
+    res = rank_design_study_candidates(pkg)
+
+    ranking = _read(pkg, DESIGN_STUDY_CANDIDATE_RANKING_PATH)
+    assert ranking["pareto_front"]["status"] == "insufficient_data"
+    assert ranking["pareto_front"]["front_candidate_ids"] == []

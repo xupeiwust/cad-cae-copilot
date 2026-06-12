@@ -26,6 +26,11 @@ from aieng.converters.design_study_execution import (
     DESIGN_STUDY_ITERATIONS_PATH,
     DESIGN_STUDY_REPORT_PATH,
 )
+from aieng.converters.optimization_pareto import (
+    PARETO_FRONT_PATH,
+    compute_pareto_front,
+    write_pareto_front_artifact,
+)
 
 DESIGN_STUDY_CANDIDATE_RANKING_PATH = "analysis/design_study_candidate_ranking.json"
 DESIGN_STUDY_SCORING_REPORT_PATH = "diagnostics/design_study_scoring_report.json"
@@ -905,7 +910,33 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
             "validation_status": it.get("validation_status"),
         })
 
+    objectives = problem.get("objectives") if isinstance(problem.get("objectives"), list) else []
+    pareto_result = None
+    pareto_artifact_path: str | None = None
+    if len(objectives) == 2:
+        pareto_result = compute_pareto_front(candidates_data, objectives)
+
     ranking = _build_ranking(problem, candidates_data, baseline_metrics)
+    if pareto_result is not None:
+        ranking["pareto_front"] = {
+            "status": pareto_result["status"],
+            "front_candidate_ids": pareto_result["front_candidate_ids"],
+            "dominated_candidate_ids": pareto_result["dominated_candidate_ids"],
+            "objective_metrics": [obj["metric"] for obj in pareto_result["objectives"]],
+            "limitations": pareto_result["limitations"],
+        }
+        # Replace the generic single-objective limitation with the honest frontier text.
+        ranking["limitations"] = [
+            "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."
+            if "No Pareto optimization or search is performed" in lim
+            else lim
+            for lim in ranking["limitations"]
+        ]
+        if not any("not a proven surface" in lim for lim in ranking["limitations"]):
+            ranking["limitations"].append(
+                "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."
+            )
+
     report = _build_scoring_report(ranking, candidates_data)
 
     members = {
@@ -914,6 +945,20 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
     }
     _rewrite_package_members(package_path, members)
 
+    if pareto_result is not None and pareto_result["status"] == "ok":
+        write_pareto_front_artifact(
+            package_path,
+            pareto_result,
+            study_id=problem.get("id"),
+            design_study_problem_ref=DESIGN_STUDY_PROBLEM_PATH,
+            design_study_problem_id=problem.get("id"),
+        )
+        pareto_artifact_path = PARETO_FRONT_PATH
+
+    artifacts = [DESIGN_STUDY_CANDIDATE_RANKING_PATH, DESIGN_STUDY_SCORING_REPORT_PATH] + evaluation_artifacts
+    if pareto_artifact_path:
+        artifacts.append(pareto_artifact_path)
+
     return {
         "status": "ok",
         "design_study_present": True,
@@ -921,5 +966,5 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         "best_candidate_id": ranking["best_candidate_id"],
         "safe_to_accept": ranking["safe_to_accept"],
         "next_action": ranking["next_action"],
-        "artifacts": [DESIGN_STUDY_CANDIDATE_RANKING_PATH, DESIGN_STUDY_SCORING_REPORT_PATH] + evaluation_artifacts,
+        "artifacts": artifacts,
     }

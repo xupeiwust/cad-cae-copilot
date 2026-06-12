@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 import zipfile
 
 import yaml
@@ -2716,6 +2717,13 @@ def _read_schema_text(schema_name: str) -> str | None:
         pass
     fallback = Path(__file__).resolve().parent / "schemas" / schema_name
     if fallback.exists():
+        warnings.warn(
+            f"Schema {schema_name!r} was loaded from the source tree fallback "
+            f"({fallback}); the installed package may be missing its schema data. "
+            "This can mask a packaging regression.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return fallback.read_text(encoding="utf-8")
     return None
 

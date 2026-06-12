@@ -120,3 +120,71 @@ def test_generate_bom_returns_error_when_package_missing(tmp_path: Path) -> None
     result = generate_bom(settings, project_id=None, package_path=str(tmp_path / "missing.aieng"))
     assert result["status"] == "error"
     assert result["code"] == "missing_package"
+
+
+def test_generate_bom_empty_feature_graph_returns_empty_bom(tmp_path: Path) -> None:
+    """A package with an empty feature graph produces an empty but valid BOM."""
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-empty-fg.aieng"
+    _make_bom_package(pkg_path, [])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path))
+    assert result["status"] == "ok"
+    assert result["items"] == []
+    assert result["total_parts"] == 0
+    assert result["unique_parts"] == 0
+
+
+def test_generate_bom_corrupted_package_returns_read_error(tmp_path: Path) -> None:
+    """A corrupted/non-zip file produces a package_read_error."""
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-corrupt.aieng"
+    pkg_path.write_text("this is not a zip file", encoding="utf-8")
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path))
+    assert result["status"] == "error"
+    assert result["code"] == "package_read_error"
+
+
+def test_generate_bom_dedup_with_none_or_empty_material(tmp_path: Path) -> None:
+    """Parts with None/empty material are deduped separately from parts with a material."""
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-empty-material.aieng"
+    _make_bom_package(pkg_path, [
+        {
+            "id": "feat_bolt_none",
+            "type": "standard_part",
+            "name": "bolt_M6",
+            "canonical_type": "screw",
+            "parameters": {"material": None},
+        },
+        {
+            "id": "feat_bolt_empty",
+            "type": "standard_part",
+            "name": "bolt_M6",
+            "canonical_type": "screw",
+            "parameters": {"material": ""},
+        },
+        {
+            "id": "feat_bolt_steel",
+            "type": "standard_part",
+            "name": "bolt_M6",
+            "canonical_type": "screw",
+            "parameters": {"material": "steel"},
+        },
+    ])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path))
+    assert result["status"] == "ok"
+    assert result["total_parts"] == 3
+    # None and empty string both normalise to "", so they merge.
+    assert result["unique_parts"] == 2
+    materials = {item["material"]: item["quantity"] for item in result["items"]}
+    assert materials.get("") == 2
+    assert materials.get("steel") == 1

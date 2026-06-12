@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from aieng.converters.optimization_recommendation import (
     OPTIMIZATION_RECOMMENDATION_PATH,
@@ -169,7 +170,7 @@ def test_all_emitted_reason_codes_are_in_shared_vocabulary(tmp_path: Path):
 
 # ── Pareto-aware advisory recommendation ─────────────────────────────────────
 
-def _pareto_ranking():
+def _pareto_ranking() -> dict[str, Any]:
     return {
         "format": "aieng.design_study.candidate_ranking.v0",
         "status": "ranked",

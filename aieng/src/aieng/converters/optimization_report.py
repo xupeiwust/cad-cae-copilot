@@ -54,6 +54,23 @@ def _dumps(obj: Any) -> bytes:
     return (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode()
 
 
+def _is_usable_pareto_front(pareto: Any) -> bool:
+    """Return True if ``pareto`` has the minimal shape we surface in reports."""
+    if not isinstance(pareto, dict):
+        return False
+    if pareto.get("status") != "ok":
+        return False
+    front_ids = pareto.get("front_candidate_ids")
+    if not isinstance(front_ids, list) or len(front_ids) < 2:
+        return False
+    # Either the standalone artifact uses ``objectives`` or the embedded block
+    # uses ``objective_metrics``.
+    objectives = pareto.get("objectives") or pareto.get("objective_metrics")
+    if not isinstance(objectives, list) or len(objectives) < 2:
+        return False
+    return True
+
+
 def _replace_members(package_path: Path, members: dict[str, bytes]) -> None:
     tmp = package_path.with_suffix(".optreport.tmp.aieng")
     try:
@@ -169,9 +186,14 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             opt_iterations_doc = _read_json(zf, OPTIMIZATION_ITERATIONS_PATH, names)
             ranking = _read_json(zf, DESIGN_STUDY_RANKING_PATH, names)
             scoring = _read_json(zf, DESIGN_STUDY_SCORING_REPORT_PATH, names)
-            pareto_front = _read_json(zf, PARETO_FRONT_PATH, names)
-            if not isinstance(pareto_front, dict) and isinstance(ranking, dict):
-                pareto_front = ranking.get("pareto_front")
+            pareto_front_artifact = _read_json(zf, PARETO_FRONT_PATH, names)
+            ranking_pareto = ranking.get("pareto_front") if isinstance(ranking, dict) else None
+            if _is_usable_pareto_front(pareto_front_artifact):
+                pareto_front = pareto_front_artifact
+            elif _is_usable_pareto_front(ranking_pareto):
+                pareto_front = ranking_pareto
+            else:
+                pareto_front = None
             recommendation = _read_json(zf, OPTIMIZATION_RECOMMENDATION_PATH, names)
             acceptance = _read_json(zf, DESIGN_STUDY_ACCEPTANCE_PATH, names)
 

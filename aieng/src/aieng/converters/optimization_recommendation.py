@@ -74,13 +74,18 @@ def _has_pareto_frontier(ranking: dict[str, Any]) -> bool:
     """Return True when the ranking carries a usable multi-objective frontier."""
     if not isinstance(ranking, dict):
         return False
+    objectives = ranking.get("objectives")
+    if not isinstance(objectives, list) or len(objectives) < 2:
+        return False
     pareto = ranking.get("pareto_front")
     if not isinstance(pareto, dict):
         return False
     if pareto.get("status") != "ok":
         return False
-    front_ids = pareto.get("front_candidate_ids") or []
-    return len(front_ids) >= 2
+    front_ids = pareto.get("front_candidate_ids")
+    if not isinstance(front_ids, list) or len(front_ids) < 2:
+        return False
+    return True
 
 
 def _fmt_delta(objective_delta: dict[str, Any] | None) -> str | None:

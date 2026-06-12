@@ -81,7 +81,7 @@ def _normalize_for_dominance(
     negated so that "lower is better" unifies dominance logic.
     """
     normalized: list[float] = []
-    for value, obj in zip(values, objectives):
+    for value, obj in zip(values, objectives, strict=True):
         sense = obj.get("sense", "minimize")
         if sense in ("maximize", "improve"):
             normalized.append(-value)
@@ -99,7 +99,7 @@ def _dominates(
     cand = _normalize_for_dominance(candidate_values, objectives)
     targ = _normalize_for_dominance(target_values, objectives)
     strictly_better = False
-    for c, t in zip(cand, targ):
+    for c, t in zip(cand, targ, strict=True):
         if c > t:
             return False
         if c < t:

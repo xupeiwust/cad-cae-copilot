@@ -690,6 +690,7 @@ def _build_ranking(
         "status": "ranked",
         "problem_id": problem.get("id") if problem else None,
         "objective": problem.get("objective") if problem else None,
+        "objectives": problem.get("objectives") if problem else None,
         "constraints": problem.get("constraints") if problem else [],
         "baseline_metrics": baseline_metrics,
         "candidates": ranked,
@@ -933,7 +934,8 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
             "validation_status": it.get("validation_status"),
         })
 
-    objectives = problem.get("objectives") if isinstance(problem.get("objectives"), list) else []
+    raw_objectives = problem.get("objectives") if problem else None
+    objectives = raw_objectives if isinstance(raw_objectives, list) else []
     pareto_result = None
     pareto_artifact_path: str | None = None
     if len(objectives) == 2:
@@ -997,7 +999,11 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         )
         pareto_artifact_path = PARETO_FRONT_PATH
 
-    artifacts = [DESIGN_STUDY_CANDIDATE_RANKING_PATH, DESIGN_STUDY_SCORING_REPORT_PATH] + evaluation_artifacts
+    artifacts = [
+        DESIGN_STUDY_CANDIDATE_RANKING_PATH,
+        DESIGN_STUDY_SCORING_REPORT_PATH,
+        *evaluation_artifacts,
+    ]
     if pareto_artifact_path:
         artifacts.append(pareto_artifact_path)
 

@@ -331,6 +331,9 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
         "pareto_front": pareto_front if isinstance(pareto_front, dict) else None,
         "iteration_history": iteration_history,
         "decision_log_entries": decision_entries,
+        "topology_to_sizing_chain": (
+            study.get("topology_to_sizing_chain") if isinstance(study, dict) else None
+        ),
         "sources_present": sources_present,
         "missing_stages": missing_stages,
         "honesty": {

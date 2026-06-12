@@ -256,6 +256,47 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         input_schema=_schema("opt.writeback_to_shape_ir"),
     )
 
+    def _tool_opt_topology_to_sizing(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Bridge a 2D contour topology writeback to a sizing study.
+
+        Verifies the project has a 2D topology result and contour writeback,
+        auto-parameterizes the recovered extruded_region, and writes the full
+        optimization-study envelope (problem, variables, objectives, constraints,
+        study, decision-log) with chain-linkage provenance. Refuses 3D / voxel
+        inputs honestly. Baseline geometry is never modified.
+        """
+        from aieng.converters.topology_to_sizing import topology_to_sizing
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+        try:
+            result = topology_to_sizing(pkg)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "topology_to_sizing_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"status": result.get("status"), "tool": "opt.topology_to_sizing", **result}
+
+    rt.register_tool(
+        "opt.topology_to_sizing",
+        _tool_opt_topology_to_sizing,
+        description=(
+            "Bridge a 2D contour topology writeback to a sizing study. Verifies "
+            "analysis/topology_optimization.json and geometry/shape_ir.json, "
+            "auto-parameterizes the recovered extruded_region thickness, and writes "
+            "analysis/design_study_problem.json, analysis/optimization_variables.json, "
+            "analysis/optimization_objectives.json, analysis/optimization_constraints.json, "
+            "analysis/optimization_study.json, and a chain-linkage entry in "
+            "analysis/optimization_decision_log.json. Refuses 3D / voxel inputs with "
+            "needs_user_input. Run opt.writeback_to_shape_ir (method=contour) first."
+        ),
+        input_schema=_schema("opt.topology_to_sizing"),
+    )
+
     def _tool_opt_run_assembly_topology_optimization(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         """Explicit assembly-aware topopt execution for one selected design part.
         Uses the assembly topopt setup artifacts and writes selected-part derived
@@ -771,5 +812,6 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         "derive_topology_optimization_problem": _tool_opt_derive_problem_from_cae,
         "run_topology_optimization": _tool_opt_run_topology_optimization,
         "writeback_topology_optimization": _tool_opt_writeback_to_shape_ir,
+        "topology_to_sizing": _tool_opt_topology_to_sizing,
         "run_assembly_topology_optimization": _tool_opt_run_assembly_topology_optimization,
     }

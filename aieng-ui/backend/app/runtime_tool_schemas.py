@@ -231,6 +231,21 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "density_voxels node and recompile. Run opt.run_topology_optimization first."
         ),
     },
+    "opt.topology_to_sizing": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+        },
+        "additionalProperties": False,
+        "description": (
+            "Bridge a 2D contour topology writeback to a sizing study. Verifies the "
+            "project has a 2D topology result and a contour writeback (extruded_region), "
+            "auto-parameterizes the recovered thickness, and writes the full optimization-"
+            "study envelope plus a chain-linkage decision-log entry. Refuses 3D / voxel "
+            "inputs with needs_user_input. Run opt.writeback_to_shape_ir (method=contour) first."
+        ),
+    },
     "opt.propose_candidates": {
         "type": "object",
         "required": ["project_id"],

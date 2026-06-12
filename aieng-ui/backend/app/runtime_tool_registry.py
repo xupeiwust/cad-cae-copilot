@@ -61,6 +61,7 @@ class RuntimeToolHandlers:
     derive_topology_optimization_problem: Any
     run_topology_optimization: Any
     writeback_topology_optimization: Any
+    topology_to_sizing: Any
     run_assembly_topology_optimization: Any
 
 
@@ -91,5 +92,6 @@ def register_runtime_tools(*, active_settings: Any, app_context: Any) -> Runtime
         derive_topology_optimization_problem=opt_handlers["derive_topology_optimization_problem"],
         run_topology_optimization=opt_handlers["run_topology_optimization"],
         writeback_topology_optimization=opt_handlers["writeback_topology_optimization"],
+        topology_to_sizing=opt_handlers["topology_to_sizing"],
         run_assembly_topology_optimization=opt_handlers["run_assembly_topology_optimization"],
     )

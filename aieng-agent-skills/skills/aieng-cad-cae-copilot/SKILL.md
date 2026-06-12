@@ -24,7 +24,7 @@ Do not use for new CAD authoring or schema/tool implementation.
 
 1. Inspect state with `aieng.agent_context { project_id }` and, when needed, `aieng.inspect_package` or `aieng.write_completeness_report`.
 2. If material, loads, or constraints are missing, ask the user or apply explicit setup with `cae.apply_setup_patch`.
-3. Run `cae.prepare_solver_run { project_id }` before any solver execution.
+3. Run `cae.prepare_solver_run { project_id }` before any solver execution. Use the `recommended_next_calls` list in the response to decide the next `cae.*` call.
 4. If the input deck is missing but setup is sufficient, call `cae.generate_solver_input { project_id }`.
 5. Call `cae.run_solver { project_id }` only after successful preflight and only through approval. If `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` is active, report the server refusal and stop.
 6. After a successful solver run, call `cae.extract_solver_results`, optionally `cae.extract_field_regions`, then `postprocess.refresh_cae_summary`.

@@ -410,6 +410,91 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "field_summary_status": field_summary_status,
         }
 
+    def _recommended_next_calls(
+        project_id: str,
+        run_id: str,
+        load_case_id: str,
+        preflight: dict[str, Any],
+        ready_to_run: bool,
+    ) -> list[dict[str, Any]]:
+        """Build actionable next-call recommendations for external agents."""
+        recs: list[dict[str, Any]] = []
+        if not preflight["has_mesh"]:
+            recs.append({
+                "tool": "cae.write_mesh_handoff",
+                "input": {"project_id": project_id, "handoff_id": "mesh_handoff_001"},
+                "reason": (
+                    "No mesh files found in package. Write a mesh handoff contract "
+                    "or import a meshed CalculiX deck before generating solver input."
+                ),
+            })
+        if not preflight["has_solver_settings"]:
+            recs.append({
+                "tool": "cae.apply_setup_patch",
+                "input": {
+                    "project_id": project_id,
+                    "patches": [{
+                        "path": "simulation/solver_settings.json",
+                        "action_type": "create_file",
+                        "content": {"solver": "CalculiX", "analysis_type": "linear_static"},
+                    }],
+                },
+                "reason": (
+                    "Missing solver settings. Create simulation/solver_settings.json "
+                    "with solver target and analysis_type."
+                ),
+            })
+        if not preflight["has_load_case"]:
+            recs.append({
+                "tool": "cae.apply_setup_patch",
+                "input": {
+                    "project_id": project_id,
+                    "patches": [{
+                        "path": f"simulation/load_cases/{load_case_id}.json",
+                        "action_type": "create_file",
+                        "content": {
+                            "id": load_case_id,
+                            "loads": [{
+                                "id": "load_001",
+                                "type": "force",
+                                "target": "REPLACE_WITH_NSET_OR_FACE_POINTER",
+                                "dof": 2,
+                                "value": 500.0,
+                            }],
+                        },
+                    }],
+                },
+                "reason": f"Missing load case file simulation/load_cases/{load_case_id}.json.",
+            })
+        if not preflight["has_input_deck"]:
+            recs.append({
+                "tool": "cae.generate_solver_input",
+                "input": {"project_id": project_id, "run_id": run_id, "overwrite": True},
+                "reason": (
+                    "Missing solver input deck; generate it once mesh, solver settings, "
+                    "material, boundary conditions and loads are present."
+                ),
+            })
+        if not preflight["ccx_available"]:
+            recs.append({
+                "tool": None,
+                "action": "Install CalculiX and ensure ccx is on PATH, or set AIENG_CCX_CMD.",
+                "reason": "CalculiX command not found.",
+            })
+        if ready_to_run:
+            recs.append({
+                "tool": "cae.run_solver",
+                "input": {
+                    "project_id": project_id,
+                    "run_id": run_id,
+                    "load_case_id": load_case_id,
+                    "input_deck_path": f"simulation/runs/{run_id}/solver_input.inp",
+                },
+                "reason": "All preflight checks passed.",
+                "requires_approval": True,
+            })
+        return recs
+
     def _tool_cae_prepare_solver_run(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         import zipfile as _zipfile
 
@@ -534,6 +619,19 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             },
             "planned_artifacts": planned_artifacts,
             "warnings": warnings,
+            "recommended_next_calls": _recommended_next_calls(
+                project_id or "",
+                run_id,
+                load_case_id,
+                {
+                    "has_mesh": has_mesh,
+                    "has_solver_settings": has_solver_settings,
+                    "has_load_case": has_load_case,
+                    "has_input_deck": has_input_deck,
+                    "ccx_available": ccx_available,
+                },
+                ready_to_run,
+            ),
         }
 
     def _tool_cae_generate_solver_input(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1237,7 +1335,9 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "Apply a controlled patch to CAE setup artifacts inside a .aieng package. "
             "Accepts a preferred 'patches' array plus legacy 'patch' compatibility. "
             "Supports create_file, replace_json, merge_object, append_array_item. "
-            "Writes only to allowed setup paths; rejects results/ and path traversal."
+            "Use this to assemble a minimal linear_static setup: solver settings, "
+            "materials, boundary conditions, and loads. Writes only to allowed setup paths; "
+            "rejects results/ and path traversal."
         ),
         input_schema=_schema("cae.apply_setup_patch"),
     )
@@ -1268,8 +1368,8 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         description=(
             "Inspect a .aieng package and return a reviewable solver run preflight plan. "
             "Checks for mesh, solver settings, load case, and input deck presence. "
-            "No solver is executed. Call this before cae.run_solver to verify readiness "
-            "and surface any missing_items the agent or user must resolve first."
+            "No solver is executed. The response includes recommended_next_calls so the "
+            "agent knows exactly which cae.* tool to invoke next. Call this before cae.run_solver."
         ),
         input_schema=_schema("cae.prepare_solver_run"),
     )
@@ -1279,7 +1379,8 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         description=(
             "Generate a runnable CalculiX solver input deck from existing .aieng setup artifacts. "
             "Preserves mesh from a previously imported source deck and assembles materials, BCs, loads, and step. "
-            "Supports linear static only. Refuses with explicit missing_items if mesh or setup is absent."
+            "Supports linear static only. Refuses with explicit missing_items if mesh or setup is absent. "
+            "Typical input: {project_id, run_id: 'run_001', overwrite: true}."
         ),
         input_schema=_schema("cae.generate_solver_input"),
     )
@@ -1293,7 +1394,8 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "captures stdout/stderr, and writes solver_run.json, solver_log.txt, "
             "and result.frd back into the .aieng package. "
             "Always call cae.prepare_solver_run first to verify the input deck is ready. "
-            "After completion call cae.extract_solver_results to parse the FRD output."
+            "After completion call cae.extract_solver_results to parse the FRD output. "
+            "Typical input: {project_id, run_id, load_case_id, input_deck_path: 'simulation/runs/run_001/solver_input.inp'}."
         ),
         input_schema=_schema("cae.run_solver"),
     )
@@ -1303,8 +1405,10 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         description=(
             "Write a mesh handoff contract (simulation/mesh_handoff_contract.json) into a .aieng package. "
             "Reads topology_map.json and simulation/setup.yaml to produce a structured handoff spec "
-            "for external Gmsh execution. Does not run a mesher."
+            "for external Gmsh execution. Does not run a mesher. "
+            "Typical input: {project_id, handoff_id: 'mesh_handoff_001', overwrite: false}."
         ),
+        input_schema=_schema("cae.write_mesh_handoff"),
     )
     rt.register_tool(
         "cae.import_solver_evidence",
@@ -1314,6 +1418,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "Scans the result file for known numeric observations (max von Mises, max displacement, etc.) "
             "and appends them to results/evidence_index.json. Does not auto-advance claim status."
         ),
+        input_schema=_schema("cae.import_solver_evidence"),
     )
 
     return {}

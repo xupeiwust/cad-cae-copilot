@@ -1038,8 +1038,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["project_id"],
         "description": (
             "Apply incremental patches to the project's CAE setup artifacts "
-            "(materials, boundary conditions, loads, mesh settings). Each patch "
-            "specifies an action_type and a target path within the package."
+            "(materials, boundary conditions, loads, mesh settings, solver settings). "
+            "Each patch specifies an action_type and a target path within the package. "
+            "Minimal linear-static example: create simulation/solver_settings.json "
+            "({solver: CalculiX, analysis_type: linear_static}), set materials in "
+            "simulation/cae_imports/parsed_materials.json, add boundary conditions in "
+            "simulation/cae_imports/parsed_boundary_conditions.json, add loads in "
+            "simulation/cae_imports/parsed_loads.json or simulation/load_cases/load_case_001.json, "
+            "then call cae.generate_solver_input."
         ),
         "properties": {
             "project_id": {"type": "string"},
@@ -1054,12 +1060,18 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "path (allowed target file path in the package, e.g. "
                         "'simulation/cae_imports/parsed_materials.json'), and payload "
                         "(content for create_file; value or content for JSON operations). "
-                        "Example: "
+                        "Example material patch: "
                         '{"action_type": "merge_object", '
                         '"path": "simulation/cae_imports/parsed_materials.json", '
                         '"content": {"materials": [{"name": "aluminum_6061", '
                         '"density_kg_m3": 2700, "youngs_modulus_pa": 69e9, '
-                        '"poisson_ratio": 0.33, "yield_strength_pa": 276e6}]}}'
+                        '"poisson_ratio": 0.33, "yield_strength_pa": 276e6}]}}. '
+                        "Example load-case patch: "
+                        '{"action_type": "create_file", '
+                        '"path": "simulation/load_cases/load_case_001.json", '
+                        '"content": {"id": "load_case_001", '
+                        '"loads": [{"id": "load_001", "type": "force", '
+                        '"target": "REPLACE_WITH_NSET_OR_FACE_POINTER", "dof": 2, "value": 500.0}]}}'
                     ),
                 },
                 "description": (
@@ -1081,27 +1093,110 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "cae.prepare_solver_run": {
         "type": "object",
         "required": ["project_id"],
+        "description": (
+            "Inspect a .aieng package and return a reviewable solver-run preflight plan. "
+            "Checks mesh, solver settings, load case, input deck, and CalculiX availability. "
+            "No solver is executed. The response includes recommended_next_calls so an "
+            "external agent knows exactly which cae.* tool to call next."
+        ),
         "properties": {
             "project_id": {"type": "string"},
-            "runId": {
-                "type": "string",
-                "description": "Solver run identifier; created if absent.",
-            },
+            "run_id": {"type": "string", "description": "Solver run id, default run_001."},
+            "load_case_id": {"type": "string", "description": "Load case id, default load_case_001."},
+            "input_deck_path": {"type": "string", "description": "Optional external input deck path."},
+            "extract_results": {"type": "boolean", "description": "Plan computed_metrics extraction."},
+            "refresh_summary": {"type": "boolean", "description": "Plan result/evidence summary refresh."},
+            "solver": {"type": "string", "description": "Solver name, default CalculiX."},
         },
         "additionalProperties": True,
     },
-    "cae.generate_solver_input": _project_id_schema(),
-    "cae.run_solver": {
+    "cae.generate_solver_input": {
         "type": "object",
         "required": ["project_id"],
+        "description": (
+            "Generate a runnable CalculiX linear-static solver input deck from existing "
+            ".aieng setup artifacts. Typical input: {project_id, run_id: 'run_001', overwrite: true}."
+        ),
         "properties": {
             "project_id": {"type": "string"},
-            "runId": {"type": "string"},
-            "timeout_s": {"type": "integer", "minimum": 1, "maximum": 3600},
+            "run_id": {"type": "string", "description": "Solver run id, default run_001."},
+            "overwrite": {"type": "boolean", "description": "Overwrite an existing input deck."},
         },
         "additionalProperties": True,
     },
-    "cae.extract_solver_results": _project_id_schema(),
+    "cae.run_solver": {
+        "type": "object",
+        "required": ["project_id", "input_deck_path"],
+        "description": (
+            "[APPROVAL REQUIRED] Execute an external CalculiX solver run on an existing input deck. "
+            "Typical input: {project_id, run_id: 'run_001', load_case_id: 'load_case_001', "
+            "input_deck_path: 'simulation/runs/run_001/solver_input.inp', timeout_seconds: 120}."
+        ),
+        "properties": {
+            "project_id": {"type": "string"},
+            "run_id": {"type": "string", "description": "Solver run id, default run_001."},
+            "load_case_id": {"type": "string", "description": "Load case id, default load_case_001."},
+            "input_deck_path": {"type": "string", "description": "Relative path to the .inp file inside the package."},
+            "solver": {"type": "string", "description": "Solver name, default CalculiX."},
+            "extract_results": {"type": "boolean", "description": "Extract metrics after a successful run."},
+            "refresh_summary": {"type": "boolean", "description": "Refresh result summaries after a successful run."},
+            "overwrite": {"type": "boolean", "description": "Overwrite existing run artifacts."},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600, "description": "Solver timeout in seconds."},
+            "auto_import_evidence": {"type": "boolean", "description": "Import .dat evidence after a successful run."},
+        },
+        "additionalProperties": True,
+    },
+    "cae.write_mesh_handoff": {
+        "type": "object",
+        "required": ["project_id"],
+        "description": (
+            "Write a mesh handoff contract (simulation/mesh_handoff_contract.json) into a .aieng package. "
+            "Typical input: {project_id, handoff_id: 'mesh_handoff_001', overwrite: false}."
+        ),
+        "properties": {
+            "project_id": {"type": "string"},
+            "handoff_id": {"type": "string", "description": "Handoff identifier, default mesh_handoff_001."},
+            "overwrite": {"type": "boolean", "description": "Overwrite an existing handoff contract."},
+        },
+        "additionalProperties": True,
+    },
+    "cae.import_solver_evidence": {
+        "type": "object",
+        "required": ["project_id", "result_file"],
+        "description": (
+            "Import an external solver result file as evidence into a .aieng package. "
+            "Scans the file for known numeric observations and appends them to results/evidence_index.json. "
+            "Does not auto-advance claim status."
+        ),
+        "properties": {
+            "project_id": {"type": "string"},
+            "result_file": {"type": "string", "description": "Absolute path to the external solver result file."},
+            "result_format": {"type": "string", "description": "Result format, default calculix_dat."},
+            "producer_tool": {"type": "string", "description": "Tool that produced the result, default calculix."},
+            "claim_support": {"type": "array", "items": {"type": "string"}, "description": "Claim IDs this evidence may support."},
+            "verification_status": {"type": "string", "description": "Evidence verification status, default unverified."},
+            "evidence_id": {"type": "string", "description": "Optional explicit evidence id."},
+            "auto_scaffold": {"type": "boolean", "description": "Auto-create evidence scaffold if missing."},
+        },
+        "additionalProperties": True,
+    },
+    "cae.extract_solver_results": {
+        "type": "object",
+        "required": ["project_id"],
+        "description": (
+            "Parse a CalculiX FRD result file and write computed_metrics.json into a .aieng package. "
+            "Pass package_path/project_id and frd_path."
+        ),
+        "properties": {
+            "project_id": {"type": "string"},
+            "frd_path": {"type": "string", "description": "Absolute path to the CalculiX .frd file."},
+            "load_case_id": {"type": "string", "description": "Load case id, default load_case_001."},
+            "software": {"type": "string", "description": "Solver software, default CalculiX."},
+            "overwrite": {"type": "boolean", "description": "Overwrite existing computed_metrics.json."},
+            "refresh_result_summary": {"type": "boolean", "description": "Refresh the human-readable result summary."},
+        },
+        "additionalProperties": True,
+    },
     "cae.extract_field_regions": {
         "type": "object",
         "required": ["project_id"],

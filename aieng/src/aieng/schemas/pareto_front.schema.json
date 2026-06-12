@@ -8,6 +8,7 @@
   "required": [
     "format",
     "schema_version",
+    "status",
     "study_id",
     "design_study_problem_ref",
     "objectives",
@@ -22,6 +23,7 @@
     "format": {"const": "aieng.pareto_front"},
     "format_version": {"type": "string"},
     "schema_version": {"const": "0.1"},
+    "status": {"type": "string", "minLength": 1},
     "study_id": {
       "type": ["string", "null"],
       "minLength": 1
@@ -58,7 +60,15 @@
         }
       }
     },
+    "front_candidate_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
     "dominated": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "dominated_candidate_ids": {
       "type": "array",
       "items": {"type": "string", "minLength": 1}
     },

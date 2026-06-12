@@ -180,9 +180,19 @@ def _extract_metrics(
 
 def _has_critical_metrics(problem: dict[str, Any] | None,
                           metrics: dict[str, Any]) -> bool:
-    """Check if we have metrics for the objective."""
+    """Check if we have metrics for the objective(s)."""
     if not problem:
         return False
+
+    # Multi-objective studies use the explicit objectives array.
+    objectives = problem.get("objectives")
+    if isinstance(objectives, list) and objectives:
+        return any(
+            any(k in metrics and metrics[k] is not None for k in _objective_to_metric_keys(obj.get("metric", "")))
+            for obj in objectives
+            if isinstance(obj, dict) and obj.get("metric")
+        )
+
     objective = problem.get("objective")
     if not isinstance(objective, dict):
         return False
@@ -200,13 +210,26 @@ def _find_missing_metrics(problem: dict[str, Any] | None,
     if not problem:
         return []
 
-    objective = problem.get("objective")
-    if isinstance(objective, dict):
-        metric = objective.get("metric")
-        if metric:
+    # Multi-objective studies use the explicit objectives array.
+    objectives = problem.get("objectives")
+    if isinstance(objectives, list) and objectives:
+        for obj in objectives:
+            if not isinstance(obj, dict):
+                continue
+            metric = obj.get("metric")
+            if not metric:
+                continue
             keys = _objective_to_metric_keys(metric)
             if not any(k in metrics and metrics[k] is not None for k in keys):
                 missing.add(metric)
+    else:
+        objective = problem.get("objective")
+        if isinstance(objective, dict):
+            metric = objective.get("metric")
+            if metric:
+                keys = _objective_to_metric_keys(metric)
+                if not any(k in metrics and metrics[k] is not None for k in keys):
+                    missing.add(metric)
 
     constraints = problem.get("constraints") or []
     for c in constraints:

@@ -23,6 +23,15 @@ def _request(url: str, *, timeout: float = 10.0, headers: dict[str, str] | None 
         return exc.code, dict(exc.headers), exc.read()
 
 
+def _open_stream(url: str, *, timeout: float = 10.0, headers: dict[str, str] | None = None) -> tuple[int, dict[str, str]]:
+    req = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, dict(resp.headers)
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers)
+
+
 def _wait_for_health(base: str, timeout: float = 60.0, interval: float = 2.0) -> dict[str, Any]:
     deadline = time.time() + timeout
     last_error = ""
@@ -59,7 +68,7 @@ def main() -> int:
     print("[docker-smoke] Viewer OK")
 
     print("[docker-smoke] Checking MCP SSE endpoint ...")
-    status, headers, _ = _request(
+    status, headers = _open_stream(
         f"{mcp_base}/sse",
         timeout=10.0,
         headers={"Accept": "text/event-stream"},

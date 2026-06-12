@@ -54,6 +54,11 @@ def _make_pkg(tmp_path: Path) -> Path:
         "result": {},
     }
     with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({
+            "format": "aieng.package",
+            "format_version": "0.1.0",
+            "resources": {},
+        }))
         zf.writestr("metadata.json", json.dumps({"name": "topology sizing demo"}))
         zf.writestr("geometry/shape_ir.json", json.dumps(shape_ir))
         zf.writestr("analysis/topology_optimization.json", json.dumps(topo))
@@ -130,6 +135,8 @@ def test_topology_sizing_demo_end_to_end_static_metrics(tmp_path: Path) -> None:
     assert report["problem"]["variable_count"] == 1
 
     # Topology→sizing chain is preserved in the report.
+    assert report["topology_to_sizing_chain"] is not None
+    assert report["topology_to_sizing_chain"]["production_ready"] is False
     assert report["ranking"]["best_candidate_id"] is not None
 
     # Honest CAE absence: stress/displacement are missing, not fabricated.

@@ -22,11 +22,13 @@ from aieng import FORMAT_VERSION
 from aieng.audit_event import build_audit_event, serialize_audit_events_jsonl
 from aieng.converters.design_study import DESIGN_STUDY_PROBLEM_PATH
 from aieng.converters.optimization_variables import resolve_optimization_variables
+from aieng.provenance.tool_trace_writer import record_trace_package
 
 TOPOLOGY_OPTIMIZATION_PATH = "analysis/topology_optimization.json"
 SHAPE_IR_PATH = "geometry/shape_ir.json"
 OPTIMIZATION_VARIABLES_PATH = "analysis/optimization_variables.json"
 AUDIT_EVENTS_PATH = "audit/events.jsonl"
+MANIFEST_PATH = "manifest.json"
 
 THICKNESS_VAR_ID = "extrusion_thickness"
 THICKNESS_PATH = "parts/0/thickness"
@@ -38,6 +40,44 @@ class _RewriteError(Exception):
 
 def _dumps(obj: Any) -> bytes:
     return (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _ensure_manifest(package_path: Path) -> None:
+    """Create a minimal manifest.json if the package does not yet have one."""
+    with zipfile.ZipFile(package_path, "r") as zf:
+        if MANIFEST_PATH in zf.namelist():
+            return
+    members = {MANIFEST_PATH: _dumps({
+        "format": "aieng.package",
+        "format_version": FORMAT_VERSION,
+        "resources": {},
+    })}
+    _rewrite_package_members(package_path, members)
+
+
+def _record_trace(
+    package_path: Path,
+    exit_status: str,
+    *,
+    outputs: list[str] | None = None,
+    notes: list[str] | None = None,
+) -> None:
+    """Best-effort tool_trace entry. Swallows errors so tracing never blocks work."""
+    try:
+        _ensure_manifest(package_path)
+        record_trace_package(
+            package_path,
+            tool_id="aieng.converters.topology_parameterization",
+            tool_role="agent_runtime",
+            step_name="parameterize_topology_writeback",
+            exit_status=exit_status,
+            inputs=[TOPOLOGY_OPTIMIZATION_PATH, SHAPE_IR_PATH],
+            outputs=outputs or [],
+            artifacts_recorded=outputs or [],
+            notes=notes or [],
+        )
+    except Exception:
+        pass
 
 
 def _read_json(zf: zipfile.ZipFile, name: str) -> Any:
@@ -141,6 +181,11 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
     # ── Reject 3D / voxel / non-contour inputs ────────────────────────────────
     topo_dimension = (topo.get("dimension") if isinstance(topo, dict) else None) or ""
     if topo_dimension != "2d":
+        _record_trace(
+            package_path,
+            "skipped",
+            notes=[f"Refused non-2d topology result: dimension={topo_dimension!r}"],
+        )
         return {
             "status": "needs_user_input",
             "code": "3d_or_non_2d_not_supported",
@@ -152,6 +197,11 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
         }
 
     if not isinstance(shape_ir, dict):
+        _record_trace(
+            package_path,
+            "skipped",
+            notes=["No readable geometry/shape_ir.json found in package."],
+        )
         return {
             "status": "needs_user_input",
             "code": "no_shape_ir",
@@ -161,6 +211,11 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
 
     parts = [p for p in (shape_ir.get("parts") or []) if isinstance(p, dict)]
     if not parts:
+        _record_trace(
+            package_path,
+            "skipped",
+            notes=["Topology writeback did not produce a recoverable body part."],
+        )
         return {
             "status": "needs_user_input",
             "code": "no_recovered_body",
@@ -171,6 +226,11 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
     node = parts[0]
     node_type = node.get("type")
     if node_type != "extruded_region":
+        _record_trace(
+            package_path,
+            "skipped",
+            notes=[f"Auto-parameterization only supports extruded_region; found {node_type!r}"],
+        )
         return {
             "status": "needs_user_input",
             "code": "no_stable_parameter",
@@ -183,6 +243,11 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
 
     thickness = node.get("thickness")
     if not isinstance(thickness, (int, float)) or thickness <= 0:
+        _record_trace(
+            package_path,
+            "skipped",
+            notes=["Recovered extruded_region has no positive numeric thickness."],
+        )
         return {
             "status": "needs_user_input",
             "code": "no_stable_parameter",
@@ -267,6 +332,21 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
             package_path,
             status="completed",
             artifacts_written=[DESIGN_STUDY_PROBLEM_PATH, OPTIMIZATION_VARIABLES_PATH],
+        )
+        _ensure_manifest(package_path)
+        record_trace_package(
+            package_path,
+            tool_id="aieng.converters.topology_parameterization",
+            tool_role="agent_runtime",
+            step_name="parameterize_topology_writeback",
+            exit_status="success",
+            inputs=[TOPOLOGY_OPTIMIZATION_PATH, SHAPE_IR_PATH],
+            outputs=[DESIGN_STUDY_PROBLEM_PATH, OPTIMIZATION_VARIABLES_PATH],
+            artifacts_recorded=[DESIGN_STUDY_PROBLEM_PATH, OPTIMIZATION_VARIABLES_PATH],
+            notes=[
+                "Derived extrusion_thickness sizing variable from 2D contour writeback.",
+                f"production_ready=false; design_space_node={design_space_node}",
+            ],
         )
     except _RewriteError as exc:
         return {

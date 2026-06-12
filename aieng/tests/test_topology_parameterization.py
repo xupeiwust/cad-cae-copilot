@@ -18,9 +18,19 @@ from aieng.converters.topology_parameterization import (
 )
 
 
+def _read(pkg: Path, name: str) -> Any:
+    with zipfile.ZipFile(pkg, "r") as zf:
+        return json.loads(zf.read(name))
+
+
 def _make_pkg(tmp_path: Path, topo: dict[str, Any], shape_ir: dict[str, Any]) -> Path:
     pkg = tmp_path / "topo_param.aieng"
     with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({
+            "format": "aieng.package",
+            "format_version": "0.1.0",
+            "resources": {},
+        }))
         zf.writestr("metadata.json", json.dumps({"name": "topo param test"}))
         zf.writestr("geometry/shape_ir.json", json.dumps(shape_ir))
         zf.writestr(TOPOLOGY_OPTIMIZATION_PATH, json.dumps(topo))
@@ -110,6 +120,13 @@ def test_parameterizes_contour_extrusion(tmp_path: Path) -> None:
     assert len(events) == 1
     assert events[0]["tool"] == "aieng.converters.topology_parameterization"
     assert events[0]["status"] == "completed"
+
+    trace = _read(pkg, "provenance/tool_trace.json")
+    assert trace["format_version"] == FORMAT_VERSION
+    assert len(trace["entries"]) == 1
+    assert trace["entries"][0]["tool"]["tool_id"] == "aieng.converters.topology_parameterization"
+    assert trace["entries"][0]["step"]["exit_status"] == "success"
+    assert DESIGN_STUDY_PROBLEM_PATH in trace["entries"][0]["artifacts_recorded"]
 
 
 def test_refuses_3d_topology_result(tmp_path: Path) -> None:

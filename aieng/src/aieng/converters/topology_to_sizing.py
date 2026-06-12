@@ -29,11 +29,15 @@ from aieng.optimization_artifacts import (
     OPTIMIZATION_ARTIFACT_PATHS,
     validate_optimization_artifact_set,
 )
+from aieng.provenance.tool_trace_writer import record_trace_package
 
 from .topology_parameterization import (
     AUDIT_EVENTS_PATH,
+    MANIFEST_PATH,
     OPTIMIZATION_VARIABLES_PATH,
+    SHAPE_IR_PATH,
     TOPOLOGY_OPTIMIZATION_PATH,
+    _ensure_manifest,
     parameterize_topology_writeback,
 )
 
@@ -45,6 +49,31 @@ OPTIMIZATION_DECISION_LOG_PATH = OPTIMIZATION_ARTIFACT_PATHS["decision_log"]
 
 def _dumps(obj: Any) -> bytes:
     return (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _record_trace(
+    package_path: Path,
+    exit_status: str,
+    *,
+    outputs: list[str] | None = None,
+    notes: list[str] | None = None,
+) -> None:
+    """Best-effort tool_trace entry for the topology_to_sizing step."""
+    try:
+        _ensure_manifest(package_path)
+        record_trace_package(
+            package_path,
+            tool_id="aieng.converters.topology_to_sizing",
+            tool_role="agent_runtime",
+            step_name="topology_to_sizing",
+            exit_status=exit_status,
+            inputs=[TOPOLOGY_OPTIMIZATION_PATH, SHAPE_IR_PATH],
+            outputs=outputs or [],
+            artifacts_recorded=outputs or [],
+            notes=notes or [],
+        )
+    except Exception:
+        pass
 
 
 def _now() -> str:
@@ -361,6 +390,11 @@ def topology_to_sizing(package_path: str | Path) -> dict[str, Any]:
     # 3. Build derived optimization artifacts.
     objectives_doc = _objectives_from_problem(problem, study_id)
     if objectives_doc is None:
+        _record_trace(
+            package_path,
+            "skipped",
+            notes=["Design-study problem has no objective; cannot create sizing study."],
+        )
         return {
             "status": "needs_user_input",
             "code": "no_objective",
@@ -396,6 +430,11 @@ def topology_to_sizing(package_path: str | Path) -> dict[str, Any]:
         design_study_problem=problem,
     )
     if validation_issues:
+        _record_trace(
+            package_path,
+            "failure",
+            notes=["Artifact validation failed", "; ".join(validation_issues)],
+        )
         return {
             "status": "error",
             "code": "artifact_validation_failed",
@@ -417,7 +456,23 @@ def topology_to_sizing(package_path: str | Path) -> dict[str, Any]:
             status="completed",
             artifacts_written=list(members.keys()),
         )
+        all_artifacts = list(members.keys()) + param_result["artifacts"]
+        _record_trace(
+            package_path,
+            "success",
+            outputs=all_artifacts,
+            notes=[
+                "Linked topology optimization result to a sizing study.",
+                f"study_id={study_id}",
+                "production_ready=false; human approval required before acceptance.",
+            ],
+        )
     except Exception as exc:  # noqa: BLE001
+        _record_trace(
+            package_path,
+            "failure",
+            notes=[f"Write failed: {type(exc).__name__}: {exc}"],
+        )
         return {
             "status": "error",
             "code": "write_failed",

@@ -22,9 +22,19 @@ from aieng.converters.topology_to_sizing import (
 )
 
 
+def _read(pkg: Path, name: str) -> Any:
+    with zipfile.ZipFile(pkg, "r") as zf:
+        return json.loads(zf.read(name))
+
+
 def _make_pkg(tmp_path: Path, topo: dict[str, Any], shape_ir: dict[str, Any]) -> Path:
     pkg = tmp_path / "topo_sizing.aieng"
     with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({
+            "format": "aieng.package",
+            "format_version": "0.1.0",
+            "resources": {},
+        }))
         zf.writestr("metadata.json", json.dumps({"name": "topo sizing test"}))
         zf.writestr("geometry/shape_ir.json", json.dumps(shape_ir))
         zf.writestr(TOPOLOGY_OPTIMIZATION_PATH, json.dumps(topo))
@@ -116,6 +126,13 @@ def test_topology_to_sizing_creates_study_chain(tmp_path: Path) -> None:
 
     events = [json.loads(line) for line in audit_text.strip().splitlines()]
     assert any(e["tool"] == "aieng.converters.topology_to_sizing" for e in events)
+
+    trace = _read(pkg, "provenance/tool_trace.json")
+    topo_entries = [e for e in trace["entries"]
+                    if e["tool"]["tool_id"] == "aieng.converters.topology_to_sizing"]
+    assert len(topo_entries) == 1
+    assert topo_entries[0]["step"]["exit_status"] == "success"
+    assert OPTIMIZATION_STUDY_PATH in topo_entries[0]["artifacts_recorded"]
 
 
 def test_topology_to_sizing_refuses_3d(tmp_path: Path) -> None:

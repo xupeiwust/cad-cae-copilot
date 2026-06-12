@@ -41,7 +41,11 @@ Context should come from the package. Execution and engineering validation still
 ## Quick Start
 
 ```bash
-# Install
+# Install from PyPI (alpha)
+pip install aieng-format
+
+# Or install from source in editable mode
+cd aieng
 pip install -e .
 
 # Create a package from a STEP file

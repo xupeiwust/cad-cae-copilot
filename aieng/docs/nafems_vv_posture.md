@@ -5,12 +5,18 @@ NAFEMS-style starter suite implemented in `aieng/src/aieng/nafems_verification.p
 
 ## What the starter suite verifies
 
-The suite exercises the AIENG CAE pipeline end-to-end on three simple
+The suite exercises the AIENG CAE pipeline end-to-end on five simple
 linear-static structural cases:
 
 1. **Tension rod** — axial loading of a square rod.
 2. **Cantilever, end load** — transverse point load at the free end.
 3. **Cantilever, uniformly distributed load** — downward load spread over the top face.
+4. **Fixed-fixed, uniformly distributed load** — fixed ends with downward UDL.
+5. **Fixed-fixed, center point load** — fixed ends with a center point load.
+
+The suite also supports optional mesh-convergence studies that run a case at
+several refinements and record the trend of computed metrics toward the
+analytical reference.
 
 For each case the pipeline:
 
@@ -59,9 +65,12 @@ deformation, contact, buckling, modal, thermal, or dynamic verification.
 * **Analytical reference only.** Comparisons are against closed-form theory, not
 physical test data.
 * **Coarse mesh.** Results are mesh-dependent and may change if the mesh is
-refined.
+  refined.
+* **Mesh convergence is case-specific.** A convergence trend on a documented
+  reference case does not prove mesh independence for arbitrary geometries or
+  loading conditions.
 * **Single solver path.** Verification is performed with CalculiX ccx only;
-other solvers may yield different numerical results.
+  other solvers may yield different numerical results.
 * **Not a certification.** The report claims only that computed metrics fall
 within the documented tolerance of the analytical reference. It does **not**
 claim ASME V&V 10 compliance, NAFEMS certification, or product certification of
@@ -120,15 +129,17 @@ establishes:
 * A reproducible automated regression.
 * Documented reference values and tolerance bands.
 * A machine-readable evidence artifact.
+* Optional mesh-convergence studies that document numerical trend toward the
+  analytical reference.
 
 It does **not** establish:
 
 * Validation against experimental data.
-* Code verification beyond these three analytical cases.
-* Calculation verification for mesh/time-step independence.
+* Code verification beyond these five analytical cases.
+* Calculation verification for arbitrary mesh/time-step independence.
 * Formal uncertainty quantification.
 
-Future work may extend the suite to include additional reference cases, mesh
-convergence studies, and comparison to experimental or higher-fidelity reference
-solutions. Until then, all claims must remain scoped to the documented
+Future work may extend the suite to include additional reference cases, broader
+mesh convergence studies, and comparison to experimental or higher-fidelity
+reference solutions. Until then, all claims must remain scoped to the documented
 linear-static verification cases.

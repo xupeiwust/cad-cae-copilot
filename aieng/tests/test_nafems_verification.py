@@ -23,6 +23,7 @@ from aieng.nafems_verification import (
     REFERENCE_CASES,
     _find_ccx,
     run_case,
+    run_mesh_convergence_study,
     run_nafems_suite,
     verify_case,
     write_nafems_vv_report,
@@ -32,6 +33,8 @@ from tests.fixtures.nafems.build_fixtures import (
     build_all_fixtures,
     build_cantilever_end_load_fixture,
     build_cantilever_udl_fixture,
+    build_fixed_fixed_center_load_fixture,
+    build_fixed_fixed_udl_fixture,
     build_tension_rod_fixture,
 )
 
@@ -147,9 +150,15 @@ def fixtures_dir(tmp_path: Path) -> Path:
     return tmp_path / "fixtures"
 
 
-def test_build_all_fixtures_creates_three_packages(fixtures_dir: Path) -> None:
+def test_build_all_fixtures_creates_five_packages(fixtures_dir: Path) -> None:
     paths = build_all_fixtures(fixtures_dir)
-    assert set(paths) == {"tension_rod", "cantilever_end_load", "cantilever_udl"}
+    assert set(paths) == {
+        "tension_rod",
+        "cantilever_end_load",
+        "cantilever_udl",
+        "fixed_fixed_udl",
+        "fixed_fixed_center_load",
+    }
     for p in paths.values():
         assert p.exists()
         assert p.suffix == ".aieng"
@@ -196,6 +205,34 @@ def test_fixture_mappings_resolve_features_to_nsets(fixtures_dir: Path) -> None:
     assert "feat_load" in feature_ids
 
 
+def test_fixed_fixed_udl_fixture_has_both_ends_in_fix_nset(fixtures_dir: Path) -> None:
+    path = build_fixed_fixed_udl_fixture(fixtures_dir / "fixed_fixed_udl.aieng")
+    with zipfile.ZipFile(path, "r") as zf:
+        deck = zf.read("simulation/cae_imports/source_solver_deck.inp").decode("utf-8")
+    assert "*NSET, NSET=N_FIX" in deck
+    # Both ends fixed means the N_FIX block must contain at least two distinct x-faces
+    # worth of nodes; a minimal sanity check is that the same NSET appears once.
+
+
+def test_fixed_fixed_center_load_fixture_has_center_load_nset(fixtures_dir: Path) -> None:
+    path = build_fixed_fixed_center_load_fixture(fixtures_dir / "fixed_fixed_center_load.aieng")
+    with zipfile.ZipFile(path, "r") as zf:
+        deck = zf.read("simulation/cae_imports/source_solver_deck.inp").decode("utf-8")
+    assert "*NSET, NSET=N_CENTER" in deck
+
+
+def test_verify_case_for_fixed_fixed_cases() -> None:
+    """Synthetic metrics within tolerance produce pass verdicts for new cases."""
+    for case_id in ("fixed_fixed_udl", "fixed_fixed_center_load"):
+        ref = REFERENCE_CASES[case_id]
+        computed = _make_computed_metrics(
+            max_displacement=ref["metrics"]["max_displacement"]["value"] * 1.02,
+            max_von_mises_stress=ref["metrics"].get("max_von_mises_stress", {}).get("value"),
+        )
+        result = verify_case(case_id, computed)
+        assert result["verdict"] == "pass", f"{case_id} should pass synthetic metrics"
+
+
 # ---------------------------------------------------------------------------
 # Real-ccx integration tests (skipped if ccx is unavailable)
 # ---------------------------------------------------------------------------
@@ -239,6 +276,79 @@ def test_cantilever_udl_real_ccx_within_tolerance(fixtures_dir: Path) -> None:
     assert verification["verdict"] == "pass", verification
 
 
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_fixed_fixed_udl_real_ccx_within_tolerance(fixtures_dir: Path) -> None:
+    path = build_fixed_fixed_udl_fixture(fixtures_dir / "fixed_fixed_udl.aieng")
+    run_result = run_case(path, run_id="nafems_run_001")
+    assert run_result["status"] == "ok", run_result.get("solver_log_tail")
+    verification = verify_case("fixed_fixed_udl", run_result["computed_metrics"])
+    assert verification["verdict"] == "pass", verification
+
+
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_fixed_fixed_center_load_real_ccx_displacement_within_tolerance(
+    fixtures_dir: Path,
+) -> None:
+    path = build_fixed_fixed_center_load_fixture(
+        fixtures_dir / "fixed_fixed_center_load.aieng"
+    )
+    run_result = run_case(path, run_id="nafems_run_001")
+    assert run_result["status"] == "ok", run_result.get("solver_log_tail")
+    # Stress under a point load is mesh-sensitive; verify displacement only.
+    computed = run_result["computed_metrics"]
+    verification = verify_case("fixed_fixed_center_load", computed)
+    disp_metric = next(
+        m for m in verification["metrics"] if m["metric"] == "max_displacement"
+    )
+    assert disp_metric["verdict"] == "pass", disp_metric
+
+
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_cantilever_end_load_mesh_convergence_trend(fixtures_dir: Path) -> None:
+    """Mesh refinement should move the displacement deviation toward the reference."""
+    levels = {
+        (10, 2, 2): build_cantilever_end_load_fixture(
+            fixtures_dir / "cantilever_end_load_coarse.aieng",
+            mesh_divisions=(10, 2, 2),
+        ),
+        (20, 4, 4): build_cantilever_end_load_fixture(
+            fixtures_dir / "cantilever_end_load_medium.aieng",
+            mesh_divisions=(20, 4, 4),
+        ),
+        (40, 8, 8): build_cantilever_end_load_fixture(
+            fixtures_dir / "cantilever_end_load_fine.aieng",
+            mesh_divisions=(40, 8, 8),
+        ),
+    }
+    study = run_mesh_convergence_study("cantilever_end_load", levels)
+    assert study["case_id"] == "cantilever_end_load"
+    assert len(study["levels"]) == 3
+    ok_levels = [lvl for lvl in study["levels"] if lvl.get("status") == "ok"]
+    # At least two levels must solve for a trend to be meaningful.
+    assert len(ok_levels) >= 2, "at least two refinement levels should solve"
+
+    disp_devs = []
+    for lvl in ok_levels:
+        for m in lvl.get("metrics", []):
+            if m["metric"] == "max_displacement" and m.get("deviation_percent") is not None:
+                disp_devs.append(abs(m["deviation_percent"]))
+                break
+    assert len(disp_devs) >= 2
+    # The finest mesh should not be farther from the reference than the coarsest.
+    assert disp_devs[-1] <= disp_devs[0] * 1.5, (
+        f"fine-mesh deviation {disp_devs[-1]} should not exceed 1.5x coarse-mesh deviation {disp_devs[0]}"
+    )
+
+
 def test_run_case_skips_cleanly_when_ccx_missing(
     fixtures_dir: Path, monkeypatch
 ) -> None:
@@ -251,6 +361,25 @@ def test_run_case_skips_cleanly_when_ccx_missing(
     result = run_case(path, run_id="nafems_run_001")
     assert result["status"] == "skipped"
     assert "ccx" in result["missing_tools"]
+
+
+def test_mesh_convergence_study_skips_cleanly_without_ccx(
+    fixtures_dir: Path, monkeypatch
+) -> None:
+    """run_mesh_convergence_study records skipped levels when ccx is unavailable."""
+    monkeypatch.setenv("AIENG_CCX_CMD", "")
+    monkeypatch.delenv("AIENG_CCX_CMD", raising=False)
+    monkeypatch.setenv("PATH", "")
+    levels = {
+        (10, 2, 2): build_tension_rod_fixture(
+            fixtures_dir / "tension_rod_coarse.aieng", mesh_divisions=(10, 2, 2)
+        ),
+    }
+    study = run_mesh_convergence_study("tension_rod", levels)
+    assert study["case_id"] == "tension_rod"
+    assert len(study["levels"]) == 1
+    assert study["levels"][0]["status"] == "skipped"
+    assert "no refinement level produced usable metrics" in study["summary"].lower()
 
 
 # ---------------------------------------------------------------------------

@@ -70,6 +70,46 @@
                 "message": {"type": ["string", "null"]}
               }
             }
+          },
+          "mesh_convergence": {
+            "type": "object",
+            "description": "Optional mesh-refinement study for this case.",
+            "additionalProperties": true,
+            "required": ["case_id", "division_levels", "levels", "summary"],
+            "properties": {
+              "case_id": {"type": "string"},
+              "division_levels": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {"type": "integer"}
+                }
+              },
+              "levels": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "required": ["divisions", "run_id", "status"],
+                  "properties": {
+                    "divisions": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {"type": "integer"}
+                    },
+                    "run_id": {"type": "string"},
+                    "status": {"type": "string"},
+                    "verdict": {"type": "string"},
+                    "message": {"type": ["string", "null"]},
+                    "metrics": {"type": "array"}
+                  }
+                }
+              },
+              "summary": {"type": "string"}
+            }
           }
         }
       }

@@ -1,0 +1,8 @@
+{
+  "format": "aieng.design_candidate_patch",
+  "candidate_id": "candidate_good",
+  "reasoning": "Increase fillet radius slightly to reduce stress concentration while keeping a standard hole size",
+  "variable_changes": [
+    {"variable_id": "fillet_r", "new_value": 3.0}
+  ]
+}

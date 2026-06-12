@@ -21,6 +21,7 @@ from typing import Any
 import yaml
 
 from .config import ensure_aieng_on_path
+from .project_io import validate_cae_topology_references
 from fastapi import HTTPException
 
 
@@ -570,6 +571,22 @@ def run_simulation(
 
     topo_raw = _read_member(package_path, "geometry/topology_map.json")
     topology: dict[str, Any] = json.loads(topo_raw) if topo_raw else {}
+
+    # Fail fast if the CAE face references are stale relative to current topology.
+    topology_validation = validate_cae_topology_references(package_path)
+    if not topology_validation["valid"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "stale_topology_references",
+                "message": (
+                    "Aborted before meshing: CAE face references do not match the "
+                    "current topology. Re-run AI preprocessing to refresh face "
+                    "references, or update simulation/cae_mapping.json manually."
+                ),
+                "topology_validation": topology_validation,
+            },
+        )
 
     mesh_size_mm = float(
         payload.get("mesh_size_mm")

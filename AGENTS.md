@@ -844,6 +844,25 @@ Linear static analysis pipeline — see workflow C below.
 
 - **Docker image:** already bundles `ccx`; no extra setup needed.
 
+**Topology revision validation.** CAE loads and boundary conditions are bound to
+`@face:*` pointers that live in `geometry/topology_map.json`. Every time AI
+preprocessing writes `simulation/setup.yaml` and `simulation/cae_mapping.json`, it
+records a `topology_hash` of the current geometry. When a CAD edit regenerates the
+model, the old CAE mapping is automatically marked `stale` and the hash is
+updated.
+
+Before running the solver, both `cae.prepare_solver_run` and `cae.run_solver`
+check the recorded hash and the existence of every referenced face. If they do not
+match the current topology, the run is refused with code
+`stale_topology_references` and a list of the stale or missing face IDs.
+
+To recover:
+1. Call `ai_preprocessing.run_ai_preprocessing` with the same (or updated) task
+   description to rebind loads/BCs against the new topology.
+2. Or use `cae.apply_setup_patch` to manually update `simulation/cae_mapping.json`
+   (`face_ids` and `topology_hash`) and `simulation/setup.yaml`.
+3. Then re-run `cae.prepare_solver_run` and `cae.run_solver`.
+
 ---
 
 ## Pointer syntax — `@kind:id`

@@ -289,6 +289,7 @@ def test_report_status_is_skipped_when_ccx_missing(
 ) -> None:
     """The aggregated report status is 'skipped' when ccx is unavailable."""
     monkeypatch.setenv("PATH", "")
+    monkeypatch.delenv("AIENG_CCX_CMD", raising=False)
     path = build_tension_rod_fixture(fixtures_dir / "tension_rod.aieng")
     report = run_nafems_suite(path, run_id="nafems_run_001")
     assert report["status"] == "skipped"

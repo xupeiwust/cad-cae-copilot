@@ -29,13 +29,19 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
+
+from jsonschema import Draft202012Validator, ValidationError
 
 from aieng import FORMAT_VERSION
 from aieng.cae_verification import VERIFICATION_SCHEMA, _claim_policy
 from aieng.simulation.deck_generator import generate_solver_input_package
 from aieng.simulation.frd_result_extractor import extract_computed_metrics
+
+
+_NAFEMS_VV_REPORT_SCHEMA: dict[str, Any] | None = None
 
 
 NAFEMS_VV_REPORT_PATH = "verification/nafems_vv_report.json"
@@ -94,6 +100,26 @@ REFERENCE_CASES: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+
+def _load_report_schema() -> dict[str, Any]:
+    """Load the canonical JSON schema for ``verification/nafems_vv_report.json``."""
+    global _NAFEMS_VV_REPORT_SCHEMA
+    if _NAFEMS_VV_REPORT_SCHEMA is None:
+        _NAFEMS_VV_REPORT_SCHEMA = json.loads(
+            files("aieng.schemas").joinpath("nafems_vv_report.schema.json").read_text(encoding="utf-8")
+        )
+    return _NAFEMS_VV_REPORT_SCHEMA
+
+
+def _validate_report(report: dict[str, Any]) -> None:
+    """Validate a NAFEMS V&V report dict against its schema.
+
+    Raises:
+        ValidationError: when the report does not match the schema.
+    """
+    schema = _load_report_schema()
+    Draft202012Validator(schema).validate(report)
 
 
 def _reference_value(case_id: str, metric: str) -> float:
@@ -235,12 +261,29 @@ def run_case(
         }
 
     # 2. Extract and run in a temp directory.
-    deck_text = _extract_solver_input_from_package(package_path, run_id)
+    try:
+        deck_text = _extract_solver_input_from_package(package_path, run_id)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "message": f"Failed to extract solver input: {type(exc).__name__}: {exc}",
+            "computed_metrics": None,
+            "solver_log_tail": None,
+        }
+
     with tempfile.TemporaryDirectory(prefix="nafems_vv_") as tmp:
         work = Path(tmp)
         jobname = "solver_input"
         inp_path = work / f"{jobname}.inp"
-        inp_path.write_text(deck_text, encoding="utf-8")
+        try:
+            inp_path.write_text(deck_text, encoding="utf-8")
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": f"Failed to write solver deck: {type(exc).__name__}: {exc}",
+                "computed_metrics": None,
+                "solver_log_tail": None,
+            }
 
         run_info = _run_ccx(ccx_cmd, work, jobname)
         log_tail = (run_info.get("stdout") or "")[-2000:]
@@ -309,7 +352,9 @@ def verify_case(
         ``"fail"``, or ``"skipped"``).
     """
     if reference is None:
-        reference = REFERENCE_CASES.get(case_id, {})
+        if case_id not in REFERENCE_CASES:
+            raise KeyError(f"unknown NAFEMS case_id: {case_id}")
+        reference = REFERENCE_CASES[case_id]
 
     ref_metrics = reference.get("metrics", {}) if isinstance(reference, dict) else {}
     metric_results: list[dict[str, Any]] = []
@@ -475,6 +520,8 @@ def write_nafems_vv_report(
         raise FileNotFoundError(f"package does not exist: {path}")
     if path.suffix != ".aieng":
         raise ValueError("package path must end with .aieng")
+
+    _validate_report(report)
 
     report_path = NAFEMS_VV_REPORT_PATH
     report_bytes = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()

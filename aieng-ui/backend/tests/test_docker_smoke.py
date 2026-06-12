@@ -55,3 +55,67 @@ def test_wait_for_stream_retries_until_ready(monkeypatch) -> None:
     assert status == 200
     assert headers["content-type"] == "text/event-stream"
     assert attempts["count"] == 3
+
+
+def test_wait_for_request_retries_through_connection_reset(monkeypatch) -> None:
+    docker_smoke = _load_docker_smoke_module()
+    attempts = {"count": 0}
+
+    def fake_request(*_args, **_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionResetError("connection reset by peer")
+        return 200, {"content-type": "text/html"}, b"<!doctype html><html></html>"
+
+    monkeypatch.setattr(docker_smoke, "_request", fake_request)
+    monkeypatch.setattr(docker_smoke.time, "sleep", lambda _seconds: None)
+
+    status, headers, body = docker_smoke._wait_for_request(
+        "http://127.0.0.1:8000/app/",
+        timeout=1.0,
+        interval=0.01,
+        validate=lambda _status, _hdrs, bdy: docker_smoke._body_looks_like_html(bdy),
+    )
+
+    assert status == 200
+    assert headers["content-type"] == "text/html"
+    assert b"<!doctype html" in body
+    assert attempts["count"] == 3
+
+
+def test_wait_for_request_retries_project_create_until_json_id(monkeypatch) -> None:
+    docker_smoke = _load_docker_smoke_module()
+    attempts = {"count": 0}
+
+    def fake_request(*_args, **_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionResetError("connection reset by peer")
+        return 200, {"content-type": "application/json"}, b'{"id": "proj-123"}'
+
+    monkeypatch.setattr(docker_smoke, "_request", fake_request)
+    monkeypatch.setattr(docker_smoke.time, "sleep", lambda _seconds: None)
+
+    import json
+
+    def _project_created(_status: int, _headers: dict[str, str], body: bytes) -> bool:
+        try:
+            project = json.loads(body)
+        except json.JSONDecodeError:
+            return False
+        return isinstance(project.get("id"), (str, int))
+
+    status, headers, body = docker_smoke._wait_for_request(
+        "http://127.0.0.1:8000/api/projects",
+        timeout=1.0,
+        interval=0.01,
+        headers={"Content-Type": "application/json"},
+        data=b'{"name": "docker-smoke"}',
+        method="POST",
+        validate=_project_created,
+    )
+
+    assert status == 200
+    assert headers["content-type"] == "application/json"
+    assert json.loads(body)["id"] == "proj-123"
+    assert attempts["count"] == 3

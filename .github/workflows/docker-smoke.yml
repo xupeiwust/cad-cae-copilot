@@ -48,6 +48,20 @@ jobs:
             -v aieng-smoke-data:/data \
             aieng/workbench:local
 
+      - name: Wait for container readiness
+        run: |
+          for i in $(seq 1 30); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' aieng-workbench-smoke 2>/dev/null || echo 'starting')
+            if [ "$status" = "healthy" ]; then
+              echo "Container healthy"
+              exit 0
+            fi
+            echo "Container health: $status ($i/30)"
+            sleep 2
+          done
+          echo "Container did not become healthy" >&2
+          exit 1
+
       - name: Install Python client deps
         run: python -m pip install --upgrade pip
 

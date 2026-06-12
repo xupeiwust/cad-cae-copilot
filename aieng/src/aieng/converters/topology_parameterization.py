@@ -29,7 +29,7 @@ OPTIMIZATION_VARIABLES_PATH = "analysis/optimization_variables.json"
 AUDIT_EVENTS_PATH = "audit/events.jsonl"
 
 THICKNESS_VAR_ID = "extrusion_thickness"
-THICKNESS_PATH = "parts/0/params/EXTRUSION_THICKNESS"
+THICKNESS_PATH = "parts/0/thickness"
 
 
 class _RewriteError(Exception):
@@ -243,8 +243,8 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
                 "feature_id": node.get("id"),
                 "feature_name": node.get("label") or node.get("id"),
                 "scope": "local",
-                "parameter_name": "extrusion_thickness",
-                "cad_parameter_name": "EXTRUSION_THICKNESS",
+                "parameter_name": "thickness",
+                "cad_parameter_name": "thickness",
                 "current_value": float(thickness),
                 "min_value": min_value,
                 "max_value": max_value,

@@ -86,6 +86,7 @@ def test_parameterizes_contour_extrusion(tmp_path: Path) -> None:
 
     var = problem["variables"][0]
     assert var["id"] == "extrusion_thickness"
+    assert var["path"] == "parts/0/thickness"
     assert var["type"] == "continuous"
     assert var["current_value"] == 5.0
     assert var["min_value"] == pytest.approx(2.5, rel=1e-6)
@@ -102,7 +103,7 @@ def test_parameterizes_contour_extrusion(tmp_path: Path) -> None:
     assert resolved["id"] == "extrusion_thickness"
     assert resolved["binding_status"] == "bound"
     assert resolved["featureId"] == "optimized_plate"
-    assert resolved["parameterName"] == "extrusion_thickness"
+    assert resolved["parameterName"] == "thickness"
     assert resolved["shape_bearing"] is False
 
     events = [json.loads(line) for line in audit_text.strip().splitlines()]

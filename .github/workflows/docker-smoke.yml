@@ -1,0 +1,61 @@
+name: Docker smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "docker/**"
+      - "docker-compose.yml"
+      - "aieng-ui/backend/scripts/docker_smoke.py"
+      - ".github/workflows/docker-smoke.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "docker/**"
+      - "docker-compose.yml"
+      - "aieng-ui/backend/scripts/docker_smoke.py"
+      - ".github/workflows/docker-smoke.yml"
+  schedule:
+    # Nightly at 05:47 UTC.
+    - cron: "47 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: docker-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-all-in-one:
+    name: Build and smoke-test Docker all-in-one image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build -t aieng/workbench:local .
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name aieng-workbench-smoke \
+            -p 8000:8000 \
+            -p 8765:8765 \
+            -v aieng-smoke-data:/data \
+            aieng/workbench:local
+
+      - name: Install Python client deps
+        run: python -m pip install --upgrade pip
+
+      - name: Run Docker smoke
+        run: python aieng-ui/backend/scripts/docker_smoke.py
+
+      - name: Stop and remove container
+        if: always()
+        run: |
+          docker stop aieng-workbench-smoke || true
+          docker rm aieng-workbench-smoke || true

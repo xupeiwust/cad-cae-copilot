@@ -175,6 +175,24 @@ For Docker/full viewer mode, prefer MCP-over-HTTP if your client supports it:
 }
 ```
 
+### Pre-publish local wheel install (no PyPI)
+
+Until both packages are published, you can install the built wheels into a clean
+venv from a local checkout:
+
+```bash
+cd aieng && python -m build
+cd ../aieng-ui/backend && python -m build
+
+python -m venv /tmp/mcp-smoke-venv
+/tmp/mcp-smoke-venv/bin/pip install \
+  ../../aieng/dist/aieng_format-0.1.0a2-py3-none-any.whl \
+  ./dist/aieng_workbench_mcp-0.1.0a2-py3-none-any.whl
+/tmp/mcp-smoke-venv/bin/aieng-workbench-mcp-smoke
+```
+
+On Windows use `\tmp\mcp-smoke-venv\Scripts\python.exe` and `\Scripts\aieng-workbench-mcp-smoke.exe`.
+
 ### Smoke checks
 
 CI-safe packaged smoke (stubbed CAD, no model/API/cloud dependency):

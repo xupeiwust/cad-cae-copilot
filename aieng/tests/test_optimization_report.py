@@ -218,3 +218,96 @@ def test_missing_package_errors(tmp_path: Path):
     res = build_optimization_report(tmp_path / "nope.aieng")
     assert res["status"] == "error"
     assert res["code"] == "package_not_found"
+
+
+# ── Pareto-front surfacing ───────────────────────────────────────────────────
+
+def _pareto_ranking():
+    return {
+        "format": "aieng.design_study.candidate_ranking.v0",
+        "status": "ranked",
+        "objectives": [
+            {"sense": "minimize", "metric": "mass"},
+            {"sense": "minimize", "metric": "max_stress"},
+        ],
+        "best_candidate_id": None,
+        "safe_to_accept": False,
+        "next_action": "request_user_input",
+        "candidates": [
+            {"rank": 1, "candidate_id": "cand_light_weak", "feasibility": "feasible",
+             "confidence": "medium", "score": 0.1, "recommendation": "refine_candidate",
+             "metrics_used": {"mass_kg": 0.7, "max_stress": 190.0},
+             "constraint_violations": [], "objective_delta": {}, "reasons": []},
+            {"rank": 2, "candidate_id": "cand_heavy_strong", "feasibility": "feasible",
+             "confidence": "medium", "score": 0.05, "recommendation": "refine_candidate",
+             "metrics_used": {"mass_kg": 1.1, "max_stress": 120.0},
+             "constraint_violations": [], "objective_delta": {}, "reasons": []},
+            {"rank": 3, "candidate_id": "cand_dominated", "feasibility": "feasible",
+             "confidence": "low", "score": -0.1, "recommendation": "reject_candidate",
+             "metrics_used": {"mass_kg": 1.0, "max_stress": 180.0},
+             "constraint_violations": [], "objective_delta": {}, "reasons": []},
+        ],
+        "pareto_front": {
+            "status": "ok",
+            "objective_metrics": ["mass", "max_stress"],
+            "front_candidate_ids": ["cand_light_weak", "cand_heavy_strong"],
+            "front": [
+                {"candidate_id": "cand_light_weak", "rank": 1,
+                 "objective_values": {"mass": 0.7, "max_stress": 190.0}},
+                {"candidate_id": "cand_heavy_strong", "rank": 2,
+                 "objective_values": {"mass": 1.1, "max_stress": 120.0}},
+            ],
+            "dominated_candidate_ids": ["cand_dominated"],
+            "limitations": ["test limitation"],
+        },
+    }
+
+
+def test_report_surfaces_pareto_front_from_ranking(tmp_path: Path):
+    members = {
+        "analysis/design_study_problem.json": {
+            "format": "aieng.design_study_problem", "schema_version": "0.1", "id": "study_pareto",
+            "variables": [
+                {"id": "wall_t", "path": "parts/0/params/WALL_THICKNESS", "type": "continuous",
+                 "current_value": 3.0, "min_value": 2.0, "max_value": 8.0, "safe_to_modify": True},
+            ],
+            "constraints": [{"id": "stress_limit", "type": "max_stress", "limit": 200.0}],
+            "objectives": [
+                {"sense": "minimize", "metric": "mass"},
+                {"sense": "minimize", "metric": "max_stress"},
+            ],
+        },
+        "analysis/design_study_candidate_ranking.json": _pareto_ranking(),
+        "analysis/design_study_iterations.json": {
+            "format": "aieng.design_study_iterations", "schema_version": "0.1",
+            "iterations": [
+                {"candidate_id": "cand_light_weak", "execution_status": "evaluation_complete"},
+                {"candidate_id": "cand_heavy_strong", "execution_status": "evaluation_complete"},
+                {"candidate_id": "cand_dominated", "execution_status": "evaluation_complete"},
+            ],
+        },
+    }
+    pkg = _write_pkg(tmp_path, members)
+    res = build_optimization_report(pkg)
+    assert res["status"] == "ok"
+
+    doc = _read(pkg, OPTIMIZATION_REPORT_PATH)
+    assert doc["pareto_front"] is not None
+    assert doc["sources_present"]["pareto_front"] is True
+    assert doc["pareto_front"]["status"] == "ok"
+    assert doc["pareto_front"]["objective_metrics"] == ["mass", "max_stress"]
+    assert set(doc["pareto_front"]["front_candidate_ids"]) == {"cand_light_weak", "cand_heavy_strong"}
+    assert doc["pareto_front"]["dominated_candidate_ids"] == ["cand_dominated"]
+    front = doc["pareto_front"]["front"]
+    assert len(front) == 2
+    by_id = {f["candidate_id"]: f for f in front}
+    assert by_id["cand_light_weak"]["objective_values"] == {"mass": 0.7, "max_stress": 190.0}
+    assert by_id["cand_heavy_strong"]["objective_values"] == {"mass": 1.1, "max_stress": 120.0}
+
+
+def test_report_pareto_front_none_for_single_objective(tmp_path: Path):
+    pkg = _write_pkg(tmp_path, _full_members())
+    build_optimization_report(pkg)
+    doc = _read(pkg, OPTIMIZATION_REPORT_PATH)
+    assert doc["pareto_front"] is None
+    assert doc["sources_present"]["pareto_front"] is False

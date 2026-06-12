@@ -918,11 +918,25 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
 
     ranking = _build_ranking(problem, candidates_data, baseline_metrics)
     if pareto_result is not None:
+        objective_metrics = [obj["metric"] for obj in pareto_result["objectives"]]
+        front_embedded: list[dict[str, Any]] = []
+        for item in pareto_result.get("front") or []:
+            values: dict[str, Any] = {}
+            if len(objective_metrics) >= 1 and "value_1" in item:
+                values[objective_metrics[0]] = item["value_1"]
+            if len(objective_metrics) >= 2 and "value_2" in item:
+                values[objective_metrics[1]] = item["value_2"]
+            front_embedded.append({
+                "candidate_id": item.get("candidate_id"),
+                "rank": item.get("rank"),
+                "objective_values": values,
+            })
         ranking["pareto_front"] = {
             "status": pareto_result["status"],
             "front_candidate_ids": pareto_result["front_candidate_ids"],
             "dominated_candidate_ids": pareto_result["dominated_candidate_ids"],
-            "objective_metrics": [obj["metric"] for obj in pareto_result["objectives"]],
+            "objective_metrics": objective_metrics,
+            "front": front_embedded,
             "limitations": pareto_result["limitations"],
         }
         if pareto_result["status"] == "ok":

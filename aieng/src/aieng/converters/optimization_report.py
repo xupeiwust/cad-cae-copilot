@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from aieng import FORMAT_VERSION
+from aieng.converters.optimization_pareto import PARETO_FRONT_PATH
 
 # Source artifacts (all optional — the report records what is present vs missing)
 DESIGN_STUDY_PROBLEM_PATH = "analysis/design_study_problem.json"
@@ -168,6 +169,9 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             opt_iterations_doc = _read_json(zf, OPTIMIZATION_ITERATIONS_PATH, names)
             ranking = _read_json(zf, DESIGN_STUDY_RANKING_PATH, names)
             scoring = _read_json(zf, DESIGN_STUDY_SCORING_REPORT_PATH, names)
+            pareto_front = _read_json(zf, PARETO_FRONT_PATH, names)
+            if not isinstance(pareto_front, dict) and isinstance(ranking, dict):
+                pareto_front = ranking.get("pareto_front")
             recommendation = _read_json(zf, OPTIMIZATION_RECOMMENDATION_PATH, names)
             acceptance = _read_json(zf, DESIGN_STUDY_ACCEPTANCE_PATH, names)
 
@@ -199,6 +203,7 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
         "iterations": bool(iterations),
         "ranking": isinstance(ranking, dict),
         "scoring_report": isinstance(scoring, dict),
+        "pareto_front": isinstance(pareto_front, dict),
         "recommendation": isinstance(recommendation, dict),
         "acceptance": isinstance(acceptance, dict),
     }
@@ -301,6 +306,7 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             ),
             "promotion_mode": acceptance.get("promotion_mode") if isinstance(acceptance, dict) else None,
         },
+        "pareto_front": pareto_front if isinstance(pareto_front, dict) else None,
         "iteration_history": iteration_history,
         "decision_log_entries": decision_entries,
         "sources_present": sources_present,

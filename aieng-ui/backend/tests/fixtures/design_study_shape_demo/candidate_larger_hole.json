@@ -1,0 +1,8 @@
+{
+  "format": "aieng.design_candidate_patch",
+  "candidate_id": "candidate_larger_hole",
+  "reasoning": "Use the next larger standard hole to remove material and reduce mass",
+  "variable_changes": [
+    {"variable_id": "hole_dia", "new_value": 10}
+  ]
+}

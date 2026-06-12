@@ -115,6 +115,21 @@ def test_feasibility_constraint_violation_is_infeasible():
     assert any("stress" in r for r in reasons)
 
 
+def test_feasibility_critique_infeasible_is_infeasible():
+    """Ranking honors evaluation_feasibility == 'infeasible' from cad.critique."""
+    it = _iteration("c1", "evaluation_complete")
+    metrics = {
+        "mass_kg": 1.0,
+        "max_stress": 150.0,
+        "max_deflection": 3.0,
+        "evaluation_feasibility": "infeasible",
+        "evaluation_constraint_violations": ["min_wall_thickness: thinnest dimension is 1.50mm"],
+    }
+    feas, reasons, _ = _classify_feasibility(it, _problem(), metrics)
+    assert feas == "infeasible"
+    assert any("min_wall_thickness" in r for r in reasons)
+
+
 def test_feasibility_satisfied_is_feasible():
     it = _iteration("c1", "evaluation_complete")
     metrics = {"max_stress": 150.0, "max_deflection": 3.0, "mass_kg": 1.0}

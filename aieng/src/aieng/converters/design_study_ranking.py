@@ -154,6 +154,18 @@ def _extract_metrics(
             metrics["evaluation_status"] = evaluation.get("evaluation_status")
         if evaluation.get("feasibility"):
             metrics["evaluation_feasibility"] = evaluation.get("feasibility")
+        # Propagate critique/manufacturing-rule violations from candidate evaluation
+        # so ranking can surface them as constraint violations and reasons.
+        constraint_evidence = evaluation.get("constraint_evidence") or []
+        critique_violations = [
+            f"{e.get('rule')}: {e.get('actual')}"
+            for e in constraint_evidence
+            if isinstance(e, dict)
+            and e.get("status") == "violated"
+            and e.get("source") == "cad.critique"
+        ]
+        if critique_violations:
+            metrics["evaluation_constraint_violations"] = critique_violations
 
     # 3. manifest metrics (geometry execution)
     if manifest:
@@ -342,6 +354,17 @@ def _classify_feasibility(
     if not metrics:
         reasons.append("no metrics available for feasibility assessment")
         return FEAS_UNKNOWN, reasons, warnings
+
+    # Rule 4b: honor critique-driven infeasibility from candidate evaluation.
+    # If the evaluator already marked the candidate infeasible (e.g. manufacturing
+    # rule violation from cad.critique), ranking must not override it.
+    if metrics.get("evaluation_feasibility") == FEAS_INFEASIBLE:
+        critique_violations = metrics.get("evaluation_constraint_violations") or []
+        if critique_violations:
+            reasons.extend(critique_violations)
+        else:
+            reasons.append("candidate evaluation marked infeasible by critique/manufacturing rule")
+        return FEAS_INFEASIBLE, reasons, warnings
 
     # Rule 5-7: evaluate constraints
     constraints = problem.get("constraints") if problem else []
@@ -886,6 +909,10 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         constraint_violations = _evaluate_constraints(
             problem.get("constraints") if problem else [], metrics
         )
+        # Include manufacturing-rule violations surfaced by cad.critique in evaluation.
+        critique_violations = metrics.get("evaluation_constraint_violations") or []
+        if critique_violations:
+            constraint_violations = list(constraint_violations) + list(critique_violations)
 
         all_reasons = list(feas_reasons) + list(score_reasons) + list(feas_warnings)
 

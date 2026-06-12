@@ -1,0 +1,8 @@
+{
+  "format": "aieng.design_candidate_patch",
+  "candidate_id": "candidate_unknown",
+  "reasoning": "Smallest standard hole; awaiting structural metrics",
+  "variable_changes": [
+    {"variable_id": "hole_dia", "new_value": 6}
+  ]
+}

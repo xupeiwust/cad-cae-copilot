@@ -68,6 +68,27 @@ def _wait_for_health(base: str, timeout: float = 60.0, interval: float = 2.0) ->
     raise RuntimeError(f"health endpoint did not become ready in {timeout}s: {last_error}")
 
 
+def _wait_for_stream(
+    url: str,
+    *,
+    timeout: float = 60.0,
+    interval: float = 2.0,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, dict[str, str]]:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            status, response_headers = _open_stream(url, timeout=5.0, headers=headers)
+            if status == 200:
+                return status, response_headers
+            last_error = f"status {status}"
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+        time.sleep(interval)
+    raise RuntimeError(f"stream endpoint did not become ready in {timeout}s: {last_error}")
+
+
 def main() -> int:
     backend_base = "http://127.0.0.1:8000"
     mcp_base = "http://127.0.0.1:8765"
@@ -92,13 +113,14 @@ def main() -> int:
     print("[docker-smoke] Viewer OK")
 
     print("[docker-smoke] Checking MCP SSE endpoint ...")
-    status, headers = _open_stream(
-        f"{mcp_base}/sse",
-        timeout=10.0,
-        headers={"Accept": "text/event-stream"},
-    )
-    if status != 200:
-        print(f"[docker-smoke] FAIL: MCP SSE returned {status}", file=sys.stderr)
+    try:
+        status, headers = _wait_for_stream(
+            f"{mcp_base}/sse",
+            timeout=60.0,
+            headers={"Accept": "text/event-stream"},
+        )
+    except RuntimeError as exc:
+        print(f"[docker-smoke] FAIL: MCP SSE endpoint not ready: {exc}", file=sys.stderr)
         return 1
     content_type = _header(headers, "Content-Type")
     if "text/event-stream" not in content_type.lower():

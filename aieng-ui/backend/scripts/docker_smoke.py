@@ -10,7 +10,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 
@@ -30,6 +29,27 @@ def _open_stream(url: str, *, timeout: float = 10.0, headers: dict[str, str] | N
             return resp.status, dict(resp.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, dict(exc.headers)
+
+
+def _header(headers: dict[str, str], name: str) -> str:
+    """Return a response header case-insensitively.
+
+    GitHub's Linux runner has observed uvicorn/static-file responses arriving as
+    lower-case keys after ``dict(resp.headers)`` conversion, while local runs may
+    preserve title-case. HTTP header names are case-insensitive, so the smoke
+    check must be too.
+    """
+
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return ""
+
+
+def _body_looks_like_html(body: bytes) -> bool:
+    prefix = body[:256].lstrip().lower()
+    return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
 
 
 def _wait_for_health(base: str, timeout: float = 60.0, interval: float = 2.0) -> dict[str, Any]:
@@ -61,9 +81,13 @@ def main() -> int:
     if status != 200:
         print(f"[docker-smoke] FAIL: viewer returned {status}", file=sys.stderr)
         return 1
-    content_type = headers.get("Content-Type", "")
-    if "text/html" not in content_type:
-        print(f"[docker-smoke] FAIL: viewer content-type is {content_type}, expected text/html", file=sys.stderr)
+    content_type = _header(headers, "Content-Type")
+    if "text/html" not in content_type.lower() and not _body_looks_like_html(body):
+        print(
+            "[docker-smoke] FAIL: viewer did not look like HTML; "
+            f"content-type={content_type!r}, headers={headers!r}, body_prefix={body[:120]!r}",
+            file=sys.stderr,
+        )
         return 1
     print("[docker-smoke] Viewer OK")
 
@@ -76,8 +100,8 @@ def main() -> int:
     if status != 200:
         print(f"[docker-smoke] FAIL: MCP SSE returned {status}", file=sys.stderr)
         return 1
-    content_type = headers.get("Content-Type", "")
-    if "text/event-stream" not in content_type:
+    content_type = _header(headers, "Content-Type")
+    if "text/event-stream" not in content_type.lower():
         print(f"[docker-smoke] WARN: MCP SSE content-type is {content_type}, expected text/event-stream")
     print("[docker-smoke] MCP SSE OK")
 

@@ -1,0 +1,59 @@
+name: Packaging smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly at 05:17 UTC — off-peak, avoids the :00 herd.
+    - cron: "17 5 * * *"
+
+concurrency:
+  group: packaging-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  aieng-format-wheel:
+    name: aieng-format installed wheel/sdist smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aieng
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: aieng/pyproject.toml
+
+      - name: Install build + run installed-wheel smoke test
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build pytest
+          python -m pytest tests/test_installed_wheel_smoke.py -q
+
+  aieng-workbench-mcp-wheel:
+    name: aieng-workbench-mcp installed wheel smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aieng-ui/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: aieng-ui/backend/pyproject.toml
+
+      - name: Install build + run installed-MCP smoke test
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build pytest
+          python -m pytest tests/test_mcp_packaging.py::test_installed_mcp_wheel_smoke -q

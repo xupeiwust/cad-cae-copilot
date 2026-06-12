@@ -83,6 +83,7 @@ SCHEMA_FILES = {
     "analysis/optimization_constraints.json": "optimization_constraints.schema.json",
     "analysis/optimization_decision_log.json": "optimization_decision_log.schema.json",
     "analysis/pareto_front.json": "pareto_front.schema.json",
+    "verification/nafems_vv_report.json": "nafems_vv_report.schema.json",
 }
 
 TEXT_RESOURCES = (

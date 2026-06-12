@@ -19,6 +19,7 @@ import json
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 _AIENG_SRC = _WORKSPACE_ROOT / "aieng" / "src"
@@ -85,7 +86,7 @@ def _make_project_with_demo_package(tmp_path: Path) -> tuple[TestClient, str, Pa
     return client, project_id, pkg, data
 
 
-def _read_pkg(pkg: Path, name: str):
+def _read_pkg(pkg: Path, name: str) -> Any:
     with zipfile.ZipFile(pkg) as zf:
         return json.loads(zf.read(name))
 
@@ -363,7 +364,7 @@ def test_shape_study_rejects_manufacturing_rule_candidate(tmp_path: Path) -> Non
 
 def test_shape_study_missing_ranking_blocks_acceptance(tmp_path: Path) -> None:
     """Acceptance without prior ranking returns needs_user_input."""
-    client, project_id, pkg, data = _make_project_with_demo_package(tmp_path)
+    client, project_id, _pkg, _data = _make_project_with_demo_package(tmp_path)
 
     resp = client.post(
         f"/api/projects/{project_id}/design-study/candidates/candidate_good/run",

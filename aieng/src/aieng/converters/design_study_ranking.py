@@ -912,7 +912,7 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         # Include manufacturing-rule violations surfaced by cad.critique in evaluation.
         critique_violations = metrics.get("evaluation_constraint_violations") or []
         if critique_violations:
-            constraint_violations = list(constraint_violations) + list(critique_violations)
+            constraint_violations = constraint_violations + critique_violations
 
         all_reasons = list(feas_reasons) + list(score_reasons) + list(feas_warnings)
 

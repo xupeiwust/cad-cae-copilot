@@ -925,17 +925,22 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
             "objective_metrics": [obj["metric"] for obj in pareto_result["objectives"]],
             "limitations": pareto_result["limitations"],
         }
-        # Replace the generic single-objective limitation with the honest frontier text.
-        ranking["limitations"] = [
-            "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."
-            if "No Pareto optimization or search is performed" in lim
-            else lim
-            for lim in ranking["limitations"]
-        ]
-        if not any("not a proven surface" in lim for lim in ranking["limitations"]):
-            ranking["limitations"].append(
+        if pareto_result["status"] == "ok":
+            # Replace the generic single-objective limitation with the honest frontier text.
+            ranking["limitations"] = [
                 "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."
-            )
+                if "No Pareto optimization or search is performed" in lim
+                else lim
+                for lim in ranking["limitations"]
+            ]
+            if not any("not a proven surface" in lim for lim in ranking["limitations"]):
+                ranking["limitations"].append(
+                    "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."
+                )
+        else:
+            # Preserve the original single-objective limitations when the frontier
+            # could not be computed; the embedded block carries the status/reason.
+            pass
 
     report = _build_scoring_report(ranking, candidates_data)
 

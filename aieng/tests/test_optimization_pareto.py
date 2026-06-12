@@ -249,9 +249,13 @@ def test_compute_pareto_front_is_deterministic():
         {"metric": "stress", "sense": "minimize"},
     ]
     candidates = [
-        _candidate("c2", "feasible", {"mass_kg": 2.0, "max_stress": 100.0}),
-        _candidate("c1", "feasible", {"mass_kg": 1.0, "max_stress": 200.0}),
-        _candidate("c3", "feasible", {"mass_kg": 3.0, "max_stress": 300.0}),
+        # Frontier: two candidates tied on mass, plus a lighter/stronger point.
+        _candidate("c_tie_b", "feasible", {"mass_kg": 1.0, "max_stress": 150.0}),
+        _candidate("c_tie_a", "feasible", {"mass_kg": 1.0, "max_stress": 150.0}),
+        _candidate("c_light", "feasible", {"mass_kg": 0.8, "max_stress": 180.0}),
+        # Dominated candidates.
+        _candidate("c_dom_b", "feasible", {"mass_kg": 2.0, "max_stress": 200.0}),
+        _candidate("c_dom_a", "feasible", {"mass_kg": 1.5, "max_stress": 250.0}),
     ]
     result1 = compute_pareto_front(candidates, objectives)
     result2 = compute_pareto_front(list(reversed(candidates)), objectives)
@@ -259,3 +263,4 @@ def test_compute_pareto_front_is_deterministic():
         item["candidate_id"] for item in result2["front"]
     ]
     assert result1["dominated_candidate_ids"] == result2["dominated_candidate_ids"]
+    assert set(result1["dominated_candidate_ids"]) == {"c_dom_a", "c_dom_b"}

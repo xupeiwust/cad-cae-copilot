@@ -221,7 +221,11 @@ def compute_pareto_front(
         else:
             front_items.append(candidate)
 
-    front_items.sort(key=lambda item: _sort_key_for_front(item, obj_defs))
+    # Deterministic ordering: primary objective, then candidate_id as a stable
+    # tie-breaker.  dominated_ids are sorted for stable JSON output.
+    front_items.sort(key=lambda item: (_sort_key_for_front(item, obj_defs), item["candidate_id"]))
+    dominated_ids.sort()
+
     front: list[dict[str, Any]] = []
     for rank, item in enumerate(front_items, start=1):
         front.append({
@@ -312,6 +316,13 @@ def write_pareto_front_artifact(
     package_path = Path(package_path)
     if not package_path.exists():
         raise FileNotFoundError(f"package not found: {package_path}")
+
+    if pareto_result.get("status") != STATUS_OK:
+        raise ValueError(
+            f"cannot write Pareto artifact with status {pareto_result.get('status')!r}"
+        )
+    if not isinstance(pareto_result.get("objectives"), list) or len(pareto_result["objectives"]) != 2:
+        raise ValueError("Pareto artifact requires exactly two objectives")
 
     doc = _build_pareto_front_document(
         pareto_result,

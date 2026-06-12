@@ -35,6 +35,7 @@ def register_project_workflow_routes(
     _tool_opt_derive_problem_from_cae = tool_handlers.derive_topology_optimization_problem
     _tool_opt_run_topology_optimization = tool_handlers.run_topology_optimization
     _tool_opt_writeback_to_shape_ir = tool_handlers.writeback_topology_optimization
+    _tool_opt_topology_to_sizing = tool_handlers.topology_to_sizing
     _tool_opt_run_assembly_topology_optimization = tool_handlers.run_assembly_topology_optimization
 
     @app.get("/api/adapters/structural/preflight")
@@ -415,6 +416,16 @@ def register_project_workflow_routes(
         Body: {representation?, cell_size?, thickness?, origin?, node_id?}."""
         p = payload or {}
         return _tool_opt_writeback_to_shape_ir({"project_id": project_id, **p}, {})
+
+    @app.post("/api/projects/{project_id}/topology-optimization/sizing")
+    def topology_to_sizing_endpoint(
+        project_id: str,
+        payload: dict[str, Any] = Body(default=None),
+    ) -> dict[str, Any]:
+        """Bridge a 2D contour topology writeback to a sizing study.
+        Body: {}. Writes the full optimization-study envelope and a decision-log
+        chain-linkage entry. Refuses 3D / voxel inputs with needs_user_input."""
+        return _tool_opt_topology_to_sizing({"project_id": project_id, **(payload or {})}, {})
 
     @app.post("/api/projects/{project_id}/assembly/topology-optimization/run")
     def run_assembly_topology_optimization_endpoint(

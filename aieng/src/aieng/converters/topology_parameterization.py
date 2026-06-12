@@ -255,10 +255,6 @@ def parameterize_topology_writeback(package_path: str | Path) -> dict[str, Any]:
     variables_doc["schema_version"] = "0.2"
     variables_doc["provenance"]["created_at"] = _now()
     variables_doc["provenance"]["source"] = "aieng.converters.topology_parameterization"
-    variables_doc["provenance"]["source_artifacts"] = [
-        TOPOLOGY_OPTIMIZATION_PATH,
-        SHAPE_IR_PATH,
-    ]
 
     members = {
         DESIGN_STUDY_PROBLEM_PATH: _dumps(problem),

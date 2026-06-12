@@ -73,6 +73,15 @@
       }
     },
     "candidate_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "topology_to_sizing_chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_artifacts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "design_space_node": {"type": ["string", "null"]},
+        "production_ready": {"type": "boolean"}
+      }
+    },
     "provenance": {"$ref": "#/$defs/provenance"},
     "claim_policy": {"$ref": "#/$defs/claim_policy"}
   },

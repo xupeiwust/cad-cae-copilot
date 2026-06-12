@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import pytest
+import shutil
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+AIENG_ROOT = BACKEND_ROOT.parents[1] / "aieng"
 
 
 def test_pyproject_exposes_branded_mcp_entrypoints() -> None:
@@ -82,3 +87,69 @@ def test_packaged_mcp_smoke_stubbed_cad(tmp_path: Path) -> None:
     assert result["mode"] == "stubbed-cad"
     assert result["approval_block_code"] == "approval_blocked"
     assert "smoke_base_plate" in result["cad_named_parts"]
+
+
+@pytest.mark.skipif(shutil.which("python") is None, reason="python executable not found")
+def test_installed_mcp_wheel_smoke(tmp_path: Path) -> None:
+    """Build both wheels, install into a clean venv, and run the packaged smoke."""
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", "build"],
+        check=True,
+    )
+
+    # Build aieng-format wheel first (MCP dependency).
+    subprocess.run(
+        [sys.executable, "-m", "build", AIENG_ROOT.as_posix()],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    aieng_wheels = sorted((AIENG_ROOT / "dist").glob("*.whl"))
+    assert aieng_wheels, "aieng-format wheel not produced"
+    aieng_wheel = aieng_wheels[-1]
+
+    # Build aieng-workbench-mcp wheel.
+    subprocess.run(
+        [sys.executable, "-m", "build", BACKEND_ROOT.as_posix()],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    mcp_wheels = sorted((BACKEND_ROOT / "dist").glob("*.whl"))
+    assert mcp_wheels, "aieng-workbench-mcp wheel not produced"
+    mcp_wheel = mcp_wheels[-1]
+
+    venv_dir = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", venv_dir.as_posix()], check=True)
+
+    if sys.platform == "win32":
+        python_bin = venv_dir / "Scripts" / "python.exe"
+        smoke_cli = venv_dir / "Scripts" / "aieng-workbench-mcp-smoke.exe"
+    else:
+        python_bin = venv_dir / "bin" / "python"
+        smoke_cli = venv_dir / "bin" / "aieng-workbench-mcp-smoke"
+
+    subprocess.run(
+        [python_bin.as_posix(), "-m", "pip", "install", "--quiet", aieng_wheel.as_posix(), mcp_wheel.as_posix()],
+        check=True,
+    )
+
+    version_check = subprocess.run(
+        [python_bin.as_posix(), "-c", "import aieng_workbench_mcp; print(aieng_workbench_mcp.__version__)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert version_check.stdout.strip().startswith("0.1.0a")
+
+    assert smoke_cli.exists()
+    smoke_result = subprocess.run(
+        [smoke_cli.as_posix()],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert '"status": "ok"' in smoke_result.stdout
+    assert '"approval_block_code": "approval_blocked"' in smoke_result.stdout

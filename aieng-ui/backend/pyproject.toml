@@ -1,9 +1,9 @@
 [project]
 name = "aieng-workbench-mcp"
-version = "0.1.0"
+version = "0.1.0a2"
 description = "Local-installable AIENG Workbench MCP server plus FastAPI backend runtime for CAD/CAE agents."
 readme = {text = "FastAPI backend service for the aieng engineering platform workbench.", content-type = "text/markdown"}
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11"
 authors = [
     {name = "Libin Mao", email = "id256211@ostfalia.de"},
@@ -32,11 +32,10 @@ keywords = [
     "design-automation",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

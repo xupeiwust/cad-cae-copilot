@@ -90,6 +90,7 @@
                 "needs_user_input",
                 "human_approval_required",
                 "advisory_recommendation",
+                "advisory_trade_off_set",
                 "proposer_exhausted",
                 "max_consecutive_failures",
                 "local_refinement",

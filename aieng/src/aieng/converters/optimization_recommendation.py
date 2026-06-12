@@ -30,6 +30,7 @@ OPTIMIZATION_RECOMMENDATION_FORMAT = "aieng.optimization_recommendation"
 # aieng.optimization_artifacts; kept as literals here to avoid a hard import cycle
 # but validated against that set by tests.
 _RC_ADVISORY = "advisory_recommendation"
+_RC_ADVISORY_TRADE_OFF_SET = "advisory_trade_off_set"
 _RC_HUMAN_APPROVAL = "human_approval_required"
 _RC_NEEDS_MORE = "needs_more_evaluation"
 _RC_NEEDS_INPUT = "needs_user_input"
@@ -67,6 +68,24 @@ def _replace_members(package_path: Path, members: dict[str, bytes]) -> None:
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _has_pareto_frontier(ranking: dict[str, Any]) -> bool:
+    """Return True when the ranking carries a usable multi-objective frontier."""
+    if not isinstance(ranking, dict):
+        return False
+    objectives = ranking.get("objectives")
+    if not isinstance(objectives, list) or len(objectives) < 2:
+        return False
+    pareto = ranking.get("pareto_front")
+    if not isinstance(pareto, dict):
+        return False
+    if pareto.get("status") != "ok":
+        return False
+    front_ids = pareto.get("front_candidate_ids")
+    if not isinstance(front_ids, list) or len(front_ids) < 2:
+        return False
+    return True
 
 
 def _fmt_delta(objective_delta: dict[str, Any] | None) -> str | None:
@@ -128,10 +147,103 @@ def explain_recommendation(package_path: str | Path) -> dict[str, Any]:
     objective = ranking.get("objective")
     constraints = ranking.get("constraints") or []
 
+    # ── Pareto-aware advisory path (multi-objective) ────────────────────────
+    if _has_pareto_frontier(ranking):
+        pareto = ranking["pareto_front"]
+        front_ids = list(pareto.get("front_candidate_ids") or [])
+        front_rows = [r for r in (pareto.get("front") or []) if isinstance(r, dict)]
+        n_front = len(front_ids)
+
+        reason_codes: list[str] = [_RC_ADVISORY, _RC_ADVISORY_TRADE_OFF_SET, _RC_NEEDS_INPUT]
+        rationale: list[str] = [
+            f"{n_front} non-dominated candidates form an advisory trade-off set.",
+            "No single global candidate is promoted because the study balances multiple objectives.",
+        ]
+        caveats: list[str] = [
+            "Frontier is advisory and over evaluated candidates only; it is not a proven Pareto surface.",
+            "Acceptance requires a human-chosen frontier point routed through the approval-gated accept step.",
+        ]
+        if isinstance(pareto.get("limitations"), list):
+            caveats.extend(str(lim) for lim in pareto["limitations"])
+
+        # Summarize each frontier point with its objective values.
+        front_summary: list[dict[str, Any]] = [
+            {
+                "candidate_id": r.get("candidate_id"),
+                "rank": r.get("rank"),
+                "objective_values": r.get("objective_values") if isinstance(r.get("objective_values"), dict) else {},
+            }
+            for r in front_rows
+        ]
+
+        headline = (
+            f"Multi-objective study: {n_front} non-dominated candidates form an advisory Pareto trade-off set."
+        )
+
+        # de-dup reason codes preserving order
+        seen: set[str] = set()
+        reason_codes = [rc for rc in reason_codes if not (rc in seen or seen.add(rc))]
+
+        recommendation = {
+            "format": OPTIMIZATION_RECOMMENDATION_FORMAT,
+            "format_version": FORMAT_VERSION,
+            "schema_version": "0.1",
+            "status": "ok",
+            "headline": headline,
+            "recommended_candidate_id": None,
+            "next_action": "request_user_input",
+            "safe_to_accept": False,
+            "advisory_only": True,
+            "requires_human_review": True,
+            "reason_codes": reason_codes,
+            "rationale": rationale,
+            "caveats": caveats,
+            "recommended_candidate": None,
+            "alternatives": front_summary,
+            "pareto_front": {
+                "status": pareto.get("status"),
+                "objective_metrics": pareto.get("objective_metrics"),
+                "front_candidate_ids": front_ids,
+                "front": front_summary,
+                "dominated_candidate_ids": list(pareto.get("dominated_candidate_ids") or []),
+            },
+            "feasibility_summary": {},
+            "objective": objective,
+            "constraints_considered": constraints,
+            "honesty": {
+                "production_sign_off": False,
+                "baseline_modified": False,
+                "solver_executed": False,
+                "advisory_only": True,
+            },
+            "source_artifacts": [
+                p for p in (DESIGN_STUDY_CANDIDATE_RANKING_PATH, DESIGN_STUDY_SCORING_REPORT_PATH)
+                if (p == DESIGN_STUDY_CANDIDATE_RANKING_PATH) or isinstance(scoring, dict)
+            ],
+            "baseline_modified": False,
+            "claim_advancement": "none",
+        }
+
+        _replace_members(pkg, {OPTIMIZATION_RECOMMENDATION_PATH: _dumps(recommendation)})
+
+        return {
+            "status": "ok",
+            "recommended_candidate_id": None,
+            "next_action": "request_user_input",
+            "safe_to_accept": False,
+            "headline": headline,
+            "reason_codes": reason_codes,
+            "advisory_only": True,
+            "requires_human_review": True,
+            "baseline_modified": False,
+            "artifacts": [OPTIMIZATION_RECOMMENDATION_PATH],
+        }
+
+    # ── Single-objective advisory path ──────────────────────────────────────
     best = next((c for c in candidates if c.get("candidate_id") == best_id), None)
-    reason_codes: list[str] = [_RC_ADVISORY]
-    rationale: list[str] = []
-    caveats: list[str] = []
+    reason_codes = [_RC_ADVISORY]
+    rationale = []
+    caveats = []
 
     # ── headline + rationale ────────────────────────────────────────────────
     if best is not None:
@@ -204,7 +316,7 @@ def explain_recommendation(package_path: str | Path) -> dict[str, Any]:
         caveats.append("No ranked candidates were found.")
 
     # de-dup reason codes preserving order
-    seen: set[str] = set()
+    seen = set()
     reason_codes = [rc for rc in reason_codes if not (rc in seen or seen.add(rc))]
 
     alternatives = [

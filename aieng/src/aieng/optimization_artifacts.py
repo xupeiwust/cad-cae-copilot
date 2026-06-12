@@ -64,6 +64,7 @@ OPTIMIZATION_REASON_CODES: frozenset[str] = frozenset(
         "needs_user_input",
         "human_approval_required",
         "advisory_recommendation",
+        "advisory_trade_off_set",
         # Phase 2 — iterative loop (#60)
         "proposer_exhausted",
         "max_consecutive_failures",

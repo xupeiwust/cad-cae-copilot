@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from aieng import FORMAT_VERSION
+from aieng.converters.optimization_pareto import PARETO_FRONT_PATH
 
 # Source artifacts (all optional — the report records what is present vs missing)
 DESIGN_STUDY_PROBLEM_PATH = "analysis/design_study_problem.json"
@@ -51,6 +52,23 @@ def _read_json(zf: zipfile.ZipFile, name: str, names: set[str]) -> Any:
 
 def _dumps(obj: Any) -> bytes:
     return (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _is_usable_pareto_front(pareto: Any) -> bool:
+    """Return True if ``pareto`` has the minimal shape we surface in reports."""
+    if not isinstance(pareto, dict):
+        return False
+    if pareto.get("status") != "ok":
+        return False
+    front_ids = pareto.get("front_candidate_ids")
+    if not isinstance(front_ids, list) or len(front_ids) < 2:
+        return False
+    # Either the standalone artifact uses ``objectives`` or the embedded block
+    # uses ``objective_metrics``.
+    objectives = pareto.get("objectives") or pareto.get("objective_metrics")
+    if not isinstance(objectives, list) or len(objectives) < 2:
+        return False
+    return True
 
 
 def _replace_members(package_path: Path, members: dict[str, bytes]) -> None:
@@ -168,6 +186,14 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             opt_iterations_doc = _read_json(zf, OPTIMIZATION_ITERATIONS_PATH, names)
             ranking = _read_json(zf, DESIGN_STUDY_RANKING_PATH, names)
             scoring = _read_json(zf, DESIGN_STUDY_SCORING_REPORT_PATH, names)
+            pareto_front_artifact = _read_json(zf, PARETO_FRONT_PATH, names)
+            ranking_pareto = ranking.get("pareto_front") if isinstance(ranking, dict) else None
+            if _is_usable_pareto_front(pareto_front_artifact):
+                pareto_front = pareto_front_artifact
+            elif _is_usable_pareto_front(ranking_pareto):
+                pareto_front = ranking_pareto
+            else:
+                pareto_front = None
             recommendation = _read_json(zf, OPTIMIZATION_RECOMMENDATION_PATH, names)
             acceptance = _read_json(zf, DESIGN_STUDY_ACCEPTANCE_PATH, names)
 
@@ -199,6 +225,7 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
         "iterations": bool(iterations),
         "ranking": isinstance(ranking, dict),
         "scoring_report": isinstance(scoring, dict),
+        "pareto_front": isinstance(pareto_front, dict),
         "recommendation": isinstance(recommendation, dict),
         "acceptance": isinstance(acceptance, dict),
     }
@@ -301,6 +328,7 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
             ),
             "promotion_mode": acceptance.get("promotion_mode") if isinstance(acceptance, dict) else None,
         },
+        "pareto_front": pareto_front if isinstance(pareto_front, dict) else None,
         "iteration_history": iteration_history,
         "decision_log_entries": decision_entries,
         "sources_present": sources_present,

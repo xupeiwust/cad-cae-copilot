@@ -26,6 +26,11 @@ from aieng.converters.design_study_execution import (
     DESIGN_STUDY_ITERATIONS_PATH,
     DESIGN_STUDY_REPORT_PATH,
 )
+from aieng.converters.optimization_pareto import (
+    PARETO_FRONT_PATH,
+    compute_pareto_front,
+    write_pareto_front_artifact,
+)
 
 DESIGN_STUDY_CANDIDATE_RANKING_PATH = "analysis/design_study_candidate_ranking.json"
 DESIGN_STUDY_SCORING_REPORT_PATH = "diagnostics/design_study_scoring_report.json"
@@ -175,9 +180,23 @@ def _extract_metrics(
 
 def _has_critical_metrics(problem: dict[str, Any] | None,
                           metrics: dict[str, Any]) -> bool:
-    """Check if we have metrics for the objective."""
+    """Check if we have metrics for the objective(s)."""
     if not problem:
         return False
+
+    # Multi-objective studies use the explicit objectives array.
+    raw_objectives = problem.get("objectives")
+    if isinstance(raw_objectives, list) and raw_objectives:
+        objective_metrics = [
+            obj.get("metric")
+            for obj in raw_objectives
+            if isinstance(obj, dict) and obj.get("metric")
+        ]
+        return bool(objective_metrics) and all(
+            any(k in metrics and metrics[k] is not None for k in _objective_to_metric_keys(metric))
+            for metric in objective_metrics
+        )
+
     objective = problem.get("objective")
     if not isinstance(objective, dict):
         return False
@@ -195,13 +214,26 @@ def _find_missing_metrics(problem: dict[str, Any] | None,
     if not problem:
         return []
 
-    objective = problem.get("objective")
-    if isinstance(objective, dict):
-        metric = objective.get("metric")
-        if metric:
+    # Multi-objective studies use the explicit objectives array.
+    objectives = problem.get("objectives")
+    if isinstance(objectives, list) and objectives:
+        for obj in objectives:
+            if not isinstance(obj, dict):
+                continue
+            metric = obj.get("metric")
+            if not metric:
+                continue
             keys = _objective_to_metric_keys(metric)
             if not any(k in metrics and metrics[k] is not None for k in keys):
                 missing.add(metric)
+    else:
+        objective = problem.get("objective")
+        if isinstance(objective, dict):
+            metric = objective.get("metric")
+            if metric:
+                keys = _objective_to_metric_keys(metric)
+                if not any(k in metrics and metrics[k] is not None for k in keys):
+                    missing.add(metric)
 
     constraints = problem.get("constraints") or []
     for c in constraints:
@@ -662,6 +694,7 @@ def _build_ranking(
         "status": "ranked",
         "problem_id": problem.get("id") if problem else None,
         "objective": problem.get("objective") if problem else None,
+        "objectives": problem.get("objectives") if problem else None,
         "constraints": problem.get("constraints") if problem else [],
         "baseline_metrics": baseline_metrics,
         "candidates": ranked,
@@ -905,7 +938,57 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
             "validation_status": it.get("validation_status"),
         })
 
+    raw_objectives = problem.get("objectives") if problem else None
+    objectives = raw_objectives if isinstance(raw_objectives, list) else []
+    pareto_result = None
+    pareto_artifact_path: str | None = None
+    if len(objectives) == 2:
+        pareto_result = compute_pareto_front(candidates_data, objectives)
+
     ranking = _build_ranking(problem, candidates_data, baseline_metrics)
+    if pareto_result is not None:
+        objective_metrics = [obj["metric"] for obj in pareto_result["objectives"]]
+        front_embedded: list[dict[str, Any]] = []
+        for item in pareto_result.get("front") or []:
+            values: dict[str, Any] = {}
+            if len(objective_metrics) >= 1 and "value_1" in item:
+                values[objective_metrics[0]] = item["value_1"]
+            if len(objective_metrics) >= 2 and "value_2" in item:
+                values[objective_metrics[1]] = item["value_2"]
+            front_embedded.append({
+                "candidate_id": item.get("candidate_id"),
+                "rank": item.get("rank"),
+                "objective_values": values,
+            })
+        ranking["pareto_front"] = {
+            "status": pareto_result["status"],
+            "front_candidate_ids": pareto_result["front_candidate_ids"],
+            "dominated_candidate_ids": pareto_result["dominated_candidate_ids"],
+            "objective_metrics": objective_metrics,
+            "front": front_embedded,
+            "limitations": pareto_result["limitations"],
+        }
+        if pareto_result["status"] == "ok":
+            # Multi-objective mode: there is no single global winner.
+            ranking["best_candidate_id"] = None
+            ranking["safe_to_accept"] = False
+            ranking["next_action"] = NEXT_REQUEST_INPUT
+            # Replace the generic single-objective limitation with the honest frontier text.
+            ranking["limitations"] = [
+                "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."
+                if "No Pareto optimization or search is performed" in lim
+                else lim
+                for lim in ranking["limitations"]
+            ]
+            if not any("not a proven surface" in lim for lim in ranking["limitations"]):
+                ranking["limitations"].append(
+                    "Pareto front is computed advisory-only over evaluated feasible candidates; it is not a proven surface."
+                )
+        else:
+            # Preserve the original single-objective limitations when the frontier
+            # could not be computed; the embedded block carries the status/reason.
+            pass
+
     report = _build_scoring_report(ranking, candidates_data)
 
     members = {
@@ -914,6 +997,24 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
     }
     _rewrite_package_members(package_path, members)
 
+    if pareto_result is not None and pareto_result["status"] == "ok":
+        write_pareto_front_artifact(
+            package_path,
+            pareto_result,
+            study_id=problem.get("id"),
+            design_study_problem_ref=DESIGN_STUDY_PROBLEM_PATH,
+            design_study_problem_id=problem.get("id"),
+        )
+        pareto_artifact_path = PARETO_FRONT_PATH
+
+    artifacts = [
+        DESIGN_STUDY_CANDIDATE_RANKING_PATH,
+        DESIGN_STUDY_SCORING_REPORT_PATH,
+        *evaluation_artifacts,
+    ]
+    if pareto_artifact_path:
+        artifacts.append(pareto_artifact_path)
+
     return {
         "status": "ok",
         "design_study_present": True,
@@ -921,5 +1022,5 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         "best_candidate_id": ranking["best_candidate_id"],
         "safe_to_accept": ranking["safe_to_accept"],
         "next_action": ranking["next_action"],
-        "artifacts": [DESIGN_STUDY_CANDIDATE_RANKING_PATH, DESIGN_STUDY_SCORING_REPORT_PATH] + evaluation_artifacts,
+        "artifacts": artifacts,
     }

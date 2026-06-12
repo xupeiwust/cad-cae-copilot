@@ -370,8 +370,8 @@ def test_execute_build123d_code_with_bd_warehouse_fastener() -> None:
 
 
 def test_execute_build123d_bd_warehouse_clearance_hole_bolt_pattern() -> None:
-    """#35: a bd_warehouse-driven 4x M6 ClearanceHole bolt pattern builds cleanly
-    and the screw carries standard_part ISO semantics.
+    """#35/#147: a bd_warehouse-driven 4x M6 ClearanceHole bolt pattern builds cleanly
+    and the four screws carry standard_part ISO semantics and correct BOM count.
 
     Regression for the documented-but-broken `ClearanceHole(fastener="M6", ...)`
     pattern: ClearanceHole takes a Fastener OBJECT (not a size string) and a
@@ -380,16 +380,21 @@ def test_execute_build123d_bd_warehouse_clearance_hole_bolt_pattern() -> None:
     pytest.importorskip("bd_warehouse")
     from app.cad_generation import _execute_build123d_code, _topology_to_feature_graph
 
+    positions = [(30, 20, 8), (-30, 20, 8), (30, -20, 8), (-30, -20, 8)]
     code = (
         "with BuildPart() as bp:\n"
         "    Box(80, 60, 8, align=(Align.CENTER, Align.CENTER, Align.MIN))\n"
         "    screw = fastener.SocketHeadCapScrew(size='M6-1', length=16, simple=True)\n"
-        "    with Locations((30, 20, 8), (-30, 20, 8), (30, -20, 8), (-30, -20, 8)):\n"
+        f"    with Locations{tuple(positions)}:\n"
         "        fastener.ClearanceHole(fastener=screw, fit='Normal')\n"
         "    plate = bp.part\n"
         "plate.label = 'base_plate'\n"
-        "screw.label = 'mounting_bolt_M6'\n"
-        "result = Compound(children=[plate, screw])\n"
+        "screws = []\n"
+        f"for pos in {positions}:\n"
+        "    s = Pos(*pos) * fastener.SocketHeadCapScrew(size='M6-1', length=16, simple=True)\n"
+        "    s.label = 'mounting_bolt_M6'\n"
+        "    screws.append(s)\n"
+        "result = Compound(children=[plate] + screws)\n"
     )
     step_bytes, stl_bytes, _glb_bytes, topo = _execute_build123d_code(code)
     # the build succeeds (this is the core #35 regression — no AttributeError)
@@ -397,16 +402,23 @@ def test_execute_build123d_bd_warehouse_clearance_hole_bolt_pattern() -> None:
     assert stl_bytes
     assert isinstance(topo, dict) and topo.get("entities")
 
-    # the fastener still carries standard_part ISO semantics
+    # four screws are recognised as standard_part features
     fg = _topology_to_feature_graph(topo, source_code=code)
-    standard = next(
-        (f for f in fg["features"]
-         if f["type"] == "standard_part" and f.get("canonical_type") == "screw"),
-        None,
-    )
-    assert standard is not None, "bd_warehouse screw should yield a standard_part feature"
-    assert standard["source_library"] == "bd_warehouse"
-    assert standard["designation"] == "M6-1"
+    standards = [
+        f for f in fg["features"]
+        if f["type"] == "standard_part" and f.get("canonical_type") == "screw"
+    ]
+    assert len(standards) == 4, "bd_warehouse bolt pattern should yield four standard_part screws"
+    for standard in standards:
+        assert standard["source_library"] == "bd_warehouse"
+        assert standard["designation"] == "M6-1"
+
+    # BOM metadata reflects the count
+    assert "metadata" in fg
+    assert "standard_parts" in fg["metadata"]
+    sp_summary = fg["metadata"]["standard_parts"]
+    assert sp_summary["count"] == 4
+    assert sp_summary["by_canonical_type"].get("screw") == 4
 
 
 def test_execute_build123d_freeform_faces_get_rich_surface_metadata() -> None:

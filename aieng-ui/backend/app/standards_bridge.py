@@ -551,7 +551,7 @@ def generate_bom(
             # Standard part metadata
             if ftype == "standard_part":
                 item["standard_part"] = True
-                item["canonical_type"] = feat.get("intent", {}).get("canonical_type", "")
+                item["canonical_type"] = feat.get("canonical_type") or feat.get("intent", {}).get("canonical_type", "")
                 item["designation"] = feat.get("designation", "")
                 item["source_library"] = feat.get("source_library", "")
             items.append(item)

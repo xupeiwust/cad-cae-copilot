@@ -506,24 +506,6 @@ export const api = {
       body: "{}",
       signal,
     }),
-  runSimulation: (projectId: string, body: Record<string, unknown>) =>
-    request<Record<string, unknown>>(`/api/projects/${projectId}/run-simulation`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  runSimulationStream: async (projectId: string, body: Record<string, unknown>): Promise<Response> => {
-    const response = await fetch(`${API}/api/projects/${projectId}/run-simulation-stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `HTTP ${response.status}`);
-    }
-    return response;
-  },
   getSimulationTools: () =>
     request<Record<string, unknown>>("/api/simulation/tools"),
   chatSetTarget: (projectId: string, message: string) =>

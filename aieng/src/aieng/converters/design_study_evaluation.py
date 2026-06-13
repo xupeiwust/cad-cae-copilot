@@ -356,6 +356,48 @@ def _to_flat_metrics(normalized: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return flat
 
 
+# Load-case-dependent metrics whose controlling case is worth surfacing.
+_LOAD_CASE_METRICS = ("max_stress", "max_deflection", "min_safety_factor")
+
+
+def _load_case_summary(
+    normalized: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Surface which load case produced each controlling metric.
+
+    The worst-case selection in ``_add_metric`` already keeps the controlling
+    load case (``load_case_id``) and records the others under
+    ``alternate_sources``; this lifts that out of ``normalized_metrics`` into a
+    first-class, consumable summary so ranking/recommendation (and the UI) can
+    see *which* load case drove each controlling metric without re-deriving it.
+
+    Missing metrics are simply absent — never fabricated. A metric present
+    without any load-case attribution reports ``controlling_load_case_id: null``
+    honestly rather than inventing one.
+    """
+    summary: list[dict[str, Any]] = []
+    considered: set[str] = set()
+    for canonical in _LOAD_CASE_METRICS:
+        entry = normalized.get(canonical)
+        if not entry or entry.get("value") is None:
+            continue
+        controlling = entry.get("load_case_id")
+        cases: list[str] = [controlling] if controlling else []
+        for alt in entry.get("alternate_sources") or []:
+            alt_id = alt.get("load_case_id") if isinstance(alt, dict) else None
+            if alt_id:
+                cases.append(str(alt_id))
+        considered.update(cases)
+        summary.append({
+            "metric": _flat_key(canonical),
+            "value": entry.get("value"),
+            "unit": entry.get("unit"),
+            "controlling_load_case_id": controlling,
+            "load_cases_considered": sorted(set(cases)),
+        })
+    return summary, sorted(considered)
+
+
 def _constraint_metric(constraint: dict[str, Any], flat: dict[str, Any]) -> tuple[str | None, float | None]:
     ctype = constraint.get("type")
     if ctype == "max_stress":
@@ -604,6 +646,8 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
     else:
         eval_status = "complete"
 
+    load_case_summary, load_cases_considered = _load_case_summary(normalized)
+
     confidence = "high" if flat and not proxy_derived and eval_status == "complete" else ("medium" if flat else "low")
     if proxy_derived:
         confidence = _confidence_min(confidence, "medium")
@@ -620,6 +664,8 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
         "confidence": confidence,
         "metrics": flat,  # backward-compatible flat metrics consumed by PR3 ranking.
         "normalized_metrics": normalized,
+        "load_case_summary": load_case_summary,
+        "load_cases_considered": load_cases_considered,
         "constraint_evidence": constraint_evidence,
         "source_artifact_paths": sorted(set(source_paths)),
         "warnings": sorted(set(warnings)),
@@ -650,6 +696,10 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
             name for name in ("mass_kg", "volume_mm3", "max_stress", "max_deflection", "min_safety_factor")
             if name not in flat
         ],
+        "controlling_load_cases": {
+            item["metric"]: item["controlling_load_case_id"] for item in load_case_summary
+        },
+        "load_cases_considered": load_cases_considered,
         "constraint_summary": {
             "evaluated": len([e for e in constraint_evidence if e.get("status") in ("satisfied", "violated")]),
             "violated": len([e for e in constraint_evidence if e.get("status") == "violated"]),

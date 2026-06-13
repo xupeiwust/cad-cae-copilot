@@ -1235,7 +1235,10 @@ geometry execution manifest, and assembly/proxy evidence — then writes
 `candidates/<id>/diagnostics/evaluation_report.json`. The evaluator normalizes mass, volume,
 max stress, max deflection, minimum safety factor, and optional compliance/stiffness proxies;
 keeps units, load-case ids, and source paths; uses worst-case stress/deflection and lowest
-safety factor across load cases; and marks proxy assembly evidence lower confidence with
+safety factor across load cases, and surfaces which case controlled each metric in a
+first-class `load_case_summary` (per-metric `controlling_load_case_id` + `load_cases_considered`,
+mirrored as `controlling_load_cases` in the report) — a metric absent from every load case stays
+`unknown` and is never fabricated; and marks proxy assembly evidence lower confidence with
 `contact_physics_modeled:false` and `bolt_preload_modeled:false`
 honesty. It never runs a solver, never recompiles geometry, never mutates baseline artifacts,
 and never promotes a candidate.

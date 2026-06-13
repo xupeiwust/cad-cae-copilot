@@ -268,3 +268,100 @@ def test_ranking_builds_candidate_evaluation_from_existing_static_metrics(tmp_pa
     assert cand["candidate_id"] == "c_good"
     assert cand["feasibility"] == "feasible"
     assert cand["score"] > 0
+
+
+# ── multi-load-case evidence ingestion (#201) ─────────────────────────────────
+
+def test_evaluate_candidate_surfaces_per_metric_controlling_load_case(tmp_path: Path):
+    """Different load cases control different metrics; the controlling case +
+    the cases considered are surfaced (not just buried in normalized_metrics)."""
+    computed = {
+        "format": "aieng.cae.computed_metrics",
+        "load_cases": [
+            {"id": "lc_a", "results": [
+                {"result_type": "stress", "metric": "max_von_mises_stress", "max": 190.0, "unit": "MPa"},
+                {"result_type": "displacement", "metric": "max_displacement", "max": 2.0, "unit": "mm"},
+                {"result_type": "safety", "metric": "minimum_safety_factor", "min": 2.4},
+            ]},
+            {"id": "lc_b", "results": [
+                {"result_type": "stress", "metric": "max_von_mises_stress", "max": 150.0, "unit": "MPa"},
+                {"result_type": "displacement", "metric": "max_displacement", "max": 4.0, "unit": "mm"},
+                {"result_type": "safety", "metric": "minimum_safety_factor", "min": 1.7},
+            ]},
+        ],
+    }
+    pkg = _write_pkg(tmp_path, members={
+        "candidates/c1/patch.json": {"candidate_id": "c1"},
+        "candidates/c1/analysis/computed_metrics.json": computed,
+    })
+
+    res = evaluate_design_study_candidate(pkg, "c1")
+    assert res["status"] == "ok"
+    ev = _read(pkg, "candidates/c1/analysis/evaluation.json")
+    # Worst-case across load cases: max for stress/deflection, min for safety.
+    assert ev["metrics"]["max_stress"] == 190.0
+    assert ev["metrics"]["max_deflection"] == 4.0
+    assert ev["metrics"]["min_safety_factor"] == 1.7
+    summary = {item["metric"]: item for item in ev["load_case_summary"]}
+    assert summary["max_stress"]["controlling_load_case_id"] == "lc_a"
+    assert summary["max_deflection"]["controlling_load_case_id"] == "lc_b"
+    assert summary["min_safety_factor"]["controlling_load_case_id"] == "lc_b"
+    assert summary["max_stress"]["load_cases_considered"] == ["lc_a", "lc_b"]
+    assert ev["load_cases_considered"] == ["lc_a", "lc_b"]
+    report = _read(pkg, "candidates/c1/diagnostics/evaluation_report.json")
+    assert report["controlling_load_cases"]["max_stress"] == "lc_a"
+    assert report["controlling_load_cases"]["min_safety_factor"] == "lc_b"
+    assert report["load_cases_considered"] == ["lc_a", "lc_b"]
+
+
+def test_evaluate_candidate_single_load_case_backward_compatible(tmp_path: Path):
+    """A single load case still evaluates, and the summary names that one case."""
+    computed = {
+        "format": "aieng.cae.computed_metrics",
+        "load_cases": [
+            {"id": "lc_only", "results": [
+                {"result_type": "stress", "metric": "max_von_mises_stress", "max": 120.0, "unit": "MPa"},
+                {"result_type": "safety", "metric": "minimum_safety_factor", "min": 2.0},
+            ]},
+        ],
+    }
+    pkg = _write_pkg(tmp_path, members={
+        "candidates/c1/patch.json": {"candidate_id": "c1"},
+        "candidates/c1/analysis/computed_metrics.json": computed,
+    })
+
+    evaluate_design_study_candidate(pkg, "c1")
+    ev = _read(pkg, "candidates/c1/analysis/evaluation.json")
+    assert ev["metrics"]["max_stress"] == 120.0  # unchanged single-case behaviour
+    summary = {item["metric"]: item for item in ev["load_case_summary"]}
+    assert summary["max_stress"]["controlling_load_case_id"] == "lc_only"
+    assert summary["max_stress"]["load_cases_considered"] == ["lc_only"]
+    assert ev["load_cases_considered"] == ["lc_only"]
+
+
+def test_evaluate_candidate_missing_load_case_metric_stays_unknown(tmp_path: Path):
+    """A metric absent from every load case is never fabricated; its constraint
+    stays `unknown` and it is reported missing."""
+    computed = {
+        "format": "aieng.cae.computed_metrics",
+        "load_cases": [
+            {"id": "lc1", "results": [{"result_type": "stress", "metric": "max_von_mises_stress", "max": 100.0, "unit": "MPa"}]},
+            {"id": "lc2", "results": [{"result_type": "stress", "metric": "max_von_mises_stress", "max": 120.0, "unit": "MPa"}]},
+        ],
+    }
+    pkg = _write_pkg(tmp_path, members={
+        "candidates/c1/patch.json": {"candidate_id": "c1"},
+        "candidates/c1/analysis/computed_metrics.json": computed,
+    })
+
+    evaluate_design_study_candidate(pkg, "c1")
+    ev = _read(pkg, "candidates/c1/analysis/evaluation.json")
+    assert ev["metrics"]["max_stress"] == 120.0
+    assert "min_safety_factor" not in ev["metrics"]  # not fabricated
+    metrics_in_summary = {item["metric"] for item in ev["load_case_summary"]}
+    assert "max_stress" in metrics_in_summary
+    assert "min_safety_factor" not in metrics_in_summary
+    sf = [c for c in ev["constraint_evidence"] if c.get("type") == "min_safety_factor"]
+    assert sf and sf[0]["status"] == "unknown"
+    report = _read(pkg, "candidates/c1/diagnostics/evaluation_report.json")
+    assert "min_safety_factor" in report["metrics_missing"]

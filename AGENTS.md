@@ -1235,7 +1235,10 @@ geometry execution manifest, and assembly/proxy evidence — then writes
 `candidates/<id>/diagnostics/evaluation_report.json`. The evaluator normalizes mass, volume,
 max stress, max deflection, minimum safety factor, and optional compliance/stiffness proxies;
 keeps units, load-case ids, and source paths; uses worst-case stress/deflection and lowest
-safety factor across load cases; and marks proxy assembly evidence lower confidence with
+safety factor across load cases, and surfaces which case controlled each metric in a
+first-class `load_case_summary` (per-metric `controlling_load_case_id` + `load_cases_considered`,
+mirrored as `controlling_load_cases` in the report) — a metric absent from every load case stays
+`unknown` and is never fabricated; and marks proxy assembly evidence lower confidence with
 `contact_physics_modeled:false` and `bolt_preload_modeled:false`
 honesty. It never runs a solver, never recompiles geometry, never mutates baseline artifacts,
 and never promotes a candidate.
@@ -1298,6 +1301,17 @@ the full PR1–PR5 pipeline end-to-end using deterministic static/neutral metric
 - Unsafe-data test: only bad candidates → ranking says no viable candidate → acceptance blocked.
 - Missing-ranking test: acceptance without prior ranking → `needs_user_input`.
 
+**Design-history branching + governed promotion (v0).** `design_study_promotion`
+makes lineage first-class: `record_design_branch` records an explicit branch
+(parent + provenance) for an **accepted** candidate; `promote_design_branch`
+performs an **approval-gated** promotion (requires `approval=true` + an existing
+branch) that moves the governed `current_baseline` pointer and records
+who/why/what changed; `rollback_baseline_promotion` restores the previous
+baseline. All lineage lives in `analysis/design_history.json`. Governance only —
+it never overwrites baseline `.aieng` geometry (`baseline_geometry_overwritten:
+false`); acceptance stays advisory until an approved promotion, and **promotion
+is not certification**.
+
 **Surrogate-assisted proposal (v0, advisory).** `optimization_surrogate` fits a
 **deterministic** numpy-only Gaussian-process surrogate (RBF kernel, fixed
 hyperparameters — no scikit-optimize dependency) over **evaluated** candidate
@@ -1311,7 +1325,7 @@ as solver/verification evidence. It degrades honestly (`needs_more_evidence` /
 and never mutates baseline geometry.
 
 Future work: optimizer/search loop, multi-objective Pareto ranking, richer candidate CAE evidence ingestion,
-auto-promotion to baseline, and design-history branching.
+physical baseline-geometry swap on promotion, and multi-branch merge.
 
 **Related docs:**
 - [`aieng/docs/demo_catalog.md`](aieng/docs/demo_catalog.md) — canonical demos and regression flows
@@ -1346,6 +1360,16 @@ fit → `geometry_status` ∈ plausible / warning / invalid / insufficient_data
 (`diagnostics/assembly_connection_geometry.json`). Invalid connections are marked `disabled` +
 `needs_user_input` in the CAE setup draft. Unresolved refs are reported honestly, never invented.
 
+The same pass also writes **pre-solver interface-NSET quality diagnostics**
+(`diagnostics/assembly_mesh_interface_diagnostics.json`): per interface it flags
+`empty_interface` (resolves to no usable faces → empty node set, **blocking**),
+`partial_resolution`, `sparse_interface` (undersampled), `disconnected_interface`
+(faces form >1 region), and `over_broad_interface` (spans the part), each with
+actionable remesh/re-pick guidance. `safe_for_solver` is false when any interface
+is blocking, and empty interfaces add a `needs_user_input` entry to the CAE draft
+(same gate as invalid connections). It is a geometry-coverage proxy — it meshes
+nothing, runs no solver, and is not a mesh-convergence guarantee.
+
 Assembly CAE v0 then produces a **solver-neutral simplified proxy model**:
 `simulation/assembly_cae_model.json` plus
 `diagnostics/assembly_cae_model_diagnostics.json`. Solver deck generation is optional and
@@ -1356,6 +1380,17 @@ also optional; v0 normalizes generic/fake assembly results when provided, otherw
 `diagnostics/assembly_solver_execution.json` with `solver_executed:false`. Assembly results map
 to parts/interfaces/connections/source_ir_node with confidence in
 `analysis/assembly_result_map.json` and `diagnostics/assembly_result_mapping.json`.
+
+**Bolt preload (contract + honest report).** A bolted connection MAY carry an
+explicit `preload` block (`axial_force_n`, optional `method`/`fastener_id`) in the
+Assembly IR; it is **never inferred** from a bolt designation or BOM/standard-part
+entry. `diagnostics/assembly_bolt_preload.json` records, per bolted connection,
+the preload intent + whether it is actually modeled, linked to connection /
+interface / fastener IDs. In v0 the simplified proxy deck cannot apply pretension
+(no solid bolt geometry / `*PRE-TENSION SECTION`), so intents are reported
+`unsupported` and `bolt_preload_modeled` stays **false** — it flips true only when
+a connection's preload is actually represented in a generated deck, never from
+intent alone. No fatigue / loosening / torque-to-preload claim is implied.
 
 Assembly-aware topology optimization v0 is **explicit execution only**:
 setup writes `analysis/assembly_topopt_problem.json`,
@@ -1402,6 +1437,18 @@ overwritten. Run it with:
 All outputs keep `production_ready:false`, `contact_physics_modeled:false`, and
 `bolt_preload_modeled:false`. Future work: real nonlinear contact modeling, bolt preload,
 assembly meshing improvements, and simultaneous multi-part topology/size optimization.
+
+**Advisory multi-part topopt problem (v0).** `write_multipart_topopt_problem(package_path,
+selected_part_ids=[...])` (and the pure `derive_multipart_topopt_problem`) derive a
+**reviewable** multi-part topology/size problem for **explicitly selected** design parts →
+`analysis/assembly_multipart_topopt_problem.json` + `diagnostics/assembly_multipart_topopt_derivation.json`.
+It preserves frozen/reference/fastener/load-source/fixture parts (marked non-design), derives
+per-part design spaces + topology/sizing variables, and records coupled connections + a recorded
+(not executed) objective. It **refuses honestly** (`status:needs_user_input`) on no selection,
+unknown/non-optimizable/ambiguous (design-and-frozen) parts, or a design-design coupling whose
+interface constraints are missing/unresolved. Advisory only: **no optimizer execution, no
+auto-acceptance, no baseline promotion** (`optimizer_executed:false`, `baseline_modified:false`,
+`production_grade_simultaneous_optimization:false`).
 
 ---
 

@@ -1,0 +1,151 @@
+"""Pre-solver assembly mesh-interface NSET quality diagnostics (#200)."""
+from __future__ import annotations
+
+import json
+import zipfile
+from pathlib import Path
+
+from aieng.converters.assembly_interface_resolution import (
+    ASSEMBLY_CAE_DRAFT_PATH,
+    ASSEMBLY_MESH_INTERFACE_DIAGNOSTICS_PATH,
+    diagnose_mesh_interfaces,
+    resolve_and_validate_assembly_geometry,
+    resolve_assembly_interfaces,
+)
+
+
+def _face(fid: str, bbox: list[float], *, area: float = 100.0) -> dict:
+    return {"id": fid, "type": "face", "bounding_box": bbox, "normal": [0, 0, 1.0], "area": area}
+
+
+def _assembly(refs: dict, *, part_id: str = "p") -> dict:
+    return {
+        "format": "aieng.assembly_ir",
+        "schema_version": "0.1",
+        "unit": "mm",
+        "parts": [{"id": part_id, "transform": {"translation": [0, 0, 0], "unit": "mm"}}],
+        "interfaces": [{"id": "if1", "part_id": part_id, "semantic_role": "mounting_face", "topology_refs": refs}],
+        "connections": [],
+    }
+
+
+def _diag(asm: dict, topo_by_part: dict) -> dict:
+    resolution = resolve_assembly_interfaces(asm, topo_by_part)
+    return diagnose_mesh_interfaces(asm, topo_by_part, resolution)
+
+
+def _rec(diag: dict) -> dict:
+    return diag["interfaces"][0]
+
+
+def _codes(rec: dict) -> set[str]:
+    return {f["code"] for f in rec["findings"]}
+
+
+# Large part body so interfaces aren't flagged over-broad unless they truly span it.
+_BIG_BODY = {"id": "p_body", "type": "solid", "bounding_box": [0, 0, 0, 200, 200, 5]}
+
+
+def test_healthy_interface_is_ok_and_solver_safe() -> None:
+    topo = {"p": {
+        "p_body": _BIG_BODY,
+        "f1": _face("f1", [0, 0, 5, 10, 10, 5]),
+        "f2": _face("f2", [10, 0, 5, 20, 10, 5]),  # adjacent -> one region
+    }}
+    diag = _diag(_assembly({"face_ids": ["f1", "f2"]}), topo)
+    rec = _rec(diag)
+    assert rec["status"] == "ok"
+    assert rec["findings"] == []
+    assert rec["face_count"] == 2
+    assert rec["region_count"] == 1
+    assert diag["safe_for_solver"] is True
+    assert diag["honesty"]["solver_executed"] is False
+
+
+def test_empty_interface_blocks_solver() -> None:
+    topo = {"p": {"p_body": _BIG_BODY}}  # 'ghost' face absent
+    diag = _diag(_assembly({"face_ids": ["ghost"]}), topo)
+    rec = _rec(diag)
+    assert rec["status"] == "blocking"
+    assert "empty_interface" in _codes(rec)
+    assert diag["safe_for_solver"] is False
+    assert diag["blocking_interfaces"] == ["if1"]
+
+
+def test_single_face_interface_is_sparse_warning() -> None:
+    topo = {"p": {"p_body": _BIG_BODY, "f1": _face("f1", [0, 0, 5, 10, 10, 5])}}
+    rec = _rec(_diag(_assembly({"face_ids": ["f1"]}), topo))
+    assert rec["status"] == "warning"
+    assert "sparse_interface" in _codes(rec)
+
+
+def test_disconnected_interface_regions_warn() -> None:
+    topo = {"p": {
+        "p_body": _BIG_BODY,
+        "f1": _face("f1", [0, 0, 5, 10, 10, 5]),
+        "f2": _face("f2", [150, 150, 5, 160, 160, 5]),  # far from f1 -> separate region
+    }}
+    rec = _rec(_diag(_assembly({"face_ids": ["f1", "f2"]}), topo))
+    assert "disconnected_interface" in _codes(rec)
+    assert rec["region_count"] == 2
+    assert rec["status"] == "warning"
+
+
+def test_over_broad_interface_warns() -> None:
+    # Interface face spans essentially the whole part footprint.
+    topo = {"p": {
+        "p_body": {"id": "p_body", "type": "solid", "bounding_box": [0, 0, 0, 100, 100, 10]},
+        "f_big": _face("f_big", [0, 0, 10, 100, 100, 10], area=10000.0),
+    }}
+    rec = _rec(_diag(_assembly({"face_ids": ["f_big"]}), topo))
+    assert "over_broad_interface" in _codes(rec)
+    assert rec["status"] == "warning"
+
+
+def test_partial_resolution_warns_without_blocking() -> None:
+    topo = {"p": {
+        "p_body": _BIG_BODY,
+        "f1": _face("f1", [0, 0, 5, 10, 10, 5]),
+        "f2": _face("f2", [10, 0, 5, 20, 10, 5]),
+    }}
+    # one ref resolves, one is missing -> partial (still has usable faces)
+    rec = _rec(_diag(_assembly({"face_ids": ["f1", "f2", "ghost"]}), topo))
+    assert rec["status"] == "warning"
+    assert "partial_resolution" in _codes(rec)
+    assert "empty_interface" not in _codes(rec)
+
+
+def test_orchestrator_writes_diagnostics_and_blocks_empty(tmp_path: Path) -> None:
+    """No topology in the package -> interfaces are unresolved -> empty -> the
+    mesh diagnostics artifact is written and the CAE draft is gated."""
+    asm = {
+        "format": "aieng.assembly_ir",
+        "schema_version": "0.1",
+        "unit": "mm",
+        "parts": [
+            {"id": "a", "role": "design_part", "transform": {"translation": [0, 0, 0], "unit": "mm"}},
+            {"id": "b", "role": "reference_part", "transform": {"translation": [0, 0, 10], "unit": "mm"}},
+        ],
+        "interfaces": [
+            {"id": "if_a", "part_id": "a", "semantic_role": "mounting_face", "topology_refs": {"face_ids": ["a_top"]}},
+            {"id": "if_b", "part_id": "b", "semantic_role": "support_face", "topology_refs": {"face_ids": ["b_bot"]}},
+        ],
+        "connections": [{"id": "c1", "type": "rigid_tie", "part_a": "a", "part_b": "b",
+                          "interface_a": "if_a", "interface_b": "if_b", "behavior": ["load_transfer"]}],
+        "analysis_intent": {"design_parts": ["a"], "frozen_parts": ["b"]},
+    }
+    pkg = tmp_path / "asm.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("assembly/assembly_ir.json", json.dumps(asm))
+
+    res = resolve_and_validate_assembly_geometry(pkg)
+    assert res["assembly_present"] is True
+    assert res["mesh_interface_safe_for_solver"] is False
+
+    with zipfile.ZipFile(pkg) as zf:
+        diag = json.loads(zf.read(ASSEMBLY_MESH_INTERFACE_DIAGNOSTICS_PATH))
+        draft = json.loads(zf.read(ASSEMBLY_CAE_DRAFT_PATH))
+    assert diag["safe_for_solver"] is False
+    assert set(diag["blocking_interfaces"]) == {"if_a", "if_b"}
+    assert draft["status"] == "needs_user_input"
+    assert any("empty/unusable node set" in m for m in draft.get("needs_user_input", []))

@@ -57,6 +57,31 @@ def test_wait_for_stream_retries_until_ready(monkeypatch) -> None:
     assert attempts["count"] == 3
 
 
+def test_wait_for_stream_retries_on_non_200_status(monkeypatch) -> None:
+    docker_smoke = _load_docker_smoke_module()
+    attempts = {"count": 0}
+
+    def fake_open_stream(url: str, *, timeout: float, headers: dict[str, str] | None):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            return 503, {}
+        return 200, {"content-type": "text/event-stream"}
+
+    monkeypatch.setattr(docker_smoke, "_open_stream", fake_open_stream)
+    monkeypatch.setattr(docker_smoke.time, "sleep", lambda _seconds: None)
+
+    status, headers = docker_smoke._wait_for_stream(
+        "http://127.0.0.1:8765/sse",
+        timeout=1.0,
+        interval=0.01,
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert status == 200
+    assert headers["content-type"] == "text/event-stream"
+    assert attempts["count"] == 3
+
+
 def test_wait_for_stream_timeout_raises_runtime_error(monkeypatch) -> None:
     docker_smoke = _load_docker_smoke_module()
 

@@ -414,12 +414,18 @@ def persist_verify(project_id: str, backend_base: str = "http://127.0.0.1:8000")
     _wait_for_health(backend_base)
 
     def _matches(status: int, _h: dict[str, str], body: bytes) -> bool:
+        # GET /api/projects/{id} returns a package summary ({"project": {...}}),
+        # not the bare project dict — and it 404s (via get_project) when the
+        # project is missing. So a 200 whose summary carries the same id proves
+        # the project survived the restart.
         if status != 200:
             return False
         try:
-            return str(json.loads(body).get("id")) == str(project_id)
+            data = json.loads(body)
         except json.JSONDecodeError:
             return False
+        found = data.get("id") or (data.get("project") or {}).get("id")
+        return str(found) == str(project_id)
 
     print(f"[docker-smoke] persist: reading project {project_id} back after restart ...", file=sys.stderr)
     try:

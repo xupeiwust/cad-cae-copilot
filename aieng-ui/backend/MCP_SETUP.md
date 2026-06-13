@@ -275,7 +275,23 @@ after changes.
 
 ### Docker all-in-one (recommended packaged viewer mode)
 
-Build and run from the repository root:
+**Quick start — pull the published image (no local build):**
+
+```bash
+docker pull ghcr.io/armpro24-blip/aieng-workbench:latest
+docker run --rm -it \
+  -p 8000:8000 \
+  -p 8765:8765 \
+  -v aieng-data:/data \
+  ghcr.io/armpro24-blip/aieng-workbench:latest
+```
+
+The alpha image is published to GHCR from `main` after the Docker smoke passes,
+tagged `latest` plus an immutable `sha-<commit>` tag (pin the sha tag for
+reproducibility). It is **alpha-scoped and not production-certified**.
+
+**Contributor path — build locally from source** (use this when developing the
+image or running an unmerged branch):
 
 ```bash
 docker build -t aieng/workbench:local .
@@ -286,7 +302,7 @@ docker run --rm -it \
   aieng/workbench:local
 ```
 
-The container starts:
+Either way, the container starts:
 
 - the FastAPI backend at `http://localhost:8000`,
 - the built React workbench at `http://localhost:8000/app/`,

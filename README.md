@@ -72,15 +72,23 @@ Inspect the generated model, named parts, verification results, and stable
 Packages the backend, built viewer, MCP HTTP server, build123d / OpenCASCADE
 dependencies, and CalculiX into one container.
 
-**Quick start with Docker Compose (recommended):**
+**Quick start — pull the published image (no local build):**
+
+```bash
+docker pull ghcr.io/armpro24-blip/aieng-workbench:latest
+docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data ghcr.io/armpro24-blip/aieng-workbench:latest
+```
+
+The alpha image is published to GHCR from `main` after the Docker smoke passes
+(`latest` + an immutable `sha-<commit>` tag). Alpha-scoped, not
+production-certified.
+
+**Contributor path — build locally from source** (Docker Compose or manual,
+for developing the image or running an unmerged branch):
 
 ```bash
 docker compose up -d
-```
-
-**Or build and run manually:**
-
-```bash
+# or:
 docker build -t aieng/workbench:local .
 docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data aieng/workbench:local
 ```

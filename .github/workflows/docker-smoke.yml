@@ -30,6 +30,9 @@ jobs:
   docker-all-in-one:
     name: Build and smoke-test Docker all-in-one image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # required for the GHCR publish step (push-to-main only)
     steps:
       - uses: actions/checkout@v4
 
@@ -95,6 +98,32 @@ jobs:
         run: |
           python aieng-ui/backend/scripts/docker_smoke.py persist-verify \
             --project-id "$PERSIST_PROJECT_ID"
+
+      # ── GHCR publish (alpha) ────────────────────────────────────────────────
+      # Only on a push to main (and schedule / manual dispatch on main) — never
+      # on pull requests. Reached only after the build + full smoke above pass,
+      # so a published image is always a smoke-validated image. Auth uses the
+      # built-in GITHUB_TOKEN (no extra secrets); the image is alpha-scoped and
+      # not production-certified.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push image to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/aieng-workbench"
+          SHA_TAG="sha-$(echo "${GITHUB_SHA}" | cut -c1-12)"
+          docker tag aieng/workbench:local "${IMAGE}:latest"
+          docker tag aieng/workbench:local "${IMAGE}:${SHA_TAG}"
+          docker push "${IMAGE}:latest"
+          docker push "${IMAGE}:${SHA_TAG}"
+          echo "Published ${IMAGE}:latest and ${IMAGE}:${SHA_TAG}"
 
       - name: Dump container logs on failure
         if: failure()

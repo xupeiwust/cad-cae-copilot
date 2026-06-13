@@ -634,3 +634,82 @@ def test_get_simulation_tools_endpoint(tmp_path: Path) -> None:
     assert "calculix" in data
     assert "ready" in data
     assert "missing" in data
+
+
+# ── streaming endpoint (run_simulation_stream) ────────────────────────────────
+#
+# These pin the streaming path, which previously had no coverage and had
+# drifted from the sync path (notably it skipped the stale-topology guard).
+# Both REST entry points now share _run_simulation_core, so these assert parity.
+
+def _parse_sse_events(text: str) -> list[dict[str, Any]]:
+    """Parse `data: {json}` lines out of a buffered SSE response body."""
+    events: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if line.startswith("data: "):
+            events.append(json.loads(line[len("data: "):]))
+    return events
+
+
+def test_run_simulation_stream_aborts_on_topology_hash_mismatch(tmp_path: Path) -> None:
+    """Parity guard: the streaming path must enforce the stale-topology check
+    that the sync path enforces — previously it did not, so it could solve
+    against stale face references and stream a wrong result as success."""
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    project_id, pkg_path = _make_project(settings, "sim-stream-stale", "sim_stream_stale.aieng")
+    _build_test_package_with_hash(pkg_path, topology_hash="deadbeef")
+
+    with patch("app.simulation_runner._gmsh_available", return_value=True), \
+         patch("app.simulation_runner._find_ccx", return_value="/usr/bin/ccx"), \
+         patch("app.simulation_runner._mesh_with_gmsh", side_effect=_fake_mesh), \
+         patch("app.simulation_runner._run_calculix", side_effect=_fake_calculix) as ccx:
+        resp = client.post(
+            f"/api/projects/{project_id}/run-simulation-stream",
+            json={"confirmed": True},
+        )
+
+    events = _parse_sse_events(resp.text)
+    error_events = [e for e in events if e["step"] == "error"]
+    assert error_events, f"expected a stale-topology error event, got {events}"
+    assert error_events[-1]["code"] == "stale_topology_references"
+    # The solver must NOT have been invoked.
+    ccx.assert_not_called()
+
+
+def test_run_simulation_stream_full_mock(tmp_path: Path) -> None:
+    """Streaming success path emits progress steps then a terminal done event
+    carrying the same result shape as the sync path."""
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=True)
+
+    project_id, pkg_path = _make_project(settings, "sim-stream-full", "sim_stream_full.aieng")
+    _build_test_package(pkg_path)
+
+    with patch("app.simulation_runner._gmsh_available", return_value=True), \
+         patch("app.simulation_runner._find_ccx", return_value="/usr/bin/ccx"), \
+         patch("app.simulation_runner._mesh_with_gmsh", side_effect=_fake_mesh), \
+         patch("app.simulation_runner._run_calculix", side_effect=_fake_calculix), \
+         patch("app.simulation_runner._extract_metrics", return_value=_MOCK_FRD_METRICS):
+        resp = client.post(
+            f"/api/projects/{project_id}/run-simulation-stream",
+            json={"confirmed": True},
+        )
+
+    events = _parse_sse_events(resp.text)
+    steps = [e["step"] for e in events]
+    assert "meshing" in steps
+    assert "solving" in steps
+    done = [e for e in events if e["step"] == "done"]
+    assert done, f"expected a done event, got {steps}"
+    result = done[-1]["result"]
+    assert result["status"] == "success"
+    assert result["von_mises_max_mpa"] == pytest.approx(45.6)
+    assert "simulation/results_summary.json" in result["written_artifacts"]
+
+    # Artifacts were written to the package, same as the sync path.
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        assert "simulation/results_summary.json" in zf.namelist()

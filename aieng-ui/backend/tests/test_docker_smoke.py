@@ -55,3 +55,72 @@ def test_wait_for_stream_retries_until_ready(monkeypatch) -> None:
     assert status == 200
     assert headers["content-type"] == "text/event-stream"
     assert attempts["count"] == 3
+
+
+def test_wait_for_stream_timeout_raises_runtime_error(monkeypatch) -> None:
+    docker_smoke = _load_docker_smoke_module()
+
+    def fake_open_stream(url: str, *, timeout: float, headers: dict[str, str] | None):
+        raise ConnectionResetError("connection reset by peer")
+
+    monkeypatch.setattr(docker_smoke, "_open_stream", fake_open_stream)
+    monkeypatch.setattr(docker_smoke.time, "sleep", lambda _seconds: None)
+
+    try:
+        docker_smoke._wait_for_stream(
+            "http://127.0.0.1:8765/sse",
+            timeout=0.05,
+            interval=0.01,
+        )
+    except RuntimeError as exc:
+        msg = str(exc)
+        assert "stream endpoint did not become ready" in msg
+        assert "connection reset by peer" in msg
+    else:
+        raise AssertionError("expected RuntimeError was not raised")
+
+
+def test_open_stream_success(monkeypatch) -> None:
+    docker_smoke = _load_docker_smoke_module()
+
+    class _FakeResponse:
+        status = 200
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def fake_urlopen(req, *, timeout):
+        return _FakeResponse()
+
+    monkeypatch.setattr(docker_smoke.urllib.request, "urlopen", fake_urlopen)
+
+    status, headers = docker_smoke._open_stream("http://127.0.0.1:8765/sse")
+    assert status == 200
+    assert headers["Content-Type"] == "text/event-stream"
+
+
+def test_open_stream_http_error(monkeypatch) -> None:
+    docker_smoke = _load_docker_smoke_module()
+
+    class _FakeErrorResponse:
+        code = 503
+        headers = {"Content-Type": "text/plain"}
+
+        def read(self):
+            return b"Service Unavailable"
+
+    def fake_urlopen(req, *, timeout):
+        raise docker_smoke.urllib.error.HTTPError(
+            "http://127.0.0.1:8765/sse", 503, "Service Unavailable",
+            {"Content-Type": "text/plain"}, None
+        )
+
+    monkeypatch.setattr(docker_smoke.urllib.request, "urlopen", fake_urlopen)
+
+    status, headers = docker_smoke._open_stream("http://127.0.0.1:8765/sse")
+    assert status == 503
+    assert headers["Content-Type"] == "text/plain"

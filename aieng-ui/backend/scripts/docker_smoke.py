@@ -6,11 +6,21 @@ server on port 8765. Exits non-zero if any check fails.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Callable
+
+# Canonical MCP-facing tool names (runtime registers dotted names; the MCP
+# server exposes them with dots replaced by underscores).
+_CANONICAL_MCP_TOOLS = (
+    "aieng_agent_readme",
+    "aieng_list_projects",
+    "cad_execute_build123d",
+    "cae_prepare_solver_run",
+)
 
 
 def _request(
@@ -168,6 +178,104 @@ def _wait_for_request(
     raise RuntimeError(f"request did not become ready in {timeout}s: {last_error}")
 
 
+def _result_text(result: Any) -> str:
+    """Flatten an MCP call_tool result to searchable text."""
+    parts: list[str] = []
+    for block in getattr(result, "content", None) or []:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        parts.append(repr(structured))
+    if not parts:
+        parts.append(repr(result))
+    return "\n".join(parts)
+
+
+async def _mcp_protocol_checks(mcp_base: str) -> tuple[bool, str]:
+    """Real MCP handshake over the container SSE endpoint.
+
+    Proves the server is *usable* (not just that /sse is reachable):
+    initialize + tools/list + canonical tools + a read-only call + the
+    managed-approval fail-safe. Returns (ok, category) so the caller can emit a
+    failure message that distinguishes protocol / missing-tools / read-only /
+    approval-surface failures.
+    """
+    try:
+        from mcp import ClientSession
+        from mcp.client.sse import sse_client
+    except Exception as exc:  # noqa: BLE001
+        print(f"[docker-smoke] FAIL: mcp client library not installed: {exc}", file=sys.stderr)
+        return False, "setup"
+
+    sse_url = f"{mcp_base}/sse"
+    # The /sse reachability was already retried in main(); a couple of connect
+    # retries here cover the brief window before the session endpoint is ready.
+    last_error = ""
+    for attempt in range(5):
+        try:
+            async with sse_client(sse_url) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await asyncio.wait_for(session.initialize(), timeout=30)
+                    print("[docker-smoke] MCP initialize OK")
+
+                    listed = await asyncio.wait_for(session.list_tools(), timeout=30)
+                    names = {tool.name for tool in listed.tools}
+                    print(f"[docker-smoke] MCP tools/list returned {len(names)} tools")
+                    missing = [t for t in _CANONICAL_MCP_TOOLS if t not in names]
+                    if missing:
+                        print(
+                            f"[docker-smoke] FAIL: tools/list missing canonical tools: {missing}",
+                            file=sys.stderr,
+                        )
+                        return False, "missing_tools"
+
+                    # Read-only call must succeed and return content.
+                    readme = await asyncio.wait_for(
+                        session.call_tool("aieng_agent_readme", {}), timeout=30
+                    )
+                    if getattr(readme, "isError", False) or not _result_text(readme).strip():
+                        print(
+                            "[docker-smoke] FAIL: read-only aieng_agent_readme returned no content",
+                            file=sys.stderr,
+                        )
+                        return False, "read_only"
+                    print("[docker-smoke] MCP read-only call OK")
+
+                    # Managed-approval fail-safe: with no viewer connected, a
+                    # gated call must fail safe rather than execute or stall.
+                    # Clear the cae guide gate first so the approval gate is what
+                    # we actually exercise.
+                    await asyncio.wait_for(
+                        session.call_tool("aieng_guide", {"topic": "cae"}), timeout=30
+                    )
+                    gated = await asyncio.wait_for(
+                        session.call_tool(
+                            "cae_run_solver", {"project_id": "docker-smoke-no-such-project"}
+                        ),
+                        timeout=30,
+                    )
+                    gated_text = _result_text(gated)
+                    if "approval_surface_unavailable" not in gated_text:
+                        print(
+                            "[docker-smoke] FAIL: gated cae_run_solver did not fail safe with "
+                            f"approval_surface_unavailable. Got: {gated_text[:500]}",
+                            file=sys.stderr,
+                        )
+                        return False, "approval_surface"
+                    print("[docker-smoke] MCP managed-approval fail-safe OK")
+                    return True, "ok"
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+            time.sleep(2)
+    print(
+        f"[docker-smoke] FAIL: MCP protocol handshake failed: {last_error}",
+        file=sys.stderr,
+    )
+    return False, "protocol"
+
+
 def main() -> int:
     backend_base = "http://127.0.0.1:8000"
     mcp_base = "http://127.0.0.1:8765"
@@ -208,6 +316,12 @@ def main() -> int:
     if "text/event-stream" not in content_type.lower():
         print(f"[docker-smoke] WARN: MCP SSE content-type is {content_type}, expected text/event-stream")
     print("[docker-smoke] MCP SSE OK")
+
+    print("[docker-smoke] Running MCP protocol handshake over the container endpoint ...")
+    ok, _category = asyncio.run(_mcp_protocol_checks(mcp_base))
+    if not ok:
+        return 1
+    print("[docker-smoke] MCP protocol checks OK")
 
     print("[docker-smoke] Creating project via backend API ...")
     import json

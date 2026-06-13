@@ -63,7 +63,7 @@ jobs:
           exit 1
 
       - name: Install Python client deps
-        run: python -m pip install --upgrade pip
+        run: python -m pip install --upgrade pip "mcp>=1.0"
 
       - name: Run Docker smoke
         run: python aieng-ui/backend/scripts/docker_smoke.py

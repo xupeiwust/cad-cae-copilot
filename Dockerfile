@@ -59,4 +59,7 @@ WORKDIR /opt/aieng/aieng-ui/backend
 EXPOSE 8000 8765
 VOLUME ["/data"]
 
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=6 \
+    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/aieng/docker/entrypoint.sh"]

@@ -1298,8 +1298,19 @@ the full PR1–PR5 pipeline end-to-end using deterministic static/neutral metric
 - Unsafe-data test: only bad candidates → ranking says no viable candidate → acceptance blocked.
 - Missing-ranking test: acceptance without prior ranking → `needs_user_input`.
 
+**Design-history branching + governed promotion (v0).** `design_study_promotion`
+makes lineage first-class: `record_design_branch` records an explicit branch
+(parent + provenance) for an **accepted** candidate; `promote_design_branch`
+performs an **approval-gated** promotion (requires `approval=true` + an existing
+branch) that moves the governed `current_baseline` pointer and records
+who/why/what changed; `rollback_baseline_promotion` restores the previous
+baseline. All lineage lives in `analysis/design_history.json`. Governance only —
+it never overwrites baseline `.aieng` geometry (`baseline_geometry_overwritten:
+false`); acceptance stays advisory until an approved promotion, and **promotion
+is not certification**.
+
 Future work: optimizer/search loop, multi-objective Pareto ranking, richer candidate CAE evidence ingestion,
-auto-promotion to baseline, and design-history branching.
+physical baseline-geometry swap on promotion, and multi-branch merge.
 
 **Related docs:**
 - [`aieng/docs/demo_catalog.md`](aieng/docs/demo_catalog.md) — canonical demos and regression flows

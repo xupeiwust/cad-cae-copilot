@@ -1312,6 +1312,18 @@ it never overwrites baseline `.aieng` geometry (`baseline_geometry_overwritten:
 false`); acceptance stays advisory until an approved promotion, and **promotion
 is not certification**.
 
+**Surrogate-assisted proposal (v0, advisory).** `optimization_surrogate` fits a
+**deterministic** numpy-only Gaussian-process surrogate (RBF kernel, fixed
+hyperparameters — no scikit-optimize dependency) over **evaluated** candidate
+metrics and proposes new candidate patches by an upper-confidence-bound
+acquisition → `analysis/design_study_surrogate_proposals.json` + proposed
+`patches/design_candidates/surrogate_*.json` (valid, `applied:false`). Each
+prediction carries an explicit `uncertainty_std` and is marked **advisory /
+`is_solver_evidence:false`** — predictions guide search only and are never imported
+as solver/verification evidence. It degrades honestly (`needs_more_evidence` /
+`no_safe_variables`) on sparse/missing evidence, runs no solver, accepts nothing,
+and never mutates baseline geometry.
+
 Future work: optimizer/search loop, multi-objective Pareto ranking, richer candidate CAE evidence ingestion,
 physical baseline-geometry swap on promotion, and multi-branch merge.
 

@@ -521,48 +521,102 @@ def _extract_metrics(frd_path: Path) -> dict[str, Any]:
 
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
+#
+# run_simulation (sync) and run_simulation_stream (SSE) share ONE pipeline,
+# _run_simulation_core, so they cannot drift. The core is a generator that
+# yields progress events ({"step": ...}) and a terminal {"step": "done",
+# "result": {...}} event, and raises _SimAbort for contract-bearing aborts
+# (confirmed gate, missing package/setup, stale-topology, unresolved faces).
+# The sync wrapper drains the events, re-raising _SimAbort as the historical
+# HTTPException; the stream wrapper formats every event as SSE and never raises.
+#
+# Note: the REST run-simulation[-stream] endpoints are the legacy embedded-agent
+# path; the MCP `cae.run_solver` tool is the canonical agent-driven solver path.
+# See docs/simulation_runner_audit.md.
 
-def run_simulation(
+
+def _sse(event: dict[str, Any]) -> str:
+    """Format a dict as an SSE data line."""
+    return f"data: {json.dumps(event)}\n\n"
+
+
+class _SimAbort(Exception):
+    """A pipeline abort that carries both response contracts.
+
+    ``http_status`` / ``detail`` reproduce the historical HTTPException raised by
+    the sync path; ``sse_event`` is the error event the streaming path emits.
+    Keeping both on one object is what lets a single core serve both wrappers
+    without the two diverging again.
+    """
+
+    def __init__(self, http_status: int, detail: Any, sse_event: dict[str, Any]) -> None:
+        super().__init__(str(detail))
+        self.http_status = http_status
+        self.detail = detail
+        self.sse_event = sse_event
+
+
+def _run_simulation_core(
     settings: Any,
     project_id: str,
     payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Mesh with Gmsh + solve with CalculiX + parse results, all in one call.
+) -> Generator[dict[str, Any], None, None]:
+    """Canonical mesh → solve → parse pipeline shared by both REST entry points.
 
-    Requires confirmed=true in payload (approval gate — this runs external processes).
-    Writes simulation/solver_log.txt, simulation/result.frd, and
+    Yields progress events and a terminal ``{"step": "done", "result": {...}}``
+    event. Raises :class:`_SimAbort` for aborts that carry a response contract.
+
+    Requires confirmed=true in payload (approval gate — this runs external
+    processes). Writes simulation/solver_log.txt, simulation/result.frd, and
     simulation/results_summary.json into the .aieng package atomically.
     """
     from .project_io import get_project, resolve_project_path
 
     if not payload.get("confirmed"):
-        raise HTTPException(
-            status_code=400,
-            detail="confirmed=true is required — simulation runs external processes (Gmsh + CalculiX)",
+        raise _SimAbort(
+            400,
+            "confirmed=true is required — simulation runs external processes (Gmsh + CalculiX)",
+            {"step": "error", "message": "confirmed=true is required"},
         )
 
-    project = get_project(settings, project_id)
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        raise _SimAbort(
+            404,
+            f"Project not found: {exc}",
+            {"step": "error", "message": f"Project not found: {exc}"},
+        )
+
     package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
     if package_path is None or not package_path.exists():
-        raise HTTPException(status_code=404, detail=".aieng package not found")
+        raise _SimAbort(
+            404,
+            ".aieng package not found",
+            {"step": "error", "message": ".aieng package not found"},
+        )
 
-    # ── Tool check (graceful degradation) ────────────────────────────────────
+    # ── Step 1: check tools (graceful degradation) ───────────────────────────
+    yield {"step": "checking_tools", "message": "Checking Gmsh and CalculiX…"}
     tools = check_simulation_tools()
     if not tools["ready"]:
-        return {
+        result: dict[str, Any] = {
             "status": "tools_unavailable",
             "project_id": project_id,
             "missing_tools": tools["missing"],
             "message": f"Required tools not installed: {', '.join(tools['missing'])}. "
                        "Install Gmsh (pip install gmsh) and CalculiX (ccx).",
         }
+        yield {"step": "done", "message": "Tools unavailable", "result": result}
+        return
 
     # ── Prerequisites ─────────────────────────────────────────────────────────
     setup_raw = _read_member(package_path, "simulation/setup.yaml")
     if not setup_raw:
-        raise HTTPException(
-            status_code=422,
-            detail="simulation/setup.yaml not found — run AI preprocessing first",
+        raise _SimAbort(
+            422,
+            "simulation/setup.yaml not found — run AI preprocessing first",
+            {"step": "error", "message": "simulation/setup.yaml not found — run AI preprocessing first"},
         )
     setup = yaml.safe_load(setup_raw)
 
@@ -573,20 +627,21 @@ def run_simulation(
     topology: dict[str, Any] = json.loads(topo_raw) if topo_raw else {}
 
     # Fail fast if the CAE face references are stale relative to current topology.
+    # Enforced for BOTH the sync and the streaming path (previously the stream
+    # path skipped this, so it could solve against stale face references and
+    # report a wrong result as success).
     topology_validation = validate_cae_topology_references(package_path)
     if not topology_validation["valid"]:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "stale_topology_references",
-                "message": (
-                    "Aborted before meshing: CAE face references do not match the "
-                    "current topology. Re-run AI preprocessing to refresh face "
-                    "references, or update simulation/cae_mapping.json manually."
-                ),
-                "topology_validation": topology_validation,
-            },
-        )
+        detail = {
+            "code": "stale_topology_references",
+            "message": (
+                "Aborted before meshing: CAE face references do not match the "
+                "current topology. Re-run AI preprocessing to refresh face "
+                "references, or update simulation/cae_mapping.json manually."
+            ),
+            "topology_validation": topology_validation,
+        }
+        raise _SimAbort(422, detail, {"step": "error", **detail})
 
     mesh_size_mm = float(
         payload.get("mesh_size_mm")
@@ -598,20 +653,24 @@ def run_simulation(
     with tempfile.TemporaryDirectory(prefix="aieng_sim_") as tmp_str:
         work_dir = Path(tmp_str)
 
-        # ── Extract STEP ──────────────────────────────────────────────────────
+        # ── Step 2: extract STEP ──────────────────────────────────────────────
         step_path = _extract_step(package_path, work_dir)
         if not step_path:
-            raise HTTPException(
-                status_code=422,
-                detail="No STEP file in package — run text-to-CAD generation first",
+            raise _SimAbort(
+                422,
+                "No STEP file in package — run text-to-CAD generation first",
+                {"step": "error", "message": "No STEP file in package — run text-to-CAD generation first"},
             )
 
-        # ── Gmsh mesh ─────────────────────────────────────────────────────────
+        # ── Step 3: mesh ──────────────────────────────────────────────────────
+        yield {"step": "meshing", "message": f"Generating mesh with Gmsh (target size {mesh_size_mm} mm)…"}
         mesh_inp = _mesh_with_gmsh(step_path, work_dir, mesh_size_mm)
         nodes = _parse_inp_nodes(mesh_inp)
         node_count = len(nodes)
 
-        # ── Build NSETs from topology + cae_mapping ───────────────────────────
+        # ── Step 4: build NSETs from topology + cae_mapping ───────────────────
+        face_count = len(cae_mapping.get("mappings") or [])
+        yield {"step": "building_nsets", "message": f"Mapping {face_count} face(s) to mesh nodes ({node_count:,} nodes)…"}
         nsets = _build_nsets(nodes, topology, cae_mapping)
         empty_nsets = [k for k, v in nsets.items() if not v]
 
@@ -620,18 +679,28 @@ def run_simulation(
         # hints before invoking CalculiX so the caller can re-pick or remesh.
         unresolved = _unresolved_bc_load_faces(setup, cae_mapping, nsets)
         if unresolved:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "unresolved_face_mapping",
-                    "message": (
-                        "Aborted before solving: load/boundary-condition face(s) "
-                        "matched zero mesh nodes. Re-pick the face(s) or reduce "
-                        "mesh_size_mm, then retry."
-                    ),
-                    "unresolved": unresolved,
-                },
-            )
+            hint_faces = ", ".join(
+                fp for prob in unresolved for fp in prob["face_pointers"]
+            ) or "(no face hints available)"
+            detail = {
+                "code": "unresolved_face_mapping",
+                "message": (
+                    "Aborted before solving: load/boundary-condition face(s) "
+                    "matched zero mesh nodes. Re-pick the face(s) or reduce "
+                    "mesh_size_mm, then retry."
+                ),
+                "unresolved": unresolved,
+            }
+            sse_event = {
+                "step": "error",
+                "code": "unresolved_face_mapping",
+                "message": (
+                    "Load/BC face(s) matched zero mesh nodes — aborted before "
+                    f"solving. Re-pick or remesh: {hint_faces}"
+                ),
+                "unresolved": unresolved,
+            }
+            raise _SimAbort(422, detail, sse_event)
 
         # ── Generate solver deck ──────────────────────────────────────────────
         mesh_text = mesh_inp.read_text(errors="replace")
@@ -641,10 +710,12 @@ def run_simulation(
         deck_inp = work_dir / "aieng_run.inp"
         deck_inp.write_text(deck_text)
 
-        # ── Run CalculiX ──────────────────────────────────────────────────────
+        # ── Step 5: solve ─────────────────────────────────────────────────────
+        yield {"step": "solving", "message": f"Running CalculiX ({node_count:,} nodes)…"}
         returncode, solver_log, frd_path = _run_calculix(deck_inp, work_dir, timeout=timeout)
 
-        # ── Parse results ─────────────────────────────────────────────────────
+        # ── Step 6: parse results ─────────────────────────────────────────────
+        yield {"step": "parsing", "message": "Parsing FRD results…"}
         warnings: list[str] = []
         if empty_nsets:
             warnings.append(f"NSETs with no matched nodes (face ID mismatch): {empty_nsets}")
@@ -716,7 +787,7 @@ def run_simulation(
             written.append("simulation/result.frd")
         _write_results_to_package(package_path, solver_log, frd_bytes, results_summary, mesh_inp_bytes)
 
-        response: dict[str, Any] = {
+        result = {
             "status": status,
             "project_id": project_id,
             "returncode": returncode,
@@ -729,14 +800,36 @@ def run_simulation(
             "verdict": verdict,
         }
         if returncode != 0:
-            response["solver_log_tail"] = solver_log[-2000:]
-            response["diagnosis"] = _diagnose_solver_log(solver_log)
-        return response
+            result["solver_log_tail"] = solver_log[-2000:]
+            result["diagnosis"] = _diagnose_solver_log(solver_log)
+
+        done_msg = "Simulation complete" if status == "success" else f"Solver error (code {returncode})"
+        yield {"step": "done", "message": done_msg, "result": result}
 
 
-def _sse(event: dict[str, Any]) -> str:
-    """Format a dict as an SSE data line."""
-    return f"data: {json.dumps(event)}\n\n"
+def run_simulation(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Mesh with Gmsh + solve with CalculiX + parse results, all in one call.
+
+    Thin synchronous wrapper over :func:`_run_simulation_core`: drains the
+    progress events and returns the terminal result dict. Pipeline aborts are
+    re-raised as the historical ``HTTPException`` so the REST contract is
+    unchanged.
+    """
+    result: dict[str, Any] | None = None
+    try:
+        for event in _run_simulation_core(settings, project_id, payload):
+            if event.get("step") == "done":
+                result = event.get("result")
+    except _SimAbort as abort:
+        raise HTTPException(status_code=abort.http_status, detail=abort.detail)
+
+    if result is None:  # defensive — the core always yields a terminal event
+        raise HTTPException(status_code=500, detail="Simulation produced no result")
+    return result
 
 
 def run_simulation_stream(
@@ -747,198 +840,15 @@ def run_simulation_stream(
     """Streaming variant of run_simulation — yields SSE-formatted progress events.
 
     Events: checking_tools → meshing → building_nsets → solving → parsing →
-            done (with full result) | error (on unexpected failure).
+            done (with full result) | error (on any failure).
 
-    The generator never raises; all failures are surfaced as SSE error events.
+    Thin SSE wrapper over :func:`_run_simulation_core`. The generator never
+    raises; all failures are surfaced as SSE error events.
     """
-    from .project_io import get_project, resolve_project_path
-
-    if not payload.get("confirmed"):
-        yield _sse({"step": "error", "message": "confirmed=true is required"})
-        return
-
     try:
-        project = get_project(settings, project_id)
-    except Exception as exc:
-        yield _sse({"step": "error", "message": f"Project not found: {exc}"})
-        return
-
-    package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
-    if package_path is None or not package_path.exists():
-        yield _sse({"step": "error", "message": ".aieng package not found"})
-        return
-
-    # ── Step 1: check tools ───────────────────────────────────────────────────
-    yield _sse({"step": "checking_tools", "message": "Checking Gmsh and CalculiX…"})
-    tools = check_simulation_tools()
-    if not tools["ready"]:
-        result: dict[str, Any] = {
-            "status": "tools_unavailable",
-            "project_id": project_id,
-            "missing_tools": tools["missing"],
-            "message": f"Required tools not installed: {', '.join(tools['missing'])}.",
-        }
-        yield _sse({"step": "done", "message": "Tools unavailable", "result": result})
-        return
-
-    # ── Load prerequisites ────────────────────────────────────────────────────
-    setup_raw = _read_member(package_path, "simulation/setup.yaml")
-    if not setup_raw:
-        yield _sse({"step": "error", "message": "simulation/setup.yaml not found — run AI preprocessing first"})
-        return
-    setup = yaml.safe_load(setup_raw)
-
-    cae_raw = _read_member(package_path, "simulation/cae_mapping.json")
-    cae_mapping: dict[str, Any] = json.loads(cae_raw) if cae_raw else {"mappings": []}
-
-    topo_raw = _read_member(package_path, "geometry/topology_map.json")
-    topology: dict[str, Any] = json.loads(topo_raw) if topo_raw else {}
-
-    mesh_size_mm = float(
-        payload.get("mesh_size_mm")
-        or (setup.get("mesh") or {}).get("target_size_mm")
-        or 2.5
-    )
-    timeout = int(payload.get("timeout_s") or 180)
-
-    try:
-        with tempfile.TemporaryDirectory(prefix="aieng_sim_") as tmp_str:
-            work_dir = Path(tmp_str)
-
-            # ── Step 2: extract STEP ──────────────────────────────────────────
-            step_path = _extract_step(package_path, work_dir)
-            if not step_path:
-                yield _sse({"step": "error", "message": "No STEP file in package — run text-to-CAD generation first"})
-                return
-
-            # ── Step 3: mesh ──────────────────────────────────────────────────
-            yield _sse({"step": "meshing", "message": f"Generating mesh with Gmsh (target size {mesh_size_mm} mm)…"})
-            mesh_inp = _mesh_with_gmsh(step_path, work_dir, mesh_size_mm)
-            nodes = _parse_inp_nodes(mesh_inp)
-            node_count = len(nodes)
-
-            # ── Step 4: build NSETs ───────────────────────────────────────────
-            face_count = len(cae_mapping.get("mappings") or [])
-            yield _sse({"step": "building_nsets", "message": f"Mapping {face_count} face(s) to mesh nodes ({node_count:,} nodes)…"})
-            nsets = _build_nsets(nodes, topology, cae_mapping)
-            empty_nsets = [k for k, v in nsets.items() if not v]
-
-            # Fail fast before solving if a load/BC face matched zero mesh nodes
-            # (it would be silently dropped → wrong/singular solve).
-            unresolved = _unresolved_bc_load_faces(setup, cae_mapping, nsets)
-            if unresolved:
-                hint_faces = ", ".join(
-                    fp for prob in unresolved for fp in prob["face_pointers"]
-                ) or "(no face hints available)"
-                yield _sse({
-                    "step": "error",
-                    "code": "unresolved_face_mapping",
-                    "message": (
-                        "Load/BC face(s) matched zero mesh nodes — aborted before "
-                        f"solving. Re-pick or remesh: {hint_faces}"
-                    ),
-                    "unresolved": unresolved,
-                })
-                return
-
-            mesh_text = mesh_inp.read_text(errors="replace")
-            deck_text, bc_count, load_count = _build_calculix_deck(mesh_text, setup, nsets, cae_mapping)
-            deck_inp = work_dir / "aieng_run.inp"
-            deck_inp.write_text(deck_text)
-
-            # ── Step 5: solve ─────────────────────────────────────────────────
-            yield _sse({"step": "solving", "message": f"Running CalculiX ({node_count:,} nodes)…"})
-            returncode, solver_log, frd_path = _run_calculix(deck_inp, work_dir, timeout=timeout)
-
-            # ── Step 6: parse results ─────────────────────────────────────────
-            yield _sse({"step": "parsing", "message": "Parsing FRD results…"})
-            warnings: list[str] = []
-            if empty_nsets:
-                warnings.append(f"NSETs with no matched nodes (face ID mismatch): {empty_nsets}")
-            if bc_count == 0:
-                warnings.append("No boundary conditions were applied — model may be unconstrained")
-            if load_count == 0:
-                warnings.append("No loads were applied")
-
-            von_mises_max: float | None = None
-            displacement_max: float | None = None
-            frd_bytes: bytes | None = None
-            full_metrics: dict[str, Any] = {}
-
-            if frd_path:
-                frd_bytes = frd_path.read_bytes()
-                try:
-                    extracted = _extract_metrics(frd_path)
-                    load_cases = extracted.get("load_cases") or {}
-                    lc = next(iter(load_cases.values()), {}) if load_cases else {}
-                    von_mises_max = lc.get("max_von_mises_stress_mpa")
-                    displacement_max = lc.get("max_displacement_mm")
-                    warnings.extend(extracted.get("warnings") or [])
-                    full_metrics = extracted
-                except Exception as exc:
-                    warnings.append(f"FRD result parsing failed: {exc}")
-
-            status = "success" if returncode == 0 and frd_path else "solver_error"
-
-            verdict: dict[str, Any] = {}
-            if status == "success" and (von_mises_max is not None or displacement_max is not None):
-                from . import post_processing
-
-                targets_raw = _read_member(package_path, "task/design_targets.yaml")
-                design_targets: list[dict[str, Any]] = []
-                if targets_raw:
-                    try:
-                        import yaml as _yaml
-                        doc = _yaml.safe_load(targets_raw)
-                        if isinstance(doc, dict):
-                            design_targets = doc.get("targets") or []
-                    except Exception:
-                        pass
-                material_name = (setup.get("material_name") or setup.get("material") or "")
-                verdict = post_processing.interpret_results(
-                    von_mises_max, displacement_max, design_targets, str(material_name)
-                )
-
-            results_summary: dict[str, Any] = {
-                "schema_version": "0.1",
-                "solver": "CalculiX",
-                "status": status,
-                "returncode": returncode,
-                "node_count": node_count,
-                "mesh_size_mm": mesh_size_mm,
-                "bc_count": bc_count,
-                "load_count": load_count,
-                "von_mises_max_mpa": von_mises_max,
-                "displacement_max_mm": displacement_max,
-                "warnings": warnings,
-                "full_metrics": full_metrics,
-                "verdict": verdict,
-            }
-
-            mesh_inp_bytes = mesh_inp.read_bytes()
-            written = ["simulation/solver_log.txt", "simulation/results_summary.json", "simulation/mesh.inp"]
-            if frd_bytes:
-                written.append("simulation/result.frd")
-            _write_results_to_package(package_path, solver_log, frd_bytes, results_summary, mesh_inp_bytes)
-
-            sim_result: dict[str, Any] = {
-                "status": status,
-                "project_id": project_id,
-                "returncode": returncode,
-                "von_mises_max_mpa": von_mises_max,
-                "displacement_max_mm": displacement_max,
-                "node_count": node_count,
-                "mesh_size_mm": mesh_size_mm,
-                "written_artifacts": written,
-                "warnings": warnings,
-                "verdict": verdict,
-            }
-            if returncode != 0:
-                sim_result["solver_log_tail"] = solver_log[-2000:]
-                sim_result["diagnosis"] = _diagnose_solver_log(solver_log)
-
-            done_msg = "Simulation complete" if status == "success" else f"Solver error (code {returncode})"
-            yield _sse({"step": "done", "message": done_msg, "result": sim_result})
-
+        for event in _run_simulation_core(settings, project_id, payload):
+            yield _sse(event)
+    except _SimAbort as abort:
+        yield _sse(abort.sse_event)
     except Exception as exc:
         yield _sse({"step": "error", "message": str(exc)})

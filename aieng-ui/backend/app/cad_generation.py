@@ -2898,6 +2898,10 @@ def _write_cad_artifacts(
             for name, data in artifacts.items():
                 zf.writestr(name, data)
 
+    # Any CAD write creates a new topology, so existing CAE face references are
+    # no longer trustworthy until AI preprocessing refreshes them.
+    _mark_cae_mapping_stale(pkg_path)
+
 
 # Project names default to a UI placeholder ("STEP workbench project"); without
 # auto-naming, list_projects shows a wall of identical rows (the discoverability
@@ -4978,8 +4982,7 @@ def refine_cad_generation(
         if glb_bytes:
             written.append("geometry/preview.glb")
 
-        # Mark existing CAE mapping as stale since geometry changed
-        _mark_cae_mapping_stale(package_path)
+        # _write_cad_artifacts already marks any existing CAE mapping stale.
         written.append("simulation/cae_mapping.json")
 
     solid = next(
@@ -5086,7 +5089,13 @@ def get_named_part_bbox(
 # ── Stale mapping marker ──────────────────────────────────────────────────────
 
 def _mark_cae_mapping_stale(pkg_path: Path) -> None:
-    """If the package contains a cae_mapping.json, mark it stale atomically."""
+    """If the package contains a cae_mapping.json, mark it stale atomically.
+
+    Records the topology hash of the geometry that made the mapping stale so
+    downstream validators can report exactly when the drift occurred.
+    """
+    from .project_io import compute_topology_hash
+
     if not pkg_path.exists():
         return
     try:
@@ -5094,6 +5103,7 @@ def _mark_cae_mapping_stale(pkg_path: Path) -> None:
             if "simulation/cae_mapping.json" not in zf.namelist():
                 return
             raw = zf.read("simulation/cae_mapping.json")
+            topo_raw = zf.read("geometry/topology_map.json") if "geometry/topology_map.json" in zf.namelist() else None
     except Exception:
         return
 
@@ -5106,6 +5116,14 @@ def _mark_cae_mapping_stale(pkg_path: Path) -> None:
     data["stale_reason"] = "CAD geometry changed since mapping was created — re-run AI preprocessing"
     from datetime import datetime, timezone
     data["stale_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    if topo_raw is not None:
+        try:
+            topo = json.loads(topo_raw)
+            current_hash = compute_topology_hash(topo)
+            if current_hash:
+                data["topology_hash_at_stale"] = current_hash
+        except Exception:
+            pass
 
     tmp = pkg_path.with_suffix(".tmp.aieng")
     try:

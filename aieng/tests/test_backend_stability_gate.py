@@ -243,6 +243,20 @@ def test_agents_md_includes_honesty_boundaries() -> None:
     assert "not production cad" in lower or "not production-certified" in lower
 
 
+def test_agents_md_documents_prepare_solver_run_guided_workflow() -> None:
+    """AGENTS.md must document the recommended_next_calls guided workflow."""
+    text = _read_text(_REPO_ROOT / "AGENTS.md")
+    assert "recommended_next_calls" in text, (
+        "AGENTS.md must mention the cae.prepare_solver_run recommended_next_calls field."
+    )
+    assert "cae.prepare_solver_run" in text, (
+        "AGENTS.md must reference cae.prepare_solver_run."
+    )
+    assert "cae.run_solver" in text, (
+        "AGENTS.md must reference cae.run_solver."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Task D — Stability report helper
 # ---------------------------------------------------------------------------

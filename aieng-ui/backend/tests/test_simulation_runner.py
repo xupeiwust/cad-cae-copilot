@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.app_factory import create_app
 from app.config import Settings
+from app.project_io import compute_topology_hash, validate_cae_topology_references
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 
@@ -481,6 +482,141 @@ def test_run_simulation_aborts_on_unresolved_face(tmp_path: Path) -> None:
     assert detail["code"] == "unresolved_face_mapping"
     assert any("@face:face_003" in p["face_pointers"] for p in detail["unresolved"])
     # The solver must NOT have been invoked.
+    ccx.assert_not_called()
+
+
+# ── topology reference validation ─────────────────────────────────────────────
+
+def _build_test_package_with_hash(
+    pkg_path: Path,
+    *,
+    include_step: bool = True,
+    topology_hash: str | None = None,
+    cae_mapping: dict[str, Any] | None = None,
+) -> None:
+    """Build a package with an optional recorded topology hash."""
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    mapping = dict(_CAE_MAPPING)
+    setup = dict(_SETUP_YAML)
+    if topology_hash is not None:
+        mapping["topology_hash"] = topology_hash
+        setup["topology_hash"] = topology_hash
+    if cae_mapping is not None:
+        mapping = cae_mapping
+    with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"schema_version": "0.1"}))
+        zf.writestr("geometry/topology_map.json", json.dumps(_TOPOLOGY))
+        zf.writestr("simulation/setup.yaml", yaml.dump(setup))
+        zf.writestr("simulation/cae_mapping.json", json.dumps(mapping))
+        if include_step:
+            zf.writestr("geometry/generated.step", _FAKE_STEP)
+
+
+def test_compute_topology_hash_is_stable() -> None:
+    h1 = compute_topology_hash(_TOPOLOGY)
+    h2 = compute_topology_hash(_TOPOLOGY)
+    assert h1 is not None
+    assert h1 == h2
+    # Mutating the topology changes the hash.
+    changed = dict(_TOPOLOGY)
+    changed["entities"] = _TOPOLOGY["entities"][:-1]
+    assert compute_topology_hash(changed) != h1
+
+
+def test_validate_topology_references_valid_without_hash(tmp_path: Path) -> None:
+    project_id, pkg_path = _make_project(_make_settings(tmp_path), "valid-no-hash", "valid_no_hash.aieng")
+    _build_test_package(pkg_path)
+    result = validate_cae_topology_references(pkg_path)
+    assert result["topology_available"] is True
+    assert result["hash_status"] == "missing_hash"
+    assert result["valid"] is True
+    assert result["missing_face_ids"] == []
+
+
+def test_validate_topology_references_detects_hash_mismatch(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    project_id, pkg_path = _make_project(settings, "hash-mismatch", "hash_mismatch.aieng")
+    _build_test_package_with_hash(pkg_path, topology_hash="deadbeef")
+    result = validate_cae_topology_references(pkg_path)
+    assert result["hash_status"] == "mismatch"
+    assert result["valid"] is False
+    assert result["topology_hash_expected"] == "deadbeef"
+    assert result["topology_hash_current"] == compute_topology_hash(_TOPOLOGY)
+
+
+def test_validate_topology_references_detects_missing_face(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    project_id, pkg_path = _make_project(settings, "missing-face", "missing_face.aieng")
+    bad_mapping = dict(_CAE_MAPPING)
+    bad_mapping["mappings"] = [
+        dict(_CAE_MAPPING["mappings"][0]),
+        {
+            "cae_entity": "FEAT_GONE_L",
+            "maps_to": {"feature_id": "feat_gone", "role": "load_application"},
+            "face_ids": ["face_999"],
+        },
+    ]
+    _build_test_package_with_hash(pkg_path, cae_mapping=bad_mapping)
+    result = validate_cae_topology_references(pkg_path)
+    assert result["hash_status"] == "missing_hash"
+    assert result["valid"] is False
+    assert "face_999" in result["missing_face_ids"]
+    assert any(r["face_id"] == "face_999" for r in result["stale_references"])
+
+
+def test_run_simulation_aborts_on_topology_hash_mismatch(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    project_id, pkg_path = _make_project(settings, "sim-stale", "sim_stale.aieng")
+    _build_test_package_with_hash(pkg_path, topology_hash="deadbeef")
+
+    with patch("app.simulation_runner._gmsh_available", return_value=True), \
+         patch("app.simulation_runner._find_ccx", return_value="/usr/bin/ccx"), \
+         patch("app.simulation_runner._mesh_with_gmsh", side_effect=_fake_mesh), \
+         patch("app.simulation_runner._run_calculix", side_effect=_fake_calculix) as ccx:
+        resp = client.post(
+            f"/api/projects/{project_id}/run-simulation",
+            json={"confirmed": True},
+        )
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "stale_topology_references"
+    ccx.assert_not_called()
+
+
+def test_run_simulation_aborts_on_missing_face(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    project_id, pkg_path = _make_project(settings, "sim-missing-face", "sim_missing_face.aieng")
+    bad_mapping = dict(_CAE_MAPPING)
+    bad_mapping["mappings"] = [
+        dict(_CAE_MAPPING["mappings"][0]),
+        {
+            "cae_entity": "FEAT_GONE_L",
+            "maps_to": {"feature_id": "feat_gone", "role": "load_application"},
+            "face_ids": ["face_999"],
+        },
+    ]
+    _build_test_package_with_hash(pkg_path, cae_mapping=bad_mapping)
+
+    with patch("app.simulation_runner._gmsh_available", return_value=True), \
+         patch("app.simulation_runner._find_ccx", return_value="/usr/bin/ccx"), \
+         patch("app.simulation_runner._mesh_with_gmsh", side_effect=_fake_mesh), \
+         patch("app.simulation_runner._run_calculix", side_effect=_fake_calculix) as ccx:
+        resp = client.post(
+            f"/api/projects/{project_id}/run-simulation",
+            json={"confirmed": True},
+        )
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "stale_topology_references"
+    assert "face_999" in detail["topology_validation"]["missing_face_ids"]
     ccx.assert_not_called()
 
 

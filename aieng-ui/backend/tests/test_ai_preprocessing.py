@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.app_factory import create_app
 from app.config import Settings
+from app.project_io import compute_topology_hash
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 
@@ -481,6 +482,12 @@ def test_ai_preprocessing_endpoint_writes_files(tmp_path: Path) -> None:
         mapping = json.loads(zf.read("simulation/cae_mapping.json"))
         assert mapping["ai_generated"] is True
         assert len(mapping["mappings"]) >= 2
+
+        # The topology hash binds the CAE setup to the geometry it was generated against.
+        topology = json.loads(zf.read("geometry/topology_map.json"))
+        expected_hash = compute_topology_hash(topology)
+        assert setup.get("topology_hash") == expected_hash
+        assert mapping.get("topology_hash") == expected_hash
 
 
 # ── validation and normalization tests ───────────────────────────────────────

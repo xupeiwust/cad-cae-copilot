@@ -17,6 +17,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
     """Register cae runtime tools."""
     sync_main_symbols(globals())
     from ..runtime_tool_registry import _resolve_ccx_cmd
+    from ..project_io import validate_cae_topology_references
 
     _delete_project_everywhere = app_context.delete_project_everywhere
     _load_project_feature_parameters = app_context.load_project_feature_parameters
@@ -559,6 +560,10 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         # Check ccx availability without executing it
         ccx_available = _resolve_ccx_cmd() is not None
 
+        # Validate that face-scoped CAE references still match the current topology.
+        topology_validation = validate_cae_topology_references(package_path)
+        topology_refs_ok = topology_validation["valid"]
+
         missing_items: list[str] = []
         if not has_mesh:
             missing_items.append("simulation/mesh/ (no mesh files found in package)")
@@ -573,8 +578,12 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             missing_items.append(
                 "CalculiX command unavailable (set AIENG_CCX_CMD or ensure ccx is discoverable on PATH)."
             )
+        if not topology_refs_ok:
+            missing_items.append(
+                "stale_topology_references: CAE face references do not match current geometry."
+            )
 
-        ready_to_run = len(missing_items) == 0
+        ready_to_run = len(missing_items) == 0 and topology_refs_ok
 
         run_prefix = f"simulation/runs/{run_id}"
         planned_artifacts: list[dict[str, str]] = [
@@ -597,8 +606,48 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "No solver execution was performed.",
             "This is a preflight plan only. Solver execution requires external CalculiX setup.",
         ]
+        warnings.extend(topology_validation.get("warnings") or [])
         if not ready_to_run:
             warnings.append(f"Run is not ready: {len(missing_items)} item(s) missing.")
+
+        preflight = {
+            "has_mesh": has_mesh,
+            "has_solver_settings": has_solver_settings,
+            "has_load_case": has_load_case,
+            "has_input_deck": has_input_deck,
+            "ccx_available": ccx_available,
+            "missing_items": missing_items,
+            "topology_references_valid": topology_refs_ok,
+            "topology_hash_current": topology_validation.get("topology_hash_current"),
+            "topology_hash_expected": topology_validation.get("topology_hash_expected"),
+            "hash_status": topology_validation.get("hash_status"),
+            "cae_mapping_stale": topology_validation.get("cae_mapping_stale"),
+            "stale_topology_references": topology_validation.get("stale_references", []),
+        }
+
+        recommendations = _recommended_next_calls(
+            project_id or "",
+            run_id,
+            load_case_id,
+            {
+                "has_mesh": has_mesh,
+                "has_solver_settings": has_solver_settings,
+                "has_load_case": has_load_case,
+                "has_input_deck": has_input_deck,
+                "ccx_available": ccx_available,
+            },
+            ready_to_run,
+        )
+        if not topology_refs_ok:
+            recommendations.insert(0, {
+                "tool": "ai_preprocessing.run_ai_preprocessing",
+                "input": {"project_id": project_id or "", "task_description": "Refresh CAE face references after geometry change"},
+                "reason": (
+                    "CAE face references are stale relative to the current topology. "
+                    "Re-run AI preprocessing to rebind loads/BCs, or use cae.apply_setup_patch "
+                    "to update face IDs manually."
+                ),
+            })
 
         return {
             "ok": True,
@@ -609,29 +658,10 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "load_case_id": load_case_id,
             "requires_approval": True,
             "solver_execution_performed": False,
-            "preflight": {
-                "has_mesh": has_mesh,
-                "has_solver_settings": has_solver_settings,
-                "has_load_case": has_load_case,
-                "has_input_deck": has_input_deck,
-                "ccx_available": ccx_available,
-                "missing_items": missing_items,
-            },
+            "preflight": preflight,
             "planned_artifacts": planned_artifacts,
             "warnings": warnings,
-            "recommended_next_calls": _recommended_next_calls(
-                project_id or "",
-                run_id,
-                load_case_id,
-                {
-                    "has_mesh": has_mesh,
-                    "has_solver_settings": has_solver_settings,
-                    "has_load_case": has_load_case,
-                    "has_input_deck": has_input_deck,
-                    "ccx_available": ccx_available,
-                },
-                ready_to_run,
-            ),
+            "recommended_next_calls": recommendations,
         }
 
     def _tool_cae_generate_solver_input(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
@@ -811,6 +841,23 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                 "status": "error",
                 "code": "package_read_error",
                 "message": f"Failed to read package: {exc}",
+                "solver_execution_performed": False,
+            }
+
+        # Refuse to run if the face-scoped CAE references are stale.
+        topology_validation = validate_cae_topology_references(package_path)
+        if not topology_validation["valid"]:
+            return {
+                "ok": False,
+                "tool": "cae.run_solver",
+                "status": "error",
+                "code": "stale_topology_references",
+                "message": (
+                    "CAE face references do not match the current topology. "
+                    "Re-run AI preprocessing to refresh face references, or update "
+                    "simulation/cae_mapping.json manually via cae.apply_setup_patch."
+                ),
+                "topology_validation": topology_validation,
                 "solver_execution_performed": False,
             }
 

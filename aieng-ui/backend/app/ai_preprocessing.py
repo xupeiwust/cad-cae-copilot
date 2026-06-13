@@ -27,6 +27,7 @@ from .geometry_providers import (
     StaticPackageProvider,
     build_geometry_context,
 )
+from .project_io import compute_topology_hash
 
 _SYSTEM_PROMPT = """\
 You are a structural FEA engineer. Your job is to generate a complete finite element \
@@ -598,6 +599,21 @@ def run_ai_preprocessing(
 
     setup_yaml_data = _fea_setup_to_setup_yaml(fea_setup)
     cae_mapping_data = _fea_setup_to_cae_mapping(fea_setup)
+
+    # Record the topology revision that these face references were bound against.
+    # If the CAD geometry is later edited, this hash lets the solver path detect
+    # stale face references before running an invalid analysis.
+    topology_hash: str | None = None
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            if "geometry/topology_map.json" in zf.namelist():
+                topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                topology_hash = compute_topology_hash(topo)
+    except Exception:
+        topology_hash = None
+    if topology_hash:
+        setup_yaml_data["topology_hash"] = topology_hash
+        cae_mapping_data["topology_hash"] = topology_hash
 
     written: list[str] = []
     if write_files:

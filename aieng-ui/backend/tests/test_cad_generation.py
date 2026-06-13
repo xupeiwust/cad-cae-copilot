@@ -2480,3 +2480,30 @@ def test_make_candidate_recompiler_clean_diff_passes(tmp_path: Path) -> None:
     diff = result["regression_diff"]
     assert diff["verdict"] == "clean"
     assert diff["collateral_parts"] == []
+
+
+def test_mark_cae_mapping_stale_records_topology_hash(tmp_path: Path) -> None:
+    from app.cad_generation import _mark_cae_mapping_stale
+    from app.project_io import compute_topology_hash
+
+    pkg = tmp_path / "stale_test.aieng"
+    topology = {
+        "format_version": "0.1",
+        "entities": [
+            {"id": "body_001", "type": "solid", "bounding_box": [0, 0, 0, 10, 10, 10]},
+            {"id": "face_001", "type": "face", "surface_type": "plane", "bounding_box": [0, 0, 0, 10, 10, 0]},
+        ],
+    }
+    with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"schema_version": "0.1"}))
+        zf.writestr("geometry/topology_map.json", json.dumps(topology))
+        zf.writestr("simulation/cae_mapping.json", json.dumps({"mappings": []}))
+
+    _mark_cae_mapping_stale(pkg)
+
+    with zipfile.ZipFile(pkg, "r") as zf:
+        mapping = json.loads(zf.read("simulation/cae_mapping.json"))
+
+    assert mapping.get("stale") is True
+    assert "stale_at" in mapping
+    assert mapping.get("topology_hash_at_stale") == compute_topology_hash(topology)

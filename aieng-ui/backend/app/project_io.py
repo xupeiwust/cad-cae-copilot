@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import re
 import shutil
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import HTTPException
 
 from .config import (
@@ -813,6 +815,264 @@ def _compute_stale_artifacts(
         if art not in refreshed_set:
             stale.append(art)
     return stale
+
+
+def compute_topology_hash(topology_map: dict[str, Any] | None) -> str | None:
+    """Return a stable SHA-256 hash of the topology map.
+
+    The hash is computed from a canonical JSON representation so that equivalent
+    topology maps produce identical hashes regardless of key ordering or
+    formatting.  ``None`` is returned for empty or non-serializable input.
+    """
+    if not topology_map:
+        return None
+    try:
+        canonical = json.dumps(
+            topology_map,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+_FACE_POINTER_RE = re.compile(r"@face:([A-Za-z0-9_]+)")
+
+
+def validate_cae_topology_references(package_path: str | Path) -> dict[str, Any]:
+    """Validate that face-scoped CAE references still match the current topology.
+
+    Compares the topology hash recorded in ``simulation/cae_mapping.json`` and
+    ``simulation/setup.yaml`` with the hash of the current
+    ``geometry/topology_map.json``.  Also checks that every referenced ``face_id``
+    exists in the current topology.
+
+    Returns a dictionary with:
+      - ``topology_available`` / ``topology_hash_current`` / ``topology_hash_expected``
+      - ``hash_status``:
+          ``"ok"`` | ``"mismatch"`` | ``"missing_hash"`` |
+          ``"missing_topology"`` | ``"no_face_refs"`` | ``"no_topology"``
+      - ``cae_mapping_stale``: bool
+      - ``valid``: bool
+      - ``missing_face_ids``: list[str]
+      - ``stale_references``: list[dict] with location and face_id
+      - ``warnings``: human-readable list
+    """
+    result: dict[str, Any] = {
+        "topology_available": False,
+        "topology_hash_current": None,
+        "topology_hash_expected": None,
+        "hash_status": "no_topology",
+        "cae_mapping_stale": False,
+        "valid": True,
+        "missing_face_ids": [],
+        "stale_references": [],
+        "warnings": [],
+    }
+
+    pkg = Path(package_path)
+    try:
+        with zipfile.ZipFile(pkg, "r") as zf:
+            names = set(zf.namelist())
+            topology_raw = (
+                zf.read("geometry/topology_map.json")
+                if "geometry/topology_map.json" in names
+                else None
+            )
+            cae_mapping_raw = (
+                zf.read("simulation/cae_mapping.json")
+                if "simulation/cae_mapping.json" in names
+                else None
+            )
+            setup_raw = (
+                zf.read("simulation/setup.yaml")
+                if "simulation/setup.yaml" in names
+                else None
+            )
+            load_case_names = [
+                n
+                for n in names
+                if n.startswith("simulation/load_cases/") and n.endswith(".json")
+            ]
+            load_cases: dict[str, Any] = {}
+            for lc in load_case_names:
+                try:
+                    load_cases[lc] = json.loads(zf.read(lc))
+                except Exception:
+                    pass
+    except Exception as exc:
+        result["warnings"].append(f"Failed to read package: {exc}")
+        result["valid"] = False
+        return result
+
+    topology: dict[str, Any] | None = None
+    face_index: dict[str, dict[str, Any]] = {}
+    if topology_raw is not None:
+        try:
+            topology = json.loads(topology_raw)
+            result["topology_available"] = True
+            result["topology_hash_current"] = compute_topology_hash(topology)
+            face_index = {
+                e["id"]: e
+                for e in (topology.get("entities") or [])
+                if isinstance(e, dict) and e.get("type") == "face" and "id" in e
+            }
+        except json.JSONDecodeError as exc:
+            result["warnings"].append(
+                f"geometry/topology_map.json is not valid JSON: {exc}"
+            )
+            result["valid"] = False
+            return result
+
+    cae_mapping: dict[str, Any] = {}
+    if cae_mapping_raw is not None:
+        try:
+            cae_mapping = json.loads(cae_mapping_raw)
+        except json.JSONDecodeError:
+            result["warnings"].append("simulation/cae_mapping.json is not valid JSON.")
+
+    expected_hash: str | None = None
+    if isinstance(cae_mapping, dict):
+        expected_hash = cae_mapping.get("topology_hash")
+    if not expected_hash and setup_raw is not None:
+        try:
+            setup_doc = yaml.safe_load(setup_raw)
+            if isinstance(setup_doc, dict):
+                expected_hash = setup_doc.get("topology_hash")
+        except Exception:
+            pass
+    result["topology_hash_expected"] = expected_hash
+
+    if isinstance(cae_mapping, dict) and cae_mapping.get("stale"):
+        result["cae_mapping_stale"] = True
+
+    stale_refs: list[dict[str, Any]] = []
+    missing_face_ids: set[str] = set()
+    referenced_face_ids: set[str] = set()
+
+    def _add_reference(face_id: str, context: dict[str, Any]) -> None:
+        referenced_face_ids.add(face_id)
+        if face_id not in face_index:
+            missing_face_ids.add(face_id)
+            stale_refs.append(context)
+
+    if isinstance(cae_mapping, dict):
+        for i, mapping in enumerate(cae_mapping.get("mappings") or []):
+            if not isinstance(mapping, dict):
+                continue
+            for fid in mapping.get("face_ids") or []:
+                _add_reference(
+                    str(fid),
+                    {
+                        "location": "simulation/cae_mapping.json",
+                        "mapping_index": i,
+                        "cae_entity": mapping.get("cae_entity"),
+                        "feature_id": (mapping.get("maps_to") or {}).get("feature_id"),
+                        "face_id": fid,
+                        "reason": "face_id not found in current topology",
+                    },
+                )
+
+    for lc_path, lc_doc in load_cases.items():
+        if not isinstance(lc_doc, dict):
+            continue
+
+        def _scan(obj: Any, path: str = "") -> None:
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    _scan(value, f"{path}.{key}" if path else key)
+            elif isinstance(obj, list):
+                for idx, value in enumerate(obj):
+                    _scan(value, f"{path}[{idx}]")
+            elif isinstance(obj, str):
+                for match in _FACE_POINTER_RE.finditer(obj):
+                    fid = match.group(1)
+                    _add_reference(
+                        fid,
+                        {
+                            "location": lc_path,
+                            "pointer": path,
+                            "face_id": fid,
+                            "reason": "face pointer not found in current topology",
+                        },
+                    )
+
+        _scan(lc_doc)
+
+    if setup_raw is not None:
+        try:
+            setup_doc = yaml.safe_load(setup_raw)
+            if isinstance(setup_doc, dict):
+                for section in ("boundary_conditions", "loads"):
+                    for i, item in enumerate(setup_doc.get(section) or []):
+                        if not isinstance(item, dict):
+                            continue
+                        for fid in item.get("target_face_ids") or []:
+                            _add_reference(
+                                str(fid),
+                                {
+                                    "location": "simulation/setup.yaml",
+                                    "section": section,
+                                    "index": i,
+                                    "face_id": fid,
+                                    "reason": "target_face_id not found in current topology",
+                                },
+                            )
+        except Exception:
+            pass
+
+    has_face_refs = bool(referenced_face_ids)
+
+    if result["topology_available"]:
+        if has_face_refs:
+            if expected_hash:
+                result["hash_status"] = (
+                    "ok" if expected_hash == result["topology_hash_current"] else "mismatch"
+                )
+            else:
+                result["hash_status"] = "missing_hash"
+        else:
+            result["hash_status"] = "no_face_refs"
+    else:
+        result["hash_status"] = "missing_topology" if has_face_refs else "no_topology"
+
+    result["missing_face_ids"] = sorted(missing_face_ids)
+    result["stale_references"] = stale_refs
+
+    if result["hash_status"] == "missing_hash":
+        result["warnings"].append(
+            "CAE setup artifacts do not record a topology_hash; "
+            "face references cannot be checked for topology drift."
+        )
+    elif result["hash_status"] == "mismatch":
+        result["warnings"].append(
+            f"Topology hash mismatch: expected {expected_hash}, "
+            f"current {result['topology_hash_current']}. "
+            "CAE face references may be stale."
+        )
+    elif result["hash_status"] == "missing_topology":
+        result["warnings"].append(
+            "geometry/topology_map.json missing; cannot validate face references."
+        )
+    if result["cae_mapping_stale"]:
+        result["warnings"].append(
+            "simulation/cae_mapping.json is marked stale — "
+            "re-run AI preprocessing to refresh face references."
+        )
+    if missing_face_ids:
+        result["warnings"].append(
+            f"Referenced face IDs missing from current topology: {sorted(missing_face_ids)}."
+        )
+
+    result["valid"] = (
+        result["hash_status"]
+        in {"ok", "missing_hash", "no_face_refs", "no_topology"}
+        and not result["cae_mapping_stale"]
+        and not missing_face_ids
+    )
+    return result
 
 
 def _feature_list_from_graph(feature_graph: dict[str, Any]) -> list[dict[str, Any]]:

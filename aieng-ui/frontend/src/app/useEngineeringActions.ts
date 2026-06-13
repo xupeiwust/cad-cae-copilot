@@ -34,8 +34,6 @@ export function useEngineeringActions({
   const [cadGenerating, setCadGenerating] = useState(false);
   const [cadGenResult, setCadGenResult] = useState<CadGenResult | null>(null);
   const [cadGenerationProgress, setCadGenerationProgress] = useState<CadGenerationProgress | null>(null);
-  const [simulationPending, setSimulationPending] = useState(false);
-  const [simulationProgress, setSimulationProgress] = useState<{ step: string; message: string } | null>(null);
   const [heatmapActive, setHeatmapActive] = useState(false);
   const [heatmapRange, setHeatmapRange] = useState<{ min: number; max: number } | null>(null);
 
@@ -214,115 +212,6 @@ export function useEngineeringActions({
     }
   }
 
-  async function executeSimulation(meshSizeMmOverride?: number) {
-    if (!selectedId) return;
-    setSimulationPending(false);
-    setBusy(true);
-    setSimulationProgress({ step: "starting", message: "Starting simulation…" });
-    try {
-      const payload: Record<string, unknown> = { confirmed: true };
-      if (meshSizeMmOverride != null) payload.mesh_size_mm = meshSizeMmOverride;
-
-      const response = await api.runSimulationStream(selectedId, payload);
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let finalResult: Record<string, unknown> | null = null;
-      let simError: string | null = null;
-
-      outer: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6)) as Record<string, unknown>;
-            const step = String(event.step ?? "");
-            if (step === "done") {
-              finalResult = (event.result as Record<string, unknown>) ?? event;
-              setSimulationProgress(null);
-              break outer;
-            } else if (step === "error") {
-              simError = String(event.message ?? "Unknown simulation error");
-              setSimulationProgress(null);
-              break outer;
-            } else {
-              setSimulationProgress({ step, message: String(event.message ?? "") });
-            }
-          } catch {
-            // Partial or malformed SSE line.
-          }
-        }
-      }
-
-      if (simError) throw new Error(simError);
-
-      const result = finalResult ?? {};
-      const status = String(result.status ?? "");
-      let body: string;
-      if (status === "success") {
-        const vm = result.von_mises_max_mpa != null ? `σ_max ${(result.von_mises_max_mpa as number).toFixed(1)} MPa` : "";
-        const ux = result.displacement_max_mm != null ? `u_max ${(result.displacement_max_mm as number).toFixed(3)} mm` : "";
-        body = ["Simulation complete.", vm, ux].filter(Boolean).join("  ·  ");
-      } else if (status === "tools_unavailable") {
-        body = `Simulation tools not available: ${(result.missing_tools as string[] | undefined)?.join(", ") ?? "unknown"}.`;
-      } else {
-        body = `Solver returned error (code ${result.returncode ?? "?"}).`;
-      }
-      setHeatmapActive(false);
-      setHeatmapRange(null);
-      await refreshProjects(selectedId);
-      const fosAdvisory = (result.verdict as Record<string, unknown> | undefined)?.fos_advisory as string[] | undefined;
-      setChatHistory((current) => [
-        ...current,
-        {
-          id: createChatId(),
-          role: "assistant",
-          body,
-          createdAt: new Date().toISOString(),
-          simulationResult: {
-            status,
-            returncode: result.returncode as number | undefined,
-            von_mises_max_mpa: result.von_mises_max_mpa as number | null | undefined,
-            displacement_max_mm: result.displacement_max_mm as number | null | undefined,
-            node_count: result.node_count as number | undefined,
-            mesh_size_mm: result.mesh_size_mm as number | undefined,
-            written_artifacts: result.written_artifacts as string[] | undefined,
-            warnings: result.warnings as string[] | undefined,
-            missing_tools: result.missing_tools as string[] | undefined,
-            message: result.message as string | undefined,
-            diagnosis: result.diagnosis as string[] | undefined,
-            verdict: result.verdict as NonNullable<ChatHistoryItem["simulationResult"]>["verdict"],
-          },
-        },
-      ]);
-      if (fosAdvisory && fosAdvisory.length > 0) {
-        setChatHistory((current) => [
-          ...current,
-          {
-            id: createChatId(),
-            role: "assistant",
-            body: "Engineering advisory based on Factor-of-Safety analysis:",
-            createdAt: new Date().toISOString(),
-            advisoryItems: fosAdvisory,
-          },
-        ]);
-      }
-    } catch (err) {
-      setSimulationProgress(null);
-      setChatHistory((current) => [
-        ...current,
-        { id: createChatId(), role: "assistant", body: redactSecrets(`Simulation failed: ${String(err)}`), createdAt: new Date().toISOString() },
-      ]);
-    } finally {
-      setBusy(false);
-      setSimulationProgress(null);
-    }
-  }
-
   async function viewStressHeatmap() {
     const newActive = !heatmapActive;
     setHeatmapActive(newActive);
@@ -351,16 +240,12 @@ export function useEngineeringActions({
     cadGenResult,
     cadGenerationProgress,
     setCadGenerationProgress,
-    simulationPending,
-    simulationProgress,
-    setSimulationPending,
     heatmapActive,
     heatmapRange,
     refreshViewerAsset,
     resetProjectDerivedState,
     executePreprocessFromPrompt,
     executeCadFromPrompt,
-    executeSimulation,
     viewStressHeatmap,
   };
 }

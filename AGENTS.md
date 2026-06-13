@@ -1345,6 +1345,17 @@ also optional; v0 normalizes generic/fake assembly results when provided, otherw
 to parts/interfaces/connections/source_ir_node with confidence in
 `analysis/assembly_result_map.json` and `diagnostics/assembly_result_mapping.json`.
 
+**Bolt preload (contract + honest report).** A bolted connection MAY carry an
+explicit `preload` block (`axial_force_n`, optional `method`/`fastener_id`) in the
+Assembly IR; it is **never inferred** from a bolt designation or BOM/standard-part
+entry. `diagnostics/assembly_bolt_preload.json` records, per bolted connection,
+the preload intent + whether it is actually modeled, linked to connection /
+interface / fastener IDs. In v0 the simplified proxy deck cannot apply pretension
+(no solid bolt geometry / `*PRE-TENSION SECTION`), so intents are reported
+`unsupported` and `bolt_preload_modeled` stays **false** — it flips true only when
+a connection's preload is actually represented in a generated deck, never from
+intent alone. No fatigue / loosening / torque-to-preload claim is implied.
+
 Assembly-aware topology optimization v0 is **explicit execution only**:
 setup writes `analysis/assembly_topopt_problem.json`,
 `diagnostics/assembly_topopt_derivation.json`, and, when supports+loads are safe,

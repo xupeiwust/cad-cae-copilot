@@ -43,6 +43,7 @@ ASSEMBLY_COMPUTED_METRICS_PATH = "analysis/assembly_computed_metrics.json"
 ASSEMBLY_FIELD_REGIONS_PATH = "analysis/assembly_field_regions.json"
 ASSEMBLY_RESULT_MAP_PATH = "analysis/assembly_result_map.json"
 ASSEMBLY_RESULT_MAPPING_DIAGNOSTICS_PATH = "diagnostics/assembly_result_mapping.json"
+ASSEMBLY_BOLT_PRELOAD_DIAGNOSTICS_PATH = "diagnostics/assembly_bolt_preload.json"
 
 # Optional generic/fake result fixtures accepted by the v0 normalizer.  They are
 # not solver-native; they already describe neutral assembly-level observations.
@@ -158,6 +159,36 @@ def _conn_load_transfer(conn: dict[str, Any]) -> bool:
     if "positioning_only" in behaviors:
         return False
     return str(conn.get("type")) in {"rigid_tie", "bonded", "bolted_proxy", "welded_proxy", "spring_proxy"}
+
+
+def _pos_num(value: Any) -> float | None:
+    """Positive finite number, else None (bool rejected)."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 and n == n else None
+
+
+def _bolt_preload_intent(conn: dict[str, Any]) -> dict[str, Any]:
+    """Read EXPLICIT bolt-preload intent off a connection.
+
+    Preload is honored only when explicitly specified (``preload.axial_force_n``);
+    it is never inferred from a bolt designation or BOM/standard-part entry.
+    """
+    preload = conn.get("preload")
+    preload = preload if isinstance(preload, dict) else {}
+    axial = _pos_num(preload.get("axial_force_n"))
+    intent = axial is not None
+    return {
+        "intent_present": intent,
+        "axial_force_n": axial,
+        "method": str(preload.get("method") or "axial_force") if intent else None,
+        "fastener_id": preload.get("fastener_id") or conn.get("fastener_id"),
+        "modeled": False,  # v0 proxy deck cannot apply pretension; only deck/solver evidence flips this
+    }
 
 
 def _proxy_limitations(ctype: str, proxy_type: str, explicit: list[Any]) -> list[str]:
@@ -330,6 +361,7 @@ def build_assembly_cae_model(
             "enabled_for_solver": enabled,
             "disabled_reason": "; ".join(sorted(set(disabled_reasons))) if disabled_reasons else None,
             "limitations": _proxy_limitations(ctype, proxy_type, _as_list(conn.get("limitations"))),
+            "bolt_preload": _bolt_preload_intent(conn) if ctype == "bolted_proxy" else None,
         })
 
     loads = []
@@ -455,6 +487,10 @@ def generate_assembly_solver_deck(
             "bolt_preload_modeled": False,
             "production_ready": False,
         },
+        "bolt_preload_intents_unsupported": [
+            c.get("connection_id") for c in enabled
+            if isinstance(c.get("bolt_preload"), dict) and c["bolt_preload"].get("intent_present")
+        ],
         "limitations": list(_LIMITATIONS),
     }
     if status != "generated":
@@ -479,6 +515,12 @@ def generate_assembly_solver_deck(
         else:
             lines.append(
                 f"** TIE PROXY {conn.get('connection_id')}: {conn.get('interface_a')} -> {conn.get('interface_b')}"
+            )
+        bp = conn.get("bolt_preload") if isinstance(conn.get("bolt_preload"), dict) else None
+        if bp and bp.get("intent_present"):
+            lines.append(
+                f"** BOLT PRELOAD INTENT {conn.get('connection_id')} axial_force_n={bp.get('axial_force_n')} "
+                "NOT MODELED (proxy deck; *PRE-TENSION SECTION unsupported in v0)"
             )
     lines.append("*STEP")
     lines.append("*STATIC")
@@ -812,6 +854,91 @@ def _update_manifest(
     return manifest
 
 
+def build_bolt_preload_report(model: dict[str, Any] | None, *, deck_status: str | None = None) -> dict[str, Any]:
+    """Honest bolt-preload report for an assembly CAE model.
+
+    Records EXPLICIT preload intent per bolted connection and whether it is
+    actually modeled. In v0 the simplified proxy deck cannot apply pretension
+    (no solid bolt geometry / ``*PRE-TENSION SECTION``), so every intent is
+    reported ``unsupported`` and ``bolt_preload_modeled`` is false.
+
+    Honesty invariants (#199):
+    - preload is never inferred from a bolt designation / BOM entry — only an
+      explicit ``preload.axial_force_n`` counts as intent;
+    - ``bolt_preload_modeled`` is true ONLY when a connection's preload is
+      actually represented in a generated deck (``modeled`` true), never from
+      intent alone;
+    - no fatigue / loosening / torque-to-preload claim is implied.
+    """
+    model = model if isinstance(model, dict) else {}
+    connections: list[dict[str, Any]] = []
+    with_intent = 0
+    modeled_count = 0
+    for conn in _as_list(model.get("connections")):
+        if not isinstance(conn, dict) or conn.get("type") != "bolted_proxy":
+            continue
+        pre = conn.get("bolt_preload") if isinstance(conn.get("bolt_preload"), dict) else _bolt_preload_intent(conn)
+        intent = bool(pre.get("intent_present"))
+        modeled = bool(pre.get("modeled"))
+        with_intent += int(intent)
+        modeled_count += int(modeled)
+        if modeled:
+            status, reasons = "modeled", []
+        elif intent:
+            status = "unsupported"
+            reasons = [
+                "v0 assembly proxy deck models bolted joints as tie/connector proxies; "
+                "pretension requires solid bolt geometry and a *PRE-TENSION SECTION, "
+                "not available in the proxy model",
+            ]
+        else:
+            status = "no_intent"
+            reasons = [
+                "no explicit preload specified; bolt preload is not inferred from a "
+                "bolt designation or BOM/standard-part entry",
+            ]
+        connections.append({
+            "connection_id": conn.get("connection_id"),
+            "type": conn.get("type"),
+            "fastener_id": pre.get("fastener_id"),
+            "interface_a": conn.get("interface_a"),
+            "interface_b": conn.get("interface_b"),
+            "preload_intent_present": intent,
+            "axial_force_n": pre.get("axial_force_n"),
+            "method": pre.get("method"),
+            "modeled": modeled,
+            "status": status,
+            "reasons": reasons,
+        })
+
+    bolt_preload_modeled = modeled_count > 0
+    return {
+        "format": "aieng.assembly_bolt_preload",
+        "format_version": FORMAT_VERSION,
+        "contract_version": "0.1",
+        "schema_version": "0.1",
+        "bolt_preload_modeled": bolt_preload_modeled,
+        "deck_representation": "modeled" if bolt_preload_modeled else "unsupported",
+        "deck_status": deck_status,
+        "summary": {
+            "bolted_connections": len(connections),
+            "with_preload_intent": with_intent,
+            "modeled": modeled_count,
+        },
+        "connections": connections,
+        "honesty": {
+            "bolt_preload_modeled": bolt_preload_modeled,
+            "preload_inferred_from_designation": False,
+            "fatigue_modeled": False,
+            "loosening_modeled": False,
+            "torque_to_preload_certified": False,
+            "note": "Preload intent is recorded only when explicitly specified; the v0 "
+                    "assembly proxy deck cannot apply pretension, so no preload is modeled "
+                    "and no production or fatigue claim is implied.",
+        },
+    }
+
+
 def process_assembly_cae_package(package_path: str | Path) -> dict[str, Any]:
     """Best-effort assembly CAE v0 processing for a package.
 
@@ -850,6 +977,7 @@ def process_assembly_cae_package(package_path: str | Path) -> dict[str, Any]:
         setup_draft=setup_draft,
     )
     deck, deck_diag = generate_assembly_solver_deck(model, available_members=names)
+    preload_report = build_bolt_preload_report(model, deck_status=deck_diag.get("status"))
     computed, fields, exec_diag = execute_assembly_solver_v0(
         model=model,
         deck_present=deck is not None,
@@ -868,6 +996,7 @@ def process_assembly_cae_package(package_path: str | Path) -> dict[str, Any]:
         ASSEMBLY_SOLVER_DECK_DIAGNOSTICS_PATH: _dumps(deck_diag),
         ASSEMBLY_SOLVER_EXECUTION_DIAGNOSTICS_PATH: _dumps(exec_diag),
         ASSEMBLY_RESULT_MAPPING_DIAGNOSTICS_PATH: _dumps(mapping_diag),
+        ASSEMBLY_BOLT_PRELOAD_DIAGNOSTICS_PATH: _dumps(preload_report),
     }
     if deck is not None:
         members[ASSEMBLY_SOLVER_DECK_PATH] = deck.encode("utf-8")

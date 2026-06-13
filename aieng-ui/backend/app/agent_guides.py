@@ -1,8 +1,26 @@
 """Compact, topic-addressable agent onboarding derived from root AGENTS.md."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+
+
+def _version_surface() -> dict[str, Any]:
+    """Return the AIENG version surface from the installed aieng schemas."""
+    try:
+        from importlib.resources import files
+
+        resource = files("aieng.schemas").joinpath("version_surface.json")
+        if resource.is_file():
+            return json.loads(resource.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    # Fallback for source-tree runs.
+    fallback = Path(__file__).resolve().parents[3] / "aieng" / "src" / "aieng" / "schemas" / "version_surface.json"
+    if fallback.exists():
+        return json.loads(fallback.read_text(encoding="utf-8"))
+    return {"error": "version_surface.json not found"}
 
 
 QUICKSTART = """\
@@ -198,6 +216,7 @@ def quickstart_result() -> dict[str, Any]:
         "path": str(path),
         "mode": "quickstart",
         "available_topics": available_topics(),
+        "version_surface": _version_surface(),
         "detail_hint": "MANDATORY: Call aieng.guide {topic} once per session before the first action of that category. Topic map — cad: geometry creation/edit, cae: simulation/solver, workflows: multi-step pipelines, approvals: gated tools, operators: admin actions, pointers: entity selection, package: import/export/lifecycle, fallback: non-MCP mode, frontend: UI development, tools: tool taxonomy, full: complete rules. Re-read only if session context was lost or the guide changed. Full reference: aieng.agent_readme {detail:'full'}."
     }
 
@@ -209,6 +228,7 @@ def full_result() -> dict[str, Any]:
         "path": str(path),
         "mode": "full",
         "available_topics": available_topics(),
+        "version_surface": _version_surface(),
     }
 
 

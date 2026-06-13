@@ -50,8 +50,10 @@ CANONICAL_DOCS = [
     _DOCS / "showcase_gallery.md",
     _DOCS / "backend_capability_matrix.md",
     _DOCS / "backend_artifact_reference.md",
+    _DOCS / "version_contract.md",
     _DOCS / "showcase_gallery.json",
     _REPO_ROOT / "AGENTS.md",
+    _REPO_ROOT / "aieng-ui" / "backend" / "MCP_SETUP.md",
 ]
 
 # Artifact names that must be referenced in at least one canonical doc.
@@ -258,7 +260,53 @@ def test_agents_md_documents_prepare_solver_run_guided_workflow() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task D — Stability report helper
+# Task D — Version surface / compat contract
+# ---------------------------------------------------------------------------
+
+
+def test_version_surface_json_exists_and_is_valid() -> None:
+    """The version surface file exists and carries the three required surfaces."""
+    path = _AIENG_ROOT / "src" / "aieng" / "schemas" / "version_surface.json"
+    assert path.exists(), "version_surface.json is missing"
+    data = json.loads(_read_text(path))
+    assert data.get("format") == "aieng.version_surface.v1"
+    assert "version" in data
+    assert "surfaces" in data
+    for name in ("mcp_tool_surface", "artifact_schemas", "skill_prompts"):
+        assert name in data["surfaces"], f"Missing surface: {name}"
+        assert "version" in data["surfaces"][name]
+        assert "sha256" in data["surfaces"][name]
+    assert "compat_policy" in data
+
+
+def test_version_surface_hashes_match_current_artifacts() -> None:
+    """Stored hashes in version_surface.json must match the current artifacts.
+
+    This gate fails when a tool schema, artifact schema, or skill prompt changes
+    without running scripts/update_version_surface.py and bumping the affected
+    surface version.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, str(_REPO_ROOT / "scripts" / "update_version_surface.py"), "--check"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"Version surface hashes are stale:\n{result.stdout}\n{result.stderr}"
+    )
+
+
+def test_version_surface_referenced_in_canonical_docs() -> None:
+    """External agents must be told where to read the version surface."""
+    text = _all_doc_text()
+    assert "version_surface" in text or "version surface" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Task E — Stability report helper
 # ---------------------------------------------------------------------------
 
 

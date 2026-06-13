@@ -1509,5 +1509,9 @@ curl -X POST http://localhost:8000/api/agent/invoke-tool \
 | `AIENG_MCP_REQUIRE_GUIDES` | Require the relevant `aieng.guide` topic before CAD, CAE, or package-lifecycle tools (default `1`; set `0` to disable) |
 | `AIENG_AGENTIC_PERMISSION_TOOL` | Set to `1` only for an agentic session driver that uses the backend approval broker |
 | `AIENG_AGENTIC_APPROVAL_TIMEOUT_SECONDS` | Maximum seconds to wait for a workbench approval decision (default `900`) |
+| `AIENG_CAD_MAX_MEMORY_MB` | POSIX-only address-space (`RLIMIT_AS`) cap for the CAD execution subprocess (default `4096`; `0` disables). No-op on Windows. See `aieng-ui/backend/docs/cad_execution_boundary.md` |
+| `AIENG_CAD_MAX_CPU_SECONDS` | POSIX-only CPU-time (`RLIMIT_CPU`) cap for the CAD execution subprocess (default = build timeout + 30s; `0` disables). Hard backstop behind the wall-clock timeout |
+| `AIENG_CAD_MAX_FILE_MB` | POSIX-only single-file write-size (`RLIMIT_FSIZE`) cap for the CAD execution subprocess (default `512`; `0` disables) |
 
 Full wiring (Claude Code / Copilot / Codex): `aieng-ui/backend/MCP_SETUP.md`.
+CAD execution boundary, threat model, and deployment hardening: `aieng-ui/backend/docs/cad_execution_boundary.md`.

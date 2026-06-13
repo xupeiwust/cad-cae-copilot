@@ -20,6 +20,7 @@ import tempfile
 import time
 import zipfile
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,102 @@ def _load_agents_md() -> str | None:
         return path.read_text(encoding="utf-8")
     except Exception:
         return None
+
+
+# ── CAD execution resource limits (#182) ────────────────────────────────────────
+# User/agent-supplied build123d code already runs in a separate subprocess, so it
+# gets process isolation and a parent-side wall-clock timeout. On POSIX (the
+# Docker/Linux adoption path) we additionally cap address space, CPU time, and
+# output file size via ``resource.setrlimit`` inside the child, so a runaway or
+# hostile script cannot exhaust host memory/CPU or fill the disk. These caps are
+# OS-enforced. On platforms without the ``resource`` module (Windows) they are a
+# no-op and the wall-clock timeout remains the only guard. This is NOT a full
+# untrusted-code sandbox — see docs/cad_execution_boundary.md for the honest
+# boundary, threat model, and non-goals.
+
+# Generous defaults: large enough for real OCP/build123d models, small enough to
+# protect a shared host. Operators tune via the AIENG_CAD_MAX_* env vars; set any
+# to 0 (or a negative value) to disable that particular cap.
+_CAD_DEFAULT_MAX_MEMORY_MB = 4096
+_CAD_DEFAULT_MAX_FILE_MB = 512
+# Headroom added to the wall-clock timeout for the default CPU cap, so the
+# wall-clock timeout (which also catches sleeps / blocking IO) normally fires
+# first and the CPU cap is a hard backstop for pure-CPU spins.
+_CAD_CPU_HEADROOM_S = 30
+
+
+@dataclass(frozen=True)
+class CadResourceLimits:
+    """OS-enforced resource caps applied inside the CAD execution subprocess.
+
+    A value of ``0`` means "do not set this limit" (leave it at the inherited /
+    unlimited value).
+    """
+
+    max_memory_mb: int
+    max_cpu_seconds: int
+    max_file_mb: int
+
+
+def _cad_env_limit(name: str, default: int) -> int:
+    """Read a positive integer limit from the environment.
+
+    Returns ``default`` when unset or unparseable; returns ``0`` (disabled) when
+    the operator explicitly sets a value <= 0.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else 0
+
+
+def _resource_limits_from_env(timeout: int) -> CadResourceLimits:
+    """Resolve the resource caps for one CAD execution from env + the timeout."""
+    default_cpu = max(1, int(timeout)) + _CAD_CPU_HEADROOM_S
+    return CadResourceLimits(
+        max_memory_mb=_cad_env_limit("AIENG_CAD_MAX_MEMORY_MB", _CAD_DEFAULT_MAX_MEMORY_MB),
+        max_cpu_seconds=_cad_env_limit("AIENG_CAD_MAX_CPU_SECONDS", default_cpu),
+        max_file_mb=_cad_env_limit("AIENG_CAD_MAX_FILE_MB", _CAD_DEFAULT_MAX_FILE_MB),
+    )
+
+
+def _build_resource_limit_preamble(limits: CadResourceLimits) -> str:
+    """Python source prepended to the runner so the child caps its own resources.
+
+    Runs before any heavy import (build123d / OCP) so the caps apply to the whole
+    process. Degrades to a silent no-op where ``resource`` or a given RLIMIT is
+    unavailable (Windows, restricted platforms).
+    """
+    return (
+        "# --- aieng resource limits (auto-injected, see docs/cad_execution_boundary.md) ---\n"
+        "try:\n"
+        "    import resource as _aieng_resource\n"
+        "except Exception:\n"
+        "    _aieng_resource = None\n"
+        "if _aieng_resource is not None:\n"
+        "    def _aieng_set_limit(_res, _soft):\n"
+        "        try:\n"
+        "            _hard = _aieng_resource.getrlimit(_res)[1]\n"
+        "            if _hard != _aieng_resource.RLIM_INFINITY and _soft > _hard:\n"
+        "                _soft = _hard\n"
+        "            _aieng_resource.setrlimit(_res, (_soft, _hard))\n"
+        "        except Exception:\n"
+        "            pass\n"
+        f"    _aieng_mem_mb = {int(limits.max_memory_mb)}\n"
+        f"    _aieng_cpu_s = {int(limits.max_cpu_seconds)}\n"
+        f"    _aieng_file_mb = {int(limits.max_file_mb)}\n"
+        "    if _aieng_mem_mb > 0 and hasattr(_aieng_resource, 'RLIMIT_AS'):\n"
+        "        _aieng_set_limit(_aieng_resource.RLIMIT_AS, _aieng_mem_mb * 1024 * 1024)\n"
+        "    if _aieng_cpu_s > 0 and hasattr(_aieng_resource, 'RLIMIT_CPU'):\n"
+        "        _aieng_set_limit(_aieng_resource.RLIMIT_CPU, _aieng_cpu_s)\n"
+        "    if _aieng_file_mb > 0 and hasattr(_aieng_resource, 'RLIMIT_FSIZE'):\n"
+        "        _aieng_set_limit(_aieng_resource.RLIMIT_FSIZE, _aieng_file_mb * 1024 * 1024)\n"
+        "# --- end aieng resource limits ---\n"
+    )
 
 
 # ── build123d runner template ──────────────────────────────────────────────────
@@ -2678,7 +2775,9 @@ def _execute_build123d_code(
     yields periodic heartbeats so the SSE client sees progress during a long
     build123d invocation.
     """
-    runner_script = _RUNNER_TEMPLATE.replace("__AIENG_GENERATED_CODE__", code)
+    runner_script = _build_resource_limit_preamble(
+        _resource_limits_from_env(timeout)
+    ) + _RUNNER_TEMPLATE.replace("__AIENG_GENERATED_CODE__", code)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
@@ -2689,12 +2788,19 @@ def _execute_build123d_code(
         out_stl = tmp / "result.stl"
         out_glb = tmp / "result.glb"
 
-        proc = subprocess.run(
-            [sys.executable, str(runner_path), str(out_step), str(out_topo), str(out_stl), str(out_glb)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(runner_path), str(out_step), str(out_topo), str(out_stl), str(out_glb)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # Match the streaming path's failure mode: surface a clean RuntimeError
+            # instead of letting a raw TimeoutExpired propagate to callers.
+            raise RuntimeError(
+                f"build123d execution timed out after {timeout}s"
+            ) from exc
 
         if proc.returncode != 0:
             stderr_excerpt = proc.stderr[-2000:] if proc.stderr else "(no stderr)"
@@ -2739,7 +2845,9 @@ def _execute_build123d_code_streaming(
     The subprocess is always reaped before the generator returns, even when the
     caller stops consuming early (e.g. client disconnect).
     """
-    runner_script = _RUNNER_TEMPLATE.replace("__AIENG_GENERATED_CODE__", code)
+    runner_script = _build_resource_limit_preamble(
+        _resource_limits_from_env(timeout)
+    ) + _RUNNER_TEMPLATE.replace("__AIENG_GENERATED_CODE__", code)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)

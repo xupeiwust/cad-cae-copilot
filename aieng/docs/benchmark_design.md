@@ -41,7 +41,7 @@ geometry) and must produce a CadQuery or structured script that reconstructs the
 from the recorded parameters.
 
 The benchmark does **not** execute the script automatically. A human or external tool
-evaluates geometric correctness against a reference STEP file.
+evaluates geometric correspondence against a reference STEP file.
 
 **Target behaviour**: Syntactically valid reconstruction script; parameters match the
 package record; no invented parameters; explicit TODO for missing dimensions.

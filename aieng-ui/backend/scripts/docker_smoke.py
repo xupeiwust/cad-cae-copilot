@@ -362,5 +362,103 @@ def main() -> int:
     return 0
 
 
+def persist_create(backend_base: str = "http://127.0.0.1:8000") -> int:
+    """Create a project and print its bare id to stdout (logs to stderr).
+
+    Used by the restart-persistence smoke: the workflow captures the id, restarts
+    the container against the same mounted /data volume, then calls
+    ``persist-verify`` to prove the project survived. stdout carries ONLY the id
+    so it can be captured with ``$(...)``.
+    """
+    import json
+
+    payload = json.dumps({"name": "docker-restart-persistence"}).encode()
+
+    def _created(_s: int, _h: dict[str, str], body: bytes) -> bool:
+        try:
+            return isinstance(json.loads(body).get("id"), (str, int))
+        except json.JSONDecodeError:
+            return False
+
+    print("[docker-smoke] persist: waiting for backend health ...", file=sys.stderr)
+    _wait_for_health(backend_base)
+    print("[docker-smoke] persist: creating project ...", file=sys.stderr)
+    try:
+        _, _, body = _wait_for_request(
+            f"{backend_base}/api/projects",
+            timeout=60.0,
+            interval=2.0,
+            headers={"Content-Type": "application/json"},
+            data=payload,
+            method="POST",
+            validate=_created,
+        )
+    except RuntimeError as exc:
+        print(f"[docker-smoke] FAIL: persist create did not become ready: {exc}", file=sys.stderr)
+        return 1
+    project_id = json.loads(body).get("id")
+    print(f"[docker-smoke] persist: created project {project_id}", file=sys.stderr)
+    print(project_id)  # bare id on stdout for the workflow to capture
+    return 0
+
+
+def persist_verify(project_id: str, backend_base: str = "http://127.0.0.1:8000") -> int:
+    """Read ``project_id`` back after a container restart; assert it survived."""
+    import json
+
+    if not project_id:
+        print("[docker-smoke] FAIL: persist-verify requires a project id", file=sys.stderr)
+        return 1
+
+    print(f"[docker-smoke] persist: waiting for backend health after restart ...", file=sys.stderr)
+    _wait_for_health(backend_base)
+
+    def _matches(status: int, _h: dict[str, str], body: bytes) -> bool:
+        # GET /api/projects/{id} returns a package summary ({"project": {...}}),
+        # not the bare project dict — and it 404s (via get_project) when the
+        # project is missing. So a 200 whose summary carries the same id proves
+        # the project survived the restart.
+        if status != 200:
+            return False
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            return False
+        found = data.get("id") or (data.get("project") or {}).get("id")
+        return str(found) == str(project_id)
+
+    print(f"[docker-smoke] persist: reading project {project_id} back after restart ...", file=sys.stderr)
+    try:
+        _wait_for_request(
+            f"{backend_base}/api/projects/{project_id}",
+            timeout=60.0,
+            interval=2.0,
+            expected_status=200,
+            validate=_matches,
+        )
+    except RuntimeError as exc:
+        print(
+            f"[docker-smoke] FAIL: project {project_id} did not survive restart: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"[docker-smoke] persist: project {project_id} survived restart OK", file=sys.stderr)
+    return 0
+
+
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Docker all-in-one smoke test")
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("all", help="Full smoke (default if no subcommand)")
+    sub.add_parser("persist-create", help="Create a project; print its id to stdout")
+    verify = sub.add_parser("persist-verify", help="Verify a project id reads back after restart")
+    verify.add_argument("--project-id", required=True)
+    args = parser.parse_args()
+
+    if args.command == "persist-create":
+        raise SystemExit(persist_create())
+    if args.command == "persist-verify":
+        raise SystemExit(persist_verify(args.project_id))
     raise SystemExit(main())

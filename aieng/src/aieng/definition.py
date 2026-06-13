@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,6 +107,13 @@ def _validate_definition(definition: dict[str, Any]) -> None:
         fallback = Path(__file__).resolve().parent / "schemas" / "model_definition.schema.json"
         if not fallback.exists():
             raise ValueError("model_definition.schema.json missing")
+        warnings.warn(
+            "Schema model_definition.schema.json was loaded from the source tree fallback "
+            f"({fallback}); the installed package may be missing its schema data. "
+            "This can mask a packaging regression.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         schema_text = fallback.read_text(encoding="utf-8")
     if Draft202012Validator is None:
         return

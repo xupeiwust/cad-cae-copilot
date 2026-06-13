@@ -552,7 +552,7 @@ def generate_bom(
         if ftype not in ("named_part", "standard_part", "mounting_hole", "mounting_hole_pattern", "base_plate"):
             continue
         params = feat.get("parameters", {}) or {}
-        material = params.get("material", "")
+        material = params.get("material", "") or ""
         item: dict[str, Any] = {
             "part_name": name,
             "part_type": ftype,

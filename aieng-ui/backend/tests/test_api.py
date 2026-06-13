@@ -3921,6 +3921,87 @@ def test_prepare_solver_run_recommends_run_solver_when_ready(tmp_path: Path) -> 
     assert run_recs[0]["input"]["input_deck_path"] == "simulation/runs/run_001/solver_input.inp"
 
 
+def test_prepare_solver_run_partial_readiness_recommends_only_missing_items(tmp_path: Path) -> None:
+    """Partial readiness produces targeted recommendations for exactly the missing items."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("preflight-partial"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "preflight.aieng"
+    # Mesh + load case present; solver settings + input deck missing.
+    _make_preflight_package(pkg_path, mesh=True, solver_settings=False, load_case=True, input_deck=False)
+    project["aieng_file"] = "preflight.aieng"
+    save_project(settings, project)
+
+    resp = client.post("/api/runtime/runs", json={
+        "message": "prepare solver run",
+        "project_id": project_id,
+        "tool_input": {"project_id": project_id, "run_id": "run_001", "load_case_id": "load_case_001"},
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["ok"] is True
+    assert result["ready_to_run"] is False
+
+    preflight = result["preflight"]
+    assert preflight["has_mesh"] is True
+    assert preflight["has_solver_settings"] is False
+    assert preflight["has_load_case"] is True
+    assert preflight["has_input_deck"] is False
+
+    recs = result["recommended_next_calls"]
+    tools = [r["tool"] for r in recs]
+    assert "cae.write_mesh_handoff" not in tools
+    assert "cae.apply_setup_patch" in tools
+    assert "cae.generate_solver_input" in tools
+    assert "cae.run_solver" not in tools
+
+
+def test_prepare_solver_run_external_input_deck_bypasses_package_deck_check(tmp_path: Path) -> None:
+    """An externally-supplied input_deck_path satisfies the input deck check even when the package has no deck."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("preflight-external-deck"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "preflight.aieng"
+    # Everything present except the in-package input deck.
+    _make_preflight_package(pkg_path, mesh=True, solver_settings=True, load_case=True, input_deck=False)
+    project["aieng_file"] = "preflight.aieng"
+    save_project(settings, project)
+
+    external_deck = tmp_path / "external_solver_input.inp"
+    external_deck.write_text("** external CalculiX deck\n", encoding="utf-8")
+
+    resp = client.post("/api/runtime/runs", json={
+        "message": "prepare solver run",
+        "project_id": project_id,
+        "tool_input": {
+            "project_id": project_id,
+            "run_id": "run_001",
+            "load_case_id": "load_case_001",
+            "input_deck_path": str(external_deck),
+        },
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["ok"] is True
+    assert result["preflight"]["has_input_deck"] is True
+
+    # Missing items should no longer mention the input deck.
+    missing_items = result["preflight"]["missing_items"]
+    assert not any("solver_input.inp" in item for item in missing_items)
+
+
 def _execute_run_solver(client, project_id, tool_input):
     """Start a solver run via the runtime endpoint and auto-approve if gated."""
     resp = client.post("/api/runtime/runs", json={

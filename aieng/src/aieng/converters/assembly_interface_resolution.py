@@ -36,7 +36,16 @@ from aieng.converters.assembly_ir import (
 
 INTERFACE_RESOLUTION_PATH = "assembly/interface_resolution.json"
 ASSEMBLY_CONNECTION_GEOMETRY_PATH = "diagnostics/assembly_connection_geometry.json"
+ASSEMBLY_MESH_INTERFACE_DIAGNOSTICS_PATH = "diagnostics/assembly_mesh_interface_diagnostics.json"
 PACKAGE_TOPOLOGY_PATH = "geometry/topology_map.json"
+
+# Pre-solver interface-NSET quality thresholds (deterministic, conservative).
+# An interface that maps onto zero faces yields an EMPTY node set; one mapping
+# onto a single tiny face yields a SPARSE/undersampled one — both produce
+# misleading assembly solver results, so they are surfaced before any run.
+_SPARSE_MAX_FACES = 1          # <= this resolved face(s) -> undersampled interface
+_DISCONNECT_GAP_FRAC = 0.05    # member-face gap > this*iface-diag -> separate region
+_OVER_BROAD_DIAG_FRAC = 0.9    # iface-diag / part-diag > this -> interface spans the part
 
 # proximity thresholds expressed as a fraction of the larger interface bbox diagonal
 _TOUCH_FRAC = 0.02     # gap <= this*scale -> touching/overlapping
@@ -443,6 +452,173 @@ def build_topology_by_part(zf: zipfile.ZipFile, names: set[str],
     return out
 
 
+# ── pre-solver interface-NSET quality diagnostics (#200) ──────────────────────
+
+def _entity_world_box(ent: dict[str, Any], R: list[list[float]], t: list[float]) -> list[float] | None:
+    bb = ent.get("bounding_box")
+    if not (isinstance(bb, (list, tuple)) and len(bb) == 6):
+        return None
+    corners = [_apply_point(R, t, c) for c in _bbox_corners([float(x) for x in bb])]
+    return _bbox_from_points(corners)
+
+
+def _part_world_bbox(topo_index: dict[str, dict[str, Any]], R: list[list[float]], t: list[float]) -> list[float] | None:
+    boxes = [wb for ent in topo_index.values() if (wb := _entity_world_box(ent, R, t))]
+    return _bbox_union(boxes) if boxes else None
+
+
+def _iface_member_world_boxes(iface: dict[str, Any], topo_index: dict[str, dict[str, Any]],
+                              R: list[list[float]], t: list[float]) -> list[list[float]]:
+    refs = _ref_ids(iface)
+    out: list[list[float]] = []
+    for rid in refs["face_ids"] + refs["edge_ids"] + refs["vertex_ids"]:
+        ent = topo_index.get(rid)
+        if ent is not None and (wb := _entity_world_box(ent, R, t)):
+            out.append(wb)
+    return out
+
+
+def _region_count(boxes: list[list[float]], tol: float) -> int:
+    """Union-find clustering: boxes that overlap or sit within ``tol`` gap form one region."""
+    n = len(boxes)
+    if n <= 1:
+        return n
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _bbox_overlap(boxes[i], boxes[j]) or _bbox_gap(boxes[i], boxes[j]) <= tol:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+    return len({find(i) for i in range(n)})
+
+
+def diagnose_mesh_interfaces(assembly: Any, topology_by_part: dict[str, dict[str, dict[str, Any]]] | None,
+                             resolution: dict[str, Any]) -> dict[str, Any]:
+    """Pre-solver interface-NSET quality diagnostics for an assembly.
+
+    Catches interfaces that would map onto **empty / sparse / disconnected /
+    over-broad** mesh node sets *before* a solver runs, so misleading assembly
+    results are caught early. Derived from the already-resolved interface
+    geometry (a mesh proxy); it runs no solver and meshes nothing. Empty
+    interfaces are **blocking**; sparse/disconnected/over-broad/partial are
+    **warnings**. Complements the connection-geometry plausibility check without
+    duplicating it (that judges connection pairs; this judges per-interface node
+    coverage).
+    """
+    assembly = assembly if isinstance(assembly, dict) else {}
+    topology_by_part = topology_by_part or {}
+    resolution = resolution if isinstance(resolution, dict) else {}
+    records = resolution.get("interfaces") if isinstance(resolution.get("interfaces"), dict) else {}
+    transforms = {p.get("id"): p.get("transform") for p in _as_list(assembly.get("parts")) if isinstance(p, dict)}
+    interfaces = _collect_interfaces(assembly)
+
+    diagnostics: list[dict[str, Any]] = []
+    counts = {"ok": 0, "warning": 0, "blocking": 0}
+    blocking_interfaces: list[str] = []
+
+    for iid, iface in interfaces.items():
+        rec = records.get(iid) if isinstance(records.get(iid), dict) else {}
+        pid = iface.get("part_id")
+        topo_index = topology_by_part.get(pid) or {}
+        R, tvec, _ok, _note = _resolve_transform(transforms.get(pid))
+        face_count = int(rec.get("face_count") or 0)
+        requested = int(rec.get("requested_ref_count") or 0)
+        unresolved = rec.get("unresolved_refs") or []
+        status_res = rec.get("resolution_status")
+        world = rec.get("world") if isinstance(rec.get("world"), dict) else {}
+        area = world.get("area")
+        iface_bbox = world.get("bbox")
+        iface_diag = _bbox_diag(iface_bbox) if isinstance(iface_bbox, (list, tuple)) and len(iface_bbox) == 6 else 0.0
+
+        member_boxes = _iface_member_world_boxes(iface, topo_index, R, tvec)
+        region_count = _region_count(member_boxes, _DISCONNECT_GAP_FRAC * iface_diag) if iface_diag > 0 else len(member_boxes)
+        part_bbox = _part_world_bbox(topo_index, R, tvec)
+        part_diag = _bbox_diag(part_bbox) if part_bbox else 0.0
+        broad_ratio = (iface_diag / part_diag) if part_diag > 0 and iface_diag > 0 else None
+
+        findings: list[dict[str, Any]] = []
+        if status_res == "unresolved" or face_count == 0 or not area:
+            findings.append({
+                "code": "empty_interface", "severity": "blocking",
+                "message": "interface resolves to no usable faces (empty node set)",
+                "guidance": "re-pick the interface topology_refs or supply the part topology map; "
+                            "the solver would otherwise run with a missing interface.",
+            })
+        else:
+            if unresolved:
+                findings.append({
+                    "code": "partial_resolution", "severity": "warning",
+                    "message": f"{len(unresolved)} of {requested} interface refs did not resolve",
+                    "guidance": "refresh topology_refs against the latest part geometry; unresolved refs are dropped from the node set.",
+                })
+            if face_count <= _SPARSE_MAX_FACES:
+                findings.append({
+                    "code": "sparse_interface", "severity": "warning",
+                    "message": f"interface maps onto only {face_count} face(s); the node set may be undersampled",
+                    "guidance": "refine the mesh on this interface or extend topology_refs so the contact/load region is adequately sampled.",
+                })
+            if region_count > 1:
+                findings.append({
+                    "code": "disconnected_interface", "severity": "warning",
+                    "message": f"interface faces form {region_count} disconnected regions",
+                    "guidance": "split into separate interfaces or confirm the refs belong to one contact patch; a disconnected node set can misrepresent load transfer.",
+                })
+            if broad_ratio is not None and broad_ratio > _OVER_BROAD_DIAG_FRAC:
+                findings.append({
+                    "code": "over_broad_interface", "severity": "warning",
+                    "message": f"interface spans {round(broad_ratio * 100)}% of the part diagonal; likely over-broad",
+                    "guidance": "narrow the interface to the true mating region; an over-broad node set over-constrains the model.",
+                })
+
+        if any(f["severity"] == "blocking" for f in findings):
+            status = "blocking"
+            blocking_interfaces.append(str(iid))
+        elif findings:
+            status = "warning"
+        else:
+            status = "ok"
+        counts[status] += 1
+        diagnostics.append({
+            "interface_id": iid,
+            "part_id": pid,
+            "semantic_role": iface.get("semantic_role"),
+            "resolution_status": status_res,
+            "face_count": face_count,
+            "requested_ref_count": requested,
+            "area": area,
+            "region_count": region_count,
+            "interface_diag": round(iface_diag, 6) if iface_diag else 0.0,
+            "part_diag": round(part_diag, 6) if part_diag else None,
+            "status": status,
+            "findings": findings,
+        })
+
+    return {
+        "format": "aieng.assembly_mesh_interface_diagnostics",
+        "format_version": FORMAT_VERSION,
+        "schema_version": "0.1",
+        "interface_count": len(diagnostics),
+        "summary": counts,
+        "safe_for_solver": counts["blocking"] == 0,
+        "blocking_interfaces": blocking_interfaces,
+        "interfaces": diagnostics,
+        "honesty": {
+            "solver_executed": False,
+            "meshing_performed": False,
+            "node_sets_proxied_from": "resolved interface topology geometry",
+            "note": "Pre-solver geometry-coverage diagnostics; not a mesh-convergence guarantee.",
+        },
+    }
+
+
 def resolve_and_validate_assembly_geometry(package_path: str | Path) -> dict[str, Any]:
     """Best-effort: resolve interfaces + validate connection geometry for a package carrying
     assembly/assembly_ir.json. Writes interface_resolution, connection_geometry, refreshes the
@@ -465,6 +641,7 @@ def resolve_and_validate_assembly_geometry(package_path: str | Path) -> dict[str
 
     resolution = resolve_assembly_interfaces(assembly, topo_by_part)
     geometry = validate_connection_geometry(assembly, resolution)
+    mesh_diag = diagnose_mesh_interfaces(assembly, topo_by_part, resolution)
 
     # refresh connection graph with geometry status per edge
     graph = build_connection_graph(assembly)
@@ -499,6 +676,13 @@ def resolve_and_validate_assembly_geometry(package_path: str | Path) -> dict[str
             if rec and rec.get("world", {}).get("centroid") is not None:
                 ref["world_centroid"] = rec["world"]["centroid"]
                 ref["topology_resolved"] = rec["resolution_status"] != "unresolved"
+    # Interfaces that resolve to an empty/unusable node set block the solver via
+    # the same needs_user_input gate the geometry-invalid connections use.
+    for iid in mesh_diag.get("blocking_interfaces", []):
+        msg = f"interface '{iid}' resolves to an empty/unusable node set (mesh-interface diagnostics)"
+        if msg not in draft.get("needs_user_input", []):
+            draft.setdefault("needs_user_input", []).append(msg)
+
     if draft.get("needs_user_input"):
         draft["status"] = "needs_user_input"
 
@@ -508,6 +692,7 @@ def resolve_and_validate_assembly_geometry(package_path: str | Path) -> dict[str
     members = {
         INTERFACE_RESOLUTION_PATH: _dumps(resolution),
         ASSEMBLY_CONNECTION_GEOMETRY_PATH: _dumps(geometry),
+        ASSEMBLY_MESH_INTERFACE_DIAGNOSTICS_PATH: _dumps(mesh_diag),
         CONNECTION_GRAPH_PATH: _dumps(graph),
         ASSEMBLY_CAE_DRAFT_PATH: _dumps(draft),
     }
@@ -538,6 +723,8 @@ def resolve_and_validate_assembly_geometry(package_path: str | Path) -> dict[str
         "assembly_present": True,
         "resolution_summary": resolution["summary"],
         "geometry_summary": geometry["summary"],
+        "mesh_interface_summary": mesh_diag["summary"],
+        "mesh_interface_safe_for_solver": mesh_diag["safe_for_solver"],
         "cae_draft_status": draft["status"],
         "assembly_cae_model_status": cae_result.get("assembly_cae_model_status"),
         "solver_deck_status": cae_result.get("solver_deck_status"),

@@ -1337,6 +1337,16 @@ fit → `geometry_status` ∈ plausible / warning / invalid / insufficient_data
 (`diagnostics/assembly_connection_geometry.json`). Invalid connections are marked `disabled` +
 `needs_user_input` in the CAE setup draft. Unresolved refs are reported honestly, never invented.
 
+The same pass also writes **pre-solver interface-NSET quality diagnostics**
+(`diagnostics/assembly_mesh_interface_diagnostics.json`): per interface it flags
+`empty_interface` (resolves to no usable faces → empty node set, **blocking**),
+`partial_resolution`, `sparse_interface` (undersampled), `disconnected_interface`
+(faces form >1 region), and `over_broad_interface` (spans the part), each with
+actionable remesh/re-pick guidance. `safe_for_solver` is false when any interface
+is blocking, and empty interfaces add a `needs_user_input` entry to the CAE draft
+(same gate as invalid connections). It is a geometry-coverage proxy — it meshes
+nothing, runs no solver, and is not a mesh-convergence guarantee.
+
 Assembly CAE v0 then produces a **solver-neutral simplified proxy model**:
 `simulation/assembly_cae_model.json` plus
 `diagnostics/assembly_cae_model_diagnostics.json`. Solver deck generation is optional and

@@ -102,14 +102,7 @@ export function useWorkbenchApp() {
     heatmapActive,
     refreshViewerAsset,
     resetProjectDerivedState,
-  } = useEngineeringActions({
-    selectedId,
-    apiKey,
-    llmConfig,
-    refreshProjects,
-    setBusy,
-    setChatHistory: (() => undefined) as Dispatch<SetStateAction<ChatHistoryItem[]>>,
-  });
+  } = useEngineeringActions({ selectedId });
   const {
     pickedFaces,
     highlightedFaceIds,

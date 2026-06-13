@@ -59,20 +59,53 @@ def _body_looks_like_html(body: bytes) -> bool:
     return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
 
 
-def _wait_for_health(base: str, timeout: float = 60.0, interval: float = 2.0) -> dict[str, Any]:
+def _retry_until(
+    operation,
+    *,
+    timeout: float = 60.0,
+    interval: float = 2.0,
+    description: str = "endpoint",
+) -> Any:
+    """Call ``operation()`` until it returns without raising, or timeout expires.
+
+    ``operation`` must raise an exception on non-success; the exception message
+    becomes ``last_error`` in the final ``RuntimeError``.
+    """
     deadline = time.time() + timeout
     last_error = ""
     while time.time() < deadline:
         try:
-            status, _, body = _request(f"{base}/api/health", timeout=5.0)
-            if status == 200:
-                import json
-                return json.loads(body)
-            last_error = f"status {status}"
+            return operation()
         except Exception as exc:  # noqa: BLE001
             last_error = str(exc)
         time.sleep(interval)
-    raise RuntimeError(f"health endpoint did not become ready in {timeout}s: {last_error}")
+    raise RuntimeError(
+        f"{description} did not become ready in {timeout}s: {last_error}"
+    )
+
+
+def _wait_for_health(
+    base: str,
+    timeout: float = 60.0,
+    interval: float = 2.0,
+    attempt_timeout: float = 5.0,
+) -> dict[str, Any]:
+    import json
+
+    def _check() -> dict[str, Any]:
+        status, _, body = _request(
+            f"{base}/api/health", timeout=attempt_timeout
+        )
+        if status != 200:
+            raise ConnectionError(f"status {status}")
+        return json.loads(body)
+
+    return _retry_until(
+        _check,
+        timeout=timeout,
+        interval=interval,
+        description="health endpoint",
+    )
 
 
 def _wait_for_stream(
@@ -80,20 +113,23 @@ def _wait_for_stream(
     *,
     timeout: float = 60.0,
     interval: float = 2.0,
+    attempt_timeout: float = 5.0,
     headers: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, str]]:
-    deadline = time.time() + timeout
-    last_error = ""
-    while time.time() < deadline:
-        try:
-            status, response_headers = _open_stream(url, timeout=5.0, headers=headers)
-            if status == 200:
-                return status, response_headers
-            last_error = f"status {status}"
-        except Exception as exc:  # noqa: BLE001
-            last_error = str(exc)
-        time.sleep(interval)
-    raise RuntimeError(f"stream endpoint did not become ready in {timeout}s: {last_error}")
+    def _check() -> tuple[int, dict[str, str]]:
+        status, response_headers = _open_stream(
+            url, timeout=attempt_timeout, headers=headers
+        )
+        if status != 200:
+            raise ConnectionError(f"status {status}")
+        return status, response_headers
+
+    return _retry_until(
+        _check,
+        timeout=timeout,
+        interval=interval,
+        description="stream endpoint",
+    )
 
 
 def _wait_for_request(

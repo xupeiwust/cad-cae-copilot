@@ -534,27 +534,38 @@ def generate_bom(
 
     features = fg.get("features", [])
     items: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
     for feat in features:
         ftype = feat.get("type", "")
         name = feat.get("name", "")
         if not name:
             continue
-        if ftype in ("named_part", "standard_part", "mounting_hole", "mounting_hole_pattern", "base_plate"):
-            params = feat.get("parameters", {}) or {}
-            material = params.get("material", "")
-            item: dict[str, Any] = {
-                "part_name": name,
-                "part_type": ftype,
-                "material": material,
-                "quantity": 1,
-            }
-            # Standard part metadata
-            if ftype == "standard_part":
-                item["standard_part"] = True
-                item["canonical_type"] = feat.get("canonical_type") or feat.get("intent", {}).get("canonical_type", "")
-                item["designation"] = feat.get("designation", "")
-                item["source_library"] = feat.get("source_library", "")
-            items.append(item)
+        if not ftype:
+            warnings.append(
+                {
+                    "kind": "skipped_missing_type",
+                    "identifier": name,
+                    "message": f"Feature '{name}' skipped because it has no type.",
+                }
+            )
+            continue
+        if ftype not in ("named_part", "standard_part", "mounting_hole", "mounting_hole_pattern", "base_plate"):
+            continue
+        params = feat.get("parameters", {}) or {}
+        material = params.get("material", "")
+        item: dict[str, Any] = {
+            "part_name": name,
+            "part_type": ftype,
+            "material": material,
+            "quantity": 1,
+        }
+        # Standard part metadata
+        if ftype == "standard_part":
+            item["standard_part"] = True
+            item["canonical_type"] = feat.get("canonical_type") or feat.get("intent", {}).get("canonical_type", "")
+            item["designation"] = feat.get("designation", "")
+            item["source_library"] = feat.get("source_library", "")
+        items.append(item)
 
     # Deduplicate by (name, type, material)
     deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -562,6 +573,23 @@ def generate_bom(
         key = (item["part_name"], item["part_type"], item.get("material", ""))
         if key in deduped:
             deduped[key]["quantity"] += 1
+            warnings.append(
+                {
+                    "kind": "dedup_merge",
+                    "part_name": item["part_name"],
+                    "key": {
+                        "name": item["part_name"],
+                        "type": item["part_type"],
+                        "material": item.get("material", ""),
+                    },
+                    "merged_quantity": deduped[key]["quantity"],
+                    "message": (
+                        f"Merged duplicate of '{item['part_name']}' "
+                        f"({item['part_type']}, material={item.get('material') or 'none'}) "
+                        f"into existing entry; quantity now {deduped[key]['quantity']}."
+                    ),
+                }
+            )
         else:
             deduped[key] = dict(item)
 
@@ -575,6 +603,8 @@ def generate_bom(
         "total_parts": total_parts,
         "unique_parts": len(bom),
         "items": bom,
+        "warnings": warnings,
+        "limitations": "Best-effort semantic recognition; not a supplier BOM or validation claim.",
     }
 
     if fmt == "markdown":

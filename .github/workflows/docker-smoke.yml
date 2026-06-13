@@ -68,6 +68,34 @@ jobs:
       - name: Run Docker smoke
         run: python aieng-ui/backend/scripts/docker_smoke.py
 
+      - name: Create project for restart-persistence check
+        run: |
+          PROJECT_ID=$(python aieng-ui/backend/scripts/docker_smoke.py persist-create)
+          echo "Created persistence project: $PROJECT_ID"
+          echo "PERSIST_PROJECT_ID=$PROJECT_ID" >> "$GITHUB_ENV"
+
+      - name: Restart container (same /data volume)
+        run: docker restart aieng-workbench-smoke
+
+      - name: Wait for container readiness after restart
+        run: |
+          for i in $(seq 1 30); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' aieng-workbench-smoke 2>/dev/null || echo 'starting')
+            if [ "$status" = "healthy" ]; then
+              echo "Container healthy after restart"
+              exit 0
+            fi
+            echo "Container health: $status ($i/30)"
+            sleep 2
+          done
+          echo "Container did not become healthy after restart" >&2
+          exit 1
+
+      - name: Verify project survived restart
+        run: |
+          python aieng-ui/backend/scripts/docker_smoke.py persist-verify \
+            --project-id "$PERSIST_PROJECT_ID"
+
       - name: Dump container logs on failure
         if: failure()
         run: docker logs aieng-workbench-smoke || true

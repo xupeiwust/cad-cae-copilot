@@ -303,6 +303,28 @@ AIENG_MCP_MANAGED_APPROVAL=1
 That means generated projects persist in the Docker volume and approval-gated
 tools route through the workbench approval broker.
 
+**Data persistence across restarts / upgrades.** All projects and generated
+`.aieng` packages live under `/data` (`AIENG_PLATFORM_DATA=/data`). As long as
+you mount `/data` to a named volume or host directory, your work survives a
+container restart, `docker stop`/`start`, or an image upgrade:
+
+```bash
+# restart in place — projects persist (same volume)
+docker restart <container>
+
+# upgrade the image — projects persist as long as the SAME -v is reused
+docker pull <image>:<newtag>
+docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data <image>:<newtag>
+```
+
+Use a **host path** (`-v /abs/host/path:/data`) if you want the packages on the
+host filesystem instead of a Docker-managed volume. Without any `-v`, project
+data lives only in the container's writable layer and is lost when the container
+is removed. The image itself ships **no** runtime project data — `aieng-ui/data/`
+is excluded via `.dockerignore`, and the Docker smoke
+(`scripts/docker_smoke.py persist-create` / `persist-verify`) asserts a project
+created before a `docker restart` is still readable afterward.
+
 **Running the CalculiX solver from a separate conda env (Windows).**
 Installing `calculix` directly into `aieng311` downgrades OpenSSL and breaks SSL.
 Create a dedicated env and point the MCP server / backend at it:

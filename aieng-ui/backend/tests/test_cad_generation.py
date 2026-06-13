@@ -1,7 +1,9 @@
 """Tests for text-to-CAD generation (build123d backend)."""
 from __future__ import annotations
 
+import importlib.util
 import json
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -331,6 +333,124 @@ def test_execute_build123d_code_failure() -> None:
     with patch("app.cad_generation.subprocess.run", return_value=fail_mock):
         with pytest.raises(RuntimeError, match="build123d execution failed"):
             _execute_build123d_code("Box(10, 10, 10)  # missing result =")
+
+
+# ── CAD execution resource limits + timeout failure mode (#182) ────────────────
+
+def test_resource_limits_from_env_defaults(monkeypatch) -> None:
+    from app.cad_generation import (
+        _CAD_DEFAULT_MAX_FILE_MB,
+        _CAD_DEFAULT_MAX_MEMORY_MB,
+        _resource_limits_from_env,
+    )
+
+    for var in ("AIENG_CAD_MAX_MEMORY_MB", "AIENG_CAD_MAX_CPU_SECONDS", "AIENG_CAD_MAX_FILE_MB"):
+        monkeypatch.delenv(var, raising=False)
+
+    limits = _resource_limits_from_env(timeout=60)
+    assert limits.max_memory_mb == _CAD_DEFAULT_MAX_MEMORY_MB
+    assert limits.max_file_mb == _CAD_DEFAULT_MAX_FILE_MB
+    # CPU default sits above the wall-clock timeout so wall-clock fires first,
+    # with the CPU cap as a hard backstop for pure-CPU spins.
+    assert limits.max_cpu_seconds > 60
+
+
+def test_resource_limits_from_env_overrides(monkeypatch) -> None:
+    from app.cad_generation import _resource_limits_from_env
+
+    monkeypatch.setenv("AIENG_CAD_MAX_MEMORY_MB", "1024")
+    monkeypatch.setenv("AIENG_CAD_MAX_CPU_SECONDS", "5")
+    monkeypatch.setenv("AIENG_CAD_MAX_FILE_MB", "64")
+    limits = _resource_limits_from_env(timeout=60)
+    assert limits.max_memory_mb == 1024
+    assert limits.max_cpu_seconds == 5
+    assert limits.max_file_mb == 64
+
+
+def test_resource_limits_from_env_disable(monkeypatch) -> None:
+    from app.cad_generation import _resource_limits_from_env
+
+    # 0 / negative / garbage disables that particular cap (treated as unlimited).
+    monkeypatch.setenv("AIENG_CAD_MAX_MEMORY_MB", "0")
+    monkeypatch.setenv("AIENG_CAD_MAX_CPU_SECONDS", "-1")
+    monkeypatch.setenv("AIENG_CAD_MAX_FILE_MB", "not-a-number")
+    limits = _resource_limits_from_env(timeout=60)
+    assert limits.max_memory_mb == 0
+    assert limits.max_cpu_seconds == 0
+    # Garbage falls back to the default rather than disabling.
+    assert limits.max_file_mb > 0
+
+
+def test_resource_limit_preamble_contains_setrlimit() -> None:
+    from app.cad_generation import CadResourceLimits, _build_resource_limit_preamble
+
+    preamble = _build_resource_limit_preamble(
+        CadResourceLimits(max_memory_mb=2048, max_cpu_seconds=90, max_file_mb=256)
+    )
+    assert "RLIMIT_AS" in preamble
+    assert "RLIMIT_CPU" in preamble
+    assert "RLIMIT_FSIZE" in preamble
+    # Must degrade gracefully where the resource module is unavailable (Windows).
+    assert "import resource" in preamble
+    # The configured caps are baked into the child preamble.
+    assert "2048" in preamble and "90" in preamble and "256" in preamble
+
+
+def test_resource_limit_preamble_injected_into_runner(monkeypatch) -> None:
+    """The runner script handed to the subprocess must carry the rlimit preamble."""
+    from app.cad_generation import _execute_build123d_code
+
+    captured: dict = {}
+
+    def _fake_run(cmd, **kwargs):
+        # cmd[1] is the runner script path written to the temp dir.
+        captured["runner"] = Path(cmd[1]).read_text(encoding="utf-8")
+        result_mock = MagicMock()
+        result_mock.returncode = 0
+        result_mock.stderr = ""
+        Path(cmd[2]).write_bytes(b"ISO-10303-21;")
+        Path(cmd[3]).write_text(json.dumps(_SAMPLE_TOPOLOGY), encoding="utf-8")
+        Path(cmd[4]).write_bytes(b"solid result\nendsolid result")
+        Path(cmd[5]).write_bytes(b"glTF")
+        return result_mock
+
+    monkeypatch.setenv("AIENG_CAD_MAX_MEMORY_MB", "777")
+    with patch("app.cad_generation.subprocess.run", side_effect=_fake_run):
+        _execute_build123d_code("result = Box(10, 10, 10)", timeout=60)
+
+    runner = captured["runner"]
+    assert "setrlimit" in runner
+    assert "777" in runner  # configured memory cap baked into the child
+    # Preamble must precede the build123d import so limits apply before heavy allocs.
+    assert runner.index("setrlimit") < runner.index("import build123d")
+
+
+def test_execute_build123d_code_timeout() -> None:
+    """A subprocess timeout surfaces as a clean RuntimeError, not a raw TimeoutExpired."""
+    from app.cad_generation import _execute_build123d_code
+
+    def _raise_timeout(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout", 60))
+
+    with patch("app.cad_generation.subprocess.run", side_effect=_raise_timeout):
+        with pytest.raises(RuntimeError, match="timed out"):
+            _execute_build123d_code("result = Box(10, 10, 10)", timeout=3)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("resource") is None,
+    reason="POSIX resource limits unavailable (e.g. Windows); wall-clock timeout is the guard there",
+)
+def test_cpu_resource_limit_enforced(monkeypatch) -> None:
+    """On POSIX, a CPU-time cap kills a pure-CPU runaway before the wall clock."""
+    from app.cad_generation import _execute_build123d_code
+
+    # Cap CPU at 2s; keep the wall-clock timeout high so we prove the *CPU* cap
+    # (not the wall clock) terminates the runaway.
+    monkeypatch.setenv("AIENG_CAD_MAX_CPU_SECONDS", "2")
+    runaway = "x = 0\nwhile True:\n    x += 1\nresult = Box(1, 1, 1)"
+    with pytest.raises(RuntimeError):
+        _execute_build123d_code(runaway, timeout=120)
 
 
 def test_execute_build123d_code_with_bd_warehouse_fastener() -> None:

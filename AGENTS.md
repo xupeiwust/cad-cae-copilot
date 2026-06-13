@@ -1415,6 +1415,18 @@ All outputs keep `production_ready:false`, `contact_physics_modeled:false`, and
 `bolt_preload_modeled:false`. Future work: real nonlinear contact modeling, bolt preload,
 assembly meshing improvements, and simultaneous multi-part topology/size optimization.
 
+**Advisory multi-part topopt problem (v0).** `write_multipart_topopt_problem(package_path,
+selected_part_ids=[...])` (and the pure `derive_multipart_topopt_problem`) derive a
+**reviewable** multi-part topology/size problem for **explicitly selected** design parts →
+`analysis/assembly_multipart_topopt_problem.json` + `diagnostics/assembly_multipart_topopt_derivation.json`.
+It preserves frozen/reference/fastener/load-source/fixture parts (marked non-design), derives
+per-part design spaces + topology/sizing variables, and records coupled connections + a recorded
+(not executed) objective. It **refuses honestly** (`status:needs_user_input`) on no selection,
+unknown/non-optimizable/ambiguous (design-and-frozen) parts, or a design-design coupling whose
+interface constraints are missing/unresolved. Advisory only: **no optimizer execution, no
+auto-acceptance, no baseline promotion** (`optimizer_executed:false`, `baseline_modified:false`,
+`production_grade_simultaneous_optimization:false`).
+
 ---
 
 ## Fallback mode — when you do not have MCP tools

@@ -43,6 +43,8 @@ ASSEMBLY_OPTIMIZATION_SUMMARY_PATH = "analysis/assembly_optimization_summary.jso
 ASSEMBLY_DESIGN_RECOMMENDATIONS_PATH = "analysis/assembly_design_recommendations.json"
 ASSEMBLY_POSTPROCESS_REPORT_PATH = "diagnostics/assembly_postprocess_report.json"
 ASSEMBLY_NEXT_ACTIONS_PATH = "analysis/assembly_next_actions.json"
+ASSEMBLY_MULTIPART_TOPOPT_PROBLEM_PATH = "analysis/assembly_multipart_topopt_problem.json"
+ASSEMBLY_MULTIPART_TOPOPT_DERIVATION_PATH = "diagnostics/assembly_multipart_topopt_derivation.json"
 PART_TOPOLOGY_OPTIMIZATION_TEMPLATE = "parts/{part_id}/analysis/topology_optimization.json"
 PART_OPTIMIZED_SHAPE_IR_TEMPLATE = "parts/{part_id}/geometry/optimized_shape_ir.json"
 
@@ -1989,6 +1991,281 @@ def write_assembly_design_recommendations(
         "report": report,
         "next_actions": next_actions if emit_next_actions else None,
         "artifacts": sorted(members.keys()),
+    }
+
+
+def derive_multipart_topopt_problem(
+    *,
+    assembly: dict[str, Any],
+    part_registry: dict[str, Any],
+    interface_resolution: dict[str, Any],
+    connection_geometry: dict[str, Any],
+    topology_by_part: dict[str, dict[str, dict[str, Any]]],
+    selected_part_ids: list[str] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Derive an ADVISORY multi-part topology/size optimization *problem* (#203).
+
+    Coordinates design spaces across **explicitly selected** design parts while
+    preserving frozen / reference / fastener / load-source / fixture parts.
+    Advisory only: it derives and records a reviewable problem artifact — it never
+    runs an optimizer, accepts a candidate, or overwrites baseline geometry.
+
+    Refuses honestly (status ``needs_user_input``) when: no parts are selected; a
+    selected part is unknown / non-optimizable / both design-and-frozen (ambiguous
+    ownership); or two selected design parts are coupled by a connection whose
+    interface constraints are missing/unresolved.
+    """
+    assembly = assembly if isinstance(assembly, dict) else {}
+    part_registry = part_registry if isinstance(part_registry, dict) else {}
+    interface_resolution = interface_resolution if isinstance(interface_resolution, dict) else {}
+    connection_geometry = connection_geometry if isinstance(connection_geometry, dict) else {}
+    topology_by_part = topology_by_part or {}
+
+    parts_by_id = {str(p.get("id")): p for p in _as_list(assembly.get("parts")) if isinstance(p, dict) and p.get("id")}
+    reg_by_id = {str(p.get("part_id")): p for p in _as_list(part_registry.get("parts")) if isinstance(p, dict)}
+    intent = assembly.get("analysis_intent") if isinstance(assembly.get("analysis_intent"), dict) else {}
+    frozen = {str(x) for x in _as_list(intent.get("frozen_parts"))}
+    allowed = {str(x) for x in _as_list(intent.get("allowed_optimization_parts"))}
+    resolved = interface_resolution.get("interfaces") if isinstance(interface_resolution.get("interfaces"), dict) else {}
+    interfaces = _collect_interfaces(assembly)
+
+    refusals: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    def _role(pid: str) -> str | None:
+        part = parts_by_id.get(pid) or {}
+        return part.get("role") or (reg_by_id.get(pid) or {}).get("role")
+
+    def _editable(pid: str) -> bool:
+        part = parts_by_id.get(pid) or {}
+        reg = reg_by_id.get(pid) or {}
+        return bool(reg.get("editable", part.get("editable", _role(pid) == "design_part")))
+
+    selected = [str(x) for x in _as_list(selected_part_ids)]
+    deduped: list[str] = []
+    for pid in selected:
+        if pid in deduped:
+            warnings.append(f"duplicate_selected_part:{pid}")
+        else:
+            deduped.append(pid)
+
+    design_part_ids: list[str] = []
+    for pid in deduped:
+        if pid not in parts_by_id:
+            refusals.append({"part_id": pid, "reason": "unknown_selected_part"})
+            continue
+        role = _role(pid)
+        if pid in frozen:
+            refusals.append({"part_id": pid, "reason": "ambiguous_ownership_design_and_frozen", "role": role})
+            continue
+        if role in _NON_OPTIMIZABLE_ROLES:
+            refusals.append({"part_id": pid, "reason": f"non_optimizable_role:{role}", "role": role})
+            continue
+        if role not in _OPTIMIZABLE_ROLES:
+            refusals.append({"part_id": pid, "reason": "not_a_design_part", "role": role})
+            continue
+        if not _editable(pid):
+            refusals.append({"part_id": pid, "reason": "not_editable", "role": role})
+            continue
+        if allowed and pid not in allowed:
+            refusals.append({"part_id": pid, "reason": "not_in_allowed_optimization_parts", "role": role})
+            continue
+        design_part_ids.append(pid)
+
+    design_set = set(design_part_ids)
+
+    # ── couplings + missing-interface-constraint detection ───────────────────
+    geo_by_id = {g.get("connection_id"): g for g in _as_list(connection_geometry.get("connections")) if isinstance(g, dict)}
+    couplings: list[dict[str, Any]] = []
+    missing_constraints: list[str] = []
+    for idx, conn in enumerate(_as_list(assembly.get("connections"))):
+        if not isinstance(conn, dict):
+            continue
+        pa, pb = str(conn.get("part_a")), str(conn.get("part_b"))
+        if pa not in design_set and pb not in design_set:
+            continue  # connection unrelated to any selected design part
+        cid = str(conn.get("id") or f"connection_{idx:03d}")
+        ia, ib = conn.get("interface_a"), conn.get("interface_b")
+        kind = "design_design" if (pa in design_set and pb in design_set) else "design_nondesign"
+
+        def _iface_ok(iid: Any) -> bool:
+            if not iid:
+                return False
+            rec = resolved.get(str(iid)) if isinstance(resolved, dict) else None
+            return isinstance(rec, dict) and rec.get("resolution_status") != "unresolved" and bool(
+                (rec.get("world") or {}).get("bbox")
+            )
+
+        a_ok, b_ok = _iface_ok(ia), _iface_ok(ib)
+        if kind == "design_design" and not (a_ok and b_ok):
+            missing_constraints.append(cid)
+        elif kind == "design_nondesign":
+            design_side_iface = ia if pa in design_set else ib
+            if not _iface_ok(design_side_iface):
+                warnings.append(f"unresolved_interface_warning:{cid}")
+        couplings.append({
+            "connection_id": cid,
+            "type": conn.get("type"),
+            "kind": kind,
+            "part_a": pa, "part_b": pb,
+            "interface_a": ia, "interface_b": ib,
+            "interface_a_resolved": a_ok,
+            "interface_b_resolved": b_ok,
+            "geometry_status": (geo_by_id.get(cid) or {}).get("geometry_status"),
+        })
+    for cid in missing_constraints:
+        refusals.append({"connection_id": cid, "reason": "missing_interface_constraint"})
+
+    # ── design spaces + advisory variables for valid design parts ────────────
+    design_parts: list[dict[str, Any]] = []
+    for pid in design_part_ids:
+        bbox = _part_bbox_from_topology(topology_by_part.get(pid) or {})
+        if bbox is None:
+            refusals.append({"part_id": pid, "reason": "no_topology_for_design_space"})
+            continue
+        preserve = [
+            {
+                "connection_id": c["connection_id"],
+                "interface_id": c["interface_a"] if c["part_a"] == pid else c["interface_b"],
+                "semantic_role": (interfaces.get(str(c["interface_a"] if c["part_a"] == pid else c["interface_b"])) or {}).get("semantic_role"),
+                "preserve_min_density": 0.95,
+                "reason": "shared interface region preserved across coupling",
+            }
+            for c in couplings if pid in (c["part_a"], c["part_b"])
+        ]
+        design_parts.append({
+            "part_id": pid,
+            "role": _role(pid),
+            "design_space": {"bbox": bbox, "diag": round(_bbox_diag(bbox), 6)},
+            "variables": [
+                {"id": f"{pid}_topology", "type": "topology_density", "design_space_bbox": bbox,
+                 "volume_fraction_init": 0.5, "bounds": [0.0, 1.0], "safe_to_modify": True},
+                {"id": f"{pid}_size_scale", "type": "sizing", "semantic_role": "uniform_scale",
+                 "value_init": 1.0, "bounds": [0.5, 1.5], "safe_to_modify": True,
+                 "note": "advisory sizing variable; not executed"},
+            ],
+            "preserve_regions": preserve,
+        })
+
+    # ── non-design (preserved) parts ─────────────────────────────────────────
+    non_design_parts = []
+    for pid, part in parts_by_id.items():
+        if pid in design_set and any(dp["part_id"] == pid for dp in design_parts):
+            continue
+        role = _role(pid)
+        reason = (
+            "frozen" if pid in frozen
+            else f"non_optimizable_role:{role}" if role in _NON_OPTIMIZABLE_ROLES
+            else "not_selected"
+        )
+        non_design_parts.append({"part_id": pid, "role": role, "reason": reason, "preserved": True})
+
+    has_valid = len(design_parts) > 0
+    status = "ready" if (has_valid and not refusals and not missing_constraints) else "needs_user_input"
+    if not selected:
+        status = "needs_user_input"
+        refusals.append({"reason": "no_parts_selected"})
+    elif not has_valid and not refusals:
+        refusals.append({"reason": "no_valid_design_part_with_design_space"})
+        status = "needs_user_input"
+
+    problem = {
+        "format": "aieng.assembly_multipart_topopt_problem",
+        "format_version": FORMAT_VERSION,
+        "contract_version": "0.1",
+        "schema_version": "0.1",
+        "generated_at_utc": _now(),
+        "status": status,
+        "selected_part_ids": deduped,
+        "design_parts": design_parts,
+        "non_design_parts": non_design_parts,
+        "couplings": couplings,
+        "objective": {
+            "recorded": True,
+            "executed": False,
+            "sense": "minimize",
+            "metric": "total_compliance",
+            "subject_to": ["per_part_volume_fraction", "preserve_interface_regions"],
+            "note": "objective is recorded for review; no optimizer is run in v0",
+        },
+        "refusals": refusals,
+        "warnings": sorted(set(warnings)),
+        "honesty": {
+            "advisory_only": True,
+            "optimizer_executed": False,
+            "baseline_modified": False,
+            "auto_accepted": False,
+            "production_grade_simultaneous_optimization": False,
+            "note": "Advisory multi-part problem derivation only — no optimizer execution, "
+                    "no auto-acceptance, no baseline promotion. Frozen/reference/fastener parts "
+                    "are preserved and marked non-design.",
+        },
+    }
+    derivation = {
+        "format": "aieng.assembly_multipart_topopt_derivation",
+        "format_version": FORMAT_VERSION,
+        "schema_version": "0.1",
+        "status": status,
+        "summary": {
+            "selected": len(deduped),
+            "design_parts": len(design_parts),
+            "non_design_parts": len(non_design_parts),
+            "couplings": len(couplings),
+            "refusals": len(refusals),
+            "missing_interface_constraints": len(missing_constraints),
+        },
+        "refusals": refusals,
+        "warnings": sorted(set(warnings)),
+    }
+    return problem, derivation
+
+
+def write_multipart_topopt_problem(
+    package_path: str | Path,
+    *,
+    selected_part_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Read package assembly artifacts and write the advisory multi-part problem.
+
+    Advisory only — writes ``analysis/assembly_multipart_topopt_problem.json`` +
+    ``diagnostics/assembly_multipart_topopt_derivation.json``; runs no optimizer
+    and never modifies baseline geometry.
+    """
+    package_path = Path(package_path)
+    if not package_path.exists():
+        return {"assembly_present": False, "reason": "package not found"}
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
+            if ASSEMBLY_IR_PATH not in names:
+                return {"assembly_present": False}
+            assembly = _read_json(zf, names, ASSEMBLY_IR_PATH) or {}
+            part_registry = _read_json(zf, names, PART_REGISTRY_PATH) or {}
+            interface_resolution = _read_json(zf, names, INTERFACE_RESOLUTION_PATH) or {}
+            connection_geometry = _read_json(zf, names, ASSEMBLY_CONNECTION_GEOMETRY_PATH) or {}
+            topology_by_part = _build_topology_by_part(zf, names, assembly)
+    except Exception as exc:  # noqa: BLE001
+        return {"assembly_present": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    problem, derivation = derive_multipart_topopt_problem(
+        assembly=assembly,
+        part_registry=part_registry,
+        interface_resolution=interface_resolution,
+        connection_geometry=connection_geometry,
+        topology_by_part=topology_by_part,
+        selected_part_ids=selected_part_ids,
+    )
+    _replace_members(package_path, {
+        ASSEMBLY_MULTIPART_TOPOPT_PROBLEM_PATH: _dumps(problem),
+        ASSEMBLY_MULTIPART_TOPOPT_DERIVATION_PATH: _dumps(derivation),
+    })
+    return {
+        "assembly_present": True,
+        "status": problem["status"],
+        "design_parts": [dp["part_id"] for dp in problem["design_parts"]],
+        "refusals": problem["refusals"],
+        "baseline_modified": False,
+        "artifacts": [ASSEMBLY_MULTIPART_TOPOPT_PROBLEM_PATH, ASSEMBLY_MULTIPART_TOPOPT_DERIVATION_PATH],
     }
 
 

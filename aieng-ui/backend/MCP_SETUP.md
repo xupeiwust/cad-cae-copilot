@@ -437,6 +437,10 @@ checked into this repo so a fresh session needs no manual wiring:
 Every agent also reads the workspace-root `AGENTS.md` (Codex/Cursor natively;
 Claude Code via `CLAUDE.md` `@import`; Copilot via `.github/copilot-instructions.md`).
 
+For per-client transport / prompt-resource visibility / approval-behavior
+support — including which paths are tested vs documented — see the
+[MCP client compatibility matrix](docs/mcp_client_compatibility.md).
+
 ### Codex (`~/.codex/config.toml`)
 
 Codex uses TOML, not JSON, and its MCP config is global (not per-project). Add:

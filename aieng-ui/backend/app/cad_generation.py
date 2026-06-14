@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -2380,6 +2381,123 @@ def _diff_topology(
         "removed": removed,
         "unchanged_count": len(unchanged),
         "collateral_parts": collateral,
+    }
+
+
+def _diff_critique(
+    before_topo: dict[str, Any],
+    before_fg: dict[str, Any],
+    after_topo: dict[str, Any],
+    after_fg: dict[str, Any],
+    *,
+    mode: str = "auto",
+    min_wall_mm: float = 3.0,
+    min_corner_radius_mm: float = 2.0,
+) -> dict[str, Any]:
+    """Engineering-diagnostics diff: did this edit make the part less manufacturable?
+
+    Runs the deterministic critique (``critique_geometry``) on the before and
+    after geometry and diffs the violation counts by severity. Where
+    ``_diff_topology`` only catches *where* geometry moved, this catches an edit
+    that quietly introduces a manufacturability violation — a new floating part,
+    a wall driven below the minimum, a hole off a standard size, a broken mirror
+    pair.
+
+    Verdict:
+      - ``fail``     — high-severity violations increased.
+      - ``warn``     — medium/low violations increased (no new high).
+      - ``improved`` — violations decreased and none increased.
+      - ``clean``    — no change in violation counts.
+      - ``skipped``  — neither side has solids to critique.
+
+    Pure and read-only: it executes no CAD and mutates nothing. Critique failures
+    degrade to ``skipped`` so a best-effort diff never breaks the driving edit.
+    """
+    def _crit(topo: dict[str, Any], fg: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return critique_geometry(
+                topo or {},
+                fg or {},
+                mode=mode,
+                min_wall_mm=min_wall_mm,
+                min_corner_radius_mm=min_corner_radius_mm,
+            )
+        except Exception:  # noqa: BLE001 - best-effort evidence, never break the edit
+            return {"verdict": "skipped", "findings": [],
+                    "summary": {"by_severity": {"high": 0, "medium": 0, "low": 0}}}
+
+    before = _crit(before_topo, before_fg)
+    after = _crit(after_topo, after_fg)
+
+    def _counts(c: dict[str, Any]) -> dict[str, int]:
+        sev = (c.get("summary") or {}).get("by_severity") or {}
+        return {k: int(sev.get(k, 0)) for k in ("high", "medium", "low")}
+
+    before_counts = _counts(before)
+    after_counts = _counts(after)
+    delta = {k: after_counts[k] - before_counts[k] for k in ("high", "medium", "low")}
+
+    def _sig(f: dict[str, Any]) -> tuple[str, str]:
+        return (str(f.get("rule")), str(f.get("feature")))
+
+    before_sigs = Counter(_sig(f) for f in (before.get("findings") or []))
+    after_sigs = Counter(_sig(f) for f in (after.get("findings") or []))
+
+    introduced: list[dict[str, Any]] = []
+    seen: Counter = Counter()
+    for f in (after.get("findings") or []):
+        sig = _sig(f)
+        seen[sig] += 1
+        if seen[sig] > before_sigs.get(sig, 0):
+            introduced.append({
+                "rule": f.get("rule"),
+                "severity": f.get("severity"),
+                "category": f.get("category"),
+                "feature": f.get("feature"),
+                "feature_id": f.get("feature_id"),
+                "observation": f.get("observation"),
+                "suggested_fix": f.get("suggested_fix"),
+            })
+    resolved_count = sum(
+        max(0, before_sigs[s] - after_sigs.get(s, 0)) for s in before_sigs
+    )
+
+    before_skipped = before.get("verdict") == "skipped"
+    after_skipped = after.get("verdict") == "skipped"
+
+    if before_skipped and after_skipped:
+        verdict = "skipped"
+        headline = "No solids to critique on either side; manufacturability diff skipped."
+    elif delta["high"] > 0:
+        verdict = "fail"
+        headline = (
+            f"WARNING: this edit introduced {delta['high']} new high-severity "
+            "manufacturability violation(s). Review before trusting the result."
+        )
+    elif delta["medium"] > 0 or delta["low"] > 0:
+        verdict = "warn"
+        headline = (
+            f"This edit introduced {max(0, delta['medium'])} medium / "
+            f"{max(0, delta['low'])} low new manufacturability finding(s)."
+        )
+    elif delta["high"] < 0 or delta["medium"] < 0 or delta["low"] < 0:
+        verdict = "improved"
+        headline = (
+            f"This edit resolved {resolved_count} manufacturability finding(s)."
+        )
+    else:
+        verdict = "clean"
+        headline = "Manufacturability violations unchanged by this edit."
+
+    return {
+        "verdict": verdict,
+        "headline": headline,
+        "before_counts": before_counts,
+        "after_counts": after_counts,
+        "delta": delta,
+        "introduced": introduced[:8],
+        "introduced_count": len(introduced),
+        "resolved_count": resolved_count,
     }
 
 
@@ -6064,6 +6182,11 @@ def edit_build123d_parameter(
                 if "geometry/topology_map.json" in names
                 else {}
             )
+            before_fg: dict[str, Any] = (
+                json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+                if "graph/feature_graph.json" in names
+                else {}
+            )
     except Exception as exc:
         return {
             "status": "error",
@@ -6157,6 +6280,8 @@ def edit_build123d_parameter(
     else:
         expected_parts = None
     regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
+    # 6c. Engineering-diagnostics diff — flag if the edit worsened manufacturability.
+    critique_diff = _diff_critique(before_topo, before_fg, topo, feature_graph)
 
     # 7. Write artifacts back into the package atomically
     _write_cad_artifacts(
@@ -6217,6 +6342,7 @@ def edit_build123d_parameter(
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
         "regression_diff": regression_diff,
+        "critique_diff": critique_diff,
         "written_artifacts": [
             "geometry/generated.step",
             "geometry/preview.stl",
@@ -6292,10 +6418,11 @@ def _rebuild_after_part_edit(
     regression diff. Shared by remove_part / replace_part."""
     # Preserve the original model_kind so cache key + heuristics stay consistent.
     model_kind = "auto"
+    before_fg: dict[str, Any] = {}
     with zipfile.ZipFile(pkg_path, "r") as zf:
         if "graph/feature_graph.json" in zf.namelist():
-            fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
-            model_kind = fg.get("model_kind", "auto")
+            before_fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+            model_kind = before_fg.get("model_kind", "auto")
 
     try:
         cached_result = _execute_build123d_cached(
@@ -6319,6 +6446,7 @@ def _rebuild_after_part_edit(
     topo = cached_result["topo"]
     feature_graph = cached_result["feature_graph"]
     regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
+    critique_diff = _diff_critique(before_topo, before_fg, topo, feature_graph)
 
     _write_cad_artifacts(
         pkg_path=pkg_path,
@@ -6372,6 +6500,7 @@ def _rebuild_after_part_edit(
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
         "regression_diff": regression_diff,
+        "critique_diff": critique_diff,
         "written_artifacts": [
             "geometry/generated.step",
             "geometry/preview.stl",

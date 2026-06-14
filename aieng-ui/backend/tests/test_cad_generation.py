@@ -1491,6 +1491,58 @@ def test_diff_topology_global_param_no_collateral_judgment() -> None:
     assert len(diff["changed"]) == 2
 
 
+# ── critique (engineering-diagnostics) regression diff ────────────────────────
+# Two solids far apart trip the deterministic `floating_component` high finding;
+# moving them apart introduces it, moving them together resolves it. This lets us
+# unit-test _diff_critique purely (no build123d) on topology dicts alone.
+
+_CLOSE_TWO_PART = _topo_from(
+    [("torso", [-15, -15, -15, 15, 15, 15]), ("arm", [25, -15, -15, 55, 15, 15])]
+)  # center gap ~40, no floating finding
+_FAR_TWO_PART = _topo_from(
+    [("torso", [-15, -15, -15, 15, 15, 15]), ("arm", [185, -15, -15, 215, 15, 15])]
+)  # center gap ~200, both parts read as floating
+
+
+def test_diff_critique_fail_on_new_high_violation() -> None:
+    from app.cad_generation import _diff_critique
+
+    diff = _diff_critique(_CLOSE_TWO_PART, {}, _FAR_TWO_PART, {})
+    assert diff["verdict"] == "fail"
+    assert diff["before_counts"]["high"] == 0
+    assert diff["after_counts"]["high"] > 0
+    assert diff["delta"]["high"] > 0
+    rules = {f["rule"] for f in diff["introduced"]}
+    assert "floating_component" in rules
+
+
+def test_diff_critique_improved_when_violation_resolved() -> None:
+    from app.cad_generation import _diff_critique
+
+    diff = _diff_critique(_FAR_TWO_PART, {}, _CLOSE_TWO_PART, {})
+    assert diff["verdict"] == "improved"
+    assert diff["delta"]["high"] < 0
+    assert diff["introduced"] == []
+    assert diff["resolved_count"] > 0
+
+
+def test_diff_critique_clean_when_unchanged() -> None:
+    from app.cad_generation import _diff_critique
+
+    diff = _diff_critique(_CLOSE_TWO_PART, {}, _CLOSE_TWO_PART, {})
+    assert diff["verdict"] == "clean"
+    assert diff["delta"] == {"high": 0, "medium": 0, "low": 0}
+    assert diff["introduced"] == []
+
+
+def test_diff_critique_skipped_without_solids() -> None:
+    from app.cad_generation import _diff_critique
+
+    empty = {"entities": []}
+    diff = _diff_critique(empty, {}, empty, {})
+    assert diff["verdict"] == "skipped"
+
+
 # ── parametric edit end-to-end (real build123d) ───────────────────────────────
 
 def test_edit_build123d_parameter_end_to_end(tmp_path: Path) -> None:
@@ -1532,6 +1584,12 @@ def test_edit_build123d_parameter_end_to_end(tmp_path: Path) -> None:
     diff = edited["regression_diff"]
     assert diff["verdict"] in ("clean", "topology_changed")
     assert diff["collateral_parts"] == []
+    # critique diff: a benign length change introduces no new manufacturability
+    # violations, so the engineering-diagnostics verdict is not a regression.
+    cdiff = edited["critique_diff"]
+    assert cdiff["verdict"] in ("clean", "improved", "skipped")
+    assert cdiff["delta"]["high"] <= 0
+    assert cdiff["introduced"] == []
 
 
 def test_edit_build123d_parameter_invalid_value_preserves_geometry(tmp_path: Path) -> None:

@@ -43,6 +43,8 @@ from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadat
 from mcp.types import ToolAnnotations
 from pydantic import ConfigDict
 
+from . import mcp_approval
+
 logger = logging.getLogger(__name__)
 
 
@@ -425,6 +427,21 @@ def _broker_approval_mode() -> bool:
     return _agentic_mode() or _managed_approval_mode()
 
 
+def _elicit_approval_mode() -> bool:
+    """True when gated mutations are approved via MCP client elicitation (#228).
+
+    Opt-in per connection via ``AIENG_MCP_APPROVAL_MODE=elicit`` (CLI
+    ``--approval-mode elicit``). This makes BYO / headless agents usable WITHOUT
+    the workbench web viewer: the server asks the connecting client to prompt the
+    human. If the client cannot show a prompt (no elicitation capability), the
+    gated tool fails safe (deny). Broker modes take precedence when both are set.
+    """
+    return (
+        os.environ.get(mcp_approval.ELICIT_APPROVAL_MODE_ENV) == mcp_approval.ELICIT_APPROVAL_MODE_VALUE
+        and not _broker_approval_mode()
+    )
+
+
 def _apply_cli_runtime_options(
     *,
     backend_url: str | None = None,
@@ -453,10 +470,13 @@ def _apply_cli_runtime_options(
         return
     os.environ.pop("AIENG_MCP_MANAGED_APPROVAL", None)
     os.environ.pop("AIENG_MCP_BLOCK_APPROVAL_TOOLS", None)
+    os.environ.pop(mcp_approval.ELICIT_APPROVAL_MODE_ENV, None)
     if approval_mode == "managed":
         os.environ["AIENG_MCP_MANAGED_APPROVAL"] = "1"
     elif approval_mode == "block":
         os.environ["AIENG_MCP_BLOCK_APPROVAL_TOOLS"] = "1"
+    elif approval_mode == "elicit":
+        os.environ[mcp_approval.ELICIT_APPROVAL_MODE_ENV] = mcp_approval.ELICIT_APPROVAL_MODE_VALUE
     elif approval_mode != "client":
         raise ValueError(f"unsupported approval mode: {approval_mode}")
 
@@ -563,6 +583,54 @@ def _agentic_permission_decision(tool_name: str, tool_input: dict[str, Any]) -> 
         ),
         "recoverable": True,
     }
+
+
+def _client_supports_elicitation(ctx: Any) -> bool:
+    """Best-effort check that the connected client can show an approval prompt.
+
+    Returns False (→ fail-safe deny) on any uncertainty: no context, no session,
+    or the client did not advertise the MCP ``elicitation`` capability.
+    """
+    try:
+        from mcp.types import ClientCapabilities, ElicitationCapability
+
+        session = ctx.request_context.session
+        return bool(
+            session.check_client_capability(
+                ClientCapabilities(elicitation=ElicitationCapability())
+            )
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("elicitation capability check failed: %s", exc)
+        return False
+
+
+async def _elicit_permission_decision(
+    tool_name: str, tool_input: dict[str, Any], *, ctx: Any | None = None
+) -> dict[str, Any]:
+    """Approve a gated tool by asking the connecting MCP client to prompt the user.
+
+    Headless-friendly: needs no workbench viewer. Returns the permission contract
+    ``{"behavior": "allow"|"deny", ...}``. Fail-safe: if there is no elicitation
+    surface, or the prompt errors, the tool is DENIED — never auto-allowed.
+    """
+    if ctx is None or not _client_supports_elicitation(ctx):
+        return mcp_approval.no_surface_deny(tool_name)
+    try:
+        result = await ctx.elicit(
+            message=mcp_approval.elicit_approval_message(tool_name, tool_input),
+            schema=mcp_approval.ApprovalConfirmation,
+        )
+    except Exception as exc:
+        logger.warning("elicitation approval prompt failed for %s: %s", tool_name, exc)
+        return {
+            "behavior": "deny",
+            "message": f"Approval prompt failed ({type(exc).__name__}); the tool was NOT executed.",
+            "recoverable": True,
+        }
+    return mcp_approval.decision_from_elicitation(
+        getattr(result, "action", "cancel"), getattr(result, "data", None)
+    )
 
 
 def _request_approval_handler(**kwargs: Any) -> Any:
@@ -734,8 +802,12 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
         }
 
         def _make_handler(name_: str, requires_approval: bool = False, *, is_mutation: bool = False):
-            def _handler(**kwargs: Any) -> Any:
-                args = dict(kwargs)
+            def _preflight(args: dict[str, Any]) -> tuple[Any | None, dict[str, Any]]:
+                """Guide-guard + readme tracking + inspection-only block.
+
+                Returns ``(early_result_or_None, args)``; a non-None early result
+                must be returned to the client immediately (no execution).
+                """
                 if name_ == "aieng.guide":
                     topic = str(args.get("topic") or "").strip().lower()
                     if topic == "full":
@@ -755,41 +827,39 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
                     and required_topic is not None
                     and required_topic not in read_guide_topics
                 ):
-                    return _coerce_result(_guide_required_result(name_, required_topic, read_guide_topics))
+                    return _coerce_result(_guide_required_result(name_, required_topic, read_guide_topics)), args
 
-                # Approach A approval gate: in an agentic session, a gated tool
-                # must pause for UI approval BEFORE executing. This is enforced
-                # here (server-side), independent of Claude's own permission
-                # settings — so a user allow-listing the workbench tools cannot
-                # bypass the workbench's own approval policy. Denied/timed-out
-                # requests never execute.
                 # Inspection-only mode blocks ANY mutating tool, not only the
                 # approval-gated ones. CAD authoring/edit tools are
                 # requires_approval=False (approval lives at the modeling-plan
                 # boundary) but still mutate the package, so gate on is_mutation
                 # too — otherwise block mode would silently let CAD edits run.
                 if (requires_approval or is_mutation) and _mcp_hard_blocks_approval_tools():
-                    return _coerce_result(_approval_blocked_result(name_))
-                if requires_approval and _broker_approval_mode():
-                    decision = _agentic_permission_decision(name_, args)
-                    if decision.get("behavior") != "allow":
-                        error: dict[str, Any] = {
-                            "status": "error",
-                            "code": decision.get("code") or "approval_denied",
-                            "message": decision.get("message") or "Approval was denied in the workbench UI.",
-                        }
-                        if decision.get("recoverable"):
-                            error["recoverable"] = True
-                        return _coerce_result(error)
-                    updated = decision.get("updatedInput")
-                    if isinstance(updated, dict) and updated:
-                        args = updated
+                    return _coerce_result(_approval_blocked_result(name_)), args
+                return None, args
+
+            def _apply_decision(decision: dict[str, Any], args: dict[str, Any]) -> tuple[Any | None, dict[str, Any]]:
+                """Turn an approval decision into ``(error_result_or_None, args)``."""
+                if decision.get("behavior") != "allow":
+                    error: dict[str, Any] = {
+                        "status": "error",
+                        "code": decision.get("code") or "approval_denied",
+                        "message": decision.get("message") or "Approval was denied.",
+                    }
+                    if decision.get("recoverable"):
+                        error["recoverable"] = True
+                    return _coerce_result(error), args
+                updated = decision.get("updatedInput")
+                if isinstance(updated, dict) and updated:
+                    args = updated
+                return None, args
+
+            def _execute(args: dict[str, Any]) -> Any:
                 # Prefer forwarding to the running backend so the UI sees live
                 # activity; fall back to in-process execution if it's down.
                 if _BACKEND_URL:
                     try:
-                        result = _forward_to_backend(name_, args)
-                        return _finalize_result(result)
+                        return _finalize_result(_forward_to_backend(name_, args))
                     except urllib.error.URLError as exc:
                         logger.warning(
                             "backend forward failed for %s (%s); running in-process",
@@ -805,9 +875,42 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
                     logger.exception("tool %s raised", name_)
                     return _coerce_result({"status": "error", "code": "tool_exception", "message": f"{type(exc).__name__}: {exc}"})
                 return _finalize_result(result)
-            _handler.__name__ = name_.replace(".", "_")
-            _handler.__doc__ = description
-            return _handler
+
+            # Approach A approval gate: a gated tool must pause for approval BEFORE
+            # executing. Enforced here (server-side), independent of the client's
+            # own permission settings — a user allow-listing the workbench tools
+            # cannot bypass the workbench's own approval policy.
+            def _handler(**kwargs: Any) -> Any:
+                early, args = _preflight(dict(kwargs))
+                if early is not None:
+                    return early
+                if requires_approval and _broker_approval_mode():
+                    err, args = _apply_decision(_agentic_permission_decision(name_, args), args)
+                    if err is not None:
+                        return err
+                return _execute(args)
+
+            async def _handler_elicit(**kwargs: Any) -> Any:
+                # Headless approval (#228): ask the connecting client to prompt the
+                # user via MCP elicitation; no workbench viewer required.
+                early, args = _preflight(dict(kwargs))
+                if early is not None:
+                    return early
+                if requires_approval:
+                    try:
+                        ctx = mcp.get_context()
+                    except Exception:  # pragma: no cover - defensive
+                        ctx = None
+                    decision = await _elicit_permission_decision(name_, args, ctx=ctx)
+                    err, args = _apply_decision(decision, args)
+                    if err is not None:
+                        return err
+                return _execute(args)
+
+            chosen = _handler_elicit if _elicit_approval_mode() else _handler
+            chosen.__name__ = name_.replace(".", "_")
+            chosen.__doc__ = description
+            return chosen
 
         # Publish standard MCP safety hints in addition to the human-readable
         # approval marker. Client-managed mode relies on the connecting agent's
@@ -868,12 +971,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--approval-mode",
-        choices=["inherit", "client", "managed", "block"],
+        choices=["inherit", "client", "managed", "block", "elicit"],
         default="inherit",
         help=(
             "Approval policy for [APPROVAL REQUIRED] tools. inherit reads env; "
             "client advertises approval and trusts the MCP client; managed routes "
-            "through the backend approval broker; block rejects gated tools."
+            "through the backend approval broker (needs the web viewer); elicit "
+            "prompts the human via MCP client elicitation (headless-friendly, no "
+            "viewer; fail-safe deny if the client can't prompt); block rejects "
+            "gated tools."
         ),
     )
     parser.add_argument(

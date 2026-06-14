@@ -65,6 +65,13 @@ approval-gated CAD/package/solver mutation may execute. Use `--approval-mode
 managed --backend-url http://127.0.0.1:8000` only when the backend/viewer is
 running and should own approval.
 
+Use `--approval-mode elicit` for **headless** sessions with no workbench viewer:
+gated mutations are approved via **MCP client elicitation**, so the connecting
+CLI/IDE agent prompts the human directly. If the client does not support
+elicitation there is no approval surface and the gated tool **fails safe**
+(`behavior: deny`, `code: approval_surface_unavailable`) — it is never executed
+silently. This is the BYO-agent path that does not depend on the web UI.
+
 The install extras are intentionally explicit:
 
 | Install form | Capability |

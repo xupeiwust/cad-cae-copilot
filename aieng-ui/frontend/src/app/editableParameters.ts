@@ -88,3 +88,35 @@ export function editDraftForParameter(param: EditableParameter): string {
   const name = (param.parameter_name || param.cad_parameter_name || "parameter").replace(/_/g, " ");
   return `/modify set ${name} to `;
 }
+
+/**
+ * A composer-ready edit draft for a parameter WITH a concrete value, e.g.
+ * `/modify set wall thickness to 5`. This is the inline field/slider path (#223):
+ * the panel hands the full command to the composer, and it still flows through
+ * the existing plan-confirmed `cad.edit_parameter` path — out-of-range / global
+ * edits are routed to confirmation by the backend, never applied silently.
+ */
+export function editDraftForParameterValue(param: EditableParameter, value: number): string {
+  const name = (param.parameter_name || param.cad_parameter_name || "parameter").replace(/_/g, " ");
+  return `/modify set ${name} to ${formatNumber(value)}`;
+}
+
+/**
+ * Honest, non-blocking warning for a proposed parameter value, or null. Surfaces
+ * range + scope honesty in the UI before the user commits — but never blocks the
+ * draft (the backend owns the actual range/scope enforcement and confirmation).
+ */
+export function parameterEditWarning(param: EditableParameter, value: number): string | null {
+  if (!Number.isFinite(value)) return "Enter a numeric value.";
+  const warns: string[] = [];
+  if (typeof param.min_value === "number" && value < param.min_value) {
+    warns.push(`below the allowed minimum ${formatNumber(param.min_value)}`);
+  }
+  if (typeof param.max_value === "number" && value > param.max_value) {
+    warns.push(`above the allowed maximum ${formatNumber(param.max_value)}`);
+  }
+  if (normalizeScope(param.scope) === "global") {
+    warns.push("global constant — the edit ripples across parts");
+  }
+  return warns.length ? warns.join("; ") : null;
+}

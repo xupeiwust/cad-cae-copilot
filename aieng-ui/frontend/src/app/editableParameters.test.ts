@@ -3,9 +3,11 @@ import { expect, test } from "vitest";
 import type { EditableParameter } from "../types";
 import {
   editDraftForParameter,
+  editDraftForParameterValue,
   formatNumber,
   formatRange,
   groupParametersByScope,
+  parameterEditWarning,
 } from "./editableParameters";
 
 function param(overrides: Partial<EditableParameter>): EditableParameter {
@@ -57,4 +59,32 @@ test("editDraftForParameter builds a /modify draft with the human name", () => {
   expect(editDraftForParameter(param({ parameter_name: "wall_thickness" }))).toBe(
     "/modify set wall thickness to ",
   );
+});
+
+test("editDraftForParameterValue fills in the concrete value (#223)", () => {
+  expect(editDraftForParameterValue(param({ parameter_name: "wall_thickness" }), 5)).toBe(
+    "/modify set wall thickness to 5",
+  );
+  // trims trailing .0 via formatNumber
+  expect(editDraftForParameterValue(param({ parameter_name: "radius_mm" }), 4.5)).toBe(
+    "/modify set radius mm to 4.5",
+  );
+});
+
+test("parameterEditWarning is null for an in-range local value", () => {
+  expect(parameterEditWarning(param({ scope: "local" }), 5)).toBeNull();
+});
+
+test("parameterEditWarning flags out-of-range values (honesty, non-blocking)", () => {
+  expect(parameterEditWarning(param({ min_value: 1, max_value: 10 }), 0.5)).toContain(
+    "below the allowed minimum 1",
+  );
+  expect(parameterEditWarning(param({ min_value: 1, max_value: 10 }), 99)).toContain(
+    "above the allowed maximum 10",
+  );
+  expect(parameterEditWarning(param({}), NaN)).toBe("Enter a numeric value.");
+});
+
+test("parameterEditWarning flags global scope as rippling", () => {
+  expect(parameterEditWarning(param({ scope: "global" }), 5)).toContain("ripples across parts");
 });

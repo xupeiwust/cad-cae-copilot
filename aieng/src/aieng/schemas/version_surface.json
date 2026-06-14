@@ -29,7 +29,7 @@
     },
     "skill_prompts": {
       "policy": "unstable",
-      "sha256": "be55389b5bd1962c5c8ff03ab8e2df5d048f79284f74289e00c8b043d125ab10",
+      "sha256": "dd61f3c819c538db13916ae4fb3f9dd9bd2f623447186e1e954a47cb43d6267b",
       "version": "0.1.0-alpha.1"
     }
   },

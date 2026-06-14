@@ -31,9 +31,14 @@ For solver workflows, use `aieng-cad-cae-copilot`.
    - omits export calls,
    - sets `.label` on every meaningful part,
    - sets `.color = Color(r,g,b)` for readability,
-   - declares editable dimensions as `UPPER_SNAKE_CASE` constants.
+   - declares editable dimensions as `UPPER_SNAKE_CASE` constants,
+   - asserts design intent with `require(condition, "message")` — e.g.
+     `require(WALL_THICKNESS >= 3, "wall below 3mm CNC minimum")`. A failed
+     `require()` (or a bare `assert`) fails the build deterministically and is
+     returned as a structured `code: design_rule_violation`, so constraints are
+     verified by construction instead of hoped for; a passing one is a no-op.
 4. Inspect the returned thumbnail, `named_parts`, `parts_added`, `geometry_report_summary`, symmetry, and gaps before continuing.
-5. For pure dimensional changes, use `cad.edit_parameter` and read `regression_diff` before trusting the result.
+5. For pure dimensional changes, use `cad.edit_parameter` and read both `regression_diff` (topology drift) and `critique_diff` (manufacturability) before trusting the result.
 6. For mechanical parts, call `cad.critique` after creation and fix blocking manufacturability findings.
 
 ## Self-correction before presenting a result
@@ -46,6 +51,13 @@ signals every `cad.execute_build123d` / `edit_parameter` / `replace_part` /
   a one-line `part_count / size / proportions / floating=N / symmetry_issues=N`.
   Non-zero `floating` means a part is detached (usually a coordinate typo);
   non-zero `symmetry_issues` means a left/right pair is mismatched or missing.
+- **`critique_diff`** is returned by every `cad.edit_parameter` / `replace_part`
+  / `remove_part`: it runs the engineering critique before and after the edit and
+  reports whether manufacturability violations **increased**. A verdict of `fail`
+  (new high-severity finding) or `warn` (new medium/low) means the edit made the
+  part *less* manufacturable even if topology looks fine — read its `introduced`
+  list and fix or reconsider before presenting the result. `improved` / `clean`
+  are safe; `skipped` means no solids to critique.
 - **When `floating` or `symmetry_issues` is non-zero, call `cad.design_review`**
   (read-only). It folds the critique + those structural signals into one
   severity-ranked `actions` list and binds each fixable finding to a concrete

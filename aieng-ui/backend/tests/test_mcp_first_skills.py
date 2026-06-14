@@ -47,6 +47,32 @@ def test_closed_loop_skill_keeps_approval_and_evidence_boundaries() -> None:
     assert "Do not claim improvement until post-change solver/result evidence exists" in text
 
 
+def test_cad_authoring_skill_teaches_trust_layer_tools() -> None:
+    # #231: agent skills must teach the trust-layer tools (#216 critique-diff,
+    # #217 require() assertions) or external agents won't use them.
+    text = _skill_text("aieng-cad-authoring")
+    assert "require(" in text
+    assert "design_rule_violation" in text
+    assert "critique_diff" in text
+
+
+def test_cae_skill_teaches_credibility_tiering() -> None:
+    # #231: teach the V&V-40 credibility tier (#218).
+    text = _skill_text("aieng-cad-cae-copilot")
+    assert "credibility" in text
+    assert "executed_solver_result" in text
+    assert "surrogate_prediction" in text
+
+
+def test_closed_loop_skill_teaches_credibility_and_surrogate_bands() -> None:
+    # #231: teach credibility tiering (#218) + surrogate error-band discipline (#219).
+    text = _skill_text("aieng-closed-loop-copilot")
+    assert "critique_diff" in text
+    assert "credibility" in text
+    assert "uncertainty_std" in text
+    assert "predicted_score_band" in text
+
+
 def test_agent_skills_exposed_as_mcp_prompts_dev_skills_excluded() -> None:
     """The modeling/CAE agent skills are registered as MCP prompts (portable skill
     discovery for any client); dev skills (.claude/skills, e.g. superpowers) are NOT."""

@@ -30,9 +30,21 @@ Do not use for new CAD authoring or schema/tool implementation.
 6. After a successful solver run, call `cae.extract_solver_results`, optionally `cae.extract_field_regions`, then `postprocess.refresh_cae_summary`.
 7. Re-read context/results before reporting final numbers.
 
+## Credibility tiering
+
+Every result-bearing output carries a single `credibility` stamp (the shared
+V&V-40 tier). Ordered low → high: `critique_finding` < `surrogate_prediction` <
+`proxy_assembly_result` < `executed_solver_result`. Read `credibility.tier` and
+report it with the numbers; never present a lower tier as if it were an
+executed-solver result. An output that claims a solver result without
+`solver_executed: true` is downgraded to `unverified` (rank 0) with a
+`downgrade_reason` — treat it as not solver-backed. `production_ready` is `false`
+unless explicitly certified.
+
 ## Hard rules
 
 - Never claim a solver ran unless `cae.run_solver` completed successfully and result artifacts exist.
+- Surface the `credibility` tier of any result you report; do not upgrade a proxy/surrogate/critique result to "verified".
 - Never claim convergence unless solver evidence supports it.
 - Treat stale artifacts as historical until refreshed or rerun.
 - FRD scalar extraction is not full field validation.

@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { AgentActivitySubscriber, type ProjectActivityEvent } from "./agentActivity";
+import { ApprovalCoordinator } from "./approvals";
 import { BackendManager } from "./backendManager";
 import { HomePanel } from "./homePanel";
 import { backendUrl, chooseLiveProject, listProjects, type Project } from "./livePreview";
@@ -194,6 +195,9 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(new AgentActivitySubscriber(
     (event) => LivePreviewPanel.handleActivity(context.extensionUri, backend, event),
   ));
+  // In-editor approval surface (#230): resolve workbench-managed approvals via a
+  // native modal so agentic-session mutations can be approved without leaving VS Code.
+  context.subscriptions.push(new ApprovalCoordinator());
   const provider = new AiengPreviewProvider(context.extensionUri);
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("aieng.cadPreview", provider, {
     supportsMultipleEditorsPerDocument: false,

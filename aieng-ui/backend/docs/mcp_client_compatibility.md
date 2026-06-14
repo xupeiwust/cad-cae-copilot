@@ -62,7 +62,7 @@ the *packaged* path remain the dogfood scope of #143 / #179.
 | Mode | Flag / env | Behavior |
 |---|---|---|
 | **client-managed** | `--approval-mode client` (default in committed configs) | The MCP client owns approval (its permission dialog / native question tool). |
-| **managed viewer** | `--approval-mode managed --backend-url …` (`AIENG_MCP_MANAGED_APPROVAL=1`) | The running backend/viewer owns approval via its approval card. **Fails safe**: with no viewer connected, gated calls return `approval_surface_unavailable` rather than hanging. |
+| **managed viewer** | `--approval-mode managed --backend-url …` (`AIENG_MCP_MANAGED_APPROVAL=1`) | The running backend/viewer owns approval via its approval card. The surface can be the **web workbench** *or* the **VS Code extension** (#230), which renders each request as a native in-editor modal and resolves it. **Fails safe**: with no surface connected, gated calls return `approval_surface_unavailable` rather than hanging. |
 | **elicit (headless)** | `--approval-mode elicit` (`AIENG_MCP_APPROVAL_MODE=elicit`) | The server prompts the human through **MCP client elicitation** — no workbench viewer needed. Requires the client to advertise the `elicitation` capability; if it does not, gated tools **fail safe** (`behavior: deny`, `code: approval_surface_unavailable`). Per-client elicitation support is version-dependent and **not verified here** — confirm with the smoke below before relying on it. |
 | **hard-block** | `--approval-mode block` (`AIENG_MCP_BLOCK_APPROVAL_TOOLS=1`) | Inspection-only: all mutating tools (incl. plan-boundary CAD authoring) are blocked at the server; read-only tools still run. |
 

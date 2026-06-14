@@ -27,6 +27,19 @@ publishes a new viewer asset, the existing preview follows that project. The SSE
 client keeps retrying when the backend starts after VS Code. Set
 `aieng.autoOpenPreviewOnActivity` to `false` to disable this behavior.
 
+## Approve agent mutations in-editor
+
+When the workbench runs in **managed approval mode**
+(`--approval-mode managed`, the backend owns approval), every gated agent
+mutation — `cad.execute_build123d`, `cae.run_solver`, and the other
+`[APPROVAL REQUIRED]` tools — is surfaced as a **native VS Code modal** with the
+tool name and a code preview. Approve or Deny without leaving the editor; the
+decision is posted straight back to the backend. Being subscribed also makes the
+extension a connected approval surface, so managed-mode calls no longer fail fast
+for want of a viewer. Dismissing the modal counts as **deny** — a gated mutation
+is never auto-approved. (Other approval modes are unaffected: `client` lets your
+agent prompt, `elicit` prompts a headless CLI client, `block` rejects mutations.)
+
 ## Backend lifecycle
 
 AIENG CAD Preview can start a managed backend for the current workspace.

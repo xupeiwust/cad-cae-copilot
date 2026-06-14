@@ -355,6 +355,42 @@ def register_project_workflow_routes(
             "part_boxes": part_boxes,
         }
 
+    @app.get("/api/projects/{project_id}/edit-diff")
+    def get_edit_diff_endpoint(project_id: str) -> dict[str, Any]:
+        """The most recent edit's diff for the viewer (#226), read-only.
+
+        Re-surfaces the `regression_diff` (topology drift) + `critique_diff`
+        (manufacturability) verdicts persisted to `state/last_edit_diff.json` on
+        each CAD mutation — the trust signal that otherwise only lives in the
+        mutation tool's response (which the web viewer never sees). Missing /
+        never-edited geometry is a valid 200 with `available: false`, not a 404."""
+        import json as _json
+        import zipfile as _zipfile
+
+        from ..cad_generation import _LAST_EDIT_DIFF_MEMBER
+        from ..project_io import get_project, resolve_project_path
+
+        try:
+            project = get_project(active_settings, project_id)
+        except Exception:
+            return {"available": False, "reason": "project_not_found"}
+        pkg_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if pkg_path is None or not pkg_path.exists():
+            return {"available": False, "reason": "no_package"}
+        try:
+            with _zipfile.ZipFile(pkg_path, "r") as zf:
+                if _LAST_EDIT_DIFF_MEMBER not in zf.namelist():
+                    return {"available": False, "reason": "no_edit_yet"}
+                payload = _json.loads(zf.read(_LAST_EDIT_DIFF_MEMBER).decode("utf-8"))
+        except Exception:
+            return {"available": False, "reason": "read_failed"}
+        return {
+            "available": True,
+            "tool": payload.get("tool"),
+            "regression_diff": payload.get("regression_diff"),
+            "critique_diff": payload.get("critique_diff"),
+        }
+
     @app.get("/api/projects/{project_id}/cae-result-map")
     def get_cae_result_map_endpoint(project_id: str) -> dict[str, Any]:
         """Build (and persist) the CAE -> Shape IR result map for a project."""

@@ -1550,6 +1550,47 @@ def test_diff_critique_skipped_without_solids() -> None:
     assert diff["verdict"] == "skipped"
 
 
+def test_write_last_edit_diff_persists_to_package(tmp_path: Path) -> None:
+    import zipfile
+    from app.cad_generation import _LAST_EDIT_DIFF_MEMBER, _write_last_edit_diff
+
+    pkg = tmp_path / "p.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", "{}")
+
+    _write_last_edit_diff(
+        pkg,
+        tool="cad.edit_parameter",
+        regression_diff={"verdict": "clean"},
+        critique_diff={"verdict": "warn"},
+    )
+    with zipfile.ZipFile(pkg, "r") as zf:
+        assert _LAST_EDIT_DIFF_MEMBER in zf.namelist()
+        payload = json.loads(zf.read(_LAST_EDIT_DIFF_MEMBER).decode("utf-8"))
+    assert payload["tool"] == "cad.edit_parameter"
+    assert payload["regression_diff"]["verdict"] == "clean"
+    assert payload["critique_diff"]["verdict"] == "warn"
+
+    # A later edit replaces (not appends) the record.
+    _write_last_edit_diff(pkg, tool="cad.remove_part", regression_diff={"verdict": "topology_changed"})
+    with zipfile.ZipFile(pkg, "r") as zf:
+        payload2 = json.loads(zf.read(_LAST_EDIT_DIFF_MEMBER).decode("utf-8"))
+    assert payload2["tool"] == "cad.remove_part"
+    assert payload2["critique_diff"] is None
+
+
+def test_write_last_edit_diff_noop_when_both_none(tmp_path: Path) -> None:
+    import zipfile
+    from app.cad_generation import _LAST_EDIT_DIFF_MEMBER, _write_last_edit_diff
+
+    pkg = tmp_path / "p.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("metadata.json", "{}")
+    _write_last_edit_diff(pkg, tool="cad.edit_parameter")  # both diffs None → no write
+    with zipfile.ZipFile(pkg, "r") as zf:
+        assert _LAST_EDIT_DIFF_MEMBER not in zf.namelist()
+
+
 def test_append_mode_critique_diff_only_for_append_with_prior() -> None:
     from app.cad_generation import _append_mode_critique_diff
 
@@ -1631,6 +1672,17 @@ def test_edit_build123d_parameter_end_to_end(tmp_path: Path) -> None:
     assert cdiff["verdict"] in ("clean", "improved", "skipped")
     assert cdiff["delta"]["high"] <= 0
     assert cdiff["introduced"] == []
+    # #226: the real edit path persists the diff to package state so the viewer
+    # (GET /edit-diff) can re-surface it — not just the tool response.
+    import zipfile as _zf
+    from app.cad_generation import _LAST_EDIT_DIFF_MEMBER
+    from app.project_io import get_project, resolve_project_path
+    pkg = resolve_project_path(settings, pid, get_project(settings, pid).get("aieng_file"))
+    with _zf.ZipFile(pkg, "r") as z:
+        assert _LAST_EDIT_DIFF_MEMBER in z.namelist()
+        persisted = json.loads(z.read(_LAST_EDIT_DIFF_MEMBER).decode("utf-8"))
+    assert persisted["tool"] == "cad.edit_parameter"
+    assert persisted["regression_diff"]["verdict"] == diff["verdict"]
 
 
 def test_edit_build123d_parameter_invalid_value_preserves_geometry(tmp_path: Path) -> None:

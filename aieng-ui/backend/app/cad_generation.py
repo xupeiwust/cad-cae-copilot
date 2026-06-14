@@ -2333,6 +2333,7 @@ def _finish_execute_build123d_response(
             glb_bytes=glb_bytes,
         )
         _clear_revalidation_status(pkg_path)
+        _write_last_edit_diff(pkg_path, tool="cad.execute_build123d", critique_diff=critique_diff)
 
         try:
             from .main import save_project as _save_project2, now_iso as _now_iso
@@ -3466,6 +3467,53 @@ def _clear_revalidation_status(pkg_path: Path) -> None:
                 for item in src.infolist():
                     if item.filename != member:
                         dst.writestr(item, src.read(item.filename))
+            tmp.replace(pkg_path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+_LAST_EDIT_DIFF_MEMBER = "state/last_edit_diff.json"
+
+
+def _write_last_edit_diff(
+    pkg_path: Path,
+    *,
+    tool: str,
+    regression_diff: dict[str, Any] | None = None,
+    critique_diff: dict[str, Any] | None = None,
+) -> None:
+    """Persist the most recent edit's diffs to ``state/last_edit_diff.json``.
+
+    The ``regression_diff`` (topology drift) and ``critique_diff``
+    (manufacturability) verdicts live in the mutation tool's response, which the
+    connecting agent sees but the web viewer never does. Persisting the latest one
+    lets the UI re-surface it as a first-class "this edit changed X" diff (#226)
+    and lets ``observe_cad_state`` report it. Best-effort: never breaks the edit.
+    """
+    if not pkg_path.exists():
+        return
+    if regression_diff is None and critique_diff is None:
+        return
+    payload = {
+        "format": "aieng.last_edit_diff.v0",
+        "tool": tool,
+        "regression_diff": regression_diff,
+        "critique_diff": critique_diff,
+    }
+    try:
+        data = json.dumps(payload, indent=2).encode("utf-8")
+        tmp = pkg_path.with_suffix(".editdiff.tmp.aieng")
+        try:
+            with (
+                zipfile.ZipFile(pkg_path, "r") as src,
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst,
+            ):
+                for item in src.infolist():
+                    if item.filename != _LAST_EDIT_DIFF_MEMBER:
+                        dst.writestr(item, src.read(item.filename))
+                dst.writestr(_LAST_EDIT_DIFF_MEMBER, data)
             tmp.replace(pkg_path)
         except Exception:
             tmp.unlink(missing_ok=True)
@@ -4924,6 +4972,11 @@ def execute_build123d_code(
         topo, source_code=storage_code, model_kind=model_kind,
     )
     geometry_report_full = _compute_geometry_report(topo)
+    # Append-mode engineering-diagnostics diff (#216), reused for the response and
+    # the persisted last-edit diff (#226).
+    append_critique_diff = _append_mode_critique_diff(
+        mode, prior_topo, prior_feature_graph, topo, feature_graph
+    )
     _write_build123d_cache(
         settings,
         cache_key,
@@ -4963,6 +5016,7 @@ def execute_build123d_code(
         # Clear stale-artifact warnings: a fresh build invalidates any previous
         # EDIT IMPACT state, so aieng.agent_context won't show false positives.
         _clear_revalidation_status(pkg_path)
+        _write_last_edit_diff(pkg_path, tool="cad.execute_build123d", critique_diff=append_critique_diff)
 
         # Mark the project as having viewable geometry and bump updated_at so the
         # UI project list reflects the new model (not stuck at status "empty").
@@ -5028,9 +5082,8 @@ def execute_build123d_code(
 
     # Append-mode engineering-diagnostics diff (#216 follow-up): flag when this
     # additive step worsened manufacturability vs the prior model.
-    _append_cd = _append_mode_critique_diff(mode, prior_topo, prior_feature_graph, topo, feature_graph)
-    if _append_cd is not None:
-        result["critique_diff"] = _append_cd
+    if append_critique_diff is not None:
+        result["critique_diff"] = append_critique_diff
 
     # Visual feedback loop: render a 4-view contact sheet so an agent can judge
     # silhouette and alignment, not just face/bbox numbers. When per-body
@@ -6519,6 +6572,10 @@ def edit_build123d_parameter(
         glb_bytes=glb_bytes,
     )
     _clear_revalidation_status(pkg_path)
+    _write_last_edit_diff(
+        pkg_path, tool="cad.edit_parameter",
+        regression_diff=regression_diff, critique_diff=critique_diff,
+    )
 
     # 8. Mark project as updated
     try:
@@ -6691,6 +6748,10 @@ def _rebuild_after_part_edit(
         glb_bytes=glb_bytes,
     )
     _clear_revalidation_status(pkg_path)
+    _write_last_edit_diff(
+        pkg_path, tool=f"cad.{action}_part",
+        regression_diff=regression_diff, critique_diff=critique_diff,
+    )
 
     try:
         from .main import save_project as _save_project, now_iso as _now_iso

@@ -1395,6 +1395,44 @@ export type GeometryReportResponse = {
   part_boxes?: Record<string, number[]>;
 };
 
+/** A part that moved/resized in the topology regression diff (from a CAD edit). */
+export type RegressionChangedPart = {
+  part: string;
+  max_change_mm?: number;
+  /** false → this part changed but was NOT the edit's target (collateral). */
+  expected?: boolean;
+};
+
+/** Topology drift verdict from a CAD edit (`regression_diff` in the tool output). */
+export type RegressionDiff = {
+  verdict: string; // clean | collateral_change | topology_changed | identical
+  headline?: string;
+  changed?: RegressionChangedPart[];
+  added?: string[];
+  removed?: string[];
+  collateral_parts?: string[];
+  unchanged_count?: number;
+};
+
+/** Manufacturability diff verdict from a CAD edit (`critique_diff`). */
+export type CritiqueDiff = {
+  verdict: string; // clean | warn | fail | improved | skipped
+  headline?: string;
+  delta?: { high?: number; medium?: number; low?: number };
+  introduced?: Array<{ rule?: string; severity?: string; feature?: string; observation?: string }>;
+  introduced_count?: number;
+  resolved_count?: number;
+};
+
+/** The most recent edit's diff (#226), from GET /api/projects/{id}/edit-diff. */
+export type EditDiffResponse = {
+  available: boolean;
+  reason?: string;
+  tool?: string;
+  regression_diff?: RegressionDiff | null;
+  critique_diff?: CritiqueDiff | null;
+};
+
 /** One deterministic engineering-critique finding (from cad.critique). */
 export type CritiqueFinding = {
   severity: "high" | "medium" | "low" | string;

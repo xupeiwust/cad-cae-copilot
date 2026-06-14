@@ -26,6 +26,7 @@ import { useSettingsUI } from "./useSettingsUI";
 import { useApprovalState } from "./useApprovalState";
 import { useWorkbenchStages } from "./useWorkbenchStages";
 import { useOptimizationStudy } from "./useOptimizationStudy";
+import { useEditDiff } from "./useEditDiff";
 import { useOptimizationConvergence } from "./useOptimizationConvergence";
 
 export function useWorkbenchApp() {
@@ -121,6 +122,7 @@ export function useWorkbenchApp() {
   const geometryVersion = projects.find((item) => item.id === selectedId)?.updated_at ?? null;
 
   const { optimizationStudy, surrogateProposals } = useOptimizationStudy({ selectedId, geometryVersion });
+  const { editDiff } = useEditDiff({ selectedId, geometryVersion });
   const { optimizationConvergence } = useOptimizationConvergence({ selectedId, geometryVersion });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
@@ -405,5 +407,6 @@ export function useWorkbenchApp() {
     optimizationStudy,
     surrogateProposals,
     optimizationConvergence,
+    editDiff,
   };
 }

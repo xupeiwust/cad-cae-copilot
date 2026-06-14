@@ -956,6 +956,29 @@ def _build_mcp_server(name: str = "aieng-workbench") -> FastMCP:
     return mcp
 
 
+def _run_doctor_cli(mcp: FastMCP) -> int:
+    """Print setup diagnostics to stdout and return an exit code (#229).
+
+    Safe to print to stdout here — the stdio JSON-RPC protocol is not running in
+    doctor mode (we exit before any transport starts).
+    """
+    from . import mcp_doctor
+
+    def _http_get(url: str) -> Any:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    tool_count = len(mcp._tool_manager._tools)  # type: ignore[attr-defined]
+    report = mcp_doctor.run_doctor(
+        root=Path.cwd(),
+        backend_url=_BACKEND_URL or os.environ.get("AIENG_BACKEND_URL"),
+        tool_count=tool_count,
+        http_get=_http_get,
+    )
+    print(mcp_doctor.format_report(report))
+    return 1 if report["overall"] == "fail" else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="aieng-workbench-mcp", description=__doc__.splitlines()[0])
     parser.add_argument("--http", action="store_true", help="Run over HTTP (SSE) instead of stdio.")
@@ -986,6 +1009,15 @@ def main(argv: list[str] | None = None) -> int:
         "--data-dir",
         default=None,
         help="Directory for headless project/package/runtime data.",
+    )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help=(
+            "Run setup diagnostics ('is everything wired?') and exit: check MCP "
+            "config references aieng-workbench, the backend is reachable, and tools "
+            "are exposed — with fix hints. Exit code is non-zero on a failing check."
+        ),
     )
     guide_group = parser.add_mutually_exclusive_group()
     guide_group.add_argument(
@@ -1025,6 +1057,9 @@ def main(argv: list[str] | None = None) -> int:
 
     mcp = _build_mcp_server()
     logger.info("registered %d tools", len(mcp._tool_manager._tools))  # type: ignore[attr-defined]
+
+    if args.doctor:
+        return _run_doctor_cli(mcp)
 
     if args.http:
         # FastMCP's SSE app provides /sse + /messages.

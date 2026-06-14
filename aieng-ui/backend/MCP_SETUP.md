@@ -72,6 +72,23 @@ elicitation there is no approval surface and the gated tool **fails safe**
 (`behavior: deny`, `code: approval_surface_unavailable`) — it is never executed
 silently. This is the BYO-agent path that does not depend on the web UI.
 
+## "Is everything wired?" — the doctor command
+
+First-time setup juggles agent + MCP config + conda + backend. Run a one-shot
+diagnostic from your project root:
+
+```bash
+aieng-workbench-mcp --doctor                                   # headless
+aieng-workbench-mcp --doctor --backend-url http://127.0.0.1:8000  # with live viewer
+```
+
+It checks, with actionable fix hints, that (1) an MCP config in the current
+directory (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`,
+`.codex/config.toml`) references `aieng-workbench`; (2) the backend `/api/health`
+is reachable when a URL is given (skipped in headless mode); and (3) the server
+exposes a non-empty tool set. It prints an `OK` / `WARN` / `FAIL` report and exits
+non-zero on a failing check, so it doubles as a CI/setup smoke check.
+
 The install extras are intentionally explicit:
 
 | Install form | Capability |

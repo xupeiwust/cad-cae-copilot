@@ -676,6 +676,10 @@ failed builds. Each takes `label=` / `color=` and returns a `Part`:
 | `fuselage_profile(length, max_diameter, nose_frac=, tail_frac=)` | aircraft/rocket bodies, pods | revolved body: rounded nose, constant mid, tapered tail (axis = Z) |
 | `wheel(rim_radius, tire_radius, width)` | vehicle wheels, pulleys, rollers | disc with central axle bore; outer radius = `rim_radius + tire_radius`, axis = Z |
 | `ribbed_plate(length, width, thickness, rib_count=, rib_height=)` | brackets, base plates, panels | flat plate + N stiffening ribs on top; bottom at Z=0 |
+| `tube(outer_radius, inner_radius, length, axis=)` | pipes, bushings, sleeves, standoffs | hollow cylinder; bore runs full length; `axis` ∈ `"X"/"Y"/"Z"` |
+| `hex_prism(across_flats, height, axis=)` | nut blanks, hex standoffs, hex stock | hexagonal prism; `across_flats` = wrench size (flat-to-flat) |
+| `chamfered_box(length, width, height, chamfer_size, edges=)` | machined enclosures/housings with broken edges | angular counterpart to `rounded_box`; `edges="all"` or `"vertical"` |
+| `l_bracket(length, width, height, thickness, fillet_radius=)` | L-shaped mounting brackets/angles | base plate (+X) + vertical wall (+Z) joined at X=0; optional rounded interior corner; bottom at Z=0 |
 
 ```python
 # A humanoid torso + symmetric arms + blended head — no BuildSketch boilerplate:

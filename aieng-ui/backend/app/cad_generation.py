@@ -534,6 +534,93 @@ def ribbed_plate(length, width, thickness, rib_count=2, rib_height=None, label=N
     return _aieng_finish(_bp.part, label, color)
 
 
+# ── mechanical / engineering helper family ───────────────────────────────────
+# Common manufacturable primitives the engineering audience reaches for, in the
+# same _aieng_finish(label, color) contract. Template-driven generation is the
+# most reliable execution pattern (fewer LLM build failures) — these wrap the
+# boilerplate for hollow sections, hex stock, chamfered enclosures, and L-brackets.
+
+def tube(outer_radius, inner_radius, length, axis="Z", label=None, color=None):
+    \"\"\"A hollow cylinder (pipe / bushing / sleeve / standoff). ``axis`` in
+    {"X","Y","Z"}; the bore runs the full ``length``. inner_radius must be < outer_radius.\"\"\"
+    outer = float(outer_radius)
+    inner = float(inner_radius)
+    if inner <= 0 or inner >= outer:
+        raise ValueError("tube needs 0 < inner_radius < outer_radius")
+    with BuildPart() as _bp:
+        Cylinder(outer, float(length))
+        Cylinder(inner, float(length), mode=Mode.SUBTRACT)
+    part = _bp.part
+    a = str(axis).upper()
+    if a == "X":
+        part = part.rotate(Axis.Y, 90)
+    elif a == "Y":
+        part = part.rotate(Axis.X, 90)
+    return _aieng_finish(part, label, color)
+
+
+def hex_prism(across_flats, height, axis="Z", label=None, color=None):
+    \"\"\"A hexagonal prism (nut blank, hex standoff, hex stock). ``across_flats`` is
+    the wrench size (distance between opposite flats); ``axis`` in {"X","Y","Z"}.\"\"\"
+    af = float(across_flats)
+    if af <= 0:
+        raise ValueError("hex_prism needs across_flats > 0")
+    with BuildPart() as _bp:
+        with BuildSketch():
+            RegularPolygon(af / 2.0, 6, major_radius=False)
+        extrude(amount=float(height))
+    part = _bp.part
+    a = str(axis).upper()
+    if a == "X":
+        part = part.rotate(Axis.Y, 90)
+    elif a == "Y":
+        part = part.rotate(Axis.X, 90)
+    return _aieng_finish(part, label, color)
+
+
+def chamfered_box(length, width, height, chamfer_size, edges="all", label=None, color=None):
+    \"\"\"A box with chamfered edges -- machined enclosures / housings with broken
+    edges (the angular counterpart to ``rounded_box``). ``edges`` is "all" or
+    "vertical". Degrades to vertical-only / smaller chamfer if the size is tight.
+    (Parameter is ``chamfer_size`` so it does not shadow build123d's ``chamfer``.)\"\"\"
+    c = max(0.01, min(float(chamfer_size), min(length, width, height) / 2 - 0.01))
+    with BuildPart() as _bp:
+        Box(length, width, height)
+        try:
+            if edges == "vertical":
+                chamfer(_bp.edges().filter_by(Axis.Z), length=c)
+            else:
+                chamfer(_bp.edges(), length=c)
+        except Exception:
+            chamfer(_bp.edges().filter_by(Axis.Z), length=min(c, min(length, width) / 2 - 0.01))
+    return _aieng_finish(_bp.part, label, color)
+
+
+def l_bracket(length, width, height, thickness, fillet_radius=0, label=None, color=None):
+    \"\"\"An L-shaped mounting bracket: a base plate (length x width x thickness, in
+    +X) joined to a vertical wall (thickness x width x height, rising in +Z) at the
+    X=0 edge. Optional ``fillet_radius`` rounds the interior corner; it is
+    best-effort and skipped if geometrically infeasible. Base bottom sits at Z=0.\"\"\"
+    L = float(length)
+    W = float(width)
+    H = float(height)
+    t = float(thickness)
+    if t <= 0 or t >= L or t >= H:
+        raise ValueError("l_bracket needs 0 < thickness < length and < height")
+    with BuildPart() as _bp:
+        Box(L, W, t, align=(Align.MIN, Align.CENTER, Align.MIN))
+        Box(t, W, H, align=(Align.MIN, Align.CENTER, Align.MIN))
+        r = float(fillet_radius)
+        if r > 0:
+            try:
+                # The concave interior edge runs along Y at (x=t, z=t).
+                inner = _bp.edges().filter_by(Axis.Y).group_by(Axis.Z)[1].sort_by(Axis.X)[1]
+                fillet(inner, radius=min(r, t - 0.01, H - t - 0.01, L - t - 0.01))
+            except Exception:
+                pass
+    return _aieng_finish(_bp.part, label, color)
+
+
 # ── design-rule assertions ───────────────────────────────────────────────────
 # Let authored code embed design constraints that deterministically FAIL the
 # build (verified by construction) instead of being hoped for. A failed

@@ -2274,6 +2274,62 @@ def test_domain_primitive_builds_valid_solid(tmp_path: Path, snippet: str) -> No
     assert out["topology_summary"]["face_count"] > 0
 
 
+@pytest.mark.parametrize("snippet,part_label", [
+    ("result = tube(12, 8, 40, label='bushing')", "bushing"),
+    ("result = tube(10, 6, 30, axis='X', label='sleeve')", "sleeve"),
+    ("result = hex_prism(13, 8, label='nut_blank')", "nut_blank"),
+    ("result = chamfered_box(60, 40, 20, 4, label='housing')", "housing"),
+    ("result = chamfered_box(60, 40, 20, 3, edges='vertical', label='housing')", "housing"),
+    ("result = l_bracket(80, 40, 60, 6, label='bracket')", "bracket"),
+    ("result = l_bracket(80, 40, 60, 6, fillet_radius=4, label='bracket')", "bracket"),
+])
+def test_mechanical_helper_builds_named_part(tmp_path: Path, snippet: str, part_label: str) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "mech-helper")
+    code = "from build123d import *\n" + snippet + "\n"
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    assert out["topology_summary"]["bounding_box"] is not None
+    assert out["topology_summary"]["face_count"] > 0
+    assert part_label in out["named_parts"], out["named_parts"]
+
+
+def test_tube_is_hollow(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "tube-hollow")
+    # A hollow tube has an inner + outer cylindrical wall → more faces than a solid rod.
+    solid = execute_build123d_code(
+        settings, _make_project(settings, "rod"),
+        {"code": "from build123d import *\nresult = Cylinder(12, 40); result.label='rod'\n", "thumbnail": False},
+    )
+    hollow = execute_build123d_code(
+        settings, pid,
+        {"code": "from build123d import *\nresult = tube(12, 8, 40, label='bushing')\n", "thumbnail": False},
+    )
+    assert hollow["status"] == "ok" and solid["status"] == "ok"
+    assert hollow["topology_summary"]["face_count"] > solid["topology_summary"]["face_count"]
+
+
+def test_invalid_tube_radii_is_a_clean_error(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "tube-bad")
+    out = execute_build123d_code(
+        settings, pid,
+        {"code": "from build123d import *\nresult = tube(8, 12, 40, label='bad')\n", "thumbnail": False},
+    )
+    # inner >= outer raises ValueError inside the runner → surfaced as an error, not a crash.
+    assert out["status"] == "error"
+
+
 def test_fuselage_primitive_marks_model_organic(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import execute_build123d_code

@@ -72,6 +72,41 @@ def test_surrogate_proposes_with_uncertainty_and_advisory_flags() -> None:
     assert res["honesty"]["baseline_modified"] is False
 
 
+def test_surrogate_predictions_always_carry_an_uncertainty_band() -> None:
+    # Trust discipline (#219): never a predicted number without its envelope.
+    problem = _problem(_var("x1", 0, 10), _var("x2", 0, 10))
+    res = propose_surrogate_candidates(problem, _evaluated_patches(4), _ranking(_SCORES), n_proposals=3)
+    for p in res["proposals"]:
+        pred = p["surrogate_prediction"]
+        band = pred["predicted_score_band"]
+        assert isinstance(band, list) and len(band) == 2
+        lo, hi = band
+        assert lo <= pred["predicted_score"] <= hi
+        # band half-width equals the reported uncertainty
+        assert abs((hi - lo) / 2.0 - pred["uncertainty_std"]) < 1e-6
+
+
+def test_surrogate_reports_leave_one_out_validation_against_evaluated_points() -> None:
+    problem = _problem(_var("x1", 0, 10), _var("x2", 0, 10))
+    res = propose_surrogate_candidates(problem, _evaluated_patches(4), _ranking(_SCORES), n_proposals=3)
+    val = res["validation"]
+    assert val["method"] == "leave_one_out_cv"
+    assert val["n_points"] == 4
+    assert val["has_evaluated_points"] is True
+    for key in ("rmse", "mae", "max_abs_error", "relative_rmse"):
+        assert isinstance(val[key], (int, float)) and val[key] >= 0
+    assert -1.0 <= val["pearson_r"] <= 1.0
+    # honesty: LOO error is surrogate-vs-evaluated, not a solver-verified bound
+    assert val["is_solver_evidence"] is False
+
+
+def test_degraded_surrogate_validation_is_explicitly_absent() -> None:
+    problem = _problem(_var("x1", 0, 10), _var("x2", 0, 10))
+    res = propose_surrogate_candidates(problem, _evaluated_patches(2), _ranking({"c1": 0.2, "c2": 0.6}))
+    assert res["status"] == "needs_more_evidence"
+    assert res["validation"]["has_evaluated_points"] is False
+
+
 def test_surrogate_proposal_is_deterministic() -> None:
     problem = _problem(_var("x1", 0, 10), _var("x2", 0, 10))
     patches = _evaluated_patches(4)

@@ -11,10 +11,16 @@ import {
   type OptimizationStudy,
 } from "../app/optimizationStudy";
 import { isConvergenceMeaningful, type OptimizationConvergence } from "../app/optimizationConvergence";
+import {
+  formatPredictionWithBand,
+  type SurrogateProposals,
+} from "../app/surrogatePredictions";
 import { ConvergenceChart } from "./ConvergenceChart";
 
 type OptimizationPanelProps = {
   study: OptimizationStudy | null;
+  /** Advisory surrogate proposals — each rendered with its uncertainty band (#219). */
+  surrogate?: SurrogateProposals | null;
   /** Iterative-loop convergence history; rendered as a chart when available. */
   convergence?: OptimizationConvergence | null;
   /** Prefill the composer with an approval-gated accept draft for a candidate. */
@@ -40,7 +46,7 @@ type OptimizationPanelProps = {
  * - Missing-stages transparency.
  * - Failed-candidates transparency.
  */
-export function OptimizationPanel({ study, convergence, onUseInChat }: OptimizationPanelProps) {
+export function OptimizationPanel({ study, surrogate, convergence, onUseInChat }: OptimizationPanelProps) {
   const candidates = study?.candidates ?? [];
   const groups = useMemo(() => groupCandidatesByFeasibility(candidates), [candidates]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -105,6 +111,8 @@ export function OptimizationPanel({ study, convergence, onUseInChat }: Optimizat
       {isConvergenceMeaningful(convergence ?? null) && (
         <ConvergenceChart convergence={convergence!} title="Incumbent objective over iterations" />
       )}
+
+      {surrogate?.hasProposals && <SurrogateSection surrogate={surrogate} />}
 
       {/* ── Study overview (deepening) ── */}
       {hasDeepData && (
@@ -303,6 +311,60 @@ export function OptimizationPanel({ study, convergence, onUseInChat }: Optimizat
         Click <strong>Accept</strong> to draft a <code>/design-study</code> — acceptance stays approval-gated.
       </div>
     </section>
+  );
+}
+
+function SurrogateSection({ surrogate }: { surrogate: SurrogateProposals }) {
+  const { predictions, validation, withheld } = surrogate;
+  return (
+    <div className="surrogate-section" aria-label="Surrogate proposals">
+      <div className="surrogate-head">
+        <strong>Surrogate proposals</strong>
+        <span className="optimization-advisory-badge">Advisory — not solver evidence</span>
+      </div>
+
+      {validation ? (
+        <div className="surrogate-validation" role="status">
+          Leave-one-out check vs {validation.nPoints} evaluated point
+          {validation.nPoints !== 1 ? "s" : ""}:{" "}
+          {validation.rmse != null && <>RMSE {validation.rmse.toFixed(3)}</>}
+          {validation.relativeRmse != null && <> · rel {(validation.relativeRmse * 100).toFixed(1)}%</>}
+          {validation.pearsonR != null && <> · r={validation.pearsonR.toFixed(2)}</>}
+        </div>
+      ) : (
+        <div className="surrogate-validation surrogate-validation-absent">
+          No solver/evaluated points yet — prediction error band not established.
+        </div>
+      )}
+
+      <ul className="surrogate-list">
+        {predictions.map((p) => (
+          <li key={p.rank} className="surrogate-row">
+            <span className="surrogate-rank">#{p.rank}</span>
+            {/* The number is never shown without its ± envelope. */}
+            <span className="surrogate-score" title={`band [${p.band[0].toFixed(3)}, ${p.band[1].toFixed(3)}]`}>
+              {formatPredictionWithBand(p)}
+            </span>
+            {p.confidence && (
+              <span className={`optimization-confidence optimization-confidence-${p.confidence}`}>
+                {p.confidence}
+              </span>
+            )}
+            {p.variableChanges.length > 0 && (
+              <span className="surrogate-changes">
+                {p.variableChanges.map((c) => `${c.variableId}=${c.value}`).join(", ")}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {withheld > 0 && (
+        <div className="surrogate-withheld">
+          {withheld} prediction{withheld !== 1 ? "s" : ""} withheld — no uncertainty band available.
+        </div>
+      )}
+    </div>
   );
 }
 

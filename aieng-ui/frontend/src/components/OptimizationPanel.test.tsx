@@ -101,6 +101,45 @@ describe("OptimizationPanel", () => {
     expect(screen.getByText("feasible: 1")).toBeTruthy();
   });
 
+  it("renders surrogate predictions with their uncertainty band + LOO validation (#219)", () => {
+    const study = makeStudy({ candidates: [{ candidate_id: "c1", rank: 1, feasibility: "feasible" }] });
+    const surrogate = {
+      hasProposals: true,
+      status: "ok",
+      predictions: [
+        {
+          rank: 1,
+          variableChanges: [{ variableId: "wall_thickness", value: 4.5 }],
+          predictedScore: 0.62,
+          uncertaintyStd: 0.08,
+          band: [0.54, 0.7] as [number, number],
+          confidence: "medium",
+        },
+      ],
+      validation: {
+        method: "leave_one_out_cv",
+        nPoints: 4,
+        rmse: 0.05,
+        mae: 0.04,
+        maxAbsError: 0.09,
+        relativeRmse: 0.07,
+        pearsonR: 0.96,
+        note: null,
+      },
+      withheld: 1,
+      reasonCodes: [],
+    };
+    render(<OptimizationPanel study={study} surrogate={surrogate} />);
+    expect(screen.getByText("Surrogate proposals")).toBeTruthy();
+    // the predicted number is rendered WITH its ± band, never bare
+    expect(screen.getByText("0.620 ± 0.080")).toBeTruthy();
+    // leave-one-out validation summary is shown
+    expect(screen.getByText(/Leave-one-out check vs 4 evaluated points/)).toBeTruthy();
+    expect(screen.getByText(/RMSE 0\.050/)).toBeTruthy();
+    // withheld (band-less) predictions are disclosed, not silently dropped
+    expect(screen.getByText(/1 prediction withheld/)).toBeTruthy();
+  });
+
   it("expands candidate details on toggle click", () => {
     const study = makeStudy({
       candidates: [

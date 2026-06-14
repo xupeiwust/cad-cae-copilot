@@ -5729,6 +5729,60 @@ textarea {
   border: 1px solid rgba(245, 185, 69, 0.25);
 }
 
+/* Surrogate proposals (#219) — predictions always shown with their ± band. */
+.surrogate-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+}
+.surrogate-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.surrogate-validation {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.surrogate-validation-absent {
+  font-style: italic;
+  opacity: 0.8;
+}
+.surrogate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.surrogate-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.surrogate-rank {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.surrogate-score {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+.surrogate-changes {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+}
+.surrogate-withheld {
+  font-size: 11px;
+  color: #b45309;
+}
+
 .optimization-reason-list {
   margin: 0;
   padding-left: 18px;

@@ -120,7 +120,7 @@ export function useWorkbenchApp() {
 
   const geometryVersion = projects.find((item) => item.id === selectedId)?.updated_at ?? null;
 
-  const { optimizationStudy } = useOptimizationStudy({ selectedId, geometryVersion });
+  const { optimizationStudy, surrogateProposals } = useOptimizationStudy({ selectedId, geometryVersion });
   const { optimizationConvergence } = useOptimizationConvergence({ selectedId, geometryVersion });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
@@ -403,6 +403,7 @@ export function useWorkbenchApp() {
     globalSettingsOpen,
     setGlobalSettingsOpen,
     optimizationStudy,
+    surrogateProposals,
     optimizationConvergence,
   };
 }

@@ -109,6 +109,62 @@ def _gp_predict(X_train, y_train, X_query):
     return mean_n * ysd + ymu, np.sqrt(var_n) * ysd
 
 
+def _loo_validation(X, y) -> dict[str, Any]:
+    """Leave-one-out cross-validation of the surrogate against the evaluated points.
+
+    For each evaluated candidate, refit the GP on the others and predict its
+    score; the residuals form an honest *surrogate-vs-evaluated* error band
+    (PhysicsX discipline) — the number you would otherwise show with no envelope.
+    Deterministic and pure. Returns ``has_evaluated_points: False`` when there
+    are too few points to validate.
+    """
+    import numpy as np
+
+    Xa = np.asarray(X, dtype=float)
+    ya = np.asarray(y, dtype=float)
+    n = len(ya)
+    if n < 3:
+        return {
+            "method": "leave_one_out_cv",
+            "n_points": int(n),
+            "has_evaluated_points": False,
+            "is_solver_evidence": False,
+            "note": "Too few evaluated points to cross-validate the surrogate.",
+        }
+
+    preds = np.empty(n, dtype=float)
+    for i in range(n):
+        mask = np.ones(n, dtype=bool)
+        mask[i] = False
+        mean_i, _ = _gp_predict(Xa[mask], ya[mask], Xa[i : i + 1])
+        preds[i] = float(mean_i[0])
+
+    resid = preds - ya
+    rmse = float(np.sqrt(np.mean(resid ** 2)))
+    mae = float(np.mean(np.abs(resid)))
+    max_abs = float(np.max(np.abs(resid)))
+    yspan = float(ya.max() - ya.min()) or 1.0
+    # Pearson r between predicted and actual; undefined if either is constant.
+    if float(np.std(preds)) == 0.0 or float(np.std(ya)) == 0.0:
+        pearson = 0.0
+    else:
+        pearson = float(np.corrcoef(preds, ya)[0, 1])
+
+    return {
+        "method": "leave_one_out_cv",
+        "n_points": int(n),
+        "has_evaluated_points": True,
+        "rmse": round(rmse, 6),
+        "mae": round(mae, 6),
+        "max_abs_error": round(max_abs, 6),
+        "relative_rmse": round(rmse / yspan, 6),
+        "pearson_r": round(pearson, 6),
+        "score_span": round(yspan, 6),
+        "is_solver_evidence": False,
+        "note": "Surrogate-vs-evaluated leave-one-out error; advisory, not a solver-verified bound.",
+    }
+
+
 def propose_surrogate_candidates(
     problem: dict[str, Any] | None,
     patches: dict[str, dict[str, Any]],
@@ -142,6 +198,12 @@ def propose_surrogate_candidates(
             "proposals": [],
             "honesty": honesty,
             "credibility": classify_credibility("surrogate", is_solver_evidence=False),
+            "validation": {
+                "method": "leave_one_out_cv",
+                "has_evaluated_points": False,
+                "is_solver_evidence": False,
+                "note": "No surrogate fitted; nothing to cross-validate.",
+            },
         }
         out.update(extra or {})
         return out
@@ -183,6 +245,7 @@ def propose_surrogate_candidates(
         return _degraded("no_query_points")
 
     mean, std = _gp_predict(X, y, q_norm)
+    validation = _loo_validation(X, y)
     yspan = (max(y) - min(y)) or 1.0
     # Higher ranking score is better -> upper-confidence-bound acquisition.
     scored = sorted(
@@ -203,6 +266,11 @@ def propose_surrogate_candidates(
             "surrogate_prediction": {
                 "predicted_score": round(float(mean[i]), 6),
                 "uncertainty_std": round(float(std[i]), 6),
+                # Explicit ±1σ envelope so the number is never shown bare (#219).
+                "predicted_score_band": [
+                    round(float(mean[i]) - float(std[i]), 6),
+                    round(float(mean[i]) + float(std[i]), 6),
+                ],
                 "acquisition_ucb": round(float(mean[i]) + _UCB_KAPPA * float(std[i]), 6),
                 "confidence": "low" if rel_unc > 0.5 else global_conf,
                 "advisory": True,
@@ -234,6 +302,7 @@ def propose_surrogate_candidates(
         },
         "proposals": proposals,
         "honesty": honesty,
+        "validation": validation,
         "credibility": classify_credibility(
             "surrogate",
             is_solver_evidence=False,

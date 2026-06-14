@@ -151,6 +151,7 @@ export function AppChrome({ app }: AppChromeProps) {
 
           <OptimizationPanel
             study={app.optimizationStudy}
+            surrogate={app.surrogateProposals}
             convergence={app.optimizationConvergence}
             onUseInChat={(draft) => app.setNotice({ tone: "info", title: "Draft ready", detail: draft })}
           />

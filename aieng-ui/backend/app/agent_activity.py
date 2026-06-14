@@ -16,6 +16,7 @@ Design:
 
 from __future__ import annotations
 
+import collections
 import queue
 import threading
 import time
@@ -26,7 +27,14 @@ from typing import Any
 # the publisher (the agent's tool call must never hang on a slow UI).
 _MAX_QUEUE = 1000
 
+# Bounded ring buffer of recent events. Live subscribers (the web viewer) get a
+# real-time fan-out, but a headless agent (#227) that wasn't subscribed when an
+# event fired would otherwise see nothing — this lets `aieng.recent_activity`
+# return the recent build/activity history for a project without the web UI.
+_RECENT_MAX = 500
+
 _subscribers: set["queue.Queue[dict[str, Any]]"] = set()
+_recent: "collections.deque[dict[str, Any]]" = collections.deque(maxlen=_RECENT_MAX)
 _lock = threading.Lock()
 
 
@@ -57,6 +65,7 @@ def publish(event: dict[str, Any]) -> None:
     event.setdefault("ts", time.time())
     with _lock:
         subs = list(_subscribers)
+        _recent.append(event)
     for q in subs:
         try:
             q.put_nowait(event)
@@ -68,7 +77,32 @@ def publish(event: dict[str, Any]) -> None:
                 pass
 
 
+def recent(
+    project_id: str | None = None,
+    *,
+    limit: int = 50,
+    since_ts: float | None = None,
+) -> list[dict[str, Any]]:
+    """Return recent activity events, newest last (chronological).
+
+    Filters to ``project_id`` when given (events without a matching
+    ``project_id`` are excluded from a project-scoped query). ``since_ts`` returns
+    only events strictly newer than that monotonic ``ts`` (poll-for-new
+    pagination); ``limit`` caps the result to the most recent N. Pure read.
+    """
+    capped = max(1, min(int(limit), _RECENT_MAX))
+    with _lock:
+        items = list(_recent)
+    if project_id is not None:
+        pid = str(project_id)
+        items = [e for e in items if str(e.get("project_id") or "") == pid]
+    if since_ts is not None:
+        items = [e for e in items if float(e.get("ts") or 0.0) > float(since_ts)]
+    return items[-capped:]
+
+
 def reset() -> None:
-    """Drop all subscribers — test hook only."""
+    """Drop all subscribers and buffered events — test hook only."""
     with _lock:
         _subscribers.clear()
+        _recent.clear()

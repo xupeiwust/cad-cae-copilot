@@ -965,6 +965,7 @@ does not certify by default.
 | Tool | Purpose |
 |------|---------|
 | `aieng.read_audit_log` | Recent agent/user actions on this project |
+| `aieng.recent_activity` | Recent CAD build/activity events + iteration errors for a project (paginated by `limit` / `since_ts`) — headless build feedback without the web viewer. Poll with `since_ts=latest_ts` for new events |
 | `aieng.validate` | Schema + rule validation report (no mutation) |
 | `aieng.write_completeness_report` | What is missing before simulation |
 | `cae.prepare_solver_run` | Solver preflight — checks readiness, runs nothing. Returns `recommended_next_calls` with tool/input/reason entries for missing artifacts and stale face references |

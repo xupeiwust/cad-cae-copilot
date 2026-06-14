@@ -52,6 +52,38 @@ def register_aieng_tools(rt: Any, active_settings: Any, app_context: Any, _schem
         logs = recent_logs(active_settings, pid) if pid else []
         return {"project_id": pid, "recent_logs": logs}
 
+    def _tool_recent_activity(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Recent CAD build/activity events for a project (#227).
+
+        Headless build feedback: a CLI/IDE agent sees build progress + iteration
+        errors without the web viewer's SSE connection. Reads the backend's
+        bounded in-memory ring buffer (current process; live, not persisted).
+        """
+        from .. import agent_activity
+
+        pid = inp.get("project_id")
+        try:
+            limit = int(inp.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+        raw_since = inp.get("since_ts")
+        try:
+            since_ts = float(raw_since) if raw_since is not None else None
+        except (TypeError, ValueError):
+            since_ts = None
+        events = agent_activity.recent(pid, limit=limit, since_ts=since_ts)
+        latest_ts = events[-1].get("ts") if events else since_ts
+        return {
+            "project_id": pid,
+            "events": events,
+            "count": len(events),
+            "latest_ts": latest_ts,  # pass back as since_ts to poll for newer events
+            "note": (
+                "Recent in-memory build/activity events from the current backend "
+                "process (bounded ring buffer) — live feedback, not a persisted history."
+            ),
+        }
+
     def _tool_refresh_cae_summary(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import aieng_bridge
         from pathlib import Path as _Path
@@ -989,6 +1021,23 @@ def register_aieng_tools(rt: Any, active_settings: Any, app_context: Any, _schem
         _tool_read_audit_log,
         description="Return the most recent audit log entries for this project",
         input_schema=_schema("aieng.read_audit_log"),
+    )
+    rt.register_tool(
+        "aieng.recent_activity",
+        _tool_recent_activity,
+        description=(
+            "Return recent CAD build/activity events for a project (paginated by "
+            "limit / since_ts) — headless build feedback + iteration errors without "
+            "the web viewer. Poll with since_ts=latest_ts for new events."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string", "description": "Project to filter events for."},
+                "limit": {"type": "integer", "description": "Max events (most recent); default 50, cap 500."},
+                "since_ts": {"type": "number", "description": "Return only events with ts > since_ts (poll for new)."},
+            },
+        },
     )
     rt.register_tool(
         "aieng.write_completeness_report",

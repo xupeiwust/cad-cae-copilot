@@ -241,3 +241,59 @@ def test_invoke_tool_route_registered(tmp_path: Path) -> None:
     app = create_app(settings)
     paths = {r.path for r in app.routes}
     assert "/api/agent/invoke-tool" in paths
+
+
+# ── recent-activity ring buffer (#227) ────────────────────────────────────────
+
+def test_recent_returns_published_events_chronologically() -> None:
+    agent_activity.publish({"type": "build_started", "project_id": "p1", "ts": 1.0})
+    agent_activity.publish({"type": "build_progress", "project_id": "p1", "ts": 2.0})
+    events = agent_activity.recent("p1")
+    assert [e["type"] for e in events] == ["build_started", "build_progress"]
+
+
+def test_recent_filters_by_project() -> None:
+    agent_activity.publish({"type": "a", "project_id": "p1", "ts": 1.0})
+    agent_activity.publish({"type": "b", "project_id": "p2", "ts": 2.0})
+    agent_activity.publish({"type": "c", "ts": 3.0})  # no project_id
+    p1 = agent_activity.recent("p1")
+    assert [e["type"] for e in p1] == ["a"]
+    # no filter → everything (newest last)
+    assert [e["type"] for e in agent_activity.recent()] == ["a", "b", "c"]
+
+
+def test_recent_since_ts_returns_only_newer() -> None:
+    agent_activity.publish({"type": "old", "project_id": "p1", "ts": 10.0})
+    agent_activity.publish({"type": "new", "project_id": "p1", "ts": 20.0})
+    assert [e["type"] for e in agent_activity.recent("p1", since_ts=10.0)] == ["new"]
+
+
+def test_recent_respects_limit_and_returns_most_recent() -> None:
+    for i in range(10):
+        agent_activity.publish({"type": f"e{i}", "project_id": "p1", "ts": float(i)})
+    tail = agent_activity.recent("p1", limit=3)
+    assert [e["type"] for e in tail] == ["e7", "e8", "e9"]
+
+
+def test_reset_clears_recent_buffer() -> None:
+    agent_activity.publish({"type": "x", "project_id": "p1", "ts": 1.0})
+    agent_activity.reset()
+    assert agent_activity.recent("p1") == []
+
+
+def test_recent_activity_tool_returns_buffered_events(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project_id = _make_project(settings, "activity-recent")
+    agent_activity.publish({"type": "build_progress", "project_id": project_id, "ts": 1.0, "content": "building"})
+
+    resp = client.post(
+        "/api/agent/invoke-tool",
+        json={"tool": "aieng.recent_activity", "input": {"project_id": project_id}},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project_id"] == project_id
+    assert body["count"] >= 1
+    assert any(e.get("type") == "build_progress" for e in body["events"])
+    assert "latest_ts" in body

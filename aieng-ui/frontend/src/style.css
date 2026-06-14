@@ -5256,6 +5256,31 @@ textarea {
   color: #b45309;
 }
 
+/* Material assignment bar (#225) — pick a target + Apply (drafts a plan-confirmed /modify). */
+.material-assign-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  font-size: 12px;
+}
+.material-assign-label { color: var(--text-secondary, #a3a3a3); }
+.material-assign-target {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #334155);
+  background: rgba(8, 15, 30, 0.6);
+  color: inherit;
+  flex: 1;
+  min-width: 0;
+}
+.material-assign-apply { margin-left: auto; }
+
 .editparams-foot {
   color: #7f93b4;
   font-size: 11px;

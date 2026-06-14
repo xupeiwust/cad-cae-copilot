@@ -191,8 +191,8 @@ export function AppChrome({ app }: AppChromeProps) {
               {libraryTab === "materials" && (
                 <MaterialLibraryPanel
                   projectId={app.selectedId}
-                  onAssignMaterial={(name) => {
-                    app.setNotice({ tone: "success", title: "Material selected", detail: `${name} — assign via chat or parameter panel.` });
+                  onApplyAssignment={(draft) => {
+                    app.setNotice({ tone: "info", title: "Material assignment drafted", detail: draft });
                   }}
                   onNotice={(title, detail) => app.setNotice({ tone: "info", title, detail })}
                 />

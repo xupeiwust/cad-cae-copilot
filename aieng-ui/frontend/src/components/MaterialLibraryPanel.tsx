@@ -1,18 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "../api";
+import {
+  ALL_PARTS_TARGET,
+  assignmentTargets,
+  materialAssignmentDraft,
+} from "../app/materialAssignment";
 import type { Material, MaterialComparison } from "../types/materials";
 import { MaterialCard } from "./MaterialCard";
 
 type MaterialLibraryPanelProps = {
   projectId?: string | null;
+  /** Named parts of the current project — assignment targets (besides "all"). */
+  parts?: string[];
   onAssignMaterial?: (materialName: string) => void;
+  /** Draft a plan-confirmed `/modify assign material …` into the composer (#225). */
+  onApplyAssignment?: (draft: string) => void;
   onNotice?: (title: string, detail: string) => void;
 };
 
 export function MaterialLibraryPanel({
   projectId,
+  parts,
   onAssignMaterial,
+  onApplyAssignment,
   onNotice,
 }: MaterialLibraryPanelProps) {
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -23,6 +34,27 @@ export function MaterialLibraryPanel({
   const [compareNames, setCompareNames] = useState<string[]>([]);
   const [comparison, setComparison] = useState<MaterialComparison | null>(null);
   const [comparing, setComparing] = useState(false);
+  const [selectedMaterial, setSelectedMaterial] = useState<string | null>(null);
+  const [assignTarget, setAssignTarget] = useState<string>(ALL_PARTS_TARGET);
+  const [fetchedParts, setFetchedParts] = useState<string[]>([]);
+  // Named parts come from the prop (tests) or, in the live app, the project's
+  // geometry report (its part_boxes are keyed by named part).
+  useEffect(() => {
+    if (parts || !projectId) return;
+    let cancelled = false;
+    api
+      .getGeometryReport(projectId)
+      .then((data) => {
+        if (!cancelled) setFetchedParts(Object.keys(data?.part_boxes ?? {}));
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedParts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [parts, projectId]);
+  const targets = useMemo(() => assignmentTargets(parts ?? fetchedParts), [parts, fetchedParts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +155,36 @@ export function MaterialLibraryPanel({
         </div>
       </div>
 
+      {selectedMaterial && (
+        <div className="material-assign-bar" role="group" aria-label="Assign material">
+          <span className="material-assign-label">
+            Assign <strong>{selectedMaterial}</strong> to
+          </span>
+          <select
+            className="material-assign-target"
+            aria-label="Assignment target"
+            value={assignTarget}
+            onChange={(e) => setAssignTarget(e.target.value)}
+          >
+            {targets.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="compact-button material-assign-apply"
+            disabled={!onApplyAssignment}
+            onClick={() => {
+              const draft = materialAssignmentDraft(selectedMaterial, assignTarget);
+              if (draft) onApplyAssignment?.(draft);
+            }}
+            title={onApplyAssignment ? "Draft a /modify material assignment (runs through approval)" : "Connect a composer to apply"}
+          >
+            Apply
+          </button>
+        </div>
+      )}
+
       {compareNames.length > 0 && (
         <div
           style={{
@@ -205,8 +267,9 @@ export function MaterialLibraryPanel({
               isCompareCandidate={compareNames.includes(m.name)}
               onCompareToggle={toggleCompare}
               onSelect={(mat) => {
+                setSelectedMaterial(mat.name);
                 onAssignMaterial?.(mat.name);
-                onNotice?.("Material selected", `${mat.name} — ready to assign to a part.`);
+                onNotice?.("Material selected", `${mat.name} — pick a target below and Apply.`);
               }}
             />
           ))}

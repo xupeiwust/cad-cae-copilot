@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
-import type { CritiqueFinding } from "../types";
+import type { CredibilityStamp, CritiqueFinding } from "../types";
 
 type UseProjectCritiqueArgs = {
   selectedId: string | null;
@@ -16,9 +16,11 @@ type UseProjectCritiqueArgs = {
  */
 export function useProjectCritique({ selectedId, geometryVersion = null }: UseProjectCritiqueArgs) {
   const [findings, setFindings] = useState<CritiqueFinding[]>([]);
+  const [credibility, setCredibility] = useState<CredibilityStamp | null>(null);
 
   useEffect(() => {
     setFindings([]);
+    setCredibility(null);
   }, [selectedId]);
 
   useEffect(() => {
@@ -29,8 +31,12 @@ export function useProjectCritique({ selectedId, geometryVersion = null }: UsePr
         const data = await api.getProjectCritique(selectedId, controller.signal);
         if (controller.signal.aborted) return;
         setFindings(Array.isArray(data.findings) ? data.findings : []);
+        setCredibility(data.credibility ?? null);
       } catch {
-        if (!controller.signal.aborted) setFindings([]);
+        if (!controller.signal.aborted) {
+          setFindings([]);
+          setCredibility(null);
+        }
       }
     })();
     return () => {
@@ -38,5 +44,5 @@ export function useProjectCritique({ selectedId, geometryVersion = null }: UsePr
     };
   }, [selectedId, geometryVersion]);
 
-  return { critiqueFindings: findings };
+  return { critiqueFindings: findings, critiqueCredibility: credibility };
 }

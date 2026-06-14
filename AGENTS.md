@@ -921,6 +921,28 @@ fixture and load on flat interfaces.
 
 ---
 
+## Credibility tiering (read the `credibility` stamp)
+
+Every result-bearing output carries a single **V&V-40 credibility stamp** under a
+`credibility` key, derived from one shared classifier
+([`aieng/src/aieng/converters/credibility.py`](aieng/src/aieng/converters/credibility.py)).
+It consolidates the scattered honesty flags (`solver_executed`,
+`is_solver_evidence`, `contact_physics_modeled`, `bolt_preload_modeled`,
+`uncertainty_std`, `production_ready`) into one ordered tier so you don't
+re-derive trust from a grab-bag of booleans. Tiers, **low → high credibility**:
+
+`critique_finding` < `surrogate_prediction` < `proxy_assembly_result` < `executed_solver_result`
+
+The stamp is `{tier, rank, label, evidence_basis, production_ready, signals, …}`.
+The honesty invariant: a tier is **never more credible than its evidence** — an
+output that claims `solver` but whose `solver_executed` is not `true` is
+downgraded to `unverified` (rank 0) with a `downgrade_reason`. **Surface the tier
+to the user** and never present a lower tier as if it were an executed-solver
+result. `production_ready` is `false` unless explicitly certified — the workbench
+does not certify by default.
+
+---
+
 ## Tool taxonomy
 
 ### Onboarding / discovery (read-only)

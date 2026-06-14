@@ -6,10 +6,13 @@ import {
   SEVERITY_LABEL,
   type Severity,
 } from "../app/critiqueFindings";
-import type { CritiqueFinding } from "../types";
+import type { CredibilityStamp, CritiqueFinding } from "../types";
+import { CredibilityBadge } from "./CredibilityBadge";
 
 type CritiquePanelProps = {
   findings: CritiqueFinding[];
+  /** Shared V&V-40 credibility stamp for this critique (#218). */
+  credibility?: CredibilityStamp | null;
   /** Prefill the composer with a "/modify <suggested_fix>" draft. */
   onUseInChat?: (draft: string) => void;
 };
@@ -21,7 +24,7 @@ type CritiquePanelProps = {
  * composer. The edit itself still runs through the approval-gated path — the panel
  * never mutates geometry.
  */
-export function CritiquePanel({ findings, onUseInChat }: CritiquePanelProps) {
+export function CritiquePanel({ findings, credibility, onUseInChat }: CritiquePanelProps) {
   const groups = useMemo(() => groupFindingsBySeverity(findings), [findings]);
 
   if (!findings.length) return null;
@@ -30,6 +33,7 @@ export function CritiquePanel({ findings, onUseInChat }: CritiquePanelProps) {
     <section className="critique-card" aria-label="Engineering critique">
       <div className="critique-head">
         <strong>Engineering critique</strong>
+        <CredibilityBadge credibility={credibility} />
         <span>{findings.length} finding{findings.length !== 1 ? "s" : ""}</span>
       </div>
 

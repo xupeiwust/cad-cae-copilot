@@ -21,6 +21,7 @@ from aieng.converters.assembly_interface_resolution import (
     ASSEMBLY_CONNECTION_GEOMETRY_PATH,
     INTERFACE_RESOLUTION_PATH,
 )
+from aieng.converters.credibility import classify_credibility
 from aieng.converters.assembly_ir import (
     ASSEMBLY_CAE_DRAFT_PATH,
     ASSEMBLY_IR_PATH,
@@ -803,6 +804,12 @@ def map_assembly_results(
             "bolt_preload_modeled": False,
             "production_ready": False,
         },
+        "credibility": classify_credibility(
+            "proxy_assembly",
+            contact_physics_modeled=False,
+            bolt_preload_modeled=False,
+            production_ready=False,
+        ),
     }
     diagnostics = {
         "format": "aieng.assembly_result_mapping",

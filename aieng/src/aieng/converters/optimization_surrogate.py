@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from aieng import FORMAT_VERSION
+from aieng.converters.credibility import classify_credibility
 from aieng.converters.design_study import DESIGN_CANDIDATES_DIR, DESIGN_STUDY_PROBLEM_PATH
 from aieng.converters.design_study_ranking import DESIGN_STUDY_CANDIDATE_RANKING_PATH
 from aieng.converters.optimization_proposer_bayesian import (
@@ -140,6 +141,7 @@ def propose_surrogate_candidates(
             "training_evidence": {"candidate_ids": [], "n_train": 0},
             "proposals": [],
             "honesty": honesty,
+            "credibility": classify_credibility("surrogate", is_solver_evidence=False),
         }
         out.update(extra or {})
         return out
@@ -232,6 +234,11 @@ def propose_surrogate_candidates(
         },
         "proposals": proposals,
         "honesty": honesty,
+        "credibility": classify_credibility(
+            "surrogate",
+            is_solver_evidence=False,
+            uncertainty_std=round(float(max(std)), 6) if len(std) else None,
+        ),
     }
 
 

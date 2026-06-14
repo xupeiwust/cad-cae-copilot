@@ -5258,6 +5258,40 @@ textarea {
   color: var(--text-secondary);
 }
 
+/* V&V-40 credibility badge (#218) — risk-commensurate trust tier, read-only. */
+.credibility-badge {
+  margin-right: auto;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  cursor: help;
+  white-space: nowrap;
+}
+.credibility-neutral {
+  color: var(--text-secondary);
+  background: rgba(127, 127, 127, 0.12);
+  border-color: rgba(127, 127, 127, 0.25);
+}
+.credibility-info {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.3);
+}
+.credibility-strong {
+  color: #166534;
+  background: rgba(22, 163, 74, 0.14);
+  border-color: rgba(22, 163, 74, 0.32);
+}
+.credibility-caution {
+  color: #b45309;
+  background: rgba(217, 119, 6, 0.14);
+  border-color: rgba(217, 119, 6, 0.32);
+}
+
 .critique-group {
   display: flex;
   flex-direction: column;

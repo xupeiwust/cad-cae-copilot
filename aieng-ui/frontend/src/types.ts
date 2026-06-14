@@ -1405,11 +1405,29 @@ export type CritiqueFinding = {
   suggested_fix?: string;
 };
 
+/**
+ * Shared V&V-40 credibility stamp (#218) emitted by every result-bearing tool
+ * output. `tier` is one of critique_finding < surrogate_prediction <
+ * proxy_assembly_result < executed_solver_result (or `unverified`); `rank`
+ * orders them (higher = more credible, 0 = unverified).
+ */
+export type CredibilityStamp = {
+  tier: string;
+  rank: number;
+  label?: string;
+  evidence_basis?: string;
+  production_ready?: boolean;
+  tier_order?: string[];
+  downgrade_reason?: string;
+  signals?: Record<string, unknown>;
+};
+
 export type CritiqueResponse = {
   status?: string;
   findings?: CritiqueFinding[];
   summary?: { by_severity?: { high?: number; medium?: number; low?: number } };
   fail_first_objections?: string[];
+  credibility?: CredibilityStamp;
 };
 
 /** One core simulation input's readiness (from build_simulation_readiness_report). */

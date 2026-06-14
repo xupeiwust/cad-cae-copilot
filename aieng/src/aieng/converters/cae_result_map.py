@@ -24,6 +24,7 @@ from typing import Any
 from aieng import FORMAT_VERSION
 
 from .cae_result_contract import CAE_CONTRACT_VERSION, load_neutral_cae_artifacts
+from .credibility import classify_credibility
 
 CAE_RESULT_MAP_PATH = "analysis/cae_result_map.json"
 _TOPOLOGY_MEMBER = "geometry/topology_map.json"
@@ -205,6 +206,7 @@ def map_cae_results(
             "unsupported_or_uncertain": uncertain,
         },
         "notes": notes,
+        "credibility": classify_credibility("solver", solver_executed=True),
     }
 
 

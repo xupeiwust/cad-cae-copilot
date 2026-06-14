@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .credibility import classify_credibility
+
 
 _THIN_PART_LABELS: tuple[str, ...] = (
     "wall", "rib", "cover", "lid", "back_plate", "base_plate",
@@ -99,6 +101,7 @@ def critique_geometry(
                 "standard_hole_diameters_mm": list(_STANDARD_HOLE_DIAMETERS_MM),
             },
             "rule_source": "aieng/schemas/constraints.schema.json (manufacturing_rule type)",
+            "credibility": classify_credibility("critique"),
         }
 
     if body_count >= 2:
@@ -269,4 +272,5 @@ def critique_geometry(
             "standard_hole_diameters_mm": list(_STANDARD_HOLE_DIAMETERS_MM),
         },
         "rule_source": "aieng/schemas/constraints.schema.json (manufacturing_rule type)",
+        "credibility": classify_credibility("critique"),
     }

@@ -534,6 +534,42 @@ def ribbed_plate(length, width, thickness, rib_count=2, rib_height=None, label=N
     return _aieng_finish(_bp.part, label, color)
 
 
+# ── design-rule assertions ───────────────────────────────────────────────────
+# Let authored code embed design constraints that deterministically FAIL the
+# build (verified by construction) instead of being hoped for. A failed
+# require() — or a bare `assert` — is caught and surfaced to the parent process
+# as a single clean marker line, which the tool layer turns into a structured
+# `design_rule_violation` error rather than a raw traceback.
+
+class _AiengDesignRuleError(Exception):
+    pass
+
+
+def require(condition, message="design-rule assertion failed"):
+    \"\"\"Fail the build if `condition` is falsy.
+
+    Example: require(WALL_THICKNESS >= 3, "wall below 3mm CNC minimum").
+    A passing require() is a no-op; a failing one stops the build with a clean,
+    structured design-rule error in the tool response.
+    \"\"\"
+    if not condition:
+        raise _AiengDesignRuleError(str(message))
+
+
+_AIENG_PREV_EXCEPTHOOK = sys.excepthook
+
+
+def _aieng_excepthook(_etype, _exc, _tb):
+    if isinstance(_exc, (_AiengDesignRuleError, AssertionError)):
+        _msg = str(_exc) or "design-rule assertion failed"
+        print("__AIENG_DESIGN_RULE_VIOLATION__ " + _msg.replace(chr(10), " "),
+              file=sys.stderr)
+    _AIENG_PREV_EXCEPTHOOK(_etype, _exc, _tb)
+
+
+sys.excepthook = _aieng_excepthook
+
+
 # ---- aieng generated code ----
 __AIENG_GENERATED_CODE__
 # ---- end generated code ----
@@ -2881,6 +2917,37 @@ def call_claude_for_build123d_code(
 
 # ── build123d subprocess execution ────────────────────────────────────────────
 
+_DESIGN_RULE_MARKER = "__AIENG_DESIGN_RULE_VIOLATION__"
+
+
+class DesignRuleViolation(RuntimeError):
+    """A build failed because an authored require()/assert design rule failed.
+
+    Distinct from a generic build error so the tool layer can surface it as a
+    structured ``design_rule_violation`` rather than ``execution_failed``.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.design_rule_message = message
+
+
+def _extract_design_rule_violation(stderr_text: str | None) -> str | None:
+    """Return the design-rule message emitted by the runner, or None.
+
+    Pure: scans subprocess stderr for the marker line the runner's excepthook
+    prints when a require()/assert fails.
+    """
+    if not stderr_text:
+        return None
+    for line in stderr_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_DESIGN_RULE_MARKER):
+            msg = stripped[len(_DESIGN_RULE_MARKER):].strip()
+            return msg or "design-rule assertion failed"
+    return None
+
+
 def _execute_build123d_code(
     code: str,
     timeout: int = 60,
@@ -2921,6 +2988,9 @@ def _execute_build123d_code(
             ) from exc
 
         if proc.returncode != 0:
+            drv = _extract_design_rule_violation(proc.stderr)
+            if drv is not None:
+                raise DesignRuleViolation(drv)
             stderr_excerpt = proc.stderr[-2000:] if proc.stderr else "(no stderr)"
             raise RuntimeError(
                 f"build123d execution failed (exit {proc.returncode}):\n{stderr_excerpt}"
@@ -3012,6 +3082,14 @@ def _execute_build123d_code_streaming(
                 }
                 return
             if proc.returncode != 0:
+                drv = _extract_design_rule_violation(stderr)
+                if drv is not None:
+                    yield {
+                        "kind": "error",
+                        "error": f"Design rule failed: {drv}",
+                        "design_rule_message": drv,
+                    }
+                    return
                 stderr_excerpt = stderr[-2000:] if stderr else "(no stderr)"
                 yield {
                     "kind": "error",
@@ -4682,6 +4760,7 @@ def execute_build123d_code(
     # Drain the streaming executor; forward heartbeats to on_progress so a
     # subscribed UI sees the build advance in real time.
     last_error: str | None = None
+    design_rule_message: str | None = None
     result_evt: dict[str, Any] | None = None
     for evt in _execute_build123d_code_streaming(execution_code, timeout=timeout):
         kind = evt.get("kind")
@@ -4689,11 +4768,19 @@ def execute_build123d_code(
             _emit({"phase": "building", "elapsed_s": evt.get("elapsed_s", 0)})
         elif kind == "error":
             last_error = str(evt.get("error") or "build123d execution failed")
+            design_rule_message = evt.get("design_rule_message") or design_rule_message
         elif kind == "result":
             result_evt = evt
 
     if result_evt is None:
         try:
+            if design_rule_message:
+                return {
+                    "status": "error",
+                    "code": "design_rule_violation",
+                    "message": f"Design rule failed: {design_rule_message}",
+                    "design_rule": {"message": design_rule_message},
+                }
             return {
                 "status": "error",
                 "code": "execution_failed",
@@ -6243,6 +6330,18 @@ def edit_build123d_parameter(
             model_kind=contract.get("model_kind", "auto"),
             timeout=timeout,
         )
+    except DesignRuleViolation as exc:
+        # An authored require()/assert rejected the new value — surface it as a
+        # structured design-rule violation. The prior geometry is preserved.
+        return {
+            "status": "error",
+            "code": "design_rule_violation",
+            "message": f"Design rule failed: {exc.design_rule_message}",
+            "design_rule": {"message": exc.design_rule_message},
+            "previous_value": previous_value,
+            "new_value": new_value,
+            "cad_parameter_name": cad_parameter_name,
+        }
     except Exception as exc:
         # If the edit breaks the model, return the error but preserve the
         # previous state (do NOT write the broken source back into the package).
@@ -6432,6 +6531,14 @@ def _rebuild_after_part_edit(
             model_kind=model_kind,
             timeout=timeout,
         )
+    except DesignRuleViolation as exc:
+        return {
+            "status": "error",
+            "code": "design_rule_violation",
+            "message": f"Design rule failed: {exc.design_rule_message}",
+            "design_rule": {"message": exc.design_rule_message},
+            "label": label,
+        }
     except Exception as exc:
         return {
             "status": "error",

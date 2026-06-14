@@ -1543,6 +1543,26 @@ def test_diff_critique_skipped_without_solids() -> None:
     assert diff["verdict"] == "skipped"
 
 
+# ── design-rule assertions (require) — marker parser ──────────────────────────
+
+def test_extract_design_rule_violation_finds_marker() -> None:
+    from app.cad_generation import _extract_design_rule_violation
+
+    stderr = (
+        "Traceback (most recent call last):\n"
+        "  ...\n"
+        "__AIENG_DESIGN_RULE_VIOLATION__ wall too thin: 2.0mm < 3mm\n"
+    )
+    assert _extract_design_rule_violation(stderr) == "wall too thin: 2.0mm < 3mm"
+
+
+def test_extract_design_rule_violation_absent_returns_none() -> None:
+    from app.cad_generation import _extract_design_rule_violation
+
+    assert _extract_design_rule_violation(None) is None
+    assert _extract_design_rule_violation("ordinary build error\n") is None
+
+
 # ── parametric edit end-to-end (real build123d) ───────────────────────────────
 
 def test_edit_build123d_parameter_end_to_end(tmp_path: Path) -> None:
@@ -2685,3 +2705,70 @@ def test_mark_cae_mapping_stale_records_topology_hash(tmp_path: Path) -> None:
     assert mapping.get("stale") is True
     assert "stale_at" in mapping
     assert mapping.get("topology_hash_at_stale") == compute_topology_hash(topology)
+
+
+# ── design-rule assertions as build failures (#217) — end-to-end ──────────────
+
+def test_require_failure_is_structured_design_rule_violation(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "require-fail")
+    code = (
+        "from build123d import *\n"
+        "WALL = 2.0\n"
+        "require(WALL >= 3.0, f'wall too thin: {WALL}mm < 3mm')\n"
+        "result = Box(10, 10, WALL)\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "error"
+    assert out["code"] == "design_rule_violation"
+    assert "wall too thin" in out["message"]
+    assert out["design_rule"]["message"] == "wall too thin: 2.0mm < 3mm"
+
+
+def test_require_pass_is_a_noop(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "require-pass")
+    code = (
+        "from build123d import *\n"
+        "WALL = 5.0\n"
+        "require(WALL >= 3.0, 'wall too thin')\n"
+        "body = Box(10, 10, WALL); body.label = 'plate'\n"
+        "result = Compound(children=[body])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok"
+    assert "plate" in _named_parts_in(out)
+
+
+def test_bare_assert_is_first_class_design_rule(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "assert-fail")
+    code = (
+        "from build123d import *\n"
+        "HOLE_SPACING = 4.0\n"
+        "assert HOLE_SPACING >= 10.0, 'hole spacing below 2x radius'\n"
+        "result = Box(10, 10, 5)\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "error"
+    assert out["code"] == "design_rule_violation"
+    assert "hole spacing" in out["message"]
+
+
+def _named_parts_in(out: dict) -> list:
+    fg = out.get("feature_graph") or {}
+    names = []
+    for feat in fg.get("features", []):
+        nm = feat.get("name")
+        if nm:
+            names.append(nm)
+    return names

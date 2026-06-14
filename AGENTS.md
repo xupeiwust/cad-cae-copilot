@@ -420,6 +420,22 @@ and simplified consumer-product bodies.
 text file that the frontend cannot render.
 - A `+` that yields a `ShapeList` is auto-wrapped in a `Compound`, so unions export fine.
 
+**Assert design rules — `require(condition, message)`.** The runner injects a
+`require()` helper (and treats a bare `assert` the same way) so you can embed
+design constraints that **deterministically fail the build** instead of hoping
+they hold. A failed `require()` returns a structured
+`code: "design_rule_violation"` with your message (not a raw traceback); a
+passing one is a no-op. Use it to encode intent that must stay true across edits
+— "verified by construction":
+```python
+WALL_THICKNESS = 3.0
+require(WALL_THICKNESS >= 3.0, "wall below 3mm CNC minimum")
+require(len(result.children) == 4, "expected exactly 4 motor pods")
+```
+This composes with the deterministic `critique_diff` returned by every edit (a
+guard against *introducing* violations) — `require()` is the guard you author
+up front against ever building them in the first place.
+
 **Name your parts.** Set `.label` on shapes and combine them with a `Compound` so
 each part gets a semantic ID you can reference later (instead of anonymous
 `body_001`). Labels appear as named parts in `topology_map.json` and as

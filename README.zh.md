@@ -322,8 +322,17 @@ CAD/CAE 后端的前端,将 AI-CAD 设计循环直接带入编辑器。它可以
 | Agent | 配置文件 |
 |-------|---------|
 | Claude Code | `.mcp.json` |
-| VS Code / GitHub Copilot / Cursor | `.vscode/mcp.json` |
+| VS Code / GitHub Copilot | `.vscode/mcp.json` |
+| Cursor | `.cursor/mcp.json` |
+| Cline | 它自己的 `cline_mcp_settings.json`(从 MCP_SETUP 复制配置块) |
 | OpenAI Codex | 在 `~/.codex/config.toml` 中添加 `[mcp_servers.*]`(见 MCP_SETUP) |
+
+**审批有三种方式**(`--approval-mode`):客户端自身的提示(`client`)、工作台
+查看器 / VS Code 扩展卡片(`managed`),或为无界面 Agent 提供的**无头 MCP
+elicitation**(`elicit`)—— 当无界面可应答时安全地拒绝。运行
+`aieng-workbench-mcp --doctor` 可在开始前检查 MCP 配置、后端与工具集是否就绪。
+完整的"已测试 vs 已记录"客户端矩阵见
+[MCP 客户端兼容性](aieng-ui/backend/docs/mcp_client_compatibility.md)。
 
 **每次会话的前三个调用:**
 ```

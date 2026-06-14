@@ -24,6 +24,7 @@ build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
 ![Agent](https://img.shields.io/badge/agent-MCP%20server-8957e5)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
 
+[这是什么?](#这是什么--架构与信息流) ·
 [快速开始](#快速开始) ·
 [CAD 示例](#工业-cad-示例) ·
 [为什么选 aieng](#为什么选-aieng--超越-text-to-cad) ·
@@ -35,6 +36,20 @@ build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
 <sub>真实 STEP/STL/GLB · 可编辑参数 · 命名零件 · 稳定拓扑指针 · 确定性评审 · CAD → CAE 产物 · 审批控制操作</sub>
 
 </div>
+
+## 这是什么? —— 架构与信息流
+
+一张图说清:一份自然语言工程规格,经由**你自己的 MCP Agent** 端到端驱动,变成
+经过优化、验证的 CAD/CAE,并完整保存在一个可复现的 `.aieng` 包中。
+
+<a href="docs/cad_cae_copilot_architecture_information_flow.png">
+  <img src="docs/cad_cae_copilot_architecture_information_flow.png" width="100%" alt="CAD/CAE Copilot 系统架构与信息流:用户需求 → Agent(规划/推理)→ MCP 工具层 → CAD 建模 → CAE 设置与仿真 → 结果评估 → 闭环优化,带人类在环的信任/审批层与 .aieng 工程包"/>
+</a>
+
+**用户需求 → Agent(规划与推理)→ MCP 工具层 → CAD 建模与编辑 → CAE 设置与仿真
+→ 结果评估 → 闭环优化。** 人类在环的**信任与审批**层把关每一次变更,每个结果都标注
+一个**可信度等级**,所有产物都落入自描述的 `.aieng` 包 —— 让任何支持 MCP 的 Agent
+都能设计、分析、优化并交付经过验证、可复现的 CAD/CAE 方案。
 
 ## 快速开始
 
@@ -250,20 +265,6 @@ Modeling requirements:
 **适合谁:** 想要超越文本和代码生成的工程工具的 AI Agent / MCP 开发者;
 探索具有真实几何体的 AI 辅助 CAD/CAE 的机械工程师;以及对 CAD、CAE、MCP、
 VS Code 扩展或 build123d / OpenCASCADE 感兴趣的创客、研究人员和开源贡献者。
-
-## 架构与信息流
-
-从自然语言规格到经过优化、验证的工程设计 —— 每个阶段都由你自己的 MCP Agent
-驱动,并完整保存在一个可复现的 `.aieng` 包中:
-
-<a href="docs/cad_cae_copilot_architecture_information_flow.png">
-  <img src="docs/cad_cae_copilot_architecture_information_flow.png" width="100%" alt="CAD/CAE Copilot 系统架构与信息流:用户需求 → Agent(规划/推理)→ MCP 工具层 → CAD 建模 → CAE 设置与仿真 → 结果评估 → 闭环优化,带人类在环的信任/审批层与 .aieng 工程包"/>
-</a>
-
-**用户需求 → Agent(规划与推理)→ MCP 工具层 → CAD 建模与编辑 → CAE 设置与仿真
-→ 结果评估 → 闭环优化。** 人类在环的**信任与审批**层把关每一次变更,每个结果都标注
-一个**可信度等级**,所有产物都落入自描述的 `.aieng` 包 —— 让任何支持 MCP 的 Agent
-都能设计、分析、优化并交付经过验证、可复现的 CAD/CAE 方案。
 
 ## 信任层 —— 由构造保证可验证、可解释
 

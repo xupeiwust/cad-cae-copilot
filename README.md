@@ -24,6 +24,7 @@ which carries its own model access. The aieng backend itself needs no API key.
 ![Agent](https://img.shields.io/badge/agent-MCP%20server-8957e5)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)
 
+[What is this?](#what-is-this--architecture--information-flow) ·
 [Quick Start](#quick-start) ·
 [CAD Examples](#industrial-cad-examples) ·
 [Why aieng](#why-aieng--beyond-text-to-cad) ·
@@ -35,6 +36,23 @@ which carries its own model access. The aieng backend itself needs no API key.
 <sub>Real STEP/STL/GLB · Editable parameters · Named parts · Stable topology pointers · Deterministic critique · CAD → CAE artifacts · Approval-gated actions</sub>
 
 </div>
+
+## What is this? — architecture & information flow
+
+In one picture: a natural-language engineering spec becomes optimized, verified
+CAD/CAE, driven end-to-end by **your own MCP agent** and preserved in one
+reproducible `.aieng` package.
+
+<a href="docs/cad_cae_copilot_architecture_information_flow.png">
+  <img src="docs/cad_cae_copilot_architecture_information_flow.png" width="100%" alt="CAD/CAE Copilot system architecture and information flow: user requirement → agent (plan/reason) → MCP tool layer → CAD modeling → CAE setup & simulation → result evaluation → closed-loop optimization, with a human-in-the-loop trust/approval layer and an .aieng engineering package"/>
+</a>
+
+**User requirement → agent (plan & reason) → MCP tool layer → CAD modeling &
+editing → CAE setup & simulation → result evaluation → closed-loop
+optimization.** A human-in-the-loop **trust & approval** layer gates every
+mutation, a **credibility tier** is stamped on every result, and all artifacts
+land in a self-describing `.aieng` package — so any MCP-capable agent can design,
+analyze, optimize, and deliver verified, reproducible CAD/CAE solutions.
 
 ## Quick start
 
@@ -288,23 +306,6 @@ What that buys you:
 text and code; mechanical engineers exploring AI-assisted CAD/CAE with real
 geometry; and makers, researchers, and open-source contributors interested in
 CAD, CAE, MCP, VS Code extensions, or build123d / OpenCASCADE.
-
-## Architecture & information flow
-
-From a natural-language spec to optimized, verified engineering design — every
-stage driven by your own MCP agent and preserved in one reproducible `.aieng`
-package:
-
-<a href="docs/cad_cae_copilot_architecture_information_flow.png">
-  <img src="docs/cad_cae_copilot_architecture_information_flow.png" width="100%" alt="CAD/CAE Copilot system architecture and information flow: user requirement → agent (plan/reason) → MCP tool layer → CAD modeling → CAE setup & simulation → result evaluation → closed-loop optimization, with a human-in-the-loop trust/approval layer and an .aieng engineering package"/>
-</a>
-
-**User requirement → agent (plan & reason) → MCP tool layer → CAD modeling &
-editing → CAE setup & simulation → result evaluation → closed-loop
-optimization.** A human-in-the-loop **trust & approval** layer gates every
-mutation, a **credibility tier** is stamped on every result, and all artifacts
-land in a self-describing `.aieng` package — so any MCP-capable agent can design,
-analyze, optimize, and deliver verified, reproducible CAD/CAE solutions.
 
 ## Trust layer — verified & explainable by construction
 

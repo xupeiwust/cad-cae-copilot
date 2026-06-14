@@ -2006,6 +2006,14 @@ def write_shape_ir_from_topology_optimization(
         method=method, boundary=boundary, simplify_tol=simplify_tol,
     )
     members = {SHAPE_IR_PATH: (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()}
+    # Neutral mesh export (#149/#204): a smooth-mesh result ships a standalone OBJ
+    # so downstream mesh→NURBS tools (AMRTO/PYTOCAD) can consume it directly —
+    # reconstructed/lossy mesh, not production CAD.
+    from .mesh_obj_export import TOPOLOGY_RESULT_MESH_OBJ_PATH, topology_result_mesh_obj
+
+    _obj_text = topology_result_mesh_obj(payload)
+    if _obj_text is not None:
+        members[TOPOLOGY_RESULT_MESH_OBJ_PATH] = _obj_text.encode("utf-8")
     # When a smooth (marching-cubes) mesh was requested, write honest reconstruction
     # diagnostics (iso value, grid shape, vertex/face counts, bbox, frame placement,
     # fallback reason if it degraded to voxels).

@@ -69,9 +69,14 @@ Expected install reality:
 ## 5. Go / no-go
 
 **No-go for integration now; conditional-go for a maintainer-run spike, in this order:**
-1. **In-repo (no external dep):** add a tested neutral-mesh exporter (OBJ) for the
-   AIENG `smooth_mesh_proxy` so the AIENG input is file-ready. *(Recommended next
-   slice for #204; unit-testable, no Zenodo dependency.)*
+1. ✅ **DONE — In-repo (no external dep):** a tested neutral-mesh **OBJ** exporter
+   for the AIENG `smooth_mesh_proxy` now ships in
+   [`aieng/src/aieng/converters/mesh_obj_export.py`](../src/aieng/converters/mesh_obj_export.py)
+   (`mesh_to_obj` / `topology_result_mesh_obj` / `write_topology_result_mesh_obj`).
+   The 3D smooth-mesh `writeback_to_shape_ir` now auto-emits
+   `geometry/topology_result_mesh.obj` alongside the Shape IR, so the AIENG input
+   is **file-ready** for PYTOCAD. Unit-tested (`aieng/tests/test_mesh_obj_export.py`),
+   no Zenodo dependency. Reconstructed/lossy mesh, not production CAD.
 2. **Maintainer-run:** run the Zenodo PYTOCAD package in an isolated pinned env
    (+ Windows GMCG exe) on its own example, then on the AIENG OBJ; capture
    `.json`/`.3dm` + logs.

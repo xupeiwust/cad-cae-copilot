@@ -106,6 +106,47 @@ _DESIGN_TARGETS_FALLBACK = "task/design_targets.yml"
 # CAD-derived state under ``geometry/`` next to other CAD artifacts.
 _LIVE_SNAPSHOT_PATH = "geometry/live_snapshot.json"
 
+# The most-recent edit's diff, persisted by cad_generation._write_last_edit_diff
+# on every CAD mutation. Must match cad_generation._LAST_EDIT_DIFF_MEMBER.
+_LAST_EDIT_DIFF_PATH = "state/last_edit_diff.json"
+
+
+def _summarize_last_edit_diff(payload: Any) -> dict[str, Any] | None:
+    """Compact the persisted last-edit diff into an agent-context summary, or None.
+
+    Surfaces the trust verdict of the most recent CAD mutation
+    (``regression_diff`` topology drift + ``critique_diff`` manufacturability) so
+    a connecting agent sees "the last edit was clean / introduced a collateral
+    change / made a new manufacturability finding" in ``aieng.agent_context``
+    without re-running anything. Pure and tolerant of partial payloads.
+
+    ``needs_attention`` is true only for the genuinely-worse verdicts — a
+    regression ``collateral_change`` or a critique ``fail`` / ``warn`` — not for
+    an expected ``topology_changed`` (e.g. a part was removed).
+    """
+    if not isinstance(payload, dict):
+        return None
+    reg = payload.get("regression_diff") if isinstance(payload.get("regression_diff"), dict) else None
+    crit = payload.get("critique_diff") if isinstance(payload.get("critique_diff"), dict) else None
+    if reg is None and crit is None:
+        return None
+    reg_verdict = reg.get("verdict") if reg else None
+    crit_verdict = crit.get("verdict") if crit else None
+    collateral = [str(p) for p in (reg.get("collateral_parts") or [])] if reg else []
+    try:
+        introduced = int(crit.get("introduced_count") or 0) if crit else 0
+    except (TypeError, ValueError):
+        introduced = 0
+    needs_attention = reg_verdict == "collateral_change" or crit_verdict in ("fail", "warn")
+    return {
+        "tool": payload.get("tool"),
+        "regression_verdict": reg_verdict,
+        "critique_verdict": crit_verdict,
+        "collateral_parts": collateral,
+        "introduced_finding_count": introduced,
+        "needs_attention": needs_attention,
+    }
+
 
 # ── CAD-related action gate ──────────────────────────────────────────────────
 
@@ -388,6 +429,7 @@ def observe_cad_state(
                 "computed_metrics_evidence": False,
                 "present_paths": [],
             },
+            "last_edit": None,
             "warnings": [
                 "No package available; CAD readiness cannot be evaluated."
             ],
@@ -420,6 +462,7 @@ def observe_cad_state(
                 "computed_metrics_evidence": False,
                 "present_paths": [],
             },
+            "last_edit": None,
             "warnings": ["The package could not be opened; observation is incomplete."],
             "claim_advancement": "none",
             "claim_boundary": CLAIM_BOUNDARY,
@@ -448,6 +491,9 @@ def observe_cad_state(
         )
         feature_graph = _pi.read_package_json(zf, "graph/feature_graph.json")
         topology = _pi.read_package_json(zf, "geometry/topology_map.json")
+        last_edit = _summarize_last_edit_diff(
+            _pi.read_package_json(zf, _LAST_EDIT_DIFF_PATH) if _LAST_EDIT_DIFF_PATH in names else None
+        )
 
         # Evidence level. Order matters: live > exported > metadata > none.
         if has_live_snapshot:
@@ -646,6 +692,17 @@ def observe_cad_state(
             )
         if status == "missing":
             warnings.append("No CAD-related artifacts were found in this package.")
+        if last_edit and last_edit.get("needs_attention"):
+            bits: list[str] = []
+            if last_edit.get("regression_verdict") == "collateral_change":
+                bits.append(f"unintended parts changed ({', '.join(last_edit.get('collateral_parts') or []) or '?'})")
+            if last_edit.get("critique_verdict") in ("fail", "warn"):
+                bits.append(f"{last_edit.get('introduced_finding_count', 0)} new manufacturability finding(s)")
+            warnings.append(
+                "The last CAD edit's diff flagged a regression: "
+                + "; ".join(bits)
+                + ". Review `last_edit` before trusting the geometry."
+            )
 
         summary_lines = [
             f"CAD state: {status}.",
@@ -709,6 +766,7 @@ def observe_cad_state(
             "topology_references": topology_references,
             "missing_information": _unique(missing_information),
             "cae_readiness_hints": cae_readiness_hints,
+            "last_edit": last_edit,
             "warnings": warnings,
             "claim_advancement": "none",
             "claim_boundary": CLAIM_BOUNDARY,

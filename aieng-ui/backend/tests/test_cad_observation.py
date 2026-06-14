@@ -294,3 +294,70 @@ def test_observe_cad_state_no_geometry_has_empty_self_correction_signals(tmp_pat
     assert obs["floating_parts"] == [] and obs["broken_symmetry"] == []
     kinds = {r.get("kind") for r in obs["next_recommended_actions"]}
     assert "run_design_review" not in kinds
+
+
+# ── last-edit diff surfacing (#216/#226 follow-up) ────────────────────────────
+
+def test_summarize_last_edit_diff_pure() -> None:
+    from app.cad_observation import _summarize_last_edit_diff
+
+    assert _summarize_last_edit_diff(None) is None
+    assert _summarize_last_edit_diff({}) is None  # neither diff present
+    # clean edit → not needs_attention
+    clean = _summarize_last_edit_diff({
+        "tool": "cad.edit_parameter",
+        "regression_diff": {"verdict": "clean", "collateral_parts": []},
+        "critique_diff": {"verdict": "clean", "introduced_count": 0},
+    })
+    assert clean["needs_attention"] is False
+    assert clean["tool"] == "cad.edit_parameter"
+    # collateral change → needs attention, parts surfaced
+    coll = _summarize_last_edit_diff({
+        "tool": "cad.edit_parameter",
+        "regression_diff": {"verdict": "collateral_change", "collateral_parts": ["torso"]},
+        "critique_diff": None,
+    })
+    assert coll["needs_attention"] is True
+    assert coll["collateral_parts"] == ["torso"]
+    # new manufacturability finding → needs attention
+    fail = _summarize_last_edit_diff({
+        "tool": "cad.execute_build123d",
+        "regression_diff": None,
+        "critique_diff": {"verdict": "fail", "introduced_count": 2},
+    })
+    assert fail["needs_attention"] is True
+    assert fail["introduced_finding_count"] == 2
+    # topology_changed alone (e.g. a remove) is informational, not attention
+    topo = _summarize_last_edit_diff({"tool": "cad.remove_part", "regression_diff": {"verdict": "topology_changed"}})
+    assert topo["needs_attention"] is False
+
+
+def test_observe_cad_state_surfaces_last_edit_and_warns(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    project_id, pkg = _make_project(settings, "obs-lastedit", "obs-lastedit.aieng")
+    _make_minimal_package(pkg, extra_members={
+        "state/last_edit_diff.json": json.dumps({
+            "format": "aieng.last_edit_diff.v0",
+            "tool": "cad.edit_parameter",
+            "regression_diff": {"verdict": "collateral_change", "collateral_parts": ["torso"]},
+            "critique_diff": {"verdict": "warn", "introduced_count": 1},
+        }).encode("utf-8"),
+    })
+
+    obs = observe_cad_state(settings, project_id)
+    le = obs["last_edit"]
+    assert le is not None
+    assert le["regression_verdict"] == "collateral_change"
+    assert le["critique_verdict"] == "warn"
+    assert le["needs_attention"] is True
+    # a regression on the last edit raises an honest warning in agent context
+    assert any("last CAD edit" in w for w in obs["warnings"])
+
+
+def test_observe_cad_state_last_edit_none_when_absent(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    project_id, pkg = _make_project(settings, "obs-noedit", "obs-noedit.aieng")
+    _make_minimal_package(pkg)
+    obs = observe_cad_state(settings, project_id)
+    assert obs["last_edit"] is None
+    assert not any("last CAD edit" in w for w in obs["warnings"])

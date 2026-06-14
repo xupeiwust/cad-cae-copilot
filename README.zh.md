@@ -225,6 +225,9 @@ Modeling requirements:
 | 保留可编辑源和参数 | 部分 | 是 |
 | 命名零件并暴露稳定拓扑引用 | 很少 | 是 |
 | 验证几何体并运行确定性评审 | 很少 | 是 |
+| 对每次编辑出 diff(拓扑漂移 + 可制造性) | 否 | 是 |
+| 使构建失败的设计规则断言(`require`) | 否 | 是 |
+| 对每个结果标注可信度等级(V&V-40) | 否 | 是 |
 | 在一个包中保留产物和溯源 | 很少 | 是 |
 | 从 CAD 继续进入 CAE 工作流 | 很少 | 是 |
 | 对受控工程操作要求审批 | 很少 | 是 |
@@ -247,6 +250,42 @@ Modeling requirements:
 **适合谁:** 想要超越文本和代码生成的工程工具的 AI Agent / MCP 开发者;
 探索具有真实几何体的 AI 辅助 CAD/CAE 的机械工程师;以及对 CAD、CAE、MCP、
 VS Code 扩展或 build123d / OpenCASCADE 感兴趣的创客、研究人员和开源贡献者。
+
+## 架构与信息流
+
+从自然语言规格到经过优化、验证的工程设计 —— 每个阶段都由你自己的 MCP Agent
+驱动,并完整保存在一个可复现的 `.aieng` 包中:
+
+<a href="docs/cad_cae_copilot_architecture_information_flow.png">
+  <img src="docs/cad_cae_copilot_architecture_information_flow.png" width="100%" alt="CAD/CAE Copilot 系统架构与信息流:用户需求 → Agent(规划/推理)→ MCP 工具层 → CAD 建模 → CAE 设置与仿真 → 结果评估 → 闭环优化,带人类在环的信任/审批层与 .aieng 工程包"/>
+</a>
+
+**用户需求 → Agent(规划与推理)→ MCP 工具层 → CAD 建模与编辑 → CAE 设置与仿真
+→ 结果评估 → 闭环优化。** 人类在环的**信任与审批**层把关每一次变更,每个结果都标注
+一个**可信度等级**,所有产物都落入自描述的 `.aieng` 包 —— 让任何支持 MCP 的 Agent
+都能设计、分析、优化并交付经过验证、可复现的 CAD/CAE 方案。
+
+## 信任层 —— 由构造保证可验证、可解释
+
+拥挤的赛道是*生成*;空白的赛道是*信任*。这里每一个 AI 建议的变更都是经过检查、
+可解释的,而不仅仅是渲染出来:
+
+- **每次编辑都出 diff** —— 每次参数编辑 / 替换零件 / 追加都返回 `regression_diff`
+  (是否有非目标零件被改动?)和 `critique_diff`(编辑是否让最小壁厚 / 孔间距 /
+  悬空件 / 对称性等规则变差?),并在查看器中以 before→after 形式呈现。
+- **设计规则断言** —— 在 build123d 代码里写 `require(WALL >= 3, "壁厚低于 3mm")`
+  (或裸 `assert`);违规会确定性地使构建失败并返回结构化的 `design_rule_violation`
+  —— 约束由构造保证,而非靠期望。
+- **V&V-40 可信度分级** —— 每个产出结果都带一个有序等级
+  (`critique_finding` < `surrogate_prediction` < `proxy_assembly_result` <
+  `executed_solver_result`);声明的可信度永远不超过其证据,且从不假定
+  `production_ready`。
+- **代理模型误差带纪律** —— 代理模型预测的数值从不脱离其不确定度带 + 留一法验证误差
+  单独呈现。
+- **一致性门控的自主性** —— 当 LLM 判断步骤的多次采样一致性低时,转为*询问用户*
+  而非凭猜测行动。
+- **NAFEMS 风格的 V&V 套件** —— 以解析解支撑的线性静力基准在 CI 中守护求解器路径
+  (结果是*在容差内对照参考验证*,绝非"认证")。
 
 ## 工作原理
 

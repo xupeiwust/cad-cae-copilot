@@ -255,6 +255,9 @@ provenance, and a full CAD → CAE path all survive after the picture.
 | Preserve editable source and parameters | Partial | Yes |
 | Name parts and expose stable topology references | Rarely | Yes |
 | Verify geometry and run deterministic critique | Rarely | Yes |
+| Diff every edit (topology drift + manufacturability) | No | Yes |
+| Design-rule assertions that fail the build (`require`) | No | Yes |
+| Stamp a credibility tier on every result (V&V-40) | No | Yes |
 | Preserve artifacts and provenance in one package | Rarely | Yes |
 | Continue from CAD into CAE workflows | Rarely | Yes |
 | Require approval for gated engineering actions | Rarely | Yes |
@@ -285,6 +288,48 @@ What that buys you:
 text and code; mechanical engineers exploring AI-assisted CAD/CAE with real
 geometry; and makers, researchers, and open-source contributors interested in
 CAD, CAE, MCP, VS Code extensions, or build123d / OpenCASCADE.
+
+## Architecture & information flow
+
+From a natural-language spec to optimized, verified engineering design — every
+stage driven by your own MCP agent and preserved in one reproducible `.aieng`
+package:
+
+<a href="docs/cad_cae_copilot_architecture_information_flow.png">
+  <img src="docs/cad_cae_copilot_architecture_information_flow.png" width="100%" alt="CAD/CAE Copilot system architecture and information flow: user requirement → agent (plan/reason) → MCP tool layer → CAD modeling → CAE setup & simulation → result evaluation → closed-loop optimization, with a human-in-the-loop trust/approval layer and an .aieng engineering package"/>
+</a>
+
+**User requirement → agent (plan & reason) → MCP tool layer → CAD modeling &
+editing → CAE setup & simulation → result evaluation → closed-loop
+optimization.** A human-in-the-loop **trust & approval** layer gates every
+mutation, a **credibility tier** is stamped on every result, and all artifacts
+land in a self-describing `.aieng` package — so any MCP-capable agent can design,
+analyze, optimize, and deliver verified, reproducible CAD/CAE solutions.
+
+## Trust layer — verified & explainable by construction
+
+The crowded field is *generation*; the empty field is *trust*. Every
+AI-suggested change here is checked and explainable, not just rendered:
+
+- **Diff on every edit** — each parametric edit / part swap / append returns a
+  `regression_diff` (did unintended parts move?) and a `critique_diff` (did the
+  edit worsen min-wall / hole-spacing / floating-part / symmetry rules?),
+  re-surfaced as a first-class before→after diff in the viewer.
+- **Design-rule assertions** — author `require(WALL >= 3, "wall below 3mm")` (or a
+  bare `assert`) in build123d code; a violation fails the build deterministically
+  with a structured `design_rule_violation`, so constraints are verified by
+  construction instead of hoped for.
+- **V&V-40 credibility tiering** — every result-bearing output carries one ordered
+  tier (`critique_finding` < `surrogate_prediction` < `proxy_assembly_result` <
+  `executed_solver_result`); a claim is never presented as more credible than its
+  evidence, and `production_ready` is never assumed.
+- **Surrogate error-band discipline** — a surrogate-predicted number is never shown
+  without its uncertainty band + a leave-one-out validation error.
+- **Consistency-gated agency** — low cross-sample agreement on an LLM-judged step
+  routes to *ask the user* instead of acting on a guess.
+- **NAFEMS-style V&V suite** — analytically-backed linear-static benchmarks guard
+  the solver path in CI (results are *verified against reference within tolerance*,
+  never "certified").
 
 ## How it works
 
@@ -346,8 +391,18 @@ clone, assuming the `aieng311` env exists:
 | Agent | Config file |
 |-------|-------------|
 | Claude Code | `.mcp.json` |
-| VS Code / GitHub Copilot / Cursor | `.vscode/mcp.json` |
+| VS Code / GitHub Copilot | `.vscode/mcp.json` |
+| Cursor | `.cursor/mcp.json` |
+| Cline | its own `cline_mcp_settings.json` (copy the block from MCP_SETUP) |
 | OpenAI Codex | add `[mcp_servers.*]` to `~/.codex/config.toml` (see MCP_SETUP) |
+
+**Approval works three ways** (`--approval-mode`): your client's own prompt
+(`client`), the workbench viewer / VS Code extension card (`managed`), or
+**headless MCP elicitation** (`elicit`) for agents with no UI — with a fail-safe
+deny when no surface can answer. Run `aieng-workbench-mcp --doctor` to check that
+your MCP config, backend, and tool set are wired before you start. Full matrix
+of tested-vs-documented clients:
+[MCP client compatibility](aieng-ui/backend/docs/mcp_client_compatibility.md).
 
 **First three calls every session:**
 ```

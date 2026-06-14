@@ -1,7 +1,7 @@
 """NAFEMS-style V&V verification regression runner.
 
-This module drives three standards-backed linear-static benchmark cases through
-AIENG's existing CAE pipeline:
+This module drives a suite of standards-backed linear-static benchmark cases
+through AIENG's existing CAE pipeline:
 
 1. Generate a runnable CalculiX ``.inp`` via :mod:`aieng.simulation.deck_generator`.
 2. Execute CalculiX (when ``AIENG_CCX_CMD`` or a ``ccx`` binary is available).
@@ -124,6 +124,42 @@ REFERENCE_CASES: dict[str, dict[str, Any]] = {
                 # so this case focuses on displacement convergence.
                 "value": 0.00037202380952380954,
                 "unit": "mm",
+                "tolerance_percent": 10.0,
+            },
+        },
+    },
+    "cantilever_midspan_load": {
+        "description": "Cantilever with a point load at mid-span (X=L/2)",
+        "metrics": {
+            "max_displacement": {
+                # Free-tip deflection for a load P at distance a from the fixed end:
+                # delta_tip = P*a^2*(3L - a) / (6*E*I), with a = L/2, I = b*h^3/12 = 6666.667.
+                "value": 100.0 * 50.0 ** 2 * (3 * 100.0 - 50.0) / (6 * 210000.0 * 6666.667),
+                "unit": "mm",
+                "tolerance_percent": 10.0,
+            },
+            "max_von_mises_stress": {
+                # Bending stress at the fixed root: M = P*a = 5000 N*mm, c = h/2 = 10 mm.
+                # sigma = M*c/I = 5000*10/6666.667 = 7.5 MPa.
+                "value": 100.0 * 50.0 * 10.0 / 6666.667,
+                "unit": "MPa",
+                "tolerance_percent": 10.0,
+            },
+        },
+    },
+    "cantilever_end_load_lateral": {
+        "description": "End-loaded cantilever bending about the weak (Z) axis (load in -Y)",
+        "metrics": {
+            "max_displacement": {
+                # delta_tip = P*L^3 / (3*E*I), weak-axis I = Lz*Ly^3/12 = 1666.667 mm^4.
+                "value": 100.0 * 100.0 ** 3 / (3 * 210000.0 * 1666.667),
+                "unit": "mm",
+                "tolerance_percent": 10.0,
+            },
+            "max_von_mises_stress": {
+                # M = P*L = 10000 N*mm; c = Ly/2 = 5 mm; sigma = M*c/I = 30 MPa.
+                "value": 100.0 * 100.0 * 5.0 / 1666.667,
+                "unit": "MPa",
                 "tolerance_percent": 10.0,
             },
         },

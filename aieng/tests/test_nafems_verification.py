@@ -32,6 +32,8 @@ from aieng.simulation.deck_generator import generate_solver_input_package
 from tests.fixtures.nafems.build_fixtures import (
     build_all_fixtures,
     build_cantilever_end_load_fixture,
+    build_cantilever_end_load_lateral_fixture,
+    build_cantilever_midspan_load_fixture,
     build_cantilever_udl_fixture,
     build_fixed_fixed_center_load_fixture,
     build_fixed_fixed_udl_fixture,
@@ -150,7 +152,7 @@ def fixtures_dir(tmp_path: Path) -> Path:
     return tmp_path / "fixtures"
 
 
-def test_build_all_fixtures_creates_five_packages(fixtures_dir: Path) -> None:
+def test_build_all_fixtures_creates_all_packages(fixtures_dir: Path) -> None:
     paths = build_all_fixtures(fixtures_dir)
     assert set(paths) == {
         "tension_rod",
@@ -158,6 +160,8 @@ def test_build_all_fixtures_creates_five_packages(fixtures_dir: Path) -> None:
         "cantilever_udl",
         "fixed_fixed_udl",
         "fixed_fixed_center_load",
+        "cantilever_midspan_load",
+        "cantilever_end_load_lateral",
     }
     for p in paths.values():
         assert p.exists()
@@ -231,6 +235,49 @@ def test_verify_case_for_fixed_fixed_cases() -> None:
         )
         result = verify_case(case_id, computed)
         assert result["verdict"] == "pass", f"{case_id} should pass synthetic metrics"
+
+
+def test_verify_case_for_new_cantilever_cases() -> None:
+    """Synthetic metrics within tolerance pass for the two expansion cases (#221)."""
+    for case_id in ("cantilever_midspan_load", "cantilever_end_load_lateral"):
+        ref = REFERENCE_CASES[case_id]
+        computed = _make_computed_metrics(
+            max_displacement=ref["metrics"]["max_displacement"]["value"] * 0.97,
+            max_von_mises_stress=ref["metrics"]["max_von_mises_stress"]["value"] * 1.04,
+        )
+        result = verify_case(case_id, computed)
+        assert result["verdict"] == "pass", f"{case_id} should pass synthetic metrics"
+
+
+def test_new_cases_have_documented_reference_and_tolerance() -> None:
+    """Both expansion cases carry an analytical value + tolerance for every metric."""
+    for case_id in ("cantilever_midspan_load", "cantilever_end_load_lateral"):
+        case = REFERENCE_CASES[case_id]
+        assert case["description"]
+        assert case["metrics"], f"{case_id} must declare reference metrics"
+        for metric in case["metrics"].values():
+            assert metric["value"] > 0
+            assert metric["tolerance_percent"] > 0
+            assert metric["unit"]
+
+
+def test_midspan_fixture_deck_has_midspan_load_nset(fixtures_dir: Path) -> None:
+    path = build_cantilever_midspan_load_fixture(fixtures_dir / "cantilever_midspan_load.aieng")
+    with zipfile.ZipFile(path, "r") as zf:
+        deck = zf.read("simulation/cae_imports/source_solver_deck.inp").decode("utf-8")
+    assert "*NSET, NSET=N_MID" in deck
+    assert "*NSET, NSET=N_FIX" in deck
+
+
+def test_lateral_fixture_applies_load_in_minus_y(fixtures_dir: Path) -> None:
+    import yaml
+
+    path = build_cantilever_end_load_lateral_fixture(
+        fixtures_dir / "cantilever_end_load_lateral.aieng"
+    )
+    with zipfile.ZipFile(path, "r") as zf:
+        setup = yaml.safe_load(zf.read("simulation/setup.yaml"))
+    assert setup["loads"][0]["direction"] == [0, -1, 0]
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +354,72 @@ def test_fixed_fixed_center_load_real_ccx_displacement_within_tolerance(
         m for m in verification["metrics"] if m["metric"] == "max_displacement"
     )
     assert disp_metric["verdict"] == "pass", disp_metric
+
+
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_cantilever_midspan_load_real_ccx_displacement_within_tolerance(
+    fixtures_dir: Path,
+) -> None:
+    path = build_cantilever_midspan_load_fixture(
+        fixtures_dir / "cantilever_midspan_load.aieng"
+    )
+    run_result = run_case(path, run_id="nafems_run_001")
+    assert run_result["status"] == "ok", run_result.get("solver_log_tail")
+    # A line load at mid-span makes local stress mesh-sensitive; verify displacement.
+    verification = verify_case("cantilever_midspan_load", run_result["computed_metrics"])
+    disp_metric = next(
+        m for m in verification["metrics"] if m["metric"] == "max_displacement"
+    )
+    assert disp_metric["verdict"] == "pass", disp_metric
+
+
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_cantilever_end_load_lateral_real_ccx_within_tolerance(fixtures_dir: Path) -> None:
+    path = build_cantilever_end_load_lateral_fixture(
+        fixtures_dir / "cantilever_end_load_lateral.aieng"
+    )
+    run_result = run_case(path, run_id="nafems_run_001")
+    assert run_result["status"] == "ok", run_result.get("solver_log_tail")
+    verification = verify_case("cantilever_end_load_lateral", run_result["computed_metrics"])
+    assert verification["verdict"] == "pass", verification
+
+
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_cantilever_end_load_lateral_mesh_convergence_trend(fixtures_dir: Path) -> None:
+    """Refining the mesh should not move weak-axis displacement away from theory."""
+    levels = {
+        (10, 2, 2): build_cantilever_end_load_lateral_fixture(
+            fixtures_dir / "lateral_coarse.aieng", mesh_divisions=(10, 2, 2)
+        ),
+        (20, 4, 4): build_cantilever_end_load_lateral_fixture(
+            fixtures_dir / "lateral_medium.aieng", mesh_divisions=(20, 4, 4)
+        ),
+        (40, 8, 8): build_cantilever_end_load_lateral_fixture(
+            fixtures_dir / "lateral_fine.aieng", mesh_divisions=(40, 8, 8)
+        ),
+    }
+    study = run_mesh_convergence_study("cantilever_end_load_lateral", levels)
+    ok_levels = [lvl for lvl in study["levels"] if lvl.get("status") == "ok"]
+    assert len(ok_levels) >= 2, "at least two refinement levels should solve"
+    disp_devs = []
+    for lvl in ok_levels:
+        for m in lvl.get("metrics", []):
+            if m["metric"] == "max_displacement" and m.get("deviation_percent") is not None:
+                disp_devs.append(abs(m["deviation_percent"]))
+                break
+    assert len(disp_devs) >= 2
+    assert disp_devs[-1] <= disp_devs[0] * 1.5, (
+        f"fine-mesh deviation {disp_devs[-1]} should not exceed 1.5x coarse {disp_devs[0]}"
+    )
 
 
 @pytest.mark.skipif(

@@ -1,12 +1,14 @@
 """NAFEMS-style V&V fixture builder.
 
-Generates five linear-static reference cases as runnable ``.aieng`` packages:
+Generates linear-static reference cases as runnable ``.aieng`` packages:
 
-* ``tension_rod``              — axial tension of a square rod.
-* ``cantilever_end_load``      — end-loaded cantilever beam.
-* ``cantilever_udl``           — uniformly distributed downward load on cantilever.
-* ``fixed_fixed_udl``          — fixed-fixed beam under uniformly distributed load.
-* ``fixed_fixed_center_load``  — fixed-fixed beam with a center point load.
+* ``tension_rod``                  — axial tension of a square rod.
+* ``cantilever_end_load``          — end-loaded cantilever beam.
+* ``cantilever_udl``               — uniformly distributed downward load on cantilever.
+* ``fixed_fixed_udl``              — fixed-fixed beam under uniformly distributed load.
+* ``fixed_fixed_center_load``      — fixed-fixed beam with a center point load.
+* ``cantilever_midspan_load``      — cantilever with a point load at mid-span.
+* ``cantilever_end_load_lateral``  — end-loaded cantilever bending about the weak axis.
 
 Each package contains the minimal artifacts required by
 :mod:`aieng.simulation.deck_generator`:
@@ -245,6 +247,20 @@ def _top_center_node(
     return {min(candidates, key=lambda item: item[1])[0]}
 
 
+def _top_midspan_nset(
+    nodes: list[tuple[int, float, float, float]], lx: float, lz: float
+) -> set[int]:
+    """Return the top-face (Z=Lz) line of nodes at mid-span (X=Lx/2).
+
+    Requires an even ``nx`` so a node plane lands exactly on X=Lx/2.
+    """
+    return {
+        nid
+        for nid, x, _, z in nodes
+        if math.isclose(z, lz, abs_tol=1e-9) and math.isclose(x, lx / 2.0, abs_tol=1e-9)
+    }
+
+
 def build_tension_rod_fixture(
     out_path: Path | str,
     mesh_divisions: tuple[int, int, int] | None = None,
@@ -419,6 +435,86 @@ def build_fixed_fixed_center_load_fixture(
     )
 
 
+def build_cantilever_midspan_load_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
+    """Build a cantilever with a point load applied at mid-span (X=Lx/2).
+
+    Fixed at X=0; the total 100 N load (-Z) is distributed over the top-face
+    line of nodes at mid-span. Max displacement is at the free tip; max bending
+    stress is at the fixed root (M = P*a, a = Lx/2). ``nx`` must be even so a
+    node plane lands on mid-span. Regression case only, not a certification.
+    """
+    out_path = Path(out_path)
+    lx, ly, lz = 100.0, 10.0, 20.0
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
+    if nx % 2 != 0:
+        raise ValueError("cantilever_midspan_load requires an even nx for a mid-span node plane")
+    nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
+
+    nsets["N_MID"] = _top_midspan_nset(nodes, lx, lz)
+    mid_nodes = len(nsets["N_MID"])
+    load_per_node = 100.0 / mid_nodes
+
+    source_deck = _write_source_deck(
+        nodes=nodes,
+        elements=elements,
+        nsets=nsets,
+        active_nsets=["N_FIX", "N_MID"],
+    )
+
+    return _build_package(
+        out_path,
+        model_id="nafems_cantilever_midspan_load",
+        bc_target_feature="feat_fix",
+        load_target_feature="feat_load",
+        load_value_n=load_per_node,
+        load_direction=[0, 0, -1],
+        cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix"), ("N_MID", "feat_load")),
+        source_deck=source_deck,
+    )
+
+
+def build_cantilever_end_load_lateral_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
+    """Build an end-loaded cantilever bending about the WEAK (Z) axis.
+
+    Same geometry as ``cantilever_end_load`` but the 100 N end-face load acts in
+    -Y, so bending uses I = Lz*Ly^3/12 (weak axis) instead of Lx*... . This
+    exercises a different load direction and moment of inertia through the same
+    pipeline. Regression case only, not a certification.
+    """
+    out_path = Path(out_path)
+    lx, ly, lz = 100.0, 10.0, 20.0
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
+    nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
+
+    # Total 100 N in -Y on the X=L end face.
+    load_face_nodes = len(nsets["N_LOAD"])
+    load_per_node = 100.0 / load_face_nodes
+
+    source_deck = _write_source_deck(
+        nodes=nodes,
+        elements=elements,
+        nsets=nsets,
+        active_nsets=["N_FIX", "N_LOAD"],
+    )
+
+    return _build_package(
+        out_path,
+        model_id="nafems_cantilever_end_load_lateral",
+        bc_target_feature="feat_fix",
+        load_target_feature="feat_load",
+        load_value_n=load_per_node,
+        load_direction=[0, -1, 0],
+        cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix"), ("N_LOAD", "feat_load")),
+        source_deck=source_deck,
+    )
+
+
 # Catalog of supported cases for runners/tests.
 CASE_BUILDERS: dict[str, Any] = {
     "tension_rod": build_tension_rod_fixture,
@@ -426,6 +522,8 @@ CASE_BUILDERS: dict[str, Any] = {
     "cantilever_udl": build_cantilever_udl_fixture,
     "fixed_fixed_udl": build_fixed_fixed_udl_fixture,
     "fixed_fixed_center_load": build_fixed_fixed_center_load_fixture,
+    "cantilever_midspan_load": build_cantilever_midspan_load_fixture,
+    "cantilever_end_load_lateral": build_cantilever_end_load_lateral_fixture,
 }
 
 

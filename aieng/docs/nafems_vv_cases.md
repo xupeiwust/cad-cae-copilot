@@ -1,6 +1,6 @@
 # NAFEMS-style V&V starter suite — case catalog
 
-This document catalogs the three linear-static reference cases that seed the
+This document catalogs the linear-static reference cases that seed the
 automated verification regression in `aieng/src/aieng/nafems_verification.py`.
 
 These cases are *NAFEMS-style* benchmarks: they use simple geometry, well-known
@@ -263,6 +263,98 @@ focuses on displacement.
 | Metric | Reference | Tolerance |
 |--------|-----------|-----------|
 | `max_displacement` | 3.72 × 10⁻⁴ mm | ±10 % |
+
+---
+
+## Case 6: `cantilever_midspan_load`
+
+### Geometry and mesh
+
+Same beam as the other cantilever cases:
+
+| Parameter | Value |
+|-----------|-------|
+| Length `L` | 100 mm |
+| Width `b` (Y) | 10 mm |
+| Height `h` (Z) | 20 mm |
+| Mesh divisions | `nx = 20`, `ny = 4`, `nz = 4` |
+| Elements | 320 C3D8 |
+
+`nx` must be even so a node plane lands exactly on mid-span (`X = L/2`).
+
+### Loading
+
+A total 100 N load in `-Z` distributed over the top-face line of nodes at
+mid-span (`X = L/2`, `Z = h`) — a concentrated load at `a = L/2`.
+
+### Boundary conditions
+
+The `X = 0` face is fully fixed (DOFs 1–3 = 0).
+
+### Analytical reference (Euler-Bernoulli beam theory)
+
+* Second moment of area `I = b·h³ / 12 ≈ 6666.67 mm⁴`
+* Free-tip deflection for a load `P` at distance `a` from the fixed end:
+  `δ_tip = P·a²·(3L − a) / (6·E·I)`, with `a = L/2`
+  `δ_tip = 100 · 50² · 250 / (6 · 210000 · 6666.67) ≈ 7.44 × 10⁻³ mm`
+* Maximum bending moment at the fixed root `M = P·a = 5000 N·mm`
+* Theoretical maximum bending stress `σ = M·(h/2) / I = 7.5 MPa`
+
+Because the load is applied along a mid-span line, the local stress near the
+load is mesh-sensitive; the displacement is the primary convergence target and
+is the metric asserted in the real-solver regression.
+
+### Verified metrics and tolerance
+
+| Metric | Reference | Tolerance |
+|--------|-----------|-----------|
+| `max_displacement` | 7.44 × 10⁻³ mm | ±10 % |
+| `max_von_mises_stress` | 7.5 MPa | ±10 % |
+
+---
+
+## Case 7: `cantilever_end_load_lateral`
+
+### Geometry and mesh
+
+Identical geometry to `cantilever_end_load`, but the load bends the beam about
+its **weak axis**:
+
+| Parameter | Value |
+|-----------|-------|
+| Length `L` | 100 mm |
+| Width `b` (Y) | 10 mm |
+| Height `h` (Z) | 20 mm |
+| Mesh divisions | `nx = 20`, `ny = 4`, `nz = 4` |
+| Elements | 320 C3D8 |
+
+### Loading
+
+A total 100 N load in `-Y` distributed over the `X = L` end face. Bending is now
+in the Y direction, so the relevant second moment of area is the weak-axis one.
+
+### Boundary conditions
+
+The `X = 0` face is fully fixed (DOFs 1–3 = 0).
+
+### Analytical reference (Euler-Bernoulli beam theory)
+
+* Weak-axis second moment of area `I = h·b³ / 12 = 20 · 10³ / 12 ≈ 1666.67 mm⁴`
+* Free-tip deflection `δ = P·L³ / (3·E·I)`
+  `δ = 100 · 100³ / (3 · 210000 · 1666.67) ≈ 9.52 × 10⁻² mm`
+* Maximum bending moment at the fixed root `M = P·L = 10000 N·mm`
+* Theoretical maximum bending stress `σ = M·(b/2) / I = 30 MPa`
+
+This case exercises a different load direction and moment of inertia than
+`cantilever_end_load` through the same pipeline, guarding against axis- or
+inertia-specific regressions.
+
+### Verified metrics and tolerance
+
+| Metric | Reference | Tolerance |
+|--------|-----------|-----------|
+| `max_displacement` | 9.52 × 10⁻² mm | ±10 % |
+| `max_von_mises_stress` | 30 MPa | ±10 % |
 
 ---
 

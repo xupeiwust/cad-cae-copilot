@@ -493,8 +493,9 @@ checked into this repo so a fresh session needs no manual wiring:
 |-------|-----------------|---------------------|
 | Claude Code | `.mcp.json` (project root) | ✅ committed |
 | VS Code / GitHub Copilot | `.vscode/mcp.json` | ✅ committed |
-| OpenAI Codex | `~/.codex/config.toml` `[mcp_servers.*]` (global) | add the block below |
-| Cursor / Cline | `.vscode/mcp.json` or their own settings | reuses VS Code config |
+| OpenAI Codex | `~/.codex/config.toml` `[mcp_servers.*]` (global) | `.codex/config.toml` template committed; copy to the global path |
+| Cursor | `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global) | ✅ committed (`.cursor/mcp.json`) |
+| Cline (VS Code ext.) | its own `cline_mcp_settings.json` (VS Code globalStorage) | copy the server block below into Cline's MCP settings |
 
 Every agent also reads the workspace-root `AGENTS.md` (Codex/Cursor natively;
 Claude Code via `CLAUDE.md` `@import`; Copilot via `.github/copilot-instructions.md`).

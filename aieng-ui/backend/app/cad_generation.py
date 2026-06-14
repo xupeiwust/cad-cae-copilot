@@ -2217,6 +2217,7 @@ def _finish_execute_build123d_response(
     response_detail: str,
     cache_hit: bool,
     emit: Callable[[dict[str, Any]], None],
+    critique_diff: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from .project_io import resolve_project_path
 
@@ -2295,6 +2296,8 @@ def _finish_execute_build123d_response(
         "preview_url": f"/api/projects/{project_id}/cad-preview",
         "preview_format": "glb" if glb_bytes else "stl",
     }
+    if critique_diff is not None:
+        result["critique_diff"] = critique_diff
     if _should_render_thumbnail(payload, response_detail):
         face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
         ref_aieng_file = project.get("aieng_file")
@@ -2535,6 +2538,26 @@ def _diff_critique(
         "introduced_count": len(introduced),
         "resolved_count": resolved_count,
     }
+
+
+def _append_mode_critique_diff(
+    mode: str,
+    prior_topo: dict[str, Any],
+    prior_feature_graph: dict[str, Any],
+    topo: dict[str, Any],
+    feature_graph: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Engineering-diagnostics diff for an append-mode build, or None.
+
+    Append-mode ``cad.execute_build123d`` adds geometry onto a prior model, so —
+    like an edit — it can quietly introduce a manufacturability violation (a new
+    floating part, a broken mirror pair). When there is a prior model to compare
+    against, return a ``critique_diff``; otherwise (replace mode, or a first
+    build) return None.
+    """
+    if mode != "append" or not prior_topo:
+        return None
+    return _diff_critique(prior_topo, prior_feature_graph, topo, feature_graph)
 
 
 # ── parametric editing: extract editable parameters from source.py ─────────────
@@ -4637,6 +4660,9 @@ def execute_build123d_code(
     mode = str(payload.get("mode") or "replace").lower()
     used_base = False
     prior_named_parts: list[str] = []
+    # Before-state for the append-mode engineering-diagnostics diff (#216 follow-up).
+    prior_topo: dict[str, Any] = {}
+    prior_feature_graph: dict[str, Any] = {}
     storage_code = code  # what we persist in geometry/source.py
     execution_code = code  # what we actually run
     prior_step_path: str | None = None
@@ -4655,6 +4681,9 @@ def execute_build123d_code(
                     if "graph/feature_graph.json" in names:
                         prior_fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
                         prior_named_parts = _named_parts_from_feature_graph(prior_fg)
+                        prior_feature_graph = prior_fg
+                    if "geometry/topology_map.json" in names:
+                        prior_topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
                     if "geometry/generated.step" in names:
                         prior_step_bytes = zf.read("geometry/generated.step")
             except Exception:
@@ -4749,6 +4778,10 @@ def execute_build123d_code(
                 response_detail=response_detail,
                 cache_hit=True,
                 emit=_emit,
+                critique_diff=_append_mode_critique_diff(
+                    mode, prior_topo, prior_feature_graph,
+                    cached["topology_map"], cached["feature_graph"],
+                ),
             )
         finally:
             if prior_step_path:
@@ -4905,6 +4938,12 @@ def execute_build123d_code(
         "preview_url": f"/api/projects/{project_id}/cad-preview",
         "preview_format": "glb" if glb_bytes else "stl",
     }
+
+    # Append-mode engineering-diagnostics diff (#216 follow-up): flag when this
+    # additive step worsened manufacturability vs the prior model.
+    _append_cd = _append_mode_critique_diff(mode, prior_topo, prior_feature_graph, topo, feature_graph)
+    if _append_cd is not None:
+        result["critique_diff"] = _append_cd
 
     # Visual feedback loop: render a 4-view contact sheet so an agent can judge
     # silhouette and alignment, not just face/bbox numbers. When per-body

@@ -700,6 +700,11 @@ def test_execute_build123d_append_preserves_prior_parts(tmp_path: Path) -> None:
     assert out["used_base"] is True
     assert out["named_parts"] == ["fuselage", "motor_pod_FL"]
     assert out["parts_added"] == ["motor_pod_FL"]
+    # #216 follow-up: an append carries a manufacturability critique_diff vs the
+    # prior model (the two parts are close, so no new violation is introduced).
+    assert "critique_diff" in out
+    assert out["critique_diff"]["verdict"] in ("clean", "improved", "warn", "fail", "skipped")
+    assert out["critique_diff"]["delta"]["high"] <= 0
 
 
 def test_execute_build123d_replace_summary_fields(tmp_path: Path) -> None:
@@ -719,6 +724,8 @@ def test_execute_build123d_replace_summary_fields(tmp_path: Path) -> None:
     # in a fresh replace, everything is newly added
     assert out["named_parts"] == ["fuselage"]
     assert out["parts_added"] == ["fuselage"]
+    # replace has no "before" model to diff against → no critique_diff
+    assert "critique_diff" not in out
 
 
 def test_execute_build123d_append_without_base_errors(tmp_path: Path) -> None:
@@ -1541,6 +1548,20 @@ def test_diff_critique_skipped_without_solids() -> None:
     empty = {"entities": []}
     diff = _diff_critique(empty, {}, empty, {})
     assert diff["verdict"] == "skipped"
+
+
+def test_append_mode_critique_diff_only_for_append_with_prior() -> None:
+    from app.cad_generation import _append_mode_critique_diff
+
+    prior = _CLOSE_TWO_PART
+    after = _FAR_TWO_PART
+    # append with a prior model → a diff is produced (new floating part → fail)
+    diff = _append_mode_critique_diff("append", prior, {}, after, {})
+    assert diff is not None and diff["verdict"] == "fail"
+    # replace mode → no before-model to diff → None
+    assert _append_mode_critique_diff("replace", prior, {}, after, {}) is None
+    # append with no prior topology (first build) → None
+    assert _append_mode_critique_diff("append", {}, {}, after, {}) is None
 
 
 # ── design-rule assertions (require) — marker parser ──────────────────────────

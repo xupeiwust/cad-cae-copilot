@@ -465,7 +465,8 @@ function CandidateRow({
                 {candidate.objective_delta.delta_absolute != null && (
                   <span className="optimization-delta-absolute">
                     {" "}({candidate.objective_delta.delta_absolute > 0 ? "+" : ""}
-                    {formatMetricValue(candidate.objective_delta.delta_absolute)})
+                    {formatMetricValue(candidate.objective_delta.delta_absolute)}
+                    {candidate.objective_delta.unit ? ` ${candidate.objective_delta.unit}` : ""})
                   </span>
                 )}
               </span>

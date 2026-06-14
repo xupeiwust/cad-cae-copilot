@@ -148,14 +148,14 @@ describe("OptimizationPanel", () => {
           rank: 1,
           feasibility: "infeasible",
           constraint_violations: ["stress too high"],
-          objective_delta: { metric: "mass", delta_percent: -10 },
+          objective_delta: { metric: "mass", delta_percent: -10, delta_absolute: -0.12, unit: "kg" },
           reasons: ["violated"],
           metrics_missing: ["deflection"],
           execution_status: "completed",
         },
       ],
     });
-    render(<OptimizationPanel study={study} />);
+    const { container } = render(<OptimizationPanel study={study} />);
 
     // Details hidden initially
     expect(screen.queryByText("Violations")).toBeNull();
@@ -167,6 +167,8 @@ describe("OptimizationPanel", () => {
     expect(screen.getByText("stress too high")).toBeTruthy();
     expect(screen.getByText("Objective delta")).toBeTruthy();
     expect(screen.getByText(/mass:/)).toBeTruthy();
+    // objective delta shows the absolute change WITH its unit (#224)
+    expect(container.querySelector(".optimization-delta-absolute")?.textContent).toContain("-0.12 kg");
     expect(screen.getByText("Notes")).toBeTruthy();
     expect(screen.getByText("violated")).toBeTruthy();
     expect(screen.getByText("Missing metrics")).toBeTruthy();

@@ -16,9 +16,20 @@ from aieng.converters.design_study_ranking import (
     _build_ranking,
     _build_scoring_report,
     _classify_feasibility,
+    _metric_unit,
     _score_candidate,
     rank_design_study_candidates,
 )
+
+
+def test_metric_unit_maps_known_objectives_for_delta_display() -> None:
+    # #224: the objective delta carries a unit so the UI shows "+X kg" not "+X".
+    assert _metric_unit("mass") == "kg"
+    assert _metric_unit("max_von_mises_stress") == "MPa"
+    assert _metric_unit("max_displacement") == "mm"
+    assert _metric_unit("MASS") == "kg"  # case-insensitive
+    assert _metric_unit("min_safety_factor") == ""  # dimensionless
+    assert _metric_unit("unknown_metric") == ""
 from aieng.converters.design_study_execution import DESIGN_STUDY_ITERATIONS_PATH
 
 

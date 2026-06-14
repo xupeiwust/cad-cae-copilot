@@ -94,6 +94,27 @@ def _objective_to_metric_keys(objective_metric: str) -> list[str]:
     return _OBJECTIVE_METRIC_KEYS.get(objective_metric, [objective_metric])
 
 
+# Canonical units for the objective metrics, in the workbench's mm/N/MPa/kg
+# convention — so the objective delta can be shown with a unit (#224) instead of
+# a bare number. Dimensionless metrics (e.g. safety factor) map to "".
+_METRIC_UNITS: dict[str, str] = {
+    "mass": "kg",
+    "volume": "mm^3",
+    "max_stress": "MPa",
+    "max_von_mises_stress": "MPa",
+    "max_displacement": "mm",
+    "max_deflection": "mm",
+    "compliance": "N*mm",
+    "stiffness": "N/mm",
+    "min_safety_factor": "",
+    "safety_factor": "",
+}
+
+
+def _metric_unit(metric: str | None) -> str:
+    return _METRIC_UNITS.get(str(metric or "").strip().lower(), "")
+
+
 def _get_metric(metrics: dict[str, Any], *keys: str) -> Any:
     for k in keys:
         if k in metrics:
@@ -573,6 +594,9 @@ def _score_candidate(
         "candidate_value": candidate_val,
         "baseline_value": baseline_val,
     }
+    _unit = _metric_unit(obj_metric)
+    if _unit:
+        delta["unit"] = _unit
     if baseline_val is not None and baseline_val != 0:
         delta_pct = (candidate_val - baseline_val) / abs(baseline_val) * 100
         delta["delta_percent"] = round(delta_pct, 4)

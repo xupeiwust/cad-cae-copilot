@@ -14,6 +14,8 @@ export type ObjectiveDelta = {
   baseline_value?: number | null;
   delta_percent?: number | null;
   delta_absolute?: number | null;
+  /** Unit of the objective metric (e.g. "kg", "MPa"); "" / null when dimensionless. */
+  unit?: string | null;
 };
 
 export type OptimizationCandidate = {
@@ -288,6 +290,7 @@ function shapeObjectiveDelta(raw: unknown): ObjectiveDelta | null {
     baseline_value: typeof d.baseline_value === "number" ? d.baseline_value : null,
     delta_percent: typeof d.delta_percent === "number" ? d.delta_percent : null,
     delta_absolute: typeof d.delta_absolute === "number" ? d.delta_absolute : null,
+    unit: typeof d.unit === "string" && d.unit ? d.unit : null,
   };
 }
 

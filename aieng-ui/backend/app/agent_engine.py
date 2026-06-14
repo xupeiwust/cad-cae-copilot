@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from . import action_selector
+from .consistency_gate import (
+    consistency_samples,
+    consistency_threshold,
+    evaluate_consistency,
+    low_consistency_reply,
+    plan_decision_signature,
+)
 
 MCP_BRIDGE_TOOLS = {"mcp.check", "mcp.parse_patch", "mcp.prepare_execution"}
 
@@ -664,18 +671,50 @@ def build_agent_plan(
     errors: list[str] = []
     llm_raw: str | None = None
     mode = "heuristic"
+    consistency: dict[str, Any] | None = None
+    requires_user_input = False
     if llm_config and not dry_run:
         try:
-            steps, warnings, reply, llm_raw = llm_agent_plan(
-                settings=settings,
-                message=message,
-                project_id=project_id,
-                project_summary=project_summary,
-                selected_geometry=selected_geometry,
-                runtime_tools=runtime_tools,
-                capabilities=capabilities,
-                llm_config=llm_config,
-            )
+            def _draw_plan() -> tuple[list[dict[str, Any]], list[str], str, str | None]:
+                return llm_agent_plan(
+                    settings=settings,
+                    message=message,
+                    project_id=project_id,
+                    project_summary=project_summary,
+                    selected_geometry=selected_geometry,
+                    runtime_tools=runtime_tools,
+                    capabilities=capabilities,
+                    llm_config=llm_config,
+                )
+
+            samples = consistency_samples(llm_config)
+            if samples <= 1:
+                # Default path (gate disabled): a single judged sample, unchanged.
+                steps, warnings, reply, llm_raw = _draw_plan()
+            else:
+                # Multi-sample consistency gate (#220): judge the decision by
+                # cross-sample agreement, not the model's self-reported confidence.
+                threshold = consistency_threshold(llm_config)
+                drawn = [_draw_plan() for _ in range(samples)]
+                signatures = [plan_decision_signature(plan[0]) for plan in drawn]
+                consistency = evaluate_consistency(signatures, threshold=threshold)
+                if consistency["consistent"]:
+                    chosen = next(
+                        plan
+                        for plan, sig in zip(drawn, signatures)
+                        if sig == consistency["modal_signature"]
+                    )
+                    steps, warnings, reply, llm_raw = chosen
+                else:
+                    # Low consistency → ask the user instead of acting on a guess.
+                    steps = []
+                    warnings = [
+                        "LLM consistency below threshold; routed to ask_user instead "
+                        "of acting on a low-agreement guess."
+                    ]
+                    reply = low_consistency_reply(consistency)
+                    llm_raw = drawn[0][3] if drawn else None
+                    requires_user_input = True
             mode = "llm"
         except Exception as exc:
             steps, warnings, reply = heuristic_agent_plan(
@@ -736,4 +775,6 @@ def build_agent_plan(
         "errors": errors,
         "llm_raw": llm_raw,
         "llm_config": sanitize_llm_config(llm_config),
+        "requires_user_input": requires_user_input,
+        "consistency": consistency,
     }

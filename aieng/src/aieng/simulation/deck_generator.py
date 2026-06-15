@@ -175,6 +175,8 @@ def generate_solver_input_package(
     missing: list[str] = []
     warnings: list[str] = []
 
+    analysis_type = normalize_analysis_type(solver_settings, setup)
+
     if source_deck_text is None:
         missing.append("mesh_source_deck")
         warnings.append(
@@ -191,7 +193,10 @@ def generate_solver_input_package(
         missing.append("boundary_conditions")
 
     loads = _resolve_loads(setup, parsed_loads, cae_mapping, warnings)
-    if not loads:
+    # Loads are required for static and buckling (the reference perturbation
+    # load), but a modal (`*FREQUENCY`) analysis solves for natural frequencies
+    # of the unloaded structure — no load needed.
+    if not loads and analysis_type != "modal":
         missing.append("loads")
 
     if missing:
@@ -208,6 +213,7 @@ def generate_solver_input_package(
         boundary_conditions=bcs,
         loads=loads,
         solver_settings=solver_settings,
+        analysis_type=analysis_type,
         warnings=warnings,
     )
 
@@ -409,6 +415,7 @@ def _assemble_deck(
     loads: list[dict[str, Any]],
     solver_settings: dict[str, Any] | None,
     warnings: list[str],
+    analysis_type: str = "static",
 ) -> str:
     """Assemble the complete CalculiX deck text."""
     model_id = manifest.get("model_id", "unknown_model")
@@ -493,29 +500,19 @@ def _assemble_deck(
             lines.append(f"{target}, {dof_start}, {dof_end}, {value}")
         lines.append("")
 
-    # ---- Loads ----
-    if loads:
-        lines.append("** --- Loads ---")
-        lines.append("*CLOAD")
-        for load in loads:
-            target = load.get("target", "unknown")
-            dof = load.get("dof", 2)
-            value = load.get("value", 0.0)
-            lines.append(f"{target}, {dof}, {value}")
-        lines.append("")
+    # A modal (*FREQUENCY) analysis needs *DENSITY to form the mass matrix.
+    if analysis_type == "modal" and not any(
+        m.get("density") is not None for m in materials
+    ):
+        warnings.append(
+            "Modal analysis requires material density (*DENSITY) to build the mass "
+            "matrix; none was found — eigenfrequencies cannot be computed."
+        )
 
-    # ---- Step ----
-    step_name = _resolve_step_name(solver_settings)
-    lines += [
-        f"*STEP, NAME={step_name}",
-        "*STATIC",
-        "1.0, 1.0",
-        "*NODE FILE",
-        "U",
-        "*EL FILE",
-        "S",
-        "*END STEP",
-    ]
+    # ---- Step (analysis-type-specific; CalculiX *CLOAD is step-dependent, so
+    #      loads are emitted inside the step here, not before it) ----
+    lines.append(f"** --- Step ({analysis_type}) ---")
+    lines += _step_block(analysis_type, solver_settings, loads, warnings)
 
     return "\n".join(lines) + "\n"
 
@@ -574,6 +571,105 @@ def _resolve_step_name(solver_settings: dict[str, Any] | None) -> str:
         if isinstance(name, str) and name:
             return name.replace(" ", "_")
     return "LoadStep"
+
+
+# Supported CalculiX analysis types. Modal/buckling are linear eigenvalue
+# analyses CalculiX solves natively (`*FREQUENCY` / `*BUCKLE`); static is the
+# default. Aliases map common spellings to the canonical key.
+_ANALYSIS_TYPE_ALIASES: dict[str, str] = {
+    "": "static",
+    "static": "static",
+    "linear_static": "static",
+    "modal": "modal",
+    "frequency": "modal",
+    "eigenfrequency": "modal",
+    "eigen": "modal",
+    "natural_frequency": "modal",
+    "buckling": "buckling",
+    "buckle": "buckling",
+    "linear_buckling": "buckling",
+}
+
+
+def normalize_analysis_type(
+    solver_settings: dict[str, Any] | None, setup: dict[str, Any] | None = None
+) -> str:
+    """Return the canonical analysis type — ``static`` / ``modal`` / ``buckling``.
+
+    Reads ``analysis_type`` (or ``step_type``) from ``solver_settings`` first, then
+    ``setup``; unknown / absent values fall back to ``static``.
+    """
+    raw: Any = None
+    if isinstance(solver_settings, dict):
+        raw = solver_settings.get("analysis_type") or solver_settings.get("step_type")
+    if not raw and isinstance(setup, dict):
+        raw = setup.get("analysis_type")
+    key = str(raw or "static").strip().lower().replace("-", "_").replace(" ", "_")
+    return _ANALYSIS_TYPE_ALIASES.get(key, "static")
+
+
+def _step_block(
+    analysis_type: str,
+    solver_settings: dict[str, Any] | None,
+    loads: list[dict[str, Any]],
+    warnings: list[str],
+) -> list[str]:
+    """Build the analysis-type-specific *STEP block.
+
+    CalculiX `*CLOAD` is step-dependent, so loads are emitted INSIDE the step
+    (homogeneous `*BOUNDARY` stays in the model definition before the step).
+    - static: `*STATIC` + loads + U/S output.
+    - modal:  `*FREQUENCY` + N eigenvalues + mode-shape (U) output; loads ignored.
+    - buckling: `*BUCKLE` + N factors + the reference load + U output.
+    """
+    ss = solver_settings if isinstance(solver_settings, dict) else {}
+    step_name = _resolve_step_name(solver_settings)
+
+    def _cload_lines() -> list[str]:
+        out = ["*CLOAD"]
+        for load in loads:
+            out.append(f"{load.get('target', 'unknown')}, {load.get('dof', 2)}, {load.get('value', 0.0)}")
+        return out
+
+    def _int_setting(*keys: str, default: int, lo: int, hi: int) -> int:
+        for k in keys:
+            if k in ss:
+                try:
+                    return max(lo, min(int(ss[k]), hi))
+                except (TypeError, ValueError):
+                    break
+        return default
+
+    if analysis_type == "modal":
+        n = _int_setting("num_modes", "num_eigenvalues", default=10, lo=1, hi=100)
+        return [
+            f"*STEP, NAME={step_name}",
+            "*FREQUENCY, STORAGE=YES",
+            f"{n}",
+            "*NODE FILE",
+            "U",
+            "*END STEP",
+        ]
+
+    if analysis_type == "buckling":
+        n = _int_setting("num_factors", "num_modes", default=5, lo=1, hi=50)
+        if not loads:
+            warnings.append(
+                "Buckling analysis has no reference load (*CLOAD); buckling factors "
+                "are meaningless without one — add a reference load."
+            )
+        block = [f"*STEP, NAME={step_name}", "*BUCKLE", f"{n}"]
+        if loads:
+            block += _cload_lines()
+        block += ["*NODE FILE", "U", "*END STEP"]
+        return block
+
+    # static (default)
+    block = [f"*STEP, NAME={step_name}", "*STATIC", "1.0, 1.0"]
+    if loads:
+        block += _cload_lines()
+    block += ["*NODE FILE", "U", "*EL FILE", "S", "*END STEP"]
+    return block
 
 
 # ---------------------------------------------------------------------------

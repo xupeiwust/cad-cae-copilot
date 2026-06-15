@@ -86,6 +86,7 @@ def _write_package(
     parsed_materials: dict | None = None,
     parsed_bcs: dict | None = None,
     parsed_loads: dict | None = None,
+    solver_settings: dict | None = None,
 ) -> Path:
     """Write a minimal .aieng package that can drive deck generation."""
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -106,6 +107,8 @@ def _write_package(
             zf.writestr("simulation/setup.yaml", yaml.safe_dump(setup))
         if cae_mapping is not None:
             zf.writestr("simulation/cae_mapping.json", json.dumps(cae_mapping))
+        if solver_settings is not None:
+            zf.writestr("simulation/solver_settings.json", json.dumps(solver_settings))
         if parsed_materials is not None:
             zf.writestr(
                 "simulation/cae_imports/parsed_materials.json",
@@ -161,6 +164,108 @@ def test_manifest_records_solver_input_for_run(tmp_path: Path) -> None:
         manifest = json.loads(zf.read("manifest.json"))
     runs = manifest["resources"]["simulation"]["runs"]
     assert runs["run_001"]["solver_input"] == SOLVER_INPUT_PATH_TEMPLATE.format(run_id="run_001")
+
+
+# ---------------------------------------------------------------------------
+# Analysis-type-aware step block (modal / buckling) — issue: FEA breadth
+# ---------------------------------------------------------------------------
+
+
+def _read_deck(pkg: Path, run_id: str) -> str:
+    out_path = SOLVER_INPUT_PATH_TEMPLATE.format(run_id=run_id)
+    with zipfile.ZipFile(pkg) as zf:
+        return zf.read(out_path).decode("utf-8")
+
+
+def test_static_step_block_unchanged(tmp_path: Path) -> None:
+    """Default (no analysis_type) keeps the classic *STATIC step with U/S output."""
+    pkg = _write_package(
+        tmp_path / "static.aieng",
+        setup=_SETUP_WITH_FEATURE_REFS,
+        cae_mapping=_CAE_MAPPING_WITH_FEATURES,
+    )
+    generate_solver_input_package(pkg, run_id="run_static")
+    deck = _read_deck(pkg, "run_static")
+    assert "*STATIC" in deck
+    assert "*EL FILE" in deck and "*CLOAD" in deck
+    assert "*FREQUENCY" not in deck and "*BUCKLE" not in deck
+
+
+def test_modal_step_block_emits_frequency_and_no_load_required(tmp_path: Path) -> None:
+    """A modal analysis needs no loads: *FREQUENCY + N modes, no *STATIC/*CLOAD."""
+    setup = {
+        "materials": _SETUP_WITH_FEATURE_REFS["materials"],  # carries density
+        "boundary_conditions": _SETUP_WITH_FEATURE_REFS["boundary_conditions"],
+        # deliberately NO loads
+    }
+    pkg = _write_package(
+        tmp_path / "modal.aieng",
+        setup=setup,
+        cae_mapping=_CAE_MAPPING_WITH_FEATURES,
+        solver_settings={"analysis_type": "modal", "num_modes": 6},
+    )
+    result = generate_solver_input_package(pkg, run_id="run_modal")
+    assert result["ok"] is True
+    deck = _read_deck(pkg, "run_modal")
+    assert "*FREQUENCY" in deck
+    assert "*STATIC" not in deck
+    assert "*CLOAD" not in deck  # modal ignores loads
+    # the requested mode count is the data line after *FREQUENCY
+    lines = [ln.strip() for ln in deck.splitlines()]
+    fi = next(i for i, ln in enumerate(lines) if ln.startswith("*FREQUENCY"))
+    assert lines[fi + 1] == "6"
+
+
+def test_modal_without_density_warns(tmp_path: Path) -> None:
+    """Modal needs *DENSITY for the mass matrix; warn honestly when absent."""
+    setup = {
+        "materials": {"Steel": {"youngs_modulus_mpa": 210000.0, "poisson_ratio": 0.3}},
+        "boundary_conditions": _SETUP_WITH_FEATURE_REFS["boundary_conditions"],
+    }
+    pkg = _write_package(
+        tmp_path / "modal_nodens.aieng",
+        setup=setup,
+        cae_mapping=_CAE_MAPPING_WITH_FEATURES,
+        solver_settings={"analysis_type": "frequency"},
+    )
+    result = generate_solver_input_package(pkg, run_id="run_modal_nd")
+    assert any("density" in w.lower() for w in result["warnings"])
+
+
+def test_buckling_step_block_emits_buckle_with_reference_load(tmp_path: Path) -> None:
+    """Buckling requires a reference load and emits *BUCKLE + N factors + *CLOAD."""
+    pkg = _write_package(
+        tmp_path / "buckle.aieng",
+        setup=_SETUP_WITH_FEATURE_REFS,
+        cae_mapping=_CAE_MAPPING_WITH_FEATURES,
+        solver_settings={"analysis_type": "buckling", "num_factors": 3},
+    )
+    result = generate_solver_input_package(pkg, run_id="run_buckle")
+    assert result["ok"] is True
+    deck = _read_deck(pkg, "run_buckle")
+    assert "*BUCKLE" in deck
+    assert "*CLOAD" in deck  # reference perturbation load
+    assert "*STATIC" not in deck
+    lines = [ln.strip() for ln in deck.splitlines()]
+    bi = next(i for i, ln in enumerate(lines) if ln.startswith("*BUCKLE"))
+    assert lines[bi + 1] == "3"
+
+
+def test_buckling_still_requires_loads(tmp_path: Path) -> None:
+    """Unlike modal, buckling without a reference load is rejected as missing."""
+    setup = {
+        "materials": _SETUP_WITH_FEATURE_REFS["materials"],
+        "boundary_conditions": _SETUP_WITH_FEATURE_REFS["boundary_conditions"],
+    }
+    pkg = _write_package(
+        tmp_path / "buckle_noload.aieng",
+        setup=setup,
+        cae_mapping=_CAE_MAPPING_WITH_FEATURES,
+        solver_settings={"analysis_type": "buckle"},
+    )
+    with pytest.raises(MissingSetupError) as exc:
+        generate_solver_input_package(pkg, run_id="run_buckle_nl")
+    assert "loads" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

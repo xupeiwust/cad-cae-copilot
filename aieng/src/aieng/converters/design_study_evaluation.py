@@ -565,6 +565,10 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
     errors: list[str] = []
     source_paths: list[str] = []
     proxy_derived = False
+    # True only when a candidate-local computed_metrics.json was produced by a real
+    # solver run (its metrics_source names a solver, e.g. CalculiX from the FRD/DAT
+    # extractors). This is what flips the honesty flags from the default skip.
+    solver_sourced = False
 
     for path, doc in docs.items():
         rel = path[len(ws):]
@@ -593,6 +597,11 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
         elif rel in _COMPUTED_METRIC_RELS:
             _extract_computed_metrics(doc, normalized, source_path=path, proxy_derived=is_assembly)
             warnings.extend([str(w) for w in doc.get("warnings") or []])
+            # A computed_metrics doc that names a solver in metrics_source is real
+            # solver evidence (not proxy/static); record it for the honesty block.
+            ms = doc.get("metrics_source")
+            if not is_assembly and isinstance(ms, dict) and ms.get("software"):
+                solver_sourced = True
         elif rel in _FIELD_REGION_RELS:
             _extract_field_regions(doc, normalized, source_path=path, proxy_derived=is_assembly)
             warnings.extend([str(w) for w in doc.get("warnings") or []])
@@ -671,7 +680,7 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
         "warnings": sorted(set(warnings)),
         "errors": errors,
         "honesty": {
-            "solver_executed": False,
+            "solver_executed": solver_sourced,
             "baseline_modified": False,
             "candidate_workspace_only": True,
             "proxy_derived": proxy_derived,
@@ -680,7 +689,11 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
             "production_ready": False,
         },
         "baseline_modified": False,
-        "reason": "candidate-local solver-neutral/static evidence normalized; no solver or geometry recompile was run",
+        "reason": (
+            "candidate-local solver result normalized from an executed solver run"
+            if solver_sourced
+            else "candidate-local solver-neutral/static evidence normalized; no solver or geometry recompile was run"
+        ),
         "critique": critique_result,
         "critique_blocking": critique_blocking,
         "critique_reasons": critique_reasons,
@@ -718,7 +731,7 @@ def evaluate_design_study_candidate(package_path: str | Path, candidate_id: str)
         "provenance": {
             "created_by": "aieng.design_study_evaluation",
             "baseline_modified": False,
-            "solver_executed": False,
+            "solver_executed": solver_sourced,
             "geometry_recompiled": False,
         },
     }

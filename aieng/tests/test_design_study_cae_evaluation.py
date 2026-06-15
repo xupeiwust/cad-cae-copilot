@@ -383,3 +383,107 @@ def test_endpoint_writes_expected_candidate_local_diagnostics(tmp_path: Path):
         assert f"candidates/c1/{CANDIDATE_CAE_SETUP_REL}" in names
         # No package-level simulation artifacts created for candidate eval
         assert "simulation/candidate_solver_input.inp" not in names
+
+
+# ── injected solver_fn (real-solve wiring) ────────────────────────────────────
+
+
+def _solver_doc(stress=150.0, disp=0.5):
+    """A computed_metrics doc shaped like the FRD/DAT extractor output."""
+    return {
+        "schema_version": "0.1",
+        "metrics_source": {"tool": "frd_parser_v1", "software": "CalculiX", "source_files": ["x.frd"]},
+        "load_cases": [{"id": "lc1", "metrics": {
+            "max_von_mises_stress": {"value": stress, "unit": "MPa"},
+            "max_displacement": {"value": disp, "unit": "mm"},
+        }}],
+        "warnings": [],
+    }
+
+
+def _candidate_pkg(tmp_path: Path) -> Path:
+    return _write_pkg(tmp_path, problem=_problem(), baseline_setup="mesh:\n  size: 2.0\n",
+                      baseline_mapping={"mappings": [{"face_id": "f_top"}]},
+                      candidate_ws={"c1": {"geometry/shape_ir.json": {"representation": "brep_build123d"}}})
+
+
+def test_solver_fn_writes_metrics_and_reports_solver_executed(tmp_path: Path):
+    pkg = _candidate_pkg(tmp_path)
+    calls = []
+
+    def fake_solver(package_path, candidate_id):
+        calls.append(candidate_id)
+        return {"solver_executed": True, "computed_metrics": _solver_doc(stress=150.0)}
+
+    res = request_design_study_candidate_cae_evaluation(
+        pkg, "c1", mode="run_if_available", allow_solver_execution=True, solver_fn=fake_solver,
+    )
+    assert res["status"] == "ok"
+    assert res["solver_status"] == "completed"
+    assert calls == ["c1"]
+
+    # candidate-local computed_metrics written from the solve
+    cm = _read(pkg, "candidates/c1/analysis/computed_metrics.json")
+    assert cm["metrics_source"]["software"] == "CalculiX"
+
+    # evaluation reports the solve honestly + uses the real metric
+    ev = _read(pkg, "candidates/c1/analysis/evaluation.json")
+    assert ev["honesty"]["solver_executed"] is True
+    assert ev["metrics"]["max_stress"] == 150.0
+    assert ev["baseline_modified"] is False
+    assert _baseline_unchanged(pkg)
+    # provenance.solver_executed lives in the evaluation report
+    report = _read(pkg, "candidates/c1/diagnostics/evaluation_report.json")
+    assert report["provenance"]["solver_executed"] is True
+
+
+def test_solver_fn_absent_skips_honestly(tmp_path: Path):
+    pkg = _candidate_pkg(tmp_path)
+    res = request_design_study_candidate_cae_evaluation(
+        pkg, "c1", mode="run_if_available", allow_solver_execution=True, solver_fn=None,
+    )
+    assert res["solver_status"] == "skipped"
+    ev = _read(pkg, "candidates/c1/analysis/evaluation.json")
+    assert ev["honesty"]["solver_executed"] is False
+
+
+def test_solver_fn_failure_is_honest(tmp_path: Path):
+    pkg = _candidate_pkg(tmp_path)
+
+    def failing_solver(package_path, candidate_id):
+        return {"solver_executed": False, "error": "CalculiX returned non-zero"}
+
+    res = request_design_study_candidate_cae_evaluation(
+        pkg, "c1", mode="run_if_available", allow_solver_execution=True, solver_fn=failing_solver,
+    )
+    assert res["solver_status"] == "failed"
+    ev = _read(pkg, "candidates/c1/analysis/evaluation.json")
+    assert ev["honesty"]["solver_executed"] is False
+    assert _baseline_unchanged(pkg)
+
+
+def test_solver_fn_raising_is_caught(tmp_path: Path):
+    pkg = _candidate_pkg(tmp_path)
+
+    def boom(package_path, candidate_id):
+        raise RuntimeError("mesh blew up")
+
+    res = request_design_study_candidate_cae_evaluation(
+        pkg, "c1", mode="run_if_available", allow_solver_execution=True, solver_fn=boom,
+    )
+    assert res["status"] == "ok"  # request itself completes; solve failed honestly
+    assert res["solver_status"] == "failed"
+    ev = _read(pkg, "candidates/c1/analysis/evaluation.json")
+    assert ev["honesty"]["solver_executed"] is False
+
+
+def test_solver_not_run_when_execution_not_allowed(tmp_path: Path):
+    pkg = _candidate_pkg(tmp_path)
+
+    def fake_solver(package_path, candidate_id):
+        raise AssertionError("solver_fn must not be called when allow_solver_execution is False")
+
+    res = request_design_study_candidate_cae_evaluation(
+        pkg, "c1", mode="run_if_available", allow_solver_execution=False, solver_fn=fake_solver,
+    )
+    assert res["solver_status"] == "skipped"

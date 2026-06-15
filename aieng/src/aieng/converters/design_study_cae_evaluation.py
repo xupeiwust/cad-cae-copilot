@@ -148,18 +148,29 @@ def _derive_candidate_cae_setup(
 # ── solver execution (best-effort, conservative) ──────────────────────────────
 
 
+CANDIDATE_COMPUTED_METRICS_REL = "analysis/computed_metrics.json"
+
+
 def _try_run_candidate_solver(
     package_path: Path,
     sid: str,
     names: set[str],
     zf: zipfile.ZipFile,
     allow_solver_execution: bool,
+    solver_fn: Any = None,
 ) -> tuple[dict[str, Any], dict[str, bytes], list[str]]:
-    """Best-effort solver run for candidate geometry.
+    """Run the static solver on candidate geometry via an injected ``solver_fn``.
 
-    v0 is intentionally conservative: solver execution is skipped by default.
-    If allow_solver_execution is True but the runner is unavailable, honest
-    skipped diagnostics are returned.
+    ``solver_fn(package_path, candidate_id)`` is supplied by the caller (the backend,
+    which owns the compile + mesh + CalculiX pipeline — the core lib cannot import it).
+    It must return ``{solver_executed, computed_metrics, [warnings], [error], [status]}``
+    where ``computed_metrics`` is a ``results/computed_metrics.json``-shaped dict whose
+    ``metrics_source.software`` names the solver. On success the metrics are written to
+    the candidate-local ``analysis/computed_metrics.json`` so the evaluator picks them
+    up and reports ``solver_executed=true`` honestly.
+
+    Without ``solver_fn`` (or with ``allow_solver_execution`` false) it degrades to an
+    honest skip — never a fabricated result.
     """
     ws = f"{CANDIDATE_WORKSPACE_ROOT}{sid}/"
     warnings: list[str] = []
@@ -173,19 +184,15 @@ def _try_run_candidate_solver(
             "solver_executed": False,
         }, members, warnings
 
-    # Check candidate workspace has derived geometry
-    candidate_shape_ir = _read_json(zf, f"{ws}geometry/shape_ir.json", names)
-    if candidate_shape_ir is None:
+    # Candidate must have derived geometry + a candidate-local CAE setup.
+    if _read_json(zf, f"{ws}geometry/shape_ir.json", names) is None:
         warnings.append("candidate Shape IR not found — cannot compile geometry for solver")
         return {
             "status": "skipped",
             "reason": "candidate Shape IR not found — cannot compile geometry for solver",
             "solver_executed": False,
         }, members, warnings
-
-    # Check candidate-local setup exists (must have been derived first)
-    candidate_setup = _read_text(zf, f"{ws}{CANDIDATE_CAE_SETUP_REL}", names)
-    if candidate_setup is None:
+    if _read_text(zf, f"{ws}{CANDIDATE_CAE_SETUP_REL}", names) is None:
         warnings.append("candidate-local CAE setup not found — run prepare_only first")
         return {
             "status": "skipped",
@@ -193,27 +200,47 @@ def _try_run_candidate_solver(
             "solver_executed": False,
         }, members, warnings
 
-    # v0: honest skipped — full solver integration would require:
-    #   1. Compile candidate Shape IR to STEP in a throwaway copy
-    #   2. Generate mesh + solver deck for candidate geometry
-    #   3. Run solver
-    #   4. Normalize results back to candidate-local paths
-    # This is future work; v0 records the intent and skips safely.
-    warnings.append(
-        "run_if_available mode requested solver execution, but v0 solver integration "
-        "is best-effort/skipped. Candidate-local setup is prepared; solver execution "
-        "requires explicit v1 integration with the mesh+deck+run pipeline."
-    )
+    if solver_fn is None:
+        # Allowed but no runner injected: honest skip (core lib has no solver).
+        warnings.append(
+            "solver execution requested but no solver_fn was injected; candidate-local "
+            "setup is prepared but no solver was run (the backend wires the runner)"
+        )
+        return {
+            "status": "skipped",
+            "reason": "no solver_fn injected — candidate-local setup prepared, solver not run",
+            "solver_executed": False,
+        }, members, warnings
+
+    # Delegate the compile + mesh + solve to the injected runner.
+    try:
+        result = solver_fn(package_path, sid)
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"candidate solver run failed: {type(exc).__name__}: {exc}")
+        return {
+            "status": "failed",
+            "reason": f"solver_fn raised: {type(exc).__name__}: {exc}",
+            "solver_executed": False,
+        }, members, warnings
+
+    result = result if isinstance(result, dict) else {}
+    warnings.extend([str(w) for w in result.get("warnings") or []])
+    computed = result.get("computed_metrics")
+
+    if result.get("solver_executed") and isinstance(computed, dict):
+        members[f"{ws}{CANDIDATE_COMPUTED_METRICS_REL}"] = _dumps(computed)
+        return {
+            "status": "completed",
+            "reason": "candidate geometry solved; computed_metrics written to candidate workspace",
+            "solver_executed": True,
+            "computed_metrics_path": f"{ws}{CANDIDATE_COMPUTED_METRICS_REL}",
+        }, members, warnings
+
+    # Runner ran but did not produce a usable solve — report honestly.
     return {
-        "status": "skipped",
-        "reason": "v0 solver integration is best-effort — candidate-local setup prepared, solver not run",
+        "status": result.get("status", "failed"),
+        "reason": result.get("error") or "solver did not produce computed metrics",
         "solver_executed": False,
-        "capabilities_needed": [
-            "compile candidate Shape IR to STEP",
-            "generate candidate-local mesh and solver deck",
-            "run solver on candidate geometry",
-            "normalize candidate-local solver outputs",
-        ],
     }, members, warnings
 
 
@@ -231,11 +258,15 @@ def request_design_study_candidate_cae_evaluation(
     requested_by: str = "agent",
     load_case_ids: list[str] | None = None,
     constraints_to_evaluate: list[str] | None = None,
+    solver_fn: Any = None,
 ) -> dict[str, Any]:
     """Explicitly request CAE evaluation for one design-study candidate.
 
     Writes candidate-local artifacts only; baseline geometry and CAE setup are never
-    overwritten. Solver execution is disabled by default.
+    overwritten. Solver execution is disabled by default; when ``allow_solver_execution``
+    is true and a ``solver_fn`` is injected (by the backend, which owns the
+    compile+mesh+CalculiX pipeline), the candidate geometry is solved and the real
+    metrics drive the evaluation.
     """
     package_path = Path(package_path)
     if not package_path.exists():
@@ -320,11 +351,19 @@ def request_design_study_candidate_cae_evaluation(
     solver_warnings: list[str] = []
 
     if mode in ("normalize_existing", "run_if_available"):
+        # Persist the request + just-derived candidate-local setup to disk first, so
+        # the solver runner (which reads from disk) sees the candidate CAE setup.
+        _replace_members(package_path, members)
         with zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
             solver_diag, solver_members, solver_warnings = _try_run_candidate_solver(
-                package_path, sid, names, zf, allow_solver_execution
+                package_path, sid, names, zf, allow_solver_execution, solver_fn=solver_fn
             )
         members.update(solver_members)
+        # Persist the solver-produced computed_metrics NOW so the evaluation below
+        # (which reads from disk) picks it up and reports solver_executed honestly.
+        if solver_members:
+            _replace_members(package_path, solver_members)
 
     deck_status = "skipped"
     if allow_solver_deck_generation and mode == "run_if_available":

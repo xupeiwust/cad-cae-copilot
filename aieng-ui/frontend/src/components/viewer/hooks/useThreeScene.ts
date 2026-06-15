@@ -25,6 +25,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
   const highlightGroupRef = useRef<THREE.Group | null>(null);
   const assemblyGroupRef = useRef<THREE.Group | null>(null);
   const markerGroupRef = useRef<THREE.Group | null>(null);
+  const fieldRegionGroupRef = useRef<THREE.Group | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -55,6 +56,11 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     markerGroup.name = "field-marker-group";
     scene.add(markerGroup);
     markerGroupRef.current = markerGroup;
+
+    const fieldRegionGroup = new THREE.Group();
+    fieldRegionGroup.name = "field-region-group";
+    scene.add(fieldRegionGroup);
+    fieldRegionGroupRef.current = fieldRegionGroup;
 
     // ── Camera ──
     const initialSize = getHostSize();
@@ -119,6 +125,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
       highlightGroupRef.current = null;
       assemblyGroupRef.current = null;
       markerGroupRef.current = null;
+      fieldRegionGroupRef.current = null;
       cameraRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
@@ -133,5 +140,6 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     highlightGroupRef,
     assemblyGroupRef,
     markerGroupRef,
+    fieldRegionGroupRef,
   };
 }

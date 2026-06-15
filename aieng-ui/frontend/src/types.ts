@@ -1,4 +1,4 @@
-﻿export type CadRecommendationProposal = {
+export type CadRecommendationProposal = {
   proposal_id: string;
   rank?: number;
   feature_ref: string;
@@ -1481,6 +1481,30 @@ export type SimulationReadinessResponse = {
   missing_required_inputs?: string[];
   defaultable_inputs?: string[];
   summary?: string;
+};
+
+export type FieldRegionCluster = {
+  id: string;
+  location: { x: number; y: number; z: number };
+  magnitude: { value: number; unit: string };
+  node_count: number;
+  feature_ref?: string | null;
+};
+
+export type FieldRegionsDocument = {
+  schema_version: string;
+  format_version: string;
+  source_frd: string;
+  field: string;
+  metric: string;
+  cluster_count: number;
+  clusters: FieldRegionCluster[];
+  warnings: string[];
+  claim_policy?: {
+    observational_only: boolean;
+    physical_correctness_not_claimed: boolean;
+    solver_execution_not_performed_by_aieng: boolean;
+  };
 };
 
 export type ChatConnection = {

@@ -5,3 +5,4 @@ export { useFaceIdentityMaps } from "./useFaceIdentityMaps";
 export { useHighlightOverlay } from "./useHighlightOverlay";
 export { useAssemblyCheckOverlay } from "./useAssemblyCheckOverlay";
 export { useFieldMarkerOverlay } from "./useFieldMarkerOverlay";
+export { useFieldRegionOverlay } from "./useFieldRegionOverlay";

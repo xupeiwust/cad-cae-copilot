@@ -1,11 +1,13 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 import { assemblyAlertCounts } from "../app/geometryReport";
 import { useGeometryReport } from "../app/useGeometryReport";
+import { useFieldRegions } from "../app/useFieldRegions";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
-import type { SolverFieldDescriptor } from "../types";
+import type { FieldRegionCluster, SolverFieldDescriptor } from "../types";
+import { modelToDisplayVec } from "./viewer/coordinateFrames";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
 import {
   useThreeScene,
@@ -15,6 +17,7 @@ import {
   useHighlightOverlay,
   useAssemblyCheckOverlay,
   useFieldMarkerOverlay,
+  useFieldRegionOverlay,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -54,6 +57,8 @@ export function ModelViewer({
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
   const [showAssemblyCheck, setShowAssemblyCheck] = useState(false);
   const [showFieldMarkers, setShowFieldMarkers] = useState(true);
+  const [showFieldRegions, setShowFieldRegions] = useState(true);
+  const [selectedCluster, setSelectedCluster] = useState<FieldRegionCluster | null>(null);
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -67,11 +72,16 @@ export function ModelViewer({
     selectedId: projectId ?? null,
     geometryVersion: assetUrl ?? null,
   });
+  const { fieldRegions } = useFieldRegions({
+    selectedId: projectId ?? null,
+    geometryVersion: assetUrl ?? null,
+  });
   const assemblyAlerts = assemblyAlertCounts(geometryReport);
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
+  const fieldRegionsAvailable = Boolean(fieldRegions && fieldRegions.clusters.length > 0);
 
   // 1. Three.js scene lifecycle
-  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef } =
+  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef, fieldRegionGroupRef } =
     useThreeScene(hostRef);
 
   // 2. Asset loading
@@ -136,6 +146,61 @@ export function ModelViewer({
     objectReadyKey,
   );
 
+  // 8. Field-region cluster markers
+  useFieldRegionOverlay(
+    fieldRegionGroupRef,
+    showFieldRegions && fieldRegionsAvailable,
+    fieldRegions,
+    objectRef,
+    displayTransformRef,
+    objectReadyKey,
+  );
+
+  // 9. Cluster marker picking + framing
+  useEffect(() => {
+    const host = hostRef.current;
+    const camera = cameraRef.current;
+    const group = fieldRegionGroupRef.current;
+    if (!host || !camera || !group) return;
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    const onClick = (event: MouseEvent) => {
+      if (!showFieldRegions || !fieldRegions) return;
+      const rect = host.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(group.children, true);
+      if (intersects.length === 0) return;
+      let obj: THREE.Object3D | null = intersects[0].object;
+      while (obj && obj.userData?.type !== "field-region-cluster" && obj.parent) {
+        obj = obj.parent;
+      }
+      const cluster = obj?.userData?.cluster as FieldRegionCluster | undefined;
+      if (cluster) setSelectedCluster(cluster);
+    };
+
+    host.addEventListener("click", onClick);
+    return () => host.removeEventListener("click", onClick);
+  }, [showFieldRegions, fieldRegions, fieldRegionGroupRef]);
+
+  useEffect(() => {
+    if (!selectedCluster || !controlsRef.current || !cameraRef.current) return;
+    const center = modelToDisplayVec(
+      selectedCluster.location.x,
+      selectedCluster.location.y,
+      selectedCluster.location.z,
+      displayTransformRef.current,
+    );
+    const controls = controlsRef.current;
+    const offset = cameraRef.current.position.clone().sub(controls.target);
+    controls.target.copy(center);
+    cameraRef.current.position.copy(center.clone().add(offset));
+    controls.update();
+  }, [selectedCluster, controlsRef, cameraRef, displayTransformRef]);
+
   return (
     <div className="viewer-canvas-shell">
       <div className="viewer-canvas" ref={hostRef} />
@@ -184,6 +249,74 @@ export function ModelViewer({
         >
           {showFieldMarkers ? "Hide" : "Show"} peak/min
         </button>
+      )}
+      {fieldRegionsAvailable && (
+        <button
+          type="button"
+          className="viewer-field-region-toggle"
+          onClick={() => setShowFieldRegions((value) => !value)}
+          title="Show high-stress / high-displacement field-region clusters in 3D"
+          style={{
+            position: "absolute",
+            bottom: 8,
+            right: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: showFieldRegions ? "#7f1d1d" : "rgba(20,20,20,0.78)",
+            color: "#f5f5f5",
+            cursor: "pointer",
+          }}
+        >
+          {showFieldRegions ? "Hide" : "Show"} field regions
+        </button>
+      )}
+      {selectedCluster && (
+        <div
+          className="viewer-cluster-chip"
+          style={{
+            position: "absolute",
+            top: 8,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: "rgba(20,20,20,0.85)",
+            color: "#f5f5f5",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+          }}
+        >
+          <span>
+            <strong>{fieldRegions?.metric ?? "Cluster"}</strong>: {selectedCluster.magnitude.value.toPrecision(4)}{" "}
+            {selectedCluster.magnitude.unit}
+          </span>
+          {selectedCluster.feature_ref ? (
+            <code style={{ background: "rgba(255,255,255,0.1)", padding: "2px 4px", borderRadius: 4 }}>
+              @face:{selectedCluster.feature_ref}
+            </code>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setSelectedCluster(null)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#f5f5f5",
+              cursor: "pointer",
+              fontSize: 12,
+            }}
+            aria-label="Clear selected cluster"
+          >
+            ×
+          </button>
+        </div>
       )}
       <ViewerOverlays
         viewerState={viewerState}

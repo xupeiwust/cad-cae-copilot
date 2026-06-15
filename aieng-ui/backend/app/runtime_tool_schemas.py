@@ -970,6 +970,44 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": True,
     },
 
+    "cad.tolerance_stackup": {
+        "type": "object",
+        "required": ["contributors"],
+        "properties": {
+            "contributors": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["nominal", "plus", "minus"],
+                    "properties": {
+                        "name": {"type": "string", "description": "Human-readable label for this contributor (e.g. \"wall_a\", \"bolt_spacing\")."},
+                        "nominal": {"type": "number", "description": "Central dimension value."},
+                        "plus": {"type": "number", "description": "Upper-side tolerance (added to nominal)."},
+                        "minus": {"type": "number", "description": "Lower-side tolerance. May be positive (subtracted from nominal) or negative (interpreted as a magnitude)."},
+                        "distribution": {"type": "string", "enum": ["normal", "uniform"], "description": "Distribution assumption for RSS (default normal)."},
+                    },
+                    "additionalProperties": False,
+                },
+                "description": "Ordered 1D dimension chain. Each contributor contributes its nominal and tolerance to the stack-up.",
+            },
+            "confidence_level": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 0.9999,
+                "default": 0.95,
+                "description": "Confidence level for the RSS band (default 0.95).",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Read-only 1D tolerance stack-up: given an ordered chain of dimensions "
+            "with tolerances, compute worst-case (arithmetic) and statistical RSS "
+            "min/max. Reports controlling contributors and honesty notes about "
+            "independence and the +/- 3-sigma assumption. No geometry mutation, no solver."
+        ),
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),

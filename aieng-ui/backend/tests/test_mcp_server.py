@@ -81,6 +81,7 @@ def test_high_frequency_tools_carry_curated_schema(mcp_server) -> None:
             "aieng.guide",
             "aieng.convert",
             "aieng.find_projects_by_part",
+            "cad.tolerance_stackup",
             "list_materials",
             "get_material_details",
             "compare_materials",

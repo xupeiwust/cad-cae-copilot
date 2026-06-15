@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "analysis_type": "static",
+      "case_id": "tension_rod",
+      "reference_path": "tension_rod/reference.json"
+    },
+    {
+      "analysis_type": "static",
+      "case_id": "cantilever_end_load",
+      "reference_path": "cantilever_end_load/reference.json"
+    },
+    {
+      "analysis_type": "static",
+      "case_id": "cantilever_udl",
+      "reference_path": "cantilever_udl/reference.json"
+    },
+    {
+      "analysis_type": "static",
+      "case_id": "fixed_fixed_udl",
+      "reference_path": "fixed_fixed_udl/reference.json"
+    },
+    {
+      "analysis_type": "static",
+      "case_id": "fixed_fixed_center_load",
+      "reference_path": "fixed_fixed_center_load/reference.json"
+    }
+  ],
+  "corpus_id": "analytical_fea",
+  "description": "Closed-form / analytical reference cases for linear static and linear eigenvalue FEA.",
+  "layer": "fea_accuracy",
+  "standard": "NAFEMS-style / ASME V&V-10 inspired; not certification",
+  "title": "Analytical FEA benchmark corpus"
+}

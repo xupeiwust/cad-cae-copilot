@@ -3,6 +3,7 @@ import * as THREE from "three";
 
 import { assemblyAlertCounts } from "../app/geometryReport";
 import { useGeometryReport } from "../app/useGeometryReport";
+import { useMeshPreview } from "../app/useMeshPreview";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
 import type { SolverFieldDescriptor } from "../types";
@@ -15,6 +16,7 @@ import {
   useHighlightOverlay,
   useAssemblyCheckOverlay,
   useFieldMarkerOverlay,
+  useMeshPreviewOverlay,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -54,6 +56,7 @@ export function ModelViewer({
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
   const [showAssemblyCheck, setShowAssemblyCheck] = useState(false);
   const [showFieldMarkers, setShowFieldMarkers] = useState(true);
+  const [showMeshPreview, setShowMeshPreview] = useState(false);
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -67,12 +70,24 @@ export function ModelViewer({
     selectedId: projectId ?? null,
     geometryVersion: assetUrl ?? null,
   });
+  const { meshPreview } = useMeshPreview({
+    selectedId: projectId ?? null,
+    geometryVersion: assetUrl ?? null,
+  });
   const assemblyAlerts = assemblyAlertCounts(geometryReport);
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
+  const meshPreviewAvailable = Boolean(meshPreview && meshPreview.element_count && meshPreview.element_count > 0);
 
   // 1. Three.js scene lifecycle
-  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef } =
-    useThreeScene(hostRef);
+  const {
+    sceneRef,
+    cameraRef,
+    controlsRef,
+    highlightGroupRef,
+    assemblyGroupRef,
+    markerGroupRef,
+    meshPreviewGroupRef,
+  } = useThreeScene(hostRef);
 
   // 2. Asset loading
   useAssetLoader(
@@ -136,6 +151,15 @@ export function ModelViewer({
     objectReadyKey,
   );
 
+  // 8. FE mesh preview overlay
+  useMeshPreviewOverlay(
+    meshPreviewGroupRef,
+    showMeshPreview && meshPreviewAvailable,
+    meshPreview,
+    displayTransformRef,
+    objectReadyKey,
+  );
+
   return (
     <div className="viewer-canvas-shell">
       <div className="viewer-canvas" ref={hostRef} />
@@ -184,6 +208,61 @@ export function ModelViewer({
         >
           {showFieldMarkers ? "Hide" : "Show"} peak/min
         </button>
+      )}
+      {meshPreviewAvailable && (
+        <button
+          type="button"
+          className="viewer-mesh-preview-toggle"
+          onClick={() => setShowMeshPreview((value) => !value)}
+          title="Overlay the FE mesh surface wireframe and element count"
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: showMeshPreview ? "#0e7490" : "rgba(20,20,20,0.78)",
+            color: "#f5f5f5",
+            cursor: "pointer",
+          }}
+        >
+          {showMeshPreview ? "Hide" : "Show"} mesh
+        </button>
+      )}
+      {showMeshPreview && meshPreview && (
+        <div
+          className="viewer-mesh-preview-chip"
+          style={{
+            position: "absolute",
+            top: 44,
+            right: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: "rgba(20,20,20,0.85)",
+            color: "#f5f5f5",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+          }}
+        >
+          <span>
+            <strong>{meshPreview.element_count?.toLocaleString()}</strong> elements
+            {meshPreview.target_size_mm !== null && meshPreview.target_size_mm !== undefined
+              ? ` · ${meshPreview.target_size_mm} mm`
+              : null}
+          </span>
+          {meshPreview.quality?.coarse_flag ? (
+            <span style={{ color: "#facc15" }} title={meshPreview.quality.note ?? undefined}>
+              (coarse)
+            </span>
+          ) : null}
+        </div>
       )}
       <ViewerOverlays
         viewerState={viewerState}

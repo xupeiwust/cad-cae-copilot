@@ -341,6 +341,16 @@ single-part edit.
   around each part in a broken / missing left-right symmetry pair — the same
   `geometry_report` structural signals `cad.design_review` folds in, made visible
   in 3D. Read-only; the toggle only appears when there is at least one alert.
+- **FE mesh preview overlay (in-3D affordance).** The model viewer has a "Show
+  mesh" toggle ([`ModelViewer.tsx`](aieng-ui/frontend/src/components/ModelViewer.tsx),
+  fed by `useMeshPreview` → `GET /api/projects/{id}/mesh-preview`, drawn by
+  [`meshPreview.ts`](aieng-ui/frontend/src/components/viewer/meshPreview.ts)).
+  When a `simulation/mesh.inp` exists, toggling overlays the FE mesh as a
+  semi-transparent cyan wireframe (surface edges extracted from the solid
+  elements) on top of the smooth geometry and shows a small stats chip with the
+  element count and target mesh size. A coarse-mesh warning flag is shown when
+  the element count is very low. Read-only; the toggle only appears when a mesh
+  is present and degrades cleanly when `mesh.inp` is absent.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

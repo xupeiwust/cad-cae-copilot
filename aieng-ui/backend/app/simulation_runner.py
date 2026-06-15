@@ -172,6 +172,203 @@ def _parse_inp_nodes(inp_path: Path) -> dict[int, tuple[float, float, float]]:
     return nodes
 
 
+# ── Mesh preview: surface wireframe + element stats ───────────────────────────
+
+# Corner-node face indices for common CalculiX 3D solid elements.
+# Only the corner nodes are used for wireframe extraction; mid-side nodes
+# (quadratic elements) are ignored so the overlay stays lightweight.
+_ELEMENT_FACE_CORNERS: dict[str, tuple[tuple[int, ...], ...]] = {
+    "C3D4": ((0, 1, 2), (0, 3, 1), (1, 3, 2), (2, 3, 0)),
+    "C3D10": ((0, 1, 2), (0, 3, 1), (1, 3, 2), (2, 3, 0)),
+    "C3D8": ((0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)),
+    "C3D8R": ((0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)),
+    "C3D8I": ((0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)),
+    "C3D20": ((0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)),
+    "C3D6": ((0, 1, 2), (3, 5, 4), (0, 3, 4, 1), (1, 4, 5, 2), (2, 5, 3, 0)),
+    "C3D15": ((0, 1, 2), (3, 5, 4), (0, 3, 4, 1), (1, 4, 5, 2), (2, 5, 3, 0)),
+    "C3D5": ((0, 1, 2, 3), (0, 4, 1), (1, 4, 2), (2, 4, 3), (3, 4, 0)),
+    "C3D13": ((0, 1, 2, 3), (0, 4, 1), (1, 4, 2), (2, 4, 3), (3, 4, 0)),
+}
+
+
+def _element_corner_count(element_type: str) -> int | None:
+    """Return the number of corner nodes for a supported element type, or None."""
+    mapping: dict[str, int] = {
+        "C3D4": 4, "C3D10": 4,
+        "C3D8": 8, "C3D8R": 8, "C3D8I": 8, "C3D20": 8,
+        "C3D6": 6, "C3D15": 6,
+        "C3D5": 5, "C3D13": 5,
+    }
+    return mapping.get(element_type.upper())
+
+
+def _parse_inp_elements(inp_path: Path) -> list[dict[str, Any]]:
+    """Parse solid-element connectivity from a Gmsh-generated CalculiX .inp file.
+
+    Returns a list of ``{id, type, nodes}`` dicts.  Element types that are not
+    3D solids (e.g. *SHELL, *BEAM) are skipped.
+    """
+    elements: list[dict[str, Any]] = []
+    current_type: str | None = None
+    for line in inp_path.read_text(errors="replace").splitlines():
+        stripped = line.strip()
+        upper = stripped.upper()
+        if upper.startswith("*ELEMENT"):
+            current_type = None
+            for token in stripped.split(","):
+                key_value = token.strip().split("=", 1)
+                if len(key_value) == 2 and key_value[0].strip().upper() == "TYPE":
+                    current_type = key_value[1].strip().upper()
+            continue
+        if stripped.startswith("*"):
+            current_type = None
+            continue
+        if current_type and stripped and not stripped.startswith("**"):
+            parts = [p.strip() for p in stripped.split(",")]
+            if len(parts) < 2:
+                continue
+            corner_count = _element_corner_count(current_type)
+            if corner_count is None:
+                continue
+            try:
+                eid = int(parts[0])
+                # Take only the corner-node columns; drop mid-side nodes.
+                node_ids = [int(p) for p in parts[1 : 1 + corner_count]]
+                if len(node_ids) == corner_count:
+                    elements.append({"id": eid, "type": current_type, "nodes": node_ids})
+            except ValueError:
+                pass
+    return elements
+
+
+def _extract_surface_wireframe(
+    nodes: dict[int, tuple[float, float, float]],
+    elements: list[dict[str, Any]],
+) -> tuple[list[list[float]], list[list[int]]]:
+    """Extract the surface wireframe of a solid mesh.
+
+    Returns ``(coords, edges)`` where ``coords`` are ``[x, y, z]`` surface node
+    coordinates in model frame (mm) and ``edges`` are zero-based ``[i, j]`` pairs.
+    """
+    if not nodes or not elements:
+        return [], []
+
+    face_counts: dict[tuple[int, ...], int] = {}
+    for element in elements:
+        element_type = element["type"].upper()
+        face_defs = _ELEMENT_FACE_CORNERS.get(element_type)
+        if not face_defs:
+            continue
+        corner_ids = element["nodes"]
+        for face in face_defs:
+            face_node_ids = tuple(sorted(corner_ids[i] for i in face))
+            face_counts[face_node_ids] = face_counts.get(face_node_ids, 0) + 1
+
+    surface_faces = [face for face, count in face_counts.items() if count == 1]
+
+    edge_set: set[tuple[int, int]] = set()
+    for face in surface_faces:
+        for k in range(len(face)):
+            a, b = face[k], face[(k + 1) % len(face)]
+            if a == b:
+                continue
+            edge_set.add((a, b) if a < b else (b, a))
+
+    referenced_ids = {nid for edge in edge_set for nid in edge}
+    if not referenced_ids:
+        return [], []
+
+    compact_map: dict[int, int] = {}
+    coords: list[list[float]] = []
+    for nid in sorted(referenced_ids):
+        compact_map[nid] = len(coords)
+        x, y, z = nodes[nid]
+        coords.append([x, y, z])
+
+    edges = [[compact_map[a], compact_map[b]] for a, b in sorted(edge_set)]
+    return coords, edges
+
+
+def _read_mesh_target_size_mm(package_path: Path) -> float | None:
+    """Return the configured mesh target size from setup.yaml or results summary."""
+    setup_raw = _read_member(package_path, "simulation/setup.yaml")
+    if setup_raw:
+        try:
+            setup = yaml.safe_load(setup_raw)
+            size = (setup.get("mesh") or {}).get("target_size_mm")
+            if size is not None:
+                return float(size)
+        except Exception:
+            pass
+    results_raw = _read_member(package_path, "simulation/results_summary.json")
+    if results_raw:
+        try:
+            summary = json.loads(results_raw)
+            size = summary.get("mesh_size_mm")
+            if size is not None:
+                return float(size)
+        except Exception:
+            pass
+    return None
+
+
+def get_mesh_preview(package_path: Path) -> dict[str, Any]:
+    """Read ``simulation/mesh.inp`` and return surface wireframe + element stats.
+
+    The result is intentionally compact: a list of surface vertex coordinates and
+    zero-based edge index pairs.  When ``mesh.inp`` is absent the response is
+    ``{"available": False}`` so the UI can degrade cleanly.
+    """
+    package_path = Path(package_path)
+    inp_bytes = _read_member(package_path, "simulation/mesh.inp")
+    if not inp_bytes:
+        return {"available": False}
+
+    with tempfile.TemporaryDirectory(prefix="aieng_mesh_preview_") as tmp_str:
+        work = Path(tmp_str)
+        inp_path = work / "mesh.inp"
+        inp_path.write_bytes(inp_bytes)
+
+        nodes = _parse_inp_nodes(inp_path)
+        elements = _parse_inp_elements(inp_path)
+
+    if not elements:
+        return {
+            "available": True,
+            "node_count": len(nodes),
+            "element_count": 0,
+            "element_type": None,
+            "target_size_mm": _read_mesh_target_size_mm(package_path),
+            "nodes": [],
+            "edges": [],
+            "quality": {"coarse_flag": False},
+        }
+
+    coords, edges = _extract_surface_wireframe(nodes, elements)
+    element_type = elements[0]["type"]
+    node_count = len(nodes)
+    element_count = len(elements)
+    target_size_mm = _read_mesh_target_size_mm(package_path)
+
+    # Simple coarse-quality heuristic: fewer than 100 solid elements is treated
+    # as a sanity-check warning rather than a rigorous mesh-quality verdict.
+    coarse_flag = element_count < 100
+
+    return {
+        "available": True,
+        "node_count": node_count,
+        "element_count": element_count,
+        "element_type": element_type,
+        "target_size_mm": target_size_mm,
+        "nodes": coords,
+        "edges": edges,
+        "quality": {
+            "coarse_flag": coarse_flag,
+            "note": "Mesh appears coarse (< 100 elements)" if coarse_flag else None,
+        },
+    }
+
+
 # ── Face → node mapping ───────────────────────────────────────────────────────
 
 def _nodes_on_face(

@@ -13,7 +13,11 @@ from fastapi.testclient import TestClient
 
 from app.app_factory import create_app
 from app.config import Settings
-from app.project_io import compute_topology_hash, validate_cae_topology_references
+from app.project_io import (
+    compute_topology_hash,
+    rebind_cae_faces,
+    validate_cae_topology_references,
+)
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 
@@ -713,3 +717,201 @@ def test_run_simulation_stream_full_mock(tmp_path: Path) -> None:
     # Artifacts were written to the package, same as the sync path.
     with zipfile.ZipFile(pkg_path, "r") as zf:
         assert "simulation/results_summary.json" in zf.namelist()
+
+
+# ── adaptive face rebind tests ────────────────────────────────────────────────
+
+def _build_package_from_topology(
+    pkg_path: Path,
+    topology: dict[str, Any],
+    *,
+    cae_mapping: dict[str, Any] | None = None,
+    setup: dict[str, Any] | None = None,
+    include_step: bool = True,
+) -> None:
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    mapping = cae_mapping if cae_mapping is not None else dict(_CAE_MAPPING)
+    setup_doc = setup if setup is not None else dict(_SETUP_YAML)
+    with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"schema_version": "0.1"}))
+        zf.writestr("geometry/topology_map.json", json.dumps(topology))
+        zf.writestr("simulation/setup.yaml", yaml.dump(setup_doc))
+        zf.writestr("simulation/cae_mapping.json", json.dumps(mapping))
+        if include_step:
+            zf.writestr("geometry/generated.step", _FAKE_STEP)
+
+
+def test_rebind_cae_faces_maps_planes_after_geometry_change(tmp_path: Path) -> None:
+    old_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_load", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 5000.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 100, 50, 10]},
+            {"id": "face_hole", "type": "face", "surface_type": "cylinder", "body_id": "body_1",
+             "radius": 4.0, "normal": [0, 0, 1], "bounding_box": [8, 8, 0, 12, 12, 10]},
+        ]
+    }
+    # Same bracket scaled in X; face IDs renamed.
+    new_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 120, 50, 10]},
+            {"id": "face_load_v2", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 6000.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 120, 50, 10]},
+            {"id": "face_hole_v2", "type": "face", "surface_type": "cylinder", "body_id": "body_1",
+             "radius": 4.0, "normal": [0, 0, 1], "bounding_box": [8, 8, 0, 12, 12, 10]},
+        ]
+    }
+    old_mapping = {
+        "mappings": [
+            {"cae_entity": "LOAD", "maps_to": {"feature_id": "load"}, "face_ids": ["face_load"]},
+            {"cae_entity": "FIX", "maps_to": {"feature_id": "hole"}, "face_ids": ["face_hole"]},
+        ]
+    }
+    report = rebind_cae_faces(old_mapping, old_topology, new_topology)
+    assert report["all_resolved"] is True
+    assert not report["unresolved_face_ids"]
+    new_mapping = report["cae_mapping"]
+    assert "face_load_v2" in new_mapping["mappings"][0]["face_ids"]
+    assert "face_hole_v2" in new_mapping["mappings"][1]["face_ids"]
+    assert new_mapping["topology_hash"] == compute_topology_hash(new_topology)
+
+
+def test_rebind_cae_faces_rejects_ambiguous_match() -> None:
+    old_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_old", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 100.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 10, 10, 10]},
+        ]
+    }
+    new_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_a", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 100.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 10, 10, 10]},
+            {"id": "face_b", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 100.0, "normal": [0, 0, 1], "bounding_box": [0.1, 0.1, 10, 10.1, 10.1, 10]},
+        ]
+    }
+    old_mapping = {"mappings": [{"cae_entity": "X", "maps_to": {"feature_id": "x"}, "face_ids": ["face_old"]}]}
+    report = rebind_cae_faces(old_mapping, old_topology, new_topology)
+    assert report["all_resolved"] is False
+    assert "face_old" in report["ambiguous_face_ids"]
+
+
+def test_rebind_cae_faces_rejects_surface_type_change() -> None:
+    old_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 10, 10, 10]},
+            {"id": "face_old", "type": "face", "surface_type": "cylinder", "body_id": "body_1",
+             "radius": 4.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 0, 10, 10, 10]},
+        ]
+    }
+    new_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 10, 10, 10]},
+            {"id": "face_new", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 100.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 0, 10, 10, 0]},
+        ]
+    }
+    old_mapping = {"mappings": [{"cae_entity": "X", "maps_to": {"feature_id": "x"}, "face_ids": ["face_old"]}]}
+    report = rebind_cae_faces(old_mapping, old_topology, new_topology)
+    assert report["all_resolved"] is False
+    assert "face_old" in report["unresolved_face_ids"]
+
+
+def test_solve_package_static_rebinds_faces_when_stale(tmp_path: Path) -> None:
+    from app.simulation_runner import solve_package_static, check_simulation_tools
+
+    # Baseline package with original face IDs.
+    baseline_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_load", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 5000.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 100, 50, 10]},
+            {"id": "face_hole", "type": "face", "surface_type": "cylinder", "body_id": "body_1",
+             "radius": 4.0, "normal": [0, 0, 1], "bounding_box": [8, 8, 0, 12, 12, 10]},
+        ]
+    }
+    baseline_mapping = {
+        "schema_version": "0.1",
+        "ai_generated": True,
+        "mappings": [
+            {"cae_entity": "FEAT_HOLE_001", "maps_to": {"feature_id": "feat_hole_001", "role": "fixed_support"},
+             "face_ids": ["face_hole"]},
+            {"cae_entity": "FEAT_BASE_001_L", "maps_to": {"feature_id": "feat_base_001", "role": "load_application"},
+             "face_ids": ["face_load"]},
+        ],
+    }
+    baseline_pkg = tmp_path / "baseline.aieng"
+    _build_package_from_topology(baseline_pkg, baseline_topology, cae_mapping=baseline_mapping)
+
+    # Variant package: same geometry, renamed face IDs.
+    variant_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_load_v2", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 5000.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 100, 50, 10]},
+            {"id": "face_hole_v2", "type": "face", "surface_type": "cylinder", "body_id": "body_1",
+             "radius": 4.0, "normal": [0, 0, 1], "bounding_box": [8, 8, 0, 12, 12, 10]},
+        ]
+    }
+    variant_pkg = tmp_path / "variant.aieng"
+    _build_package_from_topology(variant_pkg, variant_topology, cae_mapping=baseline_mapping)
+
+    with patch("app.simulation_runner.check_simulation_tools", return_value={"ready": True, "missing": []}), \
+         patch("app.simulation_runner._mesh_with_gmsh", side_effect=_fake_mesh), \
+         patch("app.simulation_runner._run_calculix", side_effect=_fake_calculix), \
+         patch("app.simulation_runner._extract_metrics", return_value=_MOCK_FRD_METRICS):
+        result = solve_package_static(
+            variant_pkg,
+            rebind_faces=True,
+            baseline_package_path=baseline_pkg,
+        )
+
+    assert result["solver_executed"] is True, result
+    assert result["status"] == "success"
+
+
+def test_solve_package_static_refuses_rebind_when_ambiguous(tmp_path: Path) -> None:
+    from app.simulation_runner import solve_package_static
+
+    baseline_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_old", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 100.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 10, 10, 10]},
+        ]
+    }
+    baseline_mapping = {
+        "schema_version": "0.1",
+        "ai_generated": True,
+        "mappings": [
+            {"cae_entity": "X", "maps_to": {"feature_id": "x"}, "face_ids": ["face_old"]},
+        ],
+    }
+    baseline_pkg = tmp_path / "baseline.aieng"
+    _build_package_from_topology(baseline_pkg, baseline_topology, cae_mapping=baseline_mapping)
+
+    variant_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_a", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 100.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 10, 10, 10]},
+            {"id": "face_b", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 100.0, "normal": [0, 0, 1], "bounding_box": [0.1, 0.1, 10, 10.1, 10.1, 10]},
+        ]
+    }
+    variant_pkg = tmp_path / "variant.aieng"
+    _build_package_from_topology(variant_pkg, variant_topology, cae_mapping=baseline_mapping)
+
+    with patch("app.simulation_runner.check_simulation_tools", return_value={"ready": True, "missing": []}):
+        result = solve_package_static(
+            variant_pkg,
+            rebind_faces=True,
+            baseline_package_path=baseline_pkg,
+        )
+
+    assert result["solver_executed"] is False
+    assert result["status"] == "stale_topology_references"
+    assert "rebind_report" in result

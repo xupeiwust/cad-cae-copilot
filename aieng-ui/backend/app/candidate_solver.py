@@ -89,7 +89,16 @@ def solve_candidate_geometry(
         if isinstance(recompiled, dict) and recompiled.get("status") not in (None, "ok", "success"):
             warnings.append(f"recompile status: {recompiled.get('status')}")
 
-        solve = solve_package_static(tmp_pkg, mesh_size_mm=mesh_size_mm, timeout=timeout)
+        # Rebind baseline CAE face references to the regenerated candidate topology.
+        # The baseline package is never mutated; rebind uses it only as the source of
+        # the original topology + mapping.
+        solve = solve_package_static(
+            tmp_pkg,
+            mesh_size_mm=mesh_size_mm,
+            timeout=timeout,
+            rebind_faces=True,
+            baseline_package_path=package_path,
+        )
         warnings.extend(solve.get("warnings") or [])
         if solve.get("solver_executed") and isinstance(solve.get("computed_metrics"), dict):
             return {

@@ -21,7 +21,7 @@ from typing import Any
 import yaml
 
 from .config import ensure_aieng_on_path
-from .project_io import validate_cae_topology_references
+from .project_io import rebind_cae_faces, validate_cae_topology_references
 from fastapi import HTTPException
 
 
@@ -525,6 +525,8 @@ def solve_package_static(
     *,
     mesh_size_mm: float | None = None,
     timeout: int = 180,
+    rebind_faces: bool = False,
+    baseline_package_path: Path | str | None = None,
 ) -> dict[str, Any]:
     """Mesh + solve a package's CURRENT static geometry; return scalar metrics.
 
@@ -533,6 +535,15 @@ def solve_package_static(
     each dimension variant. Reuses the same proven leaf helpers: extract STEP →
     Gmsh mesh → NSETs from topology + cae_mapping → CalculiX deck → solve → parse
     FRD. Never mutates the package.
+
+    Args:
+        rebind_faces: If True and the package's CAE face references are stale,
+            attempt a geometric rebind against ``baseline_package_path`` before
+            refusing the solve. The baseline package is never mutated; a throwaway
+            rebound copy is used internally.
+        baseline_package_path: Package containing the original topology the CAE
+            mapping was bound to. Required when ``rebind_faces`` is True and the
+            current package's face references do not match its own topology.
 
     Returns ``{solver_executed, status, metrics, warnings, [error]}`` where
     ``metrics`` carries scalar ``max_von_mises_stress`` / ``max_displacement``.
@@ -564,12 +575,53 @@ def solve_package_static(
     topology: dict[str, Any] = json.loads(topo_raw) if topo_raw else {}
 
     # Stale face refs would silently drop loads/BCs → refuse rather than mis-solve.
+    # Optionally try a geometric rebind first (e.g. parametric sizing sweep / design
+    # study candidate where the baseline CAE mapping is carried onto a regenerated
+    # topology). The baseline package is never mutated; rebound data lives in memory.
+    rebind_report: dict[str, Any] | None = None
     topo_val = validate_cae_topology_references(package_path)
     if not topo_val.get("valid", True):
-        return {
-            "solver_executed": False, "status": "stale_topology_references", "metrics": {},
-            "warnings": [], "error": "CAE face references do not match current topology",
-        }
+        if rebind_faces and baseline_package_path is not None:
+            baseline_pkg = Path(baseline_package_path)
+            old_topo_raw = _read_member(baseline_pkg, "geometry/topology_map.json")
+            old_cae_raw = _read_member(baseline_pkg, "simulation/cae_mapping.json")
+            if old_topo_raw and old_cae_raw:
+                old_topology = json.loads(old_topo_raw)
+                old_cae_mapping = json.loads(old_cae_raw)
+                rebind_report = rebind_cae_faces(old_cae_mapping, old_topology, topology)
+                if rebind_report.get("all_resolved"):
+                    cae_mapping = rebind_report["cae_mapping"]
+                    # Skip package-level validation; rebind all_resolved guarantees the
+                    # new face_ids exist in ``topology``.
+                    topo_val = {"valid": True}
+                else:
+                    return {
+                        "solver_executed": False,
+                        "status": "stale_topology_references",
+                        "metrics": {},
+                        "warnings": [],
+                        "error": (
+                            "CAE face references do not match current topology "
+                            "and automatic rebind failed or was ambiguous."
+                        ),
+                        "rebind_report": rebind_report,
+                    }
+            else:
+                return {
+                    "solver_executed": False,
+                    "status": "stale_topology_references",
+                    "metrics": {},
+                    "warnings": [],
+                    "error": (
+                        "CAE face references are stale and baseline topology/mapping "
+                        "was not provided for rebind."
+                    ),
+                }
+        else:
+            return {
+                "solver_executed": False, "status": "stale_topology_references", "metrics": {},
+                "warnings": [], "error": "CAE face references do not match current topology",
+            }
 
     size = float(mesh_size_mm or (setup.get("mesh") or {}).get("target_size_mm") or 2.5)
     with tempfile.TemporaryDirectory(prefix="aieng_sweep_solve_") as tmp_str:

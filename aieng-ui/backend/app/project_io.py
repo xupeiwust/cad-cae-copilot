@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import math
 import re
 import shutil
 import tempfile
@@ -1134,6 +1135,343 @@ def validate_cae_topology_references(package_path: str | Path) -> dict[str, Any]
         and not missing_face_ids
     )
     return result
+
+
+# ── Adaptive CAE face rebind helpers ──────────────────────────────────────────
+
+def _face_centroid(face: dict[str, Any]) -> tuple[float, float, float]:
+    """Return the centroid of a face entity from its bounding box."""
+    bbox = face.get("bounding_box", [])
+    if len(bbox) >= 6:
+        return (
+            (float(bbox[0]) + float(bbox[3])) / 2.0,
+            (float(bbox[1]) + float(bbox[4])) / 2.0,
+            (float(bbox[2]) + float(bbox[5])) / 2.0,
+        )
+    return (0.0, 0.0, 0.0)
+
+
+def _bbox_diagonal(bbox: list[float]) -> float:
+    if len(bbox) >= 6:
+        return math.sqrt(
+            (bbox[3] - bbox[0]) ** 2
+            + (bbox[4] - bbox[1]) ** 2
+            + (bbox[5] - bbox[2]) ** 2
+        )
+    return 0.0
+
+
+def _normalize(v: tuple[float, float, float]) -> tuple[float, float, float] | None:
+    x, y, z = v
+    mag = math.sqrt(x * x + y * y + z * z)
+    if mag < 1e-9:
+        return None
+    return (x / mag, y / mag, z / mag)
+
+
+def _dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _distance(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
+
+
+def _compute_body_id_map(
+    old_topology: dict[str, Any], new_topology: dict[str, Any]
+) -> dict[str, str]:
+    """Map old solid body IDs to new solid body IDs by name, then bbox IoU."""
+    old_solids = [
+        e for e in (old_topology.get("entities") or [])
+        if isinstance(e, dict) and e.get("type") == "solid" and "id" in e
+    ]
+    new_solids = [
+        e for e in (new_topology.get("entities") or [])
+        if isinstance(e, dict) and e.get("type") == "solid" and "id" in e
+    ]
+    if not old_solids or not new_solids:
+        return {}
+
+    # First pass: unique name match.
+    old_by_name: dict[str, dict[str, Any]] = {}
+    for s in old_solids:
+        name = s.get("name") or s["id"]
+        old_by_name.setdefault(name, s)
+    new_by_name: dict[str, list[dict[str, Any]]] = {}
+    for s in new_solids:
+        name = s.get("name") or s["id"]
+        new_by_name.setdefault(name, []).append(s)
+
+    mapping: dict[str, str] = {}
+    for old in old_solids:
+        name = old.get("name") or old["id"]
+        if name in new_by_name and len(new_by_name[name]) == 1:
+            mapping[old["id"]] = new_by_name[name][0]["id"]
+
+    # Fallback: bbox volume overlap for any unmatched old bodies.
+    def _volume(bb: list[float]) -> float:
+        if len(bb) < 6:
+            return 0.0
+        return max(0.0, bb[3] - bb[0]) * max(0.0, bb[4] - bb[1]) * max(0.0, bb[5] - bb[2])
+
+    def _overlap(a: list[float], b: list[float]) -> float:
+        if len(a) < 6 or len(b) < 6:
+            return 0.0
+        dx = max(0.0, min(a[3], b[3]) - max(a[0], b[0]))
+        dy = max(0.0, min(a[4], b[4]) - max(a[1], b[1]))
+        dz = max(0.0, min(a[5], b[5]) - max(a[2], b[2]))
+        return dx * dy * dz
+
+    for old in old_solids:
+        if old["id"] in mapping:
+            continue
+        old_bb = old.get("bounding_box", [])
+        best_iou = 0.0
+        best_new_id: str | None = None
+        for new in new_solids:
+            if new["id"] in mapping.values():
+                continue
+            new_bb = new.get("bounding_box", [])
+            inter = _overlap(old_bb, new_bb)
+            union = _volume(old_bb) + _volume(new_bb) - inter
+            iou = inter / union if union > 0 else 0.0
+            if iou > best_iou:
+                best_iou = iou
+                best_new_id = new["id"]
+        if best_new_id and best_iou > 0.1:
+            mapping[old["id"]] = best_new_id
+    return mapping
+
+
+def _score_face_match(
+    old_face: dict[str, Any],
+    new_face: dict[str, Any],
+    scale: float,
+) -> float:
+    """Return a similarity score in [0, 1] for two face entities.
+
+    Higher is better. ``scale`` is a characteristic body length used to normalize
+    centroid distances.
+    """
+    old_type = old_face.get("surface_type", "unknown")
+    new_type = new_face.get("surface_type", "unknown")
+    if old_type != new_type:
+        return 0.0
+
+    old_area = float(old_face.get("area") or 0.0)
+    new_area = float(new_face.get("area") or 0.0)
+    old_centroid = _face_centroid(old_face)
+    new_centroid = _face_centroid(new_face)
+    dist = _distance(old_centroid, new_centroid)
+    centroid_score = max(0.0, 1.0 - dist / max(scale, 1e-6))
+
+    if old_type == "plane":
+        old_normal = _normalize(tuple(old_face.get("normal", [0, 0, 1])))
+        new_normal = _normalize(tuple(new_face.get("normal", [0, 0, 1])))
+        if old_normal is None or new_normal is None:
+            normal_score = 0.0
+        else:
+            normal_score = abs(_dot(old_normal, new_normal))
+        return 0.5 * normal_score + 0.5 * centroid_score
+
+    if old_type == "cylinder":
+        old_axis = _normalize(tuple(old_face.get("normal", [0, 0, 1])))
+        new_axis = _normalize(tuple(new_face.get("normal", [0, 0, 1])))
+        axis_score = abs(_dot(old_axis or (0, 0, 1), new_axis or (0, 0, 1)))
+        old_r = float(old_face.get("radius") or 0.0)
+        new_r = float(new_face.get("radius") or 0.0)
+        if old_r <= 0 or new_r <= 0:
+            radius_score = 0.0
+        else:
+            radius_score = max(0.0, 1.0 - abs(old_r - new_r) / max(old_r, new_r))
+        return 0.45 * axis_score + 0.35 * radius_score + 0.2 * centroid_score
+
+    if old_type == "sphere":
+        old_r = float(old_face.get("radius") or 0.0)
+        new_r = float(new_face.get("radius") or 0.0)
+        if old_r <= 0 or new_r <= 0:
+            radius_score = 0.0
+        else:
+            radius_score = max(0.0, 1.0 - abs(old_r - new_r) / max(old_r, new_r))
+        return 0.6 * radius_score + 0.4 * centroid_score
+
+    # Generic fallback: area + centroid.
+    if old_area > 0 and new_area > 0:
+        area_score = max(0.0, 1.0 - abs(old_area - new_area) / max(old_area, new_area))
+    else:
+        area_score = 0.0
+    return 0.5 * area_score + 0.5 * centroid_score
+
+
+def _match_face(
+    old_face: dict[str, Any],
+    candidate_faces: list[dict[str, Any]],
+    scale: float,
+    threshold: float,
+) -> tuple[dict[str, Any] | None, float, bool]:
+    """Pick the best new face for an old face and report ambiguity.
+
+    Returns ``(new_face_or_none, best_score, is_ambiguous)``.
+    """
+    if not candidate_faces:
+        return None, 0.0, False
+
+    scored = [
+        (face, _score_face_match(old_face, face, scale))
+        for face in candidate_faces
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    best_face, best_score = scored[0]
+    second_score = scored[1][1] if len(scored) > 1 else 0.0
+
+    if best_score < threshold:
+        return None, best_score, False
+    # Ambiguous if the runner-up is nearly as good.
+    ambiguous = (best_score - second_score) < 0.08 and second_score >= threshold * 0.9
+    return best_face, best_score, ambiguous
+
+
+def rebind_cae_faces(
+    old_cae_mapping: dict[str, Any],
+    old_topology: dict[str, Any],
+    new_topology: dict[str, Any],
+    *,
+    default_threshold: float = 0.75,
+    thresholds: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Rebind face-scoped CAE references from an old topology to a new topology.
+
+    Matches each referenced old face to the geometrically closest new face using
+    surface type, centroid, normal/axis, radius, and area. Confidence is scored
+    per match; low-confidence or ambiguous matches stay unresolved so callers can
+    refuse the solve honestly instead of silently mis-binding loads/BCs.
+
+    Args:
+        old_cae_mapping: the baseline ``cae_mapping.json`` document (contains
+            ``mappings`` with ``face_ids``).
+        old_topology: the baseline ``topology_map.json`` the mapping was bound to.
+        new_topology: the regenerated ``topology_map.json`` to rebind against.
+        default_threshold: minimum score for a match to be accepted.
+        thresholds: per-surface-type overrides, e.g. ``{"plane": 0.85}``.
+
+    Returns:
+        A dict with:
+          - ``cae_mapping``: a deep copy of ``old_cae_mapping`` with ``face_ids``
+            rewritten to the new topology and ``topology_hash`` updated.
+          - ``rebinds``: list of ``{old_face_id, new_face_id, score, confidence}``.
+          - ``unresolved_face_ids``: face IDs that could not be matched.
+          - ``ambiguous_face_ids``: face IDs with a close runner-up.
+          - ``all_resolved``: True when every referenced face was rebound.
+          - ``topology_hash``: hash of ``new_topology`` written into the mapping.
+    """
+    thresholds = dict(thresholds) if thresholds else {}
+    thresholds.setdefault("plane", 0.85)
+    thresholds.setdefault("cylinder", 0.80)
+    thresholds.setdefault("sphere", 0.80)
+
+    body_map = _compute_body_id_map(old_topology, new_topology)
+
+    old_faces = {
+        e["id"]: e
+        for e in (old_topology.get("entities") or [])
+        if isinstance(e, dict) and e.get("type") == "face" and "id" in e
+    }
+    new_faces_list = [
+        e
+        for e in (new_topology.get("entities") or [])
+        if isinstance(e, dict) and e.get("type") == "face" and "id" in e
+    ]
+
+    # Characteristic scale for centroid-distance normalization.
+    solids = [e for e in (new_topology.get("entities") or []) if isinstance(e, dict) and e.get("type") == "solid"]
+    scale = max(
+        (_bbox_diagonal(s.get("bounding_box", [])) for s in solids),
+        default=1.0,
+    ) or 1.0
+
+    new_cae_mapping = json.loads(json.dumps(old_cae_mapping))
+    new_cae_mapping["topology_hash"] = compute_topology_hash(new_topology)
+    new_cae_mapping["rebind_metadata"] = {
+        "rebound": True,
+        "rebind_method": "geometric_nearest_face",
+        "body_id_map": body_map,
+    }
+
+    rebinds: list[dict[str, Any]] = []
+    unresolved: set[str] = set()
+    ambiguous: set[str] = set()
+    old_to_new: dict[str, str] = {}
+
+    mappings = new_cae_mapping.get("mappings") if isinstance(new_cae_mapping.get("mappings"), list) else []
+
+    # Collect unique referenced old face IDs across all mappings.
+    referenced_old_ids: set[str] = set()
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        for fid in mapping.get("face_ids") or []:
+            referenced_old_ids.add(str(fid))
+
+    for old_id in referenced_old_ids:
+        old_face = old_faces.get(old_id)
+        if old_face is None:
+            unresolved.add(old_id)
+            continue
+
+        surface_type = old_face.get("surface_type", "unknown")
+        threshold = thresholds.get(surface_type, default_threshold)
+
+        # Restrict candidates to the matching body when we have a body map.
+        old_body = old_face.get("body_id")
+        new_body = body_map.get(old_body) if old_body else None
+        if new_body:
+            candidates = [f for f in new_faces_list if f.get("body_id") == new_body]
+        else:
+            candidates = new_faces_list
+
+        best, score, is_ambiguous = _match_face(old_face, candidates, scale, threshold)
+        if best is None:
+            unresolved.add(old_id)
+            continue
+        if is_ambiguous:
+            ambiguous.add(old_id)
+        new_id = best["id"]
+        old_to_new[old_id] = new_id
+        level = "high" if score >= 0.92 else ("medium" if score >= threshold else "low")
+        rebinds.append({
+            "old_face_id": old_id,
+            "new_face_id": new_id,
+            "score": round(score, 4),
+            "confidence": level,
+            "surface_type": surface_type,
+        })
+
+    # Rewrite face_ids in mappings.
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            continue
+        new_face_ids: list[str] = []
+        for fid in mapping.get("face_ids") or []:
+            fid_str = str(fid)
+            if fid_str in unresolved or fid_str in ambiguous:
+                # Keep the old ID so downstream diagnostics are clear.
+                new_face_ids.append(fid_str)
+            else:
+                new_face_ids.append(old_to_new.get(fid_str, fid_str))
+        mapping["face_ids"] = new_face_ids
+
+    new_cae_mapping["rebind_metadata"]["rebinds"] = rebinds
+    new_cae_mapping["rebind_metadata"]["unresolved_face_ids"] = sorted(unresolved)
+    new_cae_mapping["rebind_metadata"]["ambiguous_face_ids"] = sorted(ambiguous)
+
+    return {
+        "cae_mapping": new_cae_mapping,
+        "topology_hash": compute_topology_hash(new_topology),
+        "rebinds": rebinds,
+        "unresolved_face_ids": sorted(unresolved),
+        "ambiguous_face_ids": sorted(ambiguous),
+        "all_resolved": not unresolved and not ambiguous,
+    }
 
 
 def _feature_list_from_graph(feature_graph: dict[str, Any]) -> list[dict[str, Any]]:

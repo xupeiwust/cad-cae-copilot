@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
 import type { SolverFieldDescriptor } from "../../types";
+import { formatFieldValue, resultFieldLabel } from "./resultFields";
 import { modelToDisplayVec, type DisplayTransform } from "./coordinateFrames";
 import { findFieldExtrema } from "./fieldExtrema";
 
@@ -24,6 +25,41 @@ function marker(center: THREE.Vector3, radius: number, color: number): THREE.Mes
   mesh.position.copy(center);
   mesh.renderOrder = 1001; // draw over the model so the peak is never hidden
   return mesh;
+}
+
+function markerLabel(text: string, color: string, scale = 1): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffffff }));
+  }
+  const fontSize = 14;
+  ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
+  const metrics = ctx.measureText(text);
+  const padding = 8;
+  canvas.width = Math.ceil(metrics.width + padding * 2);
+  canvas.height = Math.ceil(fontSize * 1.4 + padding);
+
+  // Redraw after resize.
+  ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = color;
+  ctx.fillText(text, padding, canvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    opacity: 0.92,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.renderOrder = 1002;
+  // Scale sprite so text is a few world units wide.
+  const aspect = canvas.width / canvas.height;
+  sprite.scale.set(0.25 * aspect * scale, 0.25 * scale, 1);
+  return sprite;
 }
 
 /**
@@ -52,9 +88,22 @@ export function buildFieldMarkerGroup(
 
   const radius = coordsSpan(descriptor.node_coords) * 0.025;
   const toDisplay = (c: [number, number, number]) => modelToDisplayVec(c[0], c[1], c[2], transform);
-  group.add(marker(toDisplay(max.coord), radius, MAX_COLOR));
+
+  const fieldLabel = resultFieldLabel(descriptor.field_name);
+  const unit = descriptor.unit ?? "";
+
+  const maxPos = toDisplay(max.coord);
+  group.add(marker(maxPos, radius, MAX_COLOR));
+  const maxLabel = markerLabel(`${fieldLabel} max: ${formatFieldValue(max.value, unit)}`, "#fca5a5");
+  maxLabel.position.copy(maxPos).add(new THREE.Vector3(0, radius * 2.5, 0));
+  group.add(maxLabel);
+
   if (min && min.index !== max.index) {
-    group.add(marker(toDisplay(min.coord), radius, MIN_COLOR));
+    const minPos = toDisplay(min.coord);
+    group.add(marker(minPos, radius, MIN_COLOR));
+    const minLabel = markerLabel(`${fieldLabel} min: ${formatFieldValue(min.value, unit)}`, "#93c5fd");
+    minLabel.position.copy(minPos).add(new THREE.Vector3(0, radius * 2.5, 0));
+    group.add(minLabel);
   }
   return group;
 }
@@ -66,6 +115,11 @@ export function disposeFieldMarkerGroup(group: THREE.Group): void {
       const material = obj.material;
       if (Array.isArray(material)) material.forEach((m) => m.dispose());
       else material.dispose();
+    }
+    if (obj instanceof THREE.Sprite) {
+      const material = obj.material;
+      if (material.map) material.map.dispose();
+      material.dispose();
     }
   });
 }

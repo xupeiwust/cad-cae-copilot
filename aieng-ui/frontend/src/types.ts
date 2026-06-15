@@ -1,4 +1,4 @@
-﻿export type CadRecommendationProposal = {
+export type CadRecommendationProposal = {
   proposal_id: string;
   rank?: number;
   feature_ref: string;
@@ -846,6 +846,15 @@ export type SolverFieldDescriptor = {
   node_coords?: [number, number, number][] | null;
   warnings?: string[] | null;
   bbox_status?: "aligned" | "suspicious" | null;
+};
+
+export type FieldProbe = {
+  value: number;
+  unit: string | null;
+  coord: [number, number, number];
+  pointer: string | null;
+  screenX: number;
+  screenY: number;
 };
 
 export type RuntimeEventType =

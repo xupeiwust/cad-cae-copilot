@@ -13,7 +13,7 @@ vi.mock("../fieldColors", () => ({
 
 beforeEach(async () => {
   const { applyFieldColors } = await import("../fieldColors");
-  applyFieldColors.mockClear();
+  vi.mocked(applyFieldColors).mockClear();
 });
 
 afterEach(cleanup);

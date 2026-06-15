@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app import aieng_bridge
 
 
@@ -704,9 +706,9 @@ def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
             "sxy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
             "sxz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
             "syz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
-            "s1": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
-            "s2": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
-            "s3": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "s1": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "s2": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "s3": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
             "tresca": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
             "max_shear": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
             "disp_magnitude": {"min_value": 0.0, "max_value": 5.0, "unit": "mm"},

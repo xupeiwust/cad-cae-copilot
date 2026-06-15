@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -27,9 +29,9 @@ _FIELD_SYNTHETIC_DEFAULTS: dict[str, dict[str, Any]] = {
     "sxz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
     "syz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
     # Principal stresses and derived scalar stress measures
-    "s1": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
-    "s2": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
-    "s3": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "s1": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "s2": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "s3": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
     "tresca": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
     "max_shear": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
     # Displacement magnitude and legacy alias
@@ -42,6 +44,41 @@ _FIELD_SYNTHETIC_DEFAULTS: dict[str, dict[str, Any]] = {
     # Safety factor (yield / von Mises)
     "safety_factor": {"min_value": 0.0, "max_value": 10.0, "unit": "", "colormap": "thermal"},
 }
+
+
+def _field_credibility(source: str, aieng_root: Path) -> dict[str, Any]:
+    """Return the V&V-40 credibility stamp for a field descriptor response.
+
+    FRD-backed fields are stamped as ``executed_solver_result``; synthetic
+    fallbacks are downgraded to ``unverified`` so they cannot be mistaken for
+    solver evidence.
+    """
+    aieng_src = aieng_root / "src"
+    injected = False
+    if str(aieng_src) not in sys.path:
+        sys.path.insert(0, str(aieng_src))
+        injected = True
+    try:
+        from aieng.converters.credibility import classify_credibility  # type: ignore[import]
+
+        if source == "frd":
+            return classify_credibility(
+                "solver",
+                solver_executed=True,
+                is_solver_evidence=True,
+                notes="Per-node FRD data extracted from an executed solver run.",
+            )
+        return classify_credibility(
+            "solver",
+            solver_executed=False,
+            notes="Synthetic fallback; no solver result available for this field.",
+        )
+    finally:
+        if injected:
+            try:
+                sys.path.remove(str(aieng_src))
+            except ValueError:
+                pass
 
 
 def _sync_main_symbols() -> None:
@@ -87,6 +124,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
                 "values": frd_data["values"],
                 "node_coords": frd_data["node_coords"],
                 "warnings": frd_data["warnings"],
+                "credibility": _field_credibility("frd", active_settings.aieng_root),
             }
 
         # Fallback to synthetic
@@ -100,6 +138,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
             "unit": meta["unit"],
             "colormap": meta["colormap"],
             "source": "synthetic_mock",
+            "credibility": _field_credibility("synthetic", active_settings.aieng_root),
         }
 
     @app.get("/api/projects/{project_id}/cae-result-fields")

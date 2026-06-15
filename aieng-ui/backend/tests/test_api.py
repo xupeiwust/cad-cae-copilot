@@ -374,6 +374,8 @@ def test_field_descriptor_all_selectable_fields_have_metadata(tmp_path: Path) ->
         assert data["source"] == "synthetic_mock", name
         assert data["unit"] == meta["unit"], name
         assert data["colormap"] == meta["colormap"], name
+        assert data["credibility"]["tier"] == "unverified", name
+        assert data["credibility"]["rank"] == 0, name
 
 
 def _make_selectable_fields_package(pkg_path: Path) -> None:

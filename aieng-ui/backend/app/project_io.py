@@ -476,53 +476,59 @@ _VALID_PROPOSED_STATUSES: frozenset[str] = CLAIM_PROPOSAL_STATUSES
 # (imported above via aieng.package_manifest and aieng.evidence_resolver).
 
 # Supported CAE result fields for the compact field-summary endpoints.
-# Maps public field_name → {unit, metric_key (in computed_metrics.json), evidence_role}.
-# Includes both canonical names (used by the frontend field picker) and the
-# legacy aliases "stress"/"displacement" for backward compatibility.
-_CAE_RESULT_FIELDS: dict[str, dict[str, str]] = {
+# Maps public field_name → {unit, metric_key (in computed_metrics.json),
+# evidence_role, extrema}. Includes both canonical names (used by the frontend
+# field picker) and the legacy aliases "stress"/"displacement" for backward
+# compatibility.
+_CAE_RESULT_FIELDS: dict[str, dict[str, Any]] = {
     # Legacy aliases
     "displacement": {
         "unit": "mm",
         "metric_key": "max_displacement",
         "evidence_role": "displacement_extrema",
+        "extrema": "maximum",
     },
     "stress": {
         "unit": "MPa",
         "metric_key": "max_von_mises_stress",
         "evidence_role": "stress_extrema",
+        "extrema": "maximum",
     },
     # Stress scalar fields
     "von_mises": {
         "unit": "MPa",
         "metric_key": "max_von_mises_stress",
         "evidence_role": "stress_extrema",
+        "extrema": "maximum",
     },
-    "sxx": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "syy": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "szz": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "sxy": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "sxz": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "syz": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
+    "sxx": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "syy": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "szz": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "sxy": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "sxz": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "syz": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
     # Principal / equivalent stress fields
-    "s1": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "s2": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "s3": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "tresca": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
-    "max_shear": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema"},
+    "s1": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "s2": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "s3": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "tresca": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
+    "max_shear": {"unit": "MPa", "metric_key": "max_von_mises_stress", "evidence_role": "stress_extrema", "extrema": "maximum"},
     # Displacement fields
     "disp_magnitude": {
         "unit": "mm",
         "metric_key": "max_displacement",
         "evidence_role": "displacement_extrema",
+        "extrema": "maximum",
     },
-    "ux": {"unit": "mm", "metric_key": "max_displacement", "evidence_role": "displacement_extrema"},
-    "uy": {"unit": "mm", "metric_key": "max_displacement", "evidence_role": "displacement_extrema"},
-    "uz": {"unit": "mm", "metric_key": "max_displacement", "evidence_role": "displacement_extrema"},
+    "ux": {"unit": "mm", "metric_key": "max_displacement", "evidence_role": "displacement_extrema", "extrema": "maximum"},
+    "uy": {"unit": "mm", "metric_key": "max_displacement", "evidence_role": "displacement_extrema", "extrema": "maximum"},
+    "uz": {"unit": "mm", "metric_key": "max_displacement", "evidence_role": "displacement_extrema", "extrema": "maximum"},
     # Safety factor
     "safety_factor": {
         "unit": "",
         "metric_key": "minimum_safety_factor",
         "evidence_role": "safety_factor_extrema",
+        "extrema": "minimum",
     },
 }
 

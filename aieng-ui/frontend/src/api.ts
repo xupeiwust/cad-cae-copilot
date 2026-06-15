@@ -4,8 +4,11 @@ import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactRespons
 import type { Material, MaterialComparison, MaterialProperties } from "./types/materials";
 import type { BOMData } from "./types/bom";
 import type { InsertResult, StandardPartCategory, StandardPartSpec } from "./types/standards";
+import { resolveApiBase } from "./apiBase";
 
-const API = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+// Production serves the SPA and API from the same backend origin. Keep the
+// explicit override for the Vite dev server and split deployments.
+const API = resolveApiBase(import.meta.env.VITE_API_BASE);
 
 export type PersistedChatMessage = {
   id: number;

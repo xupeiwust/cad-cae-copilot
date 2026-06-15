@@ -1,0 +1,77 @@
+{
+  "schema_version": "0.1",
+  "image": "ghcr.io/armpro24-blip/aieng-workbench:latest",
+  "image_digest": "sha256:4592a01d6c53a849437e70105a1982bfa4d68d66aada4cdaa9cd3d1215d17bec",
+  "managed_cad_mutation": {
+    "status": "ok",
+    "project_id": "1b67cad972e7",
+    "geometry_report_summary": "geometry: 1 part(s), size=1.0x1.0x1.0 mm, proportions=1.0/1.0/1.0, floating=0, symmetry_issues=0"
+  },
+  "client_managed_flow": {
+    "tool_count": 74,
+    "prompt_count": 6,
+    "resource_count": 1,
+    "onboarding_messages": 1,
+    "discipline_chunks": 1,
+    "registry_hash": "sha256:d438e64a51ea5a1a",
+    "project_count_before": 4,
+    "project_id": "502477adae2e",
+    "project_status": "viewer_ready_glb",
+    "named_parts": [
+      "base_plate",
+      "rib_main"
+    ],
+    "geometry_report_summary": "geometry: 2 part(s), size=100.0x60.0x30.0 mm, proportions=1.0/0.6/0.3, floating=0, symmetry_issues=0",
+    "web_asset": "viewer/model.glb",
+    "web_asset_http_status": 200,
+    "web_asset_bytes": 69288,
+    "discovered_face_pointer": "@face:face_003",
+    "viewer_face_pointer": "@face:face_013",
+    "viewer_face_pointer_verified": true,
+    "pointer_handed_back_to_agent": "@face:face_013",
+    "pointer_handoff_status": "ok",
+    "face_count": 16,
+    "cae_ready_to_run": false,
+    "cae_missing_items": [
+      "simulation/mesh/ (no mesh files found in package)",
+      "simulation/solver_settings.json",
+      "simulation/runs/run_001/solver_input.inp"
+    ],
+    "cae_recommended_next_calls": [
+      {
+        "tool": "cae.write_mesh_handoff",
+        "input": {
+          "project_id": "502477adae2e",
+          "handoff_id": "mesh_handoff_001"
+        },
+        "reason": "No mesh files found in package. Write a mesh handoff contract or import a meshed CalculiX deck before generating solver input."
+      },
+      {
+        "tool": "cae.apply_setup_patch",
+        "input": {
+          "project_id": "502477adae2e",
+          "patches": [
+            {
+              "path": "simulation/solver_settings.json",
+              "action_type": "create_file",
+              "content": {
+                "solver": "CalculiX",
+                "analysis_type": "linear_static"
+              }
+            }
+          ]
+        },
+        "reason": "Missing solver settings. Create simulation/solver_settings.json with solver target and analysis_type."
+      },
+      {
+        "tool": "cae.generate_solver_input",
+        "input": {
+          "project_id": "502477adae2e",
+          "run_id": "run_001",
+          "overwrite": true
+        },
+        "reason": "Missing solver input deck; generate it once mesh, solver settings, material, boundary conditions and loads are present."
+      }
+    ]
+  }
+}

@@ -247,6 +247,37 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_tolerance_stackup(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from ..tolerance_analysis import analyze_tolerance_stackup
+
+        contributors = inp.get("contributors")
+        if not isinstance(contributors, list) or not contributors:
+            return {
+                "status": "error",
+                "code": "bad_input",
+                "message": "contributors must be a non-empty list of dimension/tolerance entries.",
+            }
+        confidence = inp.get("confidence_level", 0.95)
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 0.95
+        return analyze_tolerance_stackup(contributors, confidence_level=confidence)
+
+    rt.register_tool(
+        "cad.tolerance_stackup",
+        _tool_cad_tolerance_stackup,
+        read_only=True,
+        input_schema=_schema("cad.tolerance_stackup"),
+        description=(
+            "Read-only 1D tolerance stack-up analysis. Pass an ordered list of contributors "
+            "(each with name, nominal, plus, minus, and optional distribution) and get back "
+            "worst-case arithmetic min/max, statistical RSS sigma and confidence-band min/max, "
+            "the controlling contributors for each method, and explicit honesty notes about "
+            "independence and the +/- 3-sigma assumption. No solver, no geometry mutation."
+        ),
+    )
+
     def _tool_cad_set_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

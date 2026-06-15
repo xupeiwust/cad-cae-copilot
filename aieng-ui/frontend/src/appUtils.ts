@@ -1,4 +1,5 @@
 import { DEFAULT_LLM_CONFIG } from "./appConstants";
+import { resultFieldLabel } from "./components/viewer/resultFields";
 import type {
   BrepFaceEntity,
   BrepGraphSnapshot,
@@ -108,9 +109,7 @@ export function createChatId() {
 }
 
 export function fieldLabel(field: string) {
-  if (field === "stress") return "Von Mises Stress";
-  if (field === "displacement") return "Displacement Magnitude";
-  return field;
+  return resultFieldLabel(field);
 }
 
 export function runtimeRunToChatPlan(run: RuntimeRun): ChatResponse["plan"] {

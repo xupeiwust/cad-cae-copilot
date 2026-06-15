@@ -327,6 +327,166 @@ def test_field_descriptor_fallback_to_synthetic_when_no_frd(tmp_path: Path) -> N
     assert data["source"] == "synthetic_mock"
 
 
+def test_field_descriptor_all_selectable_fields_have_metadata(tmp_path: Path) -> None:
+    """GET /fields/{name} returns honest synthetic metadata for every selectable field."""
+    from app.main import create_app, default_project, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("field-metadata"))
+    project_id = project["id"]
+
+    expected: dict[str, dict[str, Any]] = {
+        # stress scalar fields
+        "von_mises": {"unit": "MPa", "colormap": "thermal"},
+        "stress": {"unit": "MPa", "colormap": "thermal"},
+        "sxx": {"unit": "MPa", "colormap": "coolwarm"},
+        "syy": {"unit": "MPa", "colormap": "coolwarm"},
+        "szz": {"unit": "MPa", "colormap": "coolwarm"},
+        "sxy": {"unit": "MPa", "colormap": "coolwarm"},
+        "sxz": {"unit": "MPa", "colormap": "coolwarm"},
+        "syz": {"unit": "MPa", "colormap": "coolwarm"},
+        # principal / equivalent stress fields
+        "s1": {"unit": "MPa", "colormap": "thermal"},
+        "s2": {"unit": "MPa", "colormap": "thermal"},
+        "s3": {"unit": "MPa", "colormap": "thermal"},
+        "tresca": {"unit": "MPa", "colormap": "thermal"},
+        "max_shear": {"unit": "MPa", "colormap": "thermal"},
+        # displacement fields
+        "disp_magnitude": {"unit": "mm", "colormap": "coolwarm"},
+        "displacement": {"unit": "mm", "colormap": "coolwarm"},
+        "ux": {"unit": "mm", "colormap": "coolwarm"},
+        "uy": {"unit": "mm", "colormap": "coolwarm"},
+        "uz": {"unit": "mm", "colormap": "coolwarm"},
+        # safety factor
+        "safety_factor": {"unit": "", "colormap": "thermal"},
+    }
+
+    for name, meta in expected.items():
+        resp = client.get(f"/api/projects/{project_id}/fields/{name}")
+        assert resp.status_code == 200, name
+        data = resp.json()
+        assert data["field_name"] == name, name
+        assert data["format"] == "vertex_synthetic", name
+        assert data["source"] == "synthetic_mock", name
+        assert data["unit"] == meta["unit"], name
+        assert data["colormap"] == meta["colormap"], name
+
+
+def _make_selectable_fields_package(pkg_path: Path) -> None:
+    """Create a package with FRD stress + displacement data and a known material."""
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    coords = {i: (float(i), 0.0, 0.0) for i in range(1, 9)}
+    # Uniaxial tension varying along X: Sxx = 10*i; von Mises == Sxx.
+    stress = {i: [10.0 * i, 0.0, 0.0, 0.0, 0.0, 0.0] for i in range(1, 9)}
+    # Linear displacement along X, Y, Z so all component fields are non-constant.
+    disp = {i: [0.1 * i, 0.05 * i, 0.02 * i] for i in range(1, 9)}
+    frd_text = _make_test_frd_with_coords(coords, disp_nodes=disp, stress_nodes=stress)
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "selectable-fields", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", frd_text)
+        zf.writestr("simulation/setup.yaml", "material_name: Steel-316L\n")
+
+
+def test_list_cae_result_fields_includes_all_selectable_fields(tmp_path: Path) -> None:
+    """GET /cae-result-fields lists every selectable field when an FRD is present."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("fields-list-all"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "fields-list-all.aieng"
+    _make_selectable_fields_package(pkg_path)
+    project["aieng_file"] = "fields-list-all.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/cae-result-fields")
+    assert resp.status_code == 200
+    data = resp.json()
+    available = {f["field_name"] for f in data["available_fields"]}
+
+    canonical_fields = {
+        "von_mises", "sxx", "syy", "szz", "sxy", "sxz", "syz",
+        "s1", "s2", "s3", "tresca", "max_shear",
+        "disp_magnitude", "ux", "uy", "uz",
+        "safety_factor",
+    }
+    missing = canonical_fields - available
+    assert not missing, f"Missing selectable fields: {missing}"
+
+
+def test_get_cae_result_field_summary_supports_all_selectable_fields(tmp_path: Path) -> None:
+    """GET /cae-result-fields/{name} returns FRD stats for every selectable field."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("fields-summ-all"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "fields-summ-all.aieng"
+    _make_selectable_fields_package(pkg_path)
+    project["aieng_file"] = "fields-summ-all.aieng"
+    save_project(settings, project)
+
+    canonical_fields = [
+        "von_mises", "sxx", "syy", "szz", "sxy", "sxz", "syz",
+        "s1", "s2", "s3", "tresca", "max_shear",
+        "disp_magnitude", "ux", "uy", "uz",
+        "safety_factor",
+    ]
+    for name in canonical_fields:
+        resp = client.get(f"/api/projects/{project_id}/cae-result-fields/{name}")
+        assert resp.status_code == 200, name
+        data = resp.json()
+        assert data["field_name"] == name, name
+        assert data["source"]["source_type"] == "frd", name
+        stats = data["stats"]
+        assert stats["node_count"] == 8, name
+        assert stats["values_finite"] is True, name
+        assert stats["max_value"] >= stats["min_value"], name
+
+
+def test_package_summary_advertises_all_solver_fields(tmp_path: Path) -> None:
+    """The project summary's cae.solver_fields includes every selectable field."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("fields-summary-all"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "fields-summary-all.aieng"
+    _make_selectable_fields_package(pkg_path)
+    project["aieng_file"] = "fields-summary-all.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    solver_fields = {f["field_name"] for f in data["cae"]["solver_fields"]}
+
+    canonical_fields = {
+        "von_mises", "sxx", "syy", "szz", "sxy", "sxz", "syz",
+        "s1", "s2", "s3", "tresca", "max_shear",
+        "disp_magnitude", "ux", "uy", "uz",
+        "safety_factor",
+    }
+    missing = canonical_fields - solver_fields
+    assert not missing, f"Missing solver_fields: {missing}"
+
+
 def test_cae_artifacts_endpoint_returns_detection_result(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(
         platform_root=tmp_path / "platform",

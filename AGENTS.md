@@ -341,6 +341,13 @@ single-part edit.
   around each part in a broken / missing left-right symmetry pair — the same
   `geometry_report` structural signals `cad.design_review` folds in, made visible
   in 3D. Read-only; the toggle only appears when there is at least one alert.
+- **Selectable result fields (#251).** The viewer field picker exposes the full
+  CAE post-processor catalog: stress tensor components (Sxx…Syz), principal
+  stresses (S1/S2/S3), Tresca / max shear, displacement magnitude and per-axis
+  components (Ux/Uy/Uz), and safety factor (yield ÷ von Mises). The backend
+  `/api/projects/{id}/fields/{name}` and `/cae-result-fields` endpoints serve all
+  of them from the FRD when available, with honest synthetic fallbacks and units
+  when no solver result is present.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

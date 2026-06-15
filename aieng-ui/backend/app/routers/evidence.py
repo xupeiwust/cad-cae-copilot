@@ -23,9 +23,35 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
     @app.get("/api/projects/{project_id}/fields/{field_name}")
     def get_field_descriptor(project_id: str, field_name: str) -> dict[str, Any]:
         project = get_project(active_settings, project_id)
+        # Synthetic fallback metadata for every selectable CAE result field.
+        # Real FRD data overrides these min/max values; this map only ensures
+        # honest units and colormaps when no solver result is present yet.
         _known: dict[str, dict[str, Any]] = {
+            # Von Mises stress and legacy alias
+            "von_mises": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
             "stress": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+            # Stress tensor components (signed)
+            "sxx": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+            "syy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+            "szz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+            "sxy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+            "sxz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+            "syz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+            # Principal stresses and derived scalar stress measures
+            "s1": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+            "s2": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+            "s3": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+            "tresca": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+            "max_shear": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+            # Displacement magnitude and legacy alias
+            "disp_magnitude": {"min_value": 0.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
             "displacement": {"min_value": 0.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+            # Per-axis displacement components (signed)
+            "ux": {"min_value": -5.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+            "uy": {"min_value": -5.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+            "uz": {"min_value": -5.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+            # Safety factor (yield / von Mises)
+            "safety_factor": {"min_value": 0.0, "max_value": 10.0, "unit": "", "colormap": "thermal"},
         }
         meta = _known.get(field_name, {"min_value": 0.0, "max_value": 1.0, "unit": "", "colormap": "thermal"})
 

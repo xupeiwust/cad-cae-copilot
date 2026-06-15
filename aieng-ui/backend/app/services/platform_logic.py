@@ -693,10 +693,31 @@ def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
 
     _cae = summary.get("cae")
     if isinstance(_cae, dict):
+        # Default metadata for every selectable CAE result field. These are
+        # overridden by real FRD extrema when a result file is present.
         _field_defaults: dict[str, dict[str, Any]] = {
+            "von_mises": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
             "stress": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "sxx": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "syy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "szz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "sxy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "sxz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "syz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "s1": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "s2": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "s3": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "tresca": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "max_shear": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "disp_magnitude": {"min_value": 0.0, "max_value": 5.0, "unit": "mm"},
             "displacement": {"min_value": 0.0, "max_value": 5.0, "unit": "mm"},
+            "ux": {"min_value": -5.0, "max_value": 5.0, "unit": "mm"},
+            "uy": {"min_value": -5.0, "max_value": 5.0, "unit": "mm"},
+            "uz": {"min_value": -5.0, "max_value": 5.0, "unit": "mm"},
+            "safety_factor": {"min_value": 0.0, "max_value": 10.0, "unit": ""},
         }
+        _SELECTABLE_FIELD_NAMES: tuple[str, ...] = tuple(_field_defaults.keys())
+
         # Check whether a real FRD exists so solver_fields can advertise the
         # correct format upfront.
         _has_frd = False
@@ -706,7 +727,7 @@ def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
         _available_fields = list(_cae.get("available_fields") or [])
         _real_field_cache: dict[str, dict[str, Any]] = {}
         if _has_frd and package_path and package_path.exists():
-            for candidate in ("stress", "displacement"):
+            for candidate in _SELECTABLE_FIELD_NAMES:
                 try:
                     real_field = _extract_frd_field_data(package_path, candidate, settings.aieng_root)
                 except Exception:

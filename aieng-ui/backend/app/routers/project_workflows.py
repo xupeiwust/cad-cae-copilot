@@ -355,6 +355,106 @@ def register_project_workflow_routes(
             "part_boxes": part_boxes,
         }
 
+    @app.get("/api/projects/{project_id}/cae-setup-overlay")
+    def get_cae_setup_overlay_endpoint(project_id: str) -> dict[str, Any]:
+        """CAE setup visualization data for the 3D viewer (read-only).
+
+        Resolves loads, constraints, and their target faces from the project's
+        CAE setup artifacts and topology map. Returns face centroids/normals/bboxes
+        in model-frame mm plus a stale-reference list so the viewer can flag
+        unresolved faces honestly.
+        """
+        import json as _json
+        import zipfile as _zipfile
+
+        from ..agent_autopilot.simulation_readiness import load_simulation_setup
+        from ..project_io import get_project, resolve_project_path, validate_cae_topology_references
+
+        try:
+            project = get_project(active_settings, project_id)
+        except Exception:
+            return {"available": False, "reason": "project_not_found"}
+        pkg_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if pkg_path is None or not pkg_path.exists():
+            return {"available": False, "reason": "no_package"}
+
+        try:
+            with _zipfile.ZipFile(pkg_path, "r") as zf:
+                names = set(zf.namelist())
+                topo = None
+                if "geometry/topology_map.json" in names:
+                    topo = _json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                setup = load_simulation_setup(lambda name: zf.read(name).decode("utf-8") if name in names else None)
+                mapping = None
+                if "simulation/cae_mapping.json" in names:
+                    mapping = _json.loads(zf.read("simulation/cae_mapping.json").decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            return {"available": False, "reason": "read_failed", "error": str(exc)}
+
+        if not setup or not isinstance(setup.get("data"), dict):
+            return {"available": False, "reason": "no_setup"}
+
+        validation = validate_cae_topology_references(pkg_path)
+        missing_face_ids = set(validation.get("missing_face_ids") or [])
+        stale_refs = validation.get("stale_references") or []
+
+        face_index: dict[str, dict[str, Any]] = {}
+        if isinstance(topo, dict):
+            for ent in topo.get("entities", []) or []:
+                if isinstance(ent, dict) and ent.get("type") == "face" and isinstance(ent.get("id"), str):
+                    face_index[ent["id"]] = ent
+
+        def _face_info(face_id: str) -> dict[str, Any] | None:
+            f = face_index.get(face_id)
+            if not isinstance(f, dict):
+                return None
+            return {
+                "face_id": face_id,
+                "center_mm": f.get("center"),
+                "normal": f.get("normal"),
+                "bounding_box_mm": f.get("bounding_box"),
+                "surface_type": f.get("surface_type"),
+                "stale": face_id in missing_face_ids,
+            }
+
+        def _collect_entities(items: list[Any], kind: str) -> list[dict[str, Any]]:
+            out: list[dict[str, Any]] = []
+            for item in items or []:
+                if not isinstance(item, dict):
+                    continue
+                face_ids = item.get("target_face_ids") or []
+                faces = []
+                for fid in face_ids:
+                    info = _face_info(fid)
+                    if info is not None:
+                        faces.append(info)
+                out.append({
+                    "id": item.get("id"),
+                    "type": item.get("type", kind),
+                    "target_feature": item.get("target_feature"),
+                    "target_pointers": item.get("target_pointers") or [],
+                    "face_ids": face_ids,
+                    "faces": faces,
+                    "value_n": item.get("value_n") if kind == "load" else None,
+                    "direction": item.get("direction") if kind == "load" else None,
+                    "magnitude_n": item.get("value_n") if kind == "load" else None,
+                })
+            return out
+
+        setup_data = setup["data"]
+        return {
+            "available": True,
+            "project_id": project_id,
+            "units": "mm",
+            "setup_source": setup.get("setup_source"),
+            "loads": _collect_entities(setup_data.get("loads"), "load"),
+            "constraints": _collect_entities(setup_data.get("boundary_conditions"), "constraint"),
+            "cae_mapping": mapping,
+            "stale_references": stale_refs,
+            "topology_hash_status": validation.get("hash_status"),
+            "topology_stale": bool(validation.get("cae_mapping_stale")),
+        }
+
     @app.get("/api/projects/{project_id}/edit-diff")
     def get_edit_diff_endpoint(project_id: str) -> dict[str, Any]:
         """The most recent edit's diff for the viewer (#226), read-only.

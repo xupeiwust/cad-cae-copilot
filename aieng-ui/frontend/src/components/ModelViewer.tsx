@@ -5,7 +5,7 @@ import { assemblyAlertCounts } from "../app/geometryReport";
 import { useGeometryReport } from "../app/useGeometryReport";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
-import type { SolverFieldDescriptor } from "../types";
+import type { CaeSetupOverlayResponse, SolverFieldDescriptor } from "../types";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
 import {
   useThreeScene,
@@ -15,12 +15,14 @@ import {
   useHighlightOverlay,
   useAssemblyCheckOverlay,
   useFieldMarkerOverlay,
+  useCaeSetupOverlay,
 } from "./viewer/hooks";
 
 export function ModelViewer({
   assetUrl,
   assetFormat,
   fieldDescriptor,
+  caeSetupOverlay,
   projectId,
   pickedFaces,
   onAddPickedFace,
@@ -34,6 +36,7 @@ export function ModelViewer({
   assetUrl?: string | null;
   assetFormat?: string | null;
   fieldDescriptor?: SolverFieldDescriptor | null;
+  caeSetupOverlay?: CaeSetupOverlayResponse | null;
   projectId?: string | null;
   pickedFaces: PickedFace[];
   onAddPickedFace(face: PickedFace): void;
@@ -54,6 +57,13 @@ export function ModelViewer({
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
   const [showAssemblyCheck, setShowAssemblyCheck] = useState(false);
   const [showFieldMarkers, setShowFieldMarkers] = useState(true);
+  const [showCaeSetup, setShowCaeSetup] = useState(true);
+
+  const caeSetupAvailable = Boolean(
+    caeSetupOverlay &&
+      ((caeSetupOverlay.loads && caeSetupOverlay.loads.length > 0) ||
+        (caeSetupOverlay.constraints && caeSetupOverlay.constraints.length > 0)),
+  );
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -71,7 +81,7 @@ export function ModelViewer({
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
 
   // 1. Three.js scene lifecycle
-  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef } =
+  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef, caeSetupGroupRef } =
     useThreeScene(hostRef);
 
   // 2. Asset loading
@@ -136,6 +146,18 @@ export function ModelViewer({
     objectReadyKey,
   );
 
+  // 8. CAE setup overlay (loads, constraints, bound faces)
+  useCaeSetupOverlay(
+    caeSetupGroupRef,
+    showCaeSetup && caeSetupAvailable,
+    caeSetupOverlay ?? null,
+    faceMeshesRef,
+    objectRef,
+    brepSnapshot,
+    displayTransformRef,
+    objectReadyKey,
+  );
+
   return (
     <div className="viewer-canvas-shell">
       <div className="viewer-canvas" ref={hostRef} />
@@ -183,6 +205,29 @@ export function ModelViewer({
           }}
         >
           {showFieldMarkers ? "Hide" : "Show"} peak/min
+        </button>
+      )}
+      {caeSetupAvailable && (
+        <button
+          type="button"
+          className="viewer-cae-setup-toggle"
+          onClick={() => setShowCaeSetup((value) => !value)}
+          title="Show loads, constraints, and bound faces from the CAE setup"
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: showCaeSetup ? "#1e3a8a" : "rgba(20,20,20,0.78)",
+            color: "#f5f5f5",
+            cursor: "pointer",
+          }}
+        >
+          {showCaeSetup ? "Hide" : "Show"} CAE setup
         </button>
       )}
       <ViewerOverlays

@@ -3,7 +3,7 @@ import { FieldPicker } from "./FieldPicker";
 import { FieldLegend } from "./FieldLegend";
 import { resultFieldLabel } from "./viewer/resultFields";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace } from "../appTypes";
-import type { ProjectRecord, SolverFieldDescriptor } from "../types";
+import type { CaeSetupOverlayResponse, ProjectRecord, SolverFieldDescriptor } from "../types";
 
 type ViewerPaneProps = {
   runtimeReady: boolean;
@@ -13,6 +13,7 @@ type ViewerPaneProps = {
   activeFieldDescriptor: SolverFieldDescriptor | null;
   selectedCaeField: string;
   onSelectCaeField(name: string): void;
+  caeSetupOverlay?: CaeSetupOverlayResponse | null;
   caeResultsAvailable: boolean;
   effectiveViewerUrl?: string | null;
   pickedFaces: PickedFace[];
@@ -33,6 +34,7 @@ export function ViewerPane({
   activeFieldDescriptor,
   selectedCaeField,
   onSelectCaeField,
+  caeSetupOverlay,
   caeResultsAvailable,
   effectiveViewerUrl,
   pickedFaces,
@@ -79,6 +81,7 @@ export function ViewerPane({
             assetUrl={effectiveViewerUrl}
             assetFormat={effectiveViewerFormat}
             fieldDescriptor={activeFieldDescriptor}
+            caeSetupOverlay={caeSetupOverlay}
             projectId={selectedProject?.id ?? null}
             pickedFaces={pickedFaces}
             onAddPickedFace={onAddPickedFace}

@@ -341,6 +341,15 @@ single-part edit.
   around each part in a broken / missing left-right symmetry pair — the same
   `geometry_report` structural signals `cad.design_review` folds in, made visible
   in 3D. Read-only; the toggle only appears when there is at least one alert.
+- **CAE setup overlay (in-3D affordance).** The model viewer has a "Show CAE setup"
+  toggle ([`ModelViewer.tsx`](aieng-ui/frontend/src/components/ModelViewer.tsx),
+  fed by `useCaeSetupOverlay` → `GET /api/projects/{id}/cae-setup-overlay`, drawn by
+  [`caeSetupOverlay.ts`](aieng-ui/frontend/src/components/viewer/caeSetupOverlay.ts)).
+  It renders **load arrows** (scaled/labeled with magnitude N), **constraint glyphs**
+  (fixed-support cones), and tinted bound-face highlights for loaded (red) and
+  constrained (blue) faces from `simulation/setup.yaml` + `cae_mapping.json`.
+  Stale/unresolved face refs are flagged with an amber marker instead of being
+  silently dropped. Read-only; the toggle only appears when a CAE setup exists.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

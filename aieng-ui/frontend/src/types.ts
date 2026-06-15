@@ -1,4 +1,4 @@
-﻿export type CadRecommendationProposal = {
+export type CadRecommendationProposal = {
   proposal_id: string;
   rank?: number;
   feature_ref: string;
@@ -1481,6 +1481,51 @@ export type SimulationReadinessResponse = {
   missing_required_inputs?: string[];
   defaultable_inputs?: string[];
   summary?: string;
+};
+
+export type CaeSetupOverlayFace = {
+  face_id: string;
+  center_mm?: number[] | null;
+  normal?: number[] | null;
+  bounding_box_mm?: number[] | null;
+  surface_type?: string | null;
+  stale?: boolean;
+};
+
+export type CaeSetupOverlayLoad = {
+  id?: string;
+  type?: string;
+  target_feature?: string;
+  target_pointers?: string[];
+  face_ids?: string[];
+  faces?: CaeSetupOverlayFace[];
+  value_n?: number | null;
+  direction?: number[] | null;
+  magnitude_n?: number | null;
+};
+
+export type CaeSetupOverlayConstraint = {
+  id?: string;
+  type?: string;
+  target_feature?: string;
+  target_pointers?: string[];
+  face_ids?: string[];
+  faces?: CaeSetupOverlayFace[];
+};
+
+export type CaeSetupOverlayResponse = {
+  available: boolean;
+  reason?: string;
+  error?: string;
+  project_id?: string;
+  units?: string;
+  setup_source?: string;
+  loads?: CaeSetupOverlayLoad[];
+  constraints?: CaeSetupOverlayConstraint[];
+  cae_mapping?: Record<string, unknown>;
+  stale_references?: Array<Record<string, unknown>>;
+  topology_hash_status?: string;
+  topology_stale?: boolean;
 };
 
 export type ChatConnection = {

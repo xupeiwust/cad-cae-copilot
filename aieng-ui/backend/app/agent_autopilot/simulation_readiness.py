@@ -32,12 +32,42 @@ STATUS_DEFAULTABLE = "defaultable"  # not set, but a sensible default exists for
 STATUS_UNKNOWN = "unknown"        # cannot determine (e.g. explicitly unavailable)
 
 # --- The six core inputs ----------------------------------------------------
+# Static requires loads; modal (natural frequency) does not — it solves the
+# unloaded structure but needs material *density* for the mass matrix; buckling
+# requires a reference load. Required inputs are therefore analysis-type-aware.
 REQUIRED_INPUTS: tuple[str, ...] = ("material", "loads", "constraints")
 DEFAULTABLE_INPUTS: tuple[str, ...] = ("analysis_type", "mesh", "solver")
 CORE_INPUTS: tuple[str, ...] = ("analysis_type", "material", "loads", "constraints", "mesh", "solver")
 
+_ANALYSIS_REQUIRED_INPUTS: dict[str, tuple[str, ...]] = {
+    "static": ("material", "loads", "constraints"),
+    "modal": ("material", "constraints"),
+    "buckling": ("material", "loads", "constraints"),
+}
+
+# Canonical analysis types + common spellings (mirrors deck_generator).
+_ANALYSIS_TYPE_ALIASES: dict[str, str] = {
+    "": "static",
+    "static": "static",
+    "linear_static": "static",
+    "modal": "modal",
+    "frequency": "modal",
+    "eigenfrequency": "modal",
+    "eigen": "modal",
+    "natural_frequency": "modal",
+    "buckling": "buckling",
+    "buckle": "buckling",
+    "linear_buckling": "buckling",
+}
+
 _DEFAULT_ANALYSIS_TYPE = "linear_static"
 _DEFAULT_SOLVER = "CalculiX"
+
+
+def normalize_analysis_type(value: Any) -> str:
+    """Canonicalize an analysis-type value to static / modal / buckling."""
+    key = str(value or "static").strip().lower().replace("-", "_").replace(" ", "_")
+    return _ANALYSIS_TYPE_ALIASES.get(key, "static")
 
 # Ordered candidate setup-artifact paths inside the .aieng package.
 SETUP_CANDIDATE_PATHS: tuple[str, ...] = (
@@ -260,12 +290,30 @@ def build_simulation_readiness_report(
             setup_source, setup_source_kind = "not_found", "none"
     fields.pop("has_setup", None)
 
+    analysis_type = normalize_analysis_type(fields.get("analysis_value"))
+    required = _ANALYSIS_REQUIRED_INPUTS.get(analysis_type, REQUIRED_INPUTS)
+
+    def _input_entry(name: str, present: bool, present_detail: str, missing_detail: str) -> dict[str, Any]:
+        # A required input that is absent is MISSING (ask the user). An input not
+        # required for this analysis type (e.g. loads for modal) is never missing:
+        # present → PRESENT, absent → DEFAULTABLE with a "not required" note.
+        if name in required:
+            return _required_entry(present, present_detail, missing_detail)
+        if present:
+            return {"status": STATUS_PRESENT, "required": False, "detail": present_detail}
+        return {
+            "status": STATUS_DEFAULTABLE,
+            "required": False,
+            "detail": f"not required for {analysis_type} analysis",
+        }
+
     inputs: dict[str, dict[str, Any]] = {
         "analysis_type": _defaultable_entry(fields["analysis_value"], fields["analysis_signal"], _DEFAULT_ANALYSIS_TYPE),
-        "material": _required_entry(fields["material_present"], "material assigned", "no material assigned"),
-        "loads": _required_entry(fields["loads_present"], "load(s) defined", "no loads defined"),
-        "constraints": _required_entry(
-            fields["constraints_present"], "constraint(s)/support(s) defined", "no constraints/supports defined"
+        "material": _input_entry("material", fields["material_present"], "material assigned", "no material assigned"),
+        "loads": _input_entry("loads", fields["loads_present"], "load(s) defined", "no loads defined"),
+        "constraints": _input_entry(
+            "constraints", fields["constraints_present"],
+            "constraint(s)/support(s) defined", "no constraints/supports defined",
         ),
         "mesh": _defaultable_entry(fields["mesh_value"], fields["mesh_signal"], "auto mesh"),
         "solver": _defaultable_entry(fields["solver_value"], fields["solver_signal"], _DEFAULT_SOLVER),
@@ -274,17 +322,29 @@ def build_simulation_readiness_report(
     if inputs["analysis_type"]["status"] == STATUS_PRESENT:
         inputs["analysis_type"]["detail"] = str(fields["analysis_value"])
 
-    missing_required_inputs = [name for name in REQUIRED_INPUTS if inputs[name]["status"] == STATUS_MISSING]
+    missing_required_inputs = [name for name in required if inputs[name]["status"] == STATUS_MISSING]
     defaultable_inputs = [name for name in CORE_INPUTS if inputs[name]["status"] == STATUS_DEFAULTABLE]
+
+    # Modal needs material density for the mass matrix; flag honestly when the
+    # material is present but no density signal is.
+    notes: list[str] = []
+    if analysis_type == "modal":
+        notes.append(
+            "Modal analysis: loads are not required; material density (*DENSITY) "
+            "is required to build the mass matrix."
+        )
 
     report: dict[str, Any] = {
         "setup_source": setup_source,
         "setup_source_kind": setup_source_kind,
+        "analysis_type": analysis_type,
+        "required_inputs": list(required),
         "solver_executed": False,  # invariant for /simulate
         "ready_for_solver": not missing_required_inputs,
         "inputs": inputs,
         "missing_required_inputs": missing_required_inputs,
         "defaultable_inputs": defaultable_inputs,
+        "notes": notes,
         "targets": bindings_to_targets(mention_bindings),
     }
     report["summary"] = summarize_simulation_readiness(report)
@@ -299,8 +359,11 @@ def summarize_simulation_readiness(report: dict[str, Any]) -> str:
     missing = report.get("missing_required_inputs") or []
     lines = [
         "Simulation readiness (deterministic, no solver run): "
+        f"analysis_type={report.get('analysis_type', 'static')}; "
         f"setup_source={report.get('setup_source')} ({report.get('setup_source_kind')}); {parts}.",
     ]
+    for note in report.get("notes") or []:
+        lines.append(note)
 
     targets = _as_dict(report.get("targets"))
     target_bits: list[str] = []
@@ -319,8 +382,9 @@ def summarize_simulation_readiness(report: dict[str, Any]) -> str:
             "do NOT claim the simulation has run."
         )
     else:
+        required = ", ".join(report.get("required_inputs") or REQUIRED_INPUTS)
         lines.append(
-            "All required inputs (material, loads, constraints) are present. "
+            f"All required inputs ({required}) are present. "
             "Produce the simulation plan; defaultable inputs may use defaults. "
             "The solver has NOT been run — running it needs a separate, approved "
             "cae.run_solver step."

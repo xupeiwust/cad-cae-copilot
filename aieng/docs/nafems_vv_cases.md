@@ -1,7 +1,8 @@
 # NAFEMS-style V&V starter suite — case catalog
 
-This document catalogs the linear-static reference cases that seed the
-automated verification regression in `aieng/src/aieng/nafems_verification.py`.
+This document catalogs the linear-static and linear-eigenvalue (modal /
+buckling) reference cases that seed the automated verification regression in
+`aieng/src/aieng/nafems_verification.py`.
 
 These cases are *NAFEMS-style* benchmarks: they use simple geometry, well-known
 analytical/closed-form solutions, and documented tolerance bands. They are **not**
@@ -358,6 +359,99 @@ inertia-specific regressions.
 
 ---
 
+## Case 8: `cantilever_modal` (eigenvalue — natural frequency)
+
+### Geometry and mesh
+
+Same beam as `cantilever_end_load`, but with **no load** and a `*FREQUENCY` step:
+
+| Parameter | Value |
+|-----------|-------|
+| Length `L` | 100 mm |
+| Width `b` (Y) | 10 mm |
+| Height `h` (Z) | 20 mm |
+| Mesh divisions | `nx = 20`, `ny = 4`, `nz = 4` |
+| Elements | 320 C3D8 |
+
+### Analysis
+
+`*FREQUENCY` extraction of the lowest natural frequencies (clamped at `X = 0`,
+free elsewhere). Results are written to the CalculiX **`.dat`** file (not the
+`.frd`) and parsed by `aieng.simulation.dat_result_extractor`.
+
+### Units note (important for eigenvalue cases)
+
+Natural frequency depends on mass, so this case uses a **consistent mm–tonne–s
+unit system**: `E = 210000 N/mm²`, density `ρ = 7.85 × 10⁻⁹ tonne/mm³`
+(= 7850 kg/m³). The deck generator emits the density value verbatim, so the
+eigenvalue cases must supply the consistent value for the reported frequency
+(Hz) to be physically meaningful. (Static cases never use density.)
+
+### Analytical reference (Euler-Bernoulli beam theory)
+
+* Fundamental mode = **weak-axis** bending; `I = L_z·L_y³ / 12 = 1666.67 mm⁴`
+* Cross-sectional area `A = L_y·L_z = 200 mm²`
+* First natural frequency
+  `f₁ = (1.875104² / 2π) · √(E·I / (ρ·A·L⁴)) ≈ 835.5 Hz`
+
+### Verified metrics and tolerance
+
+| Metric | Reference | Tolerance |
+|--------|-----------|-----------|
+| `first_natural_frequency_hz` | ≈ 835.5 Hz | ±20 % |
+
+### Mesh note
+
+The band is wider (±20 %) than the static cases: coarse C3D8 elements
+shear-stiffen in bending (raising the frequency), and Euler-Bernoulli theory
+omits shear/rotary-inertia effects present in the 3D solid. The reference is a
+*linear undamped* natural frequency — no damping, prestress, or modal
+participation claims.
+
+---
+
+## Case 9: `column_buckling` (eigenvalue — Euler buckling)
+
+### Geometry and mesh
+
+A slender column, same section as the cantilever cases:
+
+| Parameter | Value |
+|-----------|-------|
+| Length `L` | 100 mm |
+| Width `b` (Y) | 10 mm |
+| Height `h` (Z) | 20 mm |
+| Mesh divisions | `nx = 20`, `ny = 4`, `nz = 4` |
+| Elements | 320 C3D8 |
+
+### Loading and analysis
+
+A `*BUCKLE` step with a **1000 N axial compressive reference load** (`-X`) on the
+free `X = L` end face; clamped at `X = 0`. CalculiX returns load **factors** in
+the `.dat` file; the reported buckling factor `λ₁ = P_cr / 1000 N`.
+
+### Analytical reference (Euler critical load)
+
+* Lowest mode buckles about the **weak axis**; `I = 1666.67 mm⁴`
+* Fixed-free effective-length factor `K = 2`
+* `P_cr = π²·E·I / (K·L)² = π² · 210000 · 1666.67 / (2·100)² ≈ 86 360 N`
+* Buckling factor `λ₁ = P_cr / 1000 ≈ 86.4`
+
+### Verified metrics and tolerance
+
+| Metric | Reference | Tolerance |
+|--------|-----------|-----------|
+| `lowest_buckling_factor` | ≈ 86.4 | ±20 % |
+
+### Mesh note
+
+±20 % band: the coarse C3D8 mesh stiffens the column (raising `P_cr`), and the
+slenderness (`KL/r ≈ 69`) is at the upper-elastic Euler range. This is a
+**linear (eigenvalue) buckling** factor — no imperfection sensitivity,
+post-buckling, or material-nonlinear collapse is modeled.
+
+---
+
 ## Tolerance rationale
 
 A ±10 % tolerance band was chosen because:
@@ -378,8 +472,10 @@ both `max_displacement` and `max_von_mises_stress` fall within the band.
 
 ## Honest limitations
 
-* **Linear-static only.** No geometric nonlinearity, material nonlinearity,
-  contact, buckling, modal, or dynamic effects.
+* **Linear static + linear eigenvalue only.** Static stress/displacement, modal
+  natural frequency, and Euler buckling factors. No geometric or material
+  nonlinearity, contact, damping, prestress, post-buckling, or transient
+  dynamics.
 * **Analytical reference, not experimental.** Comparisons are against
   closed-form beam/rod theory, not measured physical data.
 * **Coarse mesh.** Results are mesh-dependent; finer meshes would tighten the

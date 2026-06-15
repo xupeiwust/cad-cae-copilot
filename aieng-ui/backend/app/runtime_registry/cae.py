@@ -941,6 +941,18 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             if result_frd.exists():
                 frd_path = result_frd
 
+            # Detect analysis type from the deck so eigenvalue (modal/buckling)
+            # results are routed to the .dat extractor, not the FRD extractor.
+            _deck_upper = inp_data.decode("utf-8", errors="replace").upper()
+            if "*FREQUENCY" in _deck_upper:
+                analysis_type = "modal"
+            elif "*BUCKLE" in _deck_upper:
+                analysis_type = "buckling"
+            else:
+                analysis_type = "static"
+            result_dat = work_dir / f"{stem}.dat"
+            dat_path = result_dat if result_dat.exists() else None
+
             # Build solver_run.json
             solver_run = {
                 "run_id": run_id,
@@ -960,6 +972,9 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             }
             if frd_path:
                 solver_run["output_files"].append(f"simulation/runs/{run_id}/outputs/result.frd")
+            if dat_path:
+                solver_run["output_files"].append(f"simulation/runs/{run_id}/outputs/result.dat")
+            solver_run["analysis_type"] = analysis_type
 
             # Write artifacts back into package
             run_prefix = f"simulation/runs/{run_id}"
@@ -984,10 +999,28 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
 
             if frd_path:
                 _write_safe(f"{run_prefix}/outputs/result.frd", frd_path)
+            if dat_path:
+                _write_safe(f"{run_prefix}/outputs/result.dat", dat_path)
 
-            # Extract FRD results if requested
+            # Extract results if requested — route by analysis type: modal/buckling
+            # read the .dat (eigenfrequencies / buckling factors), static reads FRD.
             extracted_metrics: dict[str, Any] | None = None
-            if extract_results and frd_path:
+            if extract_results and analysis_type in ("modal", "buckling") and dat_path:
+                try:
+                    ext_result = aieng_bridge.extract_dat_solver_results(
+                        str(package_path),
+                        str(dat_path),
+                        analysis_type,
+                        aieng_root=active_settings.aieng_root,
+                        load_case_id=load_case_id,
+                        software=solver,
+                        overwrite=overwrite,
+                    )
+                    extracted_metrics = ext_result.get("metrics")
+                    changed_artifacts.extend(ext_result.get("artifacts", []))
+                except Exception as exc:
+                    warnings.append(f"DAT extraction failed: {exc}")
+            elif extract_results and frd_path:
                 try:
                     ext_result = aieng_bridge.extract_frd_solver_results(
                         str(package_path),

@@ -846,6 +846,29 @@ result = Compound(children=[base_plate, rib])
 
 Linear static analysis pipeline — see workflow C below.
 
+**Analysis types (`analysis_type`).** The solver deck and result extraction are
+analysis-type-aware. Set `analysis_type` in the CAE setup (via
+`cae.apply_setup_patch`, written to `simulation/solver_settings.json`); the deck
+generator emits the matching CalculiX step and `cae.run_solver` routes result
+extraction to the right file:
+
+| `analysis_type` | Step card | Required inputs | Results file | Key metrics |
+|---|---|---|---|---|
+| `static` (default) | `*STATIC` | material, **loads**, constraints | `.frd` (DISP/S) | `max_displacement`, `max_von_mises_stress` |
+| `modal` / `frequency` | `*FREQUENCY` + `num_modes` (default 10) | material (**+ density**), constraints — **no loads** | `.dat` | `natural_frequencies_hz`, `first_natural_frequency_hz` |
+| `buckling` / `buckle` | `*BUCKLE` + `num_factors` (default 5) | material, **loads** (reference), constraints | `.dat` | `buckling_factors`, `lowest_buckling_factor` |
+
+Honesty boundary: modal results are **linear undamped** natural frequencies (no
+damping / prestress); buckling results are **linear (eigenvalue / Euler)** load
+factors (`critical load = factor × applied reference load`) — no imperfection
+sensitivity or post-buckling. The `/simulate` readiness report
+(`simulation_readiness.py`) reflects the analysis-type-aware required inputs (a
+modal request does not flag missing loads; a buckling request does). Modal needs
+material **density** for the mass matrix and uses a consistent mm–tonne–s unit
+system for physically-meaningful Hz. NAFEMS-style reference cases
+`cantilever_modal` (first natural frequency) and `column_buckling` (Euler factor)
+verify these paths — see `aieng/docs/nafems_vv_cases.md`.
+
 **Installing CalculiX.** `cae.run_solver` needs the `ccx` executable available at runtime.
 
 - **Windows + conda (recommended):** create a dedicated environment so installing

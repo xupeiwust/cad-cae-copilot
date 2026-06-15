@@ -34,7 +34,9 @@ from tests.fixtures.nafems.build_fixtures import (
     build_cantilever_end_load_fixture,
     build_cantilever_end_load_lateral_fixture,
     build_cantilever_midspan_load_fixture,
+    build_cantilever_modal_fixture,
     build_cantilever_udl_fixture,
+    build_column_buckling_fixture,
     build_fixed_fixed_center_load_fixture,
     build_fixed_fixed_udl_fixture,
     build_tension_rod_fixture,
@@ -162,6 +164,8 @@ def test_build_all_fixtures_creates_all_packages(fixtures_dir: Path) -> None:
         "fixed_fixed_center_load",
         "cantilever_midspan_load",
         "cantilever_end_load_lateral",
+        "cantilever_modal",
+        "column_buckling",
     }
     for p in paths.values():
         assert p.exists()
@@ -281,8 +285,90 @@ def test_lateral_fixture_applies_load_in_minus_y(fixtures_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Eigenvalue cases (modal / buckling) — fixtures + synthetic verify
+# ---------------------------------------------------------------------------
+
+
+def _eigen_metrics(metric_name: str, value: float) -> dict:
+    return {"load_cases": [{"id": "nafems_run_001", "metrics": {metric_name: {"value": value}}}]}
+
+
+def test_modal_and_buckling_reference_cases_documented() -> None:
+    for case_id, metric in (
+        ("cantilever_modal", "first_natural_frequency_hz"),
+        ("column_buckling", "lowest_buckling_factor"),
+    ):
+        case = REFERENCE_CASES[case_id]
+        assert case["description"]
+        assert case["analysis_type"] in ("modal", "buckling")
+        entry = case["metrics"][metric]
+        assert entry["value"] > 0
+        assert entry["tolerance_percent"] > 0
+        assert entry["unit"]
+
+
+def test_verify_modal_case_within_tolerance() -> None:
+    ref = REFERENCE_CASES["cantilever_modal"]["metrics"]["first_natural_frequency_hz"]["value"]
+    result = verify_case("cantilever_modal", _eigen_metrics("first_natural_frequency_hz", ref * 1.05))
+    assert result["verdict"] == "pass"
+
+
+def test_verify_buckling_case_outside_tolerance_fails() -> None:
+    ref = REFERENCE_CASES["column_buckling"]["metrics"]["lowest_buckling_factor"]["value"]
+    result = verify_case("column_buckling", _eigen_metrics("lowest_buckling_factor", ref * 1.5))
+    assert result["verdict"] == "fail"
+
+
+def test_modal_fixture_deck_is_frequency_step_without_load(fixtures_dir: Path) -> None:
+    path = build_cantilever_modal_fixture(fixtures_dir / "cantilever_modal.aieng")
+    generate_solver_input_package(path, run_id="run_modal", overwrite=True)
+    with zipfile.ZipFile(path, "r") as zf:
+        deck = zf.read("simulation/runs/run_modal/solver_input.inp").decode("utf-8")
+    assert "*FREQUENCY" in deck
+    assert "*STATIC" not in deck
+    assert "*CLOAD" not in deck  # modal needs no load
+    assert "*DENSITY" in deck    # mass matrix
+
+
+def test_buckling_fixture_deck_is_buckle_step_with_load(fixtures_dir: Path) -> None:
+    path = build_column_buckling_fixture(fixtures_dir / "column_buckling.aieng")
+    generate_solver_input_package(path, run_id="run_buckle", overwrite=True)
+    with zipfile.ZipFile(path, "r") as zf:
+        deck = zf.read("simulation/runs/run_buckle/solver_input.inp").decode("utf-8")
+    assert "*BUCKLE" in deck
+    assert "*CLOAD" in deck       # reference perturbation load
+    assert "*STATIC" not in deck
+
+
+# ---------------------------------------------------------------------------
 # Real-ccx integration tests (skipped if ccx is unavailable)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_cantilever_modal_real_ccx_within_tolerance(fixtures_dir: Path) -> None:
+    path = build_cantilever_modal_fixture(fixtures_dir / "cantilever_modal.aieng")
+    run_result = run_case(path, run_id="nafems_run_001")
+    assert run_result["status"] == "ok", run_result.get("solver_log_tail")
+    assert run_result["analysis_type"] == "modal"
+    verification = verify_case("cantilever_modal", run_result["computed_metrics"])
+    assert verification["verdict"] == "pass", verification
+
+
+@pytest.mark.skipif(
+    _find_ccx() is None,
+    reason="CalculiX command unavailable via AIENG_CCX_CMD or PATH — skipping real solver regression.",
+)
+def test_column_buckling_real_ccx_within_tolerance(fixtures_dir: Path) -> None:
+    path = build_column_buckling_fixture(fixtures_dir / "column_buckling.aieng")
+    run_result = run_case(path, run_id="nafems_run_001")
+    assert run_result["status"] == "ok", run_result.get("solver_log_tail")
+    assert run_result["analysis_type"] == "buckling"
+    verification = verify_case("column_buckling", run_result["computed_metrics"])
+    assert verification["verdict"] == "pass", verification
 
 
 @pytest.mark.skipif(

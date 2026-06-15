@@ -528,6 +528,71 @@ def extract_frd_solver_results(
                 pass
 
 
+def extract_dat_solver_results(
+    package_path: str | Path,
+    dat_path: str | Path,
+    analysis_type: str,
+    *,
+    aieng_root: str | Path,
+    load_case_id: str | None = None,
+    software: str = "CalculiX",
+    overwrite: bool = True,
+) -> dict[str, Any]:
+    """Parse a CalculiX `.dat` file (modal/buckling) → computed_metrics.json.
+
+    The `.dat` counterpart to :func:`extract_frd_solver_results`: imports
+    ``aieng.simulation.dat_result_extractor.write_dat_metrics_package`` and writes
+    natural frequencies (modal) or buckling factors (buckling) into the package.
+    """
+    pkg = Path(package_path)
+    dat = Path(dat_path)
+    if not pkg.exists():
+        raise FileNotFoundError(f"Package not found: {pkg}")
+    if not dat.exists():
+        raise FileNotFoundError(f"DAT file not found: {dat}")
+
+    aieng_src = Path(aieng_root) / "src"
+    if not aieng_src.exists():
+        raise RuntimeError(f"aieng src not found at {aieng_src}")
+
+    injected = False
+    candidate = str(aieng_src)
+    try:
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+            injected = True
+        from aieng.simulation.dat_result_extractor import write_dat_metrics_package  # type: ignore[import]
+
+        metrics = write_dat_metrics_package(
+            pkg,
+            dat,
+            analysis_type,
+            load_case_id=load_case_id,
+            software=software,
+            overwrite=overwrite,
+        )
+        return {
+            "status": "ok",
+            "package_path": str(pkg),
+            "metrics": metrics,
+            "artifacts": [
+                {
+                    "path": "results/computed_metrics.json",
+                    "kind": "computed_metrics",
+                    "role": "dat_extracted_eigenvalue_metrics",
+                }
+            ],
+        }
+    except Exception as exc:
+        raise RuntimeError(f"Failed to extract DAT solver results: {exc}") from exc
+    finally:
+        if injected:
+            try:
+                sys.path.remove(candidate)
+            except ValueError:
+                pass
+
+
 def write_mesh_handoff(
     package_path: str | Path,
     *,

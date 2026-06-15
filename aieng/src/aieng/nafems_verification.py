@@ -37,7 +37,11 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from aieng import FORMAT_VERSION
 from aieng.cae_verification import VERIFICATION_SCHEMA, _claim_policy
-from aieng.simulation.deck_generator import generate_solver_input_package
+from aieng.simulation.dat_result_extractor import extract_dat_metrics
+from aieng.simulation.deck_generator import (
+    generate_solver_input_package,
+    normalize_analysis_type,
+)
 from aieng.simulation.frd_result_extractor import extract_computed_metrics
 
 
@@ -164,6 +168,40 @@ REFERENCE_CASES: dict[str, dict[str, Any]] = {
             },
         },
     },
+    # --- Eigenvalue cases (modal / buckling) --------------------------------
+    "cantilever_modal": {
+        "description": "Clamped-free cantilever first bending natural frequency (modal)",
+        "analysis_type": "modal",
+        "metrics": {
+            "first_natural_frequency_hz": {
+                # Euler-Bernoulli: f1 = (beta1^2 / 2pi) * sqrt(E*I / (rho*A*L^4)),
+                # beta1*L = 1.875104 (clamped-free). Fundamental = weak-axis bending,
+                # I = Lz*Ly^3/12 = 1666.667 mm^4, A = Ly*Lz = 200 mm^2, L = 100 mm,
+                # E = 210000 N/mm^2, rho = 7.85e-9 t/mm^3 (consistent mm-t-s units).
+                "value": (1.875104 ** 2 / (2.0 * math.pi))
+                * math.sqrt((210000.0 * 1666.6667) / (7.85e-9 * 200.0 * 100.0 ** 4)),
+                "unit": "Hz",
+                # Wider band: coarse C3D8 (shear-stiffening) + Euler-Bernoulli vs 3D.
+                "tolerance_percent": 20.0,
+            },
+        },
+    },
+    "column_buckling": {
+        "description": "Clamped-free slender column linear (Euler) buckling factor",
+        "analysis_type": "buckling",
+        "metrics": {
+            "lowest_buckling_factor": {
+                # Euler: P_cr = pi^2*E*I / (K*L)^2, fixed-free K=2, weak-axis
+                # I = 1666.667 mm^4. Reference load = 1000 N compressive, so the
+                # reported buckling factor lambda1 = P_cr / 1000 N.
+                "value": (math.pi ** 2 * 210000.0 * 1666.6667)
+                / ((2.0 * 100.0) ** 2)
+                / 1000.0,
+                "unit": "dimensionless",
+                "tolerance_percent": 20.0,
+            },
+        },
+    },
 }
 
 
@@ -228,6 +266,20 @@ def _find_ccx() -> list[str] | None:
         if path:
             return [path]
     return None
+
+
+def _deck_analysis_type(deck_text: str) -> str:
+    """Infer the analysis type from a generated CalculiX deck.
+
+    Robust to step-name spelling: keys off the actual analysis keyword card so
+    extraction is routed to the matching result file (.dat vs .frd).
+    """
+    upper = deck_text.upper()
+    if "*FREQUENCY" in upper:
+        return "modal"
+    if "*BUCKLE" in upper:
+        return "buckling"
+    return "static"
 
 
 def _extract_solver_input_from_package(package_path: Path, run_id: str) -> str:
@@ -362,22 +414,38 @@ def run_case(
                 "computed_metrics": None,
             }
 
-        frd_path = work / f"{jobname}.frd"
-        if not frd_path.exists():
-            return {
-                "status": "error",
-                "message": f"Solver did not produce expected FRD file: {frd_path.name}",
-                "solver_log_tail": log_tail,
-                "computed_metrics": None,
-            }
-
-        metrics = extract_computed_metrics(
-            frd_path, load_case_id=run_id, software="CalculiX"
-        )
+        # Route extraction by analysis type: static reads the .frd (DISP/S);
+        # modal/buckling read the .dat (eigenfrequencies / buckling factors).
+        analysis_type = _deck_analysis_type(deck_text)
+        if analysis_type in ("modal", "buckling"):
+            dat_path = work / f"{jobname}.dat"
+            if not dat_path.exists():
+                return {
+                    "status": "error",
+                    "message": f"Solver did not produce expected DAT file: {dat_path.name}",
+                    "solver_log_tail": log_tail,
+                    "computed_metrics": None,
+                }
+            metrics = extract_dat_metrics(
+                dat_path, analysis_type, load_case_id=run_id, software="CalculiX"
+            )
+        else:
+            frd_path = work / f"{jobname}.frd"
+            if not frd_path.exists():
+                return {
+                    "status": "error",
+                    "message": f"Solver did not produce expected FRD file: {frd_path.name}",
+                    "solver_log_tail": log_tail,
+                    "computed_metrics": None,
+                }
+            metrics = extract_computed_metrics(
+                frd_path, load_case_id=run_id, software="CalculiX"
+            )
 
     return {
         "status": "ok",
         "run_id": run_id,
+        "analysis_type": analysis_type,
         "computed_metrics": metrics,
         "solver_log_tail": log_tail,
     }
@@ -660,8 +728,9 @@ def run_nafems_suite(
         "cases": case_results,
         "claim_policy": _claim_policy(),
         "limitations": [
-            "Linear-static verification only; no modal, buckling, nonlinear, or dynamic checks.",
-            "Reference values are analytical beam/rod theory for the documented geometry and loads.",
+            "Linear static + linear eigenvalue (modal natural frequency, Euler buckling) "
+            "verification only; no nonlinear, contact, damping, prestress, or transient checks.",
+            "Reference values are analytical beam/rod/column theory for the documented geometry and loads.",
             "Meshes are intentionally coarse for fast CI runtime; tolerance bands reflect mesh discretisation.",
             "Mesh convergence studies show numerical trend toward the analytical reference on the documented geometry; they do not establish general mesh independence or certification.",
             "Verified against reference values within tolerance; this is not a certification.",

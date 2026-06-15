@@ -158,6 +158,57 @@ def test_mention_targets_consume_bindings() -> None:
     assert "model.glb (unverified)" in report["summary"]
 
 
+# --- analysis-type-aware required inputs (modal / buckling) -----------------
+
+
+def test_modal_does_not_require_loads() -> None:
+    """Modal: material + constraints required, loads NOT required."""
+    cae = {
+        "present": True,
+        "materials": ["steel"],
+        "boundary_conditions": [{"type": "fixed"}],
+        "analysis_type": "modal",
+        # deliberately no loads
+    }
+    report = build_simulation_readiness_report(cae)
+    assert report["analysis_type"] == "modal"
+    assert report["required_inputs"] == ["material", "constraints"]
+    s = _statuses(report)
+    assert s["material"] == "present"
+    assert s["constraints"] == "present"
+    # loads absent but not required → not missing
+    assert s["loads"] != "missing"
+    assert report["missing_required_inputs"] == []
+    assert report["ready_for_solver"] is True
+    assert "modal" in report["summary"].lower()
+    assert any("density" in n.lower() for n in report["notes"])
+
+
+def test_modal_still_requires_material_and_constraints() -> None:
+    report = build_simulation_readiness_report(
+        {"present": True, "analysis_type": "frequency"}
+    )
+    assert report["analysis_type"] == "modal"
+    assert set(report["missing_required_inputs"]) == {"material", "constraints"}
+    assert "loads" not in report["missing_required_inputs"]
+
+
+def test_buckling_requires_loads() -> None:
+    """Buckling: loads required (reference perturbation load)."""
+    cae = {
+        "present": True,
+        "materials": ["steel"],
+        "boundary_conditions": [{"type": "fixed"}],
+        "analysis_type": "buckle",
+        # no loads
+    }
+    report = build_simulation_readiness_report(cae)
+    assert report["analysis_type"] == "buckling"
+    assert report["required_inputs"] == ["material", "loads", "constraints"]
+    assert report["missing_required_inputs"] == ["loads"]
+    assert report["ready_for_solver"] is False
+
+
 # --- v2: direct setup artifact reading --------------------------------------
 
 _YAML_COMPLETE = """

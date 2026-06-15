@@ -39,6 +39,17 @@ STEEL = {
     "density_kg_m3": 7850.0,
 }
 
+# Steel in a CONSISTENT mm–tonne–s unit system: E in N/mm² (MPa), density in
+# tonne/mm³ (7850 kg/m³ = 7.85e-9 t/mm³). The deck generator emits the density
+# value verbatim, so an eigenvalue (modal/buckling) case must use the consistent
+# value for the reported frequencies (Hz) to be physically meaningful. Static
+# cases do not use density and keep the kg/m³ value above.
+STEEL_CONSISTENT = {
+    "youngs_modulus_mpa": 210000.0,
+    "poisson_ratio": 0.3,
+    "density_kg_m3": 7.85e-9,  # tonne/mm³ (consistent mm–t–s units)
+}
+
 # Schema/format constants.
 FORMAT_VERSION = "0.1.0"
 
@@ -59,10 +70,16 @@ def _build_setup(
     load_target_feature: str,
     load_value_n: float,
     load_direction: list[int | float],
+    material: dict[str, Any] | None = None,
+    include_load: bool = True,
 ) -> dict[str, Any]:
-    """Return a minimal setup.yaml for a single fixed-face + single-load case."""
-    return {
-        "materials": {"Steel": STEEL},
+    """Return a minimal setup.yaml for a single fixed-face + single-load case.
+
+    When ``include_load`` is False (e.g. a modal analysis), the ``loads`` key is
+    omitted entirely so the deck generator does not require a load.
+    """
+    setup: dict[str, Any] = {
+        "materials": {"Steel": material or STEEL},
         "boundary_conditions": [
             {
                 "id": "bc_fixed",
@@ -70,15 +87,17 @@ def _build_setup(
                 "type": "fixed",
             },
         ],
-        "loads": [
+    }
+    if include_load:
+        setup["loads"] = [
             {
                 "id": "load_main",
                 "target_feature": load_target_feature,
                 "value_n": load_value_n,
                 "direction": load_direction,
             },
-        ],
-    }
+        ]
+    return setup
 
 
 def _build_cae_mapping(*mappings: tuple[str, str]) -> dict[str, Any]:
@@ -200,8 +219,17 @@ def _build_package(
     load_direction: list[int | float],
     cae_mapping: dict[str, Any],
     source_deck: str,
+    material: dict[str, Any] | None = None,
+    include_load: bool = True,
+    solver_settings: dict[str, Any] | None = None,
 ) -> Path:
-    """Write an ``.aieng`` package with the standard simulation artifacts."""
+    """Write an ``.aieng`` package with the standard simulation artifacts.
+
+    ``solver_settings`` (e.g. ``{"analysis_type": "modal", "num_modes": 6}``) is
+    written to ``simulation/solver_settings.json`` when provided; ``include_load``
+    / ``material`` flow into the setup (modal cases omit the load and use a
+    consistent-units density).
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.exists():
@@ -212,6 +240,8 @@ def _build_package(
         load_target_feature=load_target_feature,
         load_value_n=load_value_n,
         load_direction=load_direction,
+        material=material,
+        include_load=include_load,
     )
 
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -221,6 +251,8 @@ def _build_package(
         zf.writestr("simulation/setup.yaml", yaml.safe_dump(setup))
         zf.writestr("simulation/cae_mapping.json", json.dumps(cae_mapping, indent=2))
         zf.writestr("simulation/cae_imports/source_solver_deck.inp", source_deck)
+        if solver_settings is not None:
+            zf.writestr("simulation/solver_settings.json", json.dumps(solver_settings, indent=2))
 
     return out_path
 
@@ -515,6 +547,86 @@ def build_cantilever_end_load_lateral_fixture(
     )
 
 
+def build_cantilever_modal_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
+    """Build a clamped-free cantilever MODAL case (first bending natural frequency).
+
+    Same beam as ``cantilever_end_load`` (L=100, section 10×20 mm) but with NO
+    load and a ``*FREQUENCY`` step. The fundamental mode is weak-axis bending
+    (I = Lz·Ly³/12 = 1666.67 mm⁴). Consistent mm–t–s units → frequency in Hz.
+    Regression case only, not a certification.
+    """
+    out_path = Path(out_path)
+    lx, ly, lz = 100.0, 10.0, 20.0
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
+    nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
+
+    source_deck = _write_source_deck(
+        nodes=nodes,
+        elements=elements,
+        nsets=nsets,
+        active_nsets=["N_FIX"],
+    )
+
+    return _build_package(
+        out_path,
+        model_id="nafems_cantilever_modal",
+        bc_target_feature="feat_fix",
+        load_target_feature="feat_load",
+        load_value_n=0.0,
+        load_direction=[0, 0, 0],
+        cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix")),
+        source_deck=source_deck,
+        material=STEEL_CONSISTENT,
+        include_load=False,
+        solver_settings={"analysis_type": "modal", "num_modes": 6},
+    )
+
+
+def build_column_buckling_fixture(
+    out_path: Path | str,
+    mesh_divisions: tuple[int, int, int] | None = None,
+) -> Path:
+    """Build a clamped-free column linear BUCKLING case (Euler critical load).
+
+    A slender column (L=100, section 10×20 mm) clamped at X=0, with a 1000 N
+    axial compressive reference load (-X) on the free X=L face and a ``*BUCKLE``
+    step. The lowest buckling mode is weak-axis (I = 1666.67 mm⁴); fixed-free
+    effective-length factor K=2. The reported buckling factor λ₁ = P_cr / 1000 N.
+    Regression case only, not a certification.
+    """
+    out_path = Path(out_path)
+    lx, ly, lz = 100.0, 10.0, 20.0
+    nx, ny, nz = mesh_divisions or (20, 4, 4)
+    nodes, elements, nsets = _generate_hex_mesh(lx=lx, ly=ly, lz=lz, nx=nx, ny=ny, nz=nz)
+
+    # Total 1000 N compressive (-X) reference load on the X=L end face.
+    load_face_nodes = len(nsets["N_LOAD"])
+    load_per_node = 1000.0 / load_face_nodes
+
+    source_deck = _write_source_deck(
+        nodes=nodes,
+        elements=elements,
+        nsets=nsets,
+        active_nsets=["N_FIX", "N_LOAD"],
+    )
+
+    return _build_package(
+        out_path,
+        model_id="nafems_column_buckling",
+        bc_target_feature="feat_fix",
+        load_target_feature="feat_load",
+        load_value_n=load_per_node,
+        load_direction=[-1, 0, 0],
+        cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix"), ("N_LOAD", "feat_load")),
+        source_deck=source_deck,
+        material=STEEL_CONSISTENT,
+        solver_settings={"analysis_type": "buckling", "num_factors": 5},
+    )
+
+
 # Catalog of supported cases for runners/tests.
 CASE_BUILDERS: dict[str, Any] = {
     "tension_rod": build_tension_rod_fixture,
@@ -524,6 +636,8 @@ CASE_BUILDERS: dict[str, Any] = {
     "fixed_fixed_center_load": build_fixed_fixed_center_load_fixture,
     "cantilever_midspan_load": build_cantilever_midspan_load_fixture,
     "cantilever_end_load_lateral": build_cantilever_end_load_lateral_fixture,
+    "cantilever_modal": build_cantilever_modal_fixture,
+    "column_buckling": build_column_buckling_fixture,
 }
 
 

@@ -24,6 +24,9 @@ def test_cad_code_names_the_evidence_parts() -> None:
     assert 'base_plate.label = "base_plate"' in packaged_dogfood.CAD_CODE
     assert 'rib.label = "rib_main"' in packaged_dogfood.CAD_CODE
     assert "result = Compound(children=[base_plate, rib])" in packaged_dogfood.CAD_CODE
+    assert "export_step(" not in packaged_dogfood.CAD_CODE
+    assert "export_stl(" not in packaged_dogfood.CAD_CODE
+    assert "export_gltf(" not in packaged_dogfood.CAD_CODE
     assert "PROBE_SIZE = 1" in packaged_dogfood.MANAGED_PROBE_CODE
     assert 'probe_cube.label = "probe_cube"' in packaged_dogfood.MANAGED_PROBE_CODE
     assert "probe_cube.color = Color(" in packaged_dogfood.MANAGED_PROBE_CODE
@@ -31,6 +34,9 @@ def test_cad_code_names_the_evidence_parts() -> None:
         "result = Compound(children=[probe_cube])"
         in packaged_dogfood.MANAGED_PROBE_CODE
     )
+    assert "export_step(" not in packaged_dogfood.MANAGED_PROBE_CODE
+    assert "export_stl(" not in packaged_dogfood.MANAGED_PROBE_CODE
+    assert "export_gltf(" not in packaged_dogfood.MANAGED_PROBE_CODE
 
 
 def test_result_text_flattens_mcp_blocks() -> None:

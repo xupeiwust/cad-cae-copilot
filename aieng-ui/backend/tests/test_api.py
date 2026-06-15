@@ -225,6 +225,81 @@ def test_field_descriptor_returns_real_frd_data(tmp_path: Path) -> None:
     assert data["max_value"] == 220.0
 
 
+def test_field_descriptor_serves_derived_fields_and_safety_factor(tmp_path: Path) -> None:
+    """GET /fields/{name} serves derived fields (von_mises, components, principal)
+    and a safety-factor field when the material yield is resolvable."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("frd-derived"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "derived-test.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    coords = {i: (float(i), 0.0, 0.0) for i in range(1, 9)}
+    # Uniaxial stress (only Sxx) → von Mises == Sxx == S1; min 10, max 220.
+    stress = {i: [v, 0.0, 0.0, 0.0, 0.0, 0.0] for i, v in zip(range(1, 9), [10, 20, 30, 40, 50, 200, 210, 220])}
+    frd_text = _make_test_frd_with_coords(coords, stress_nodes=stress)
+
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "derived-test", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", frd_text)
+        zf.writestr("simulation/setup.yaml", "material_name: Steel-316L\n")
+
+    project["aieng_file"] = "derived-test.aieng"
+    save_project(settings, project)
+
+    def _field(name: str) -> dict:
+        r = client.get(f"/api/projects/{project_id}/fields/{name}")
+        assert r.status_code == 200, name
+        return r.json()
+
+    # von Mises / Sxx / S1 all equal the uniaxial Sxx field.
+    for name in ("von_mises", "sxx", "s1"):
+        d = _field(name)
+        assert d["source"] == "frd", name
+        assert d["unit"] == "MPa"
+        assert d["min_value"] == 10.0 and d["max_value"] == 220.0, name
+
+    # Safety factor = yield(290 for Steel-316L) / von Mises; min SF at the peak stress.
+    sf = _field("safety_factor")
+    assert sf["source"] == "frd"
+    assert sf["unit"] == ""
+    assert sf["min_value"] == pytest.approx(290.0 / 220.0, rel=1e-3)
+    assert sf["max_value"] == pytest.approx(290.0 / 10.0, rel=1e-3)
+
+
+def test_field_descriptor_safety_factor_unavailable_without_material(tmp_path: Path) -> None:
+    """Without a resolvable material yield, safety_factor falls back to synthetic
+    (honest: the field is not fabricated from FRD)."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("frd-nosf"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "nosf.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    coords = {i: (float(i), 0.0, 0.0) for i in range(1, 9)}
+    stress = {i: [float(10 * i), 0.0, 0.0, 0.0, 0.0, 0.0] for i in range(1, 9)}
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "nosf", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", _make_test_frd_with_coords(coords, stress_nodes=stress))
+        # no setup.yaml → no material yield
+    project["aieng_file"] = "nosf.aieng"
+    save_project(settings, project)
+
+    sf = client.get(f"/api/projects/{project_id}/fields/safety_factor").json()
+    assert sf["source"] == "synthetic_mock"  # not fabricated from FRD
+
+
 def test_field_descriptor_fallback_to_synthetic_when_no_frd(tmp_path: Path) -> None:
     """GET /fields/{name} falls back to synthetic when package has no FRD."""
     from app.main import create_app, default_project, project_dir, save_project

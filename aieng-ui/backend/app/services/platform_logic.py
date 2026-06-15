@@ -892,6 +892,50 @@ def _resolve_frd_in_package(package_path: Path) -> str | None:
         return None
 
 
+def _resolve_material_yield(package_path: Path) -> float | None:
+    """Best-effort material yield strength (MPa) for the safety-factor field.
+
+    Reads the CAE setup material: an explicit ``yield_strength_mpa`` / ``yield_mpa``
+    wins; otherwise the material name is looked up against the known-materials table.
+    Returns None if it cannot be determined (the field is then reported unavailable).
+    """
+    import yaml
+
+    from ..post_processing import _lookup_yield_strength
+
+    setup: dict[str, Any] | None = None
+    for member in ("simulation/setup.yaml", "simulation/setup.yml", "cae/setup.yaml"):
+        try:
+            with zipfile.ZipFile(package_path, "r") as zf:
+                if member in zf.namelist():
+                    setup = yaml.safe_load(zf.read(member).decode("utf-8"))
+                    break
+        except Exception:
+            continue
+    if not isinstance(setup, dict):
+        return None
+
+    # Find a material name + optional explicit yield.
+    name: str | None = setup.get("material_name")
+    mat_obj: Any = None
+    materials = setup.get("materials")
+    if isinstance(materials, dict) and materials:
+        first_name, first_obj = next(iter(materials.items()))
+        name = name or str(first_name)
+        mat_obj = first_obj
+    elif isinstance(setup.get("material"), dict):
+        mat_obj = setup["material"]
+        name = name or mat_obj.get("name")
+
+    if isinstance(mat_obj, dict):
+        for key in ("yield_strength_mpa", "yield_mpa", "yield_strength"):
+            val = mat_obj.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and val > 0:
+                return float(val)
+
+    return _lookup_yield_strength(name) if name else None
+
+
 def _extract_frd_field_data(
     package_path: Path,
     field_name: str,
@@ -926,74 +970,67 @@ def _extract_frd_field_data(
 
         from aieng.simulation.frd_result_extractor import parse_frd
         from aieng.simulation.field_region_extractor import _extract_node_coords_from_frd
+        from aieng.simulation.field_derivation import (
+            FIELD_CATALOG,
+            canonical_field_name,
+            derive_displacement_value,
+            derive_stress_value,
+        )
 
         fields = parse_frd(temp_frd)
         coords = _extract_node_coords_from_frd(temp_frd)
         if not coords:
             return None
 
-        import math
-
         warnings: list[str] = []
         values: dict[int, float] = {}
-        unit = ""
 
-        if field_name == "stress":
+        name = canonical_field_name(field_name)
+        meta = FIELD_CATALOG.get(name)
+        if meta is None:
+            warnings.append(f"Field '{field_name}' is not supported for FRD extraction.")
+            return None
+        unit = meta["unit"]
+
+        if meta["source"] == "stress":
             s_field = fields.get("S")
             if not s_field:
                 warnings.append("S (stress tensor) field not found in FRD.")
                 return None
-            node_data = s_field["node_data"]
-            for nid, vals in node_data.items():
+            yield_strength: float | None = None
+            if name == "safety_factor":
+                yield_strength = _resolve_material_yield(package_path)
+                if yield_strength is None:
+                    warnings.append(
+                        "Material yield strength unknown — safety-factor field unavailable."
+                    )
+                    return None
+            for nid, vals in s_field["node_data"].items():
                 if nid not in coords:
                     continue
-                if len(vals) < 6 or any(v is None for v in vals[:6]):
-                    continue
-                sxx, syy, szz = float(vals[0]), float(vals[1]), float(vals[2])
-                sxy, sxz, syz = float(vals[3]), float(vals[4]), float(vals[5])
-                vm = math.sqrt(
-                    0.5 * (
-                        (sxx - syy) ** 2
-                        + (syy - szz) ** 2
-                        + (szz - sxx) ** 2
-                        + 6.0 * (sxy ** 2 + sxz ** 2 + syz ** 2)
-                    )
-                )
-                values[nid] = vm
-            unit = "MPa"
-
-        elif field_name == "displacement":
+                v = derive_stress_value(name, tuple(vals[:6]), yield_strength=yield_strength)
+                if v is not None:
+                    values[nid] = v
+        else:  # displacement
             disp = fields.get("DISP")
             if not disp:
                 warnings.append("DISP field not found in FRD.")
                 return None
             components = disp["components"]
-            node_data = disp["node_data"]
-            all_idx = next((i for i, c in enumerate(components) if c == "ALL"), None)
-            d1_idx = next((i for i, c in enumerate(components) if c == "D1"), None)
-            d2_idx = next((i for i, c in enumerate(components) if c == "D2"), None)
-            d3_idx = next((i for i, c in enumerate(components) if c == "D3"), None)
-            for nid, vals in node_data.items():
+            idx = {c: next((i for i, cc in enumerate(components) if cc == c), None) for c in ("D1", "D2", "D3")}
+
+            def _comp(vals: list[Any], key: str) -> float | None:
+                i = idx[key]
+                if i is not None and i < len(vals) and vals[i] is not None:
+                    return float(vals[i])
+                return None
+
+            for nid, vals in disp["node_data"].items():
                 if nid not in coords:
                     continue
-                if all_idx is not None and all_idx < len(vals) and vals[all_idx] is not None:
-                    v = abs(float(vals[all_idx]))
-                elif (
-                    d1_idx is not None and d2_idx is not None and d3_idx is not None
-                    and all(idx < len(vals) and vals[idx] is not None for idx in (d1_idx, d2_idx, d3_idx))
-                ):
-                    v = math.sqrt(
-                        float(vals[d1_idx]) ** 2
-                        + float(vals[d2_idx]) ** 2
-                        + float(vals[d3_idx]) ** 2
-                    )
-                else:
-                    continue
-                values[nid] = v
-            unit = "mm"
-        else:
-            warnings.append(f"Field '{field_name}' is not supported for FRD extraction.")
-            return None
+                v = derive_displacement_value(name, _comp(vals, "D1"), _comp(vals, "D2"), _comp(vals, "D3"))
+                if v is not None:
+                    values[nid] = v
 
         if not values:
             warnings.append(f"No valid '{field_name}' values could be extracted from FRD.")

@@ -864,6 +864,70 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         read_only=False,
     )
 
+    def _tool_opt_cae_evaluate_candidate(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """CAE-evaluate ONE design-study candidate with the real static solver. When
+        allow_solver_execution is true, compiles the candidate geometry on a throwaway
+        copy and solves it (Gmsh + CalculiX), writing candidate-local computed_metrics +
+        an evaluation whose honesty.solver_executed reflects reality. Baseline never
+        modified; no candidate accepted/promoted."""
+        from aieng.converters.design_study_cae_evaluation import (
+            request_design_study_candidate_cae_evaluation,
+        )
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        cid = str(inp.get("candidate_id") or "").strip()
+        if not pid or not cid:
+            return {"status": "error", "code": "bad_input", "message": "project_id and candidate_id are required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+        if pkg is None or not pkg.exists():
+            return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+
+        allow_solver = bool(inp.get("allow_solver_execution", False))
+        solver_fn = None
+        if allow_solver:
+            from ..candidate_solver import solve_candidate_geometry
+
+            def solver_fn(p, c):  # noqa: ANN001
+                return solve_candidate_geometry(
+                    p, c, timeout=int(inp.get("timeout", 180)), mesh_size_mm=inp.get("mesh_size_mm")
+                )
+        try:
+            result = request_design_study_candidate_cae_evaluation(
+                pkg,
+                cid,
+                mode="run_if_available" if allow_solver else "normalize_existing",
+                allow_solver_execution=allow_solver,
+                allow_ranking_refresh=bool(inp.get("allow_ranking_refresh", False)),
+                requested_by="agent",
+                solver_fn=solver_fn,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "cae_evaluate_failed", "message": f"{type(exc).__name__}: {exc}"}
+        return {"tool": "opt.cae_evaluate_candidate", **result}
+
+    rt.register_tool(
+        "opt.cae_evaluate_candidate",
+        _tool_opt_cae_evaluate_candidate,
+        description=(
+            "[APPROVAL REQUIRED] CAE-evaluate ONE design-study candidate with the REAL static "
+            "solver — the MCP path that CLOSES the candidate optimize→verify loop. Derives "
+            "candidate-local CAE setup from the baseline; when allow_solver_execution=true it "
+            "compiles the candidate geometry on a throwaway copy and runs Gmsh + CalculiX, "
+            "writing candidate-local computed_metrics and an evaluation whose "
+            "honesty.solver_executed reflects reality (true only on a real solve). The "
+            "baseline is NEVER modified and no candidate is accepted or promoted. Degrades "
+            "honestly — never a fake success — when Gmsh/CalculiX are unavailable or the "
+            "candidate's faces no longer match the baseline CAE mapping (stale topology). "
+            "With allow_solver_execution=false it only normalizes existing candidate metrics. "
+            "Run opt.run_candidates first; rank with opt.rank_candidates after."
+        ),
+        input_schema=_schema("opt.cae_evaluate_candidate"),
+        requires_approval=True,
+        read_only=False,
+    )
+
     return {
         "derive_topology_optimization_problem": _tool_opt_derive_problem_from_cae,
         "run_topology_optimization": _tool_opt_run_topology_optimization,
@@ -871,4 +935,5 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         "topology_to_sizing": _tool_opt_topology_to_sizing,
         "run_assembly_topology_optimization": _tool_opt_run_assembly_topology_optimization,
         "sizing_sweep": _tool_opt_sizing_sweep,
+        "cae_evaluate_candidate": _tool_opt_cae_evaluate_candidate,
     }

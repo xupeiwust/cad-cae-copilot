@@ -160,6 +160,29 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "minimization). Writes analysis/topology_optimization.json. No external solver."
         ),
     },
+    "opt.cae_evaluate_candidate": {
+        "type": "object",
+        "required": ["project_id", "candidate_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "candidate_id": {"type": "string", "description": "An executed design-study candidate (run opt.run_candidates first)."},
+            "allow_solver_execution": {"type": "boolean", "description": "When true, compile the candidate geometry and run the real static solver (Gmsh + CalculiX). Default false = normalize existing candidate-local metrics only."},
+            "allow_ranking_refresh": {"type": "boolean", "description": "Re-rank candidates after this evaluation (default false)."},
+            "mesh_size_mm": {"type": "number", "description": "Gmsh target element size for the candidate solve (mm); defaults to the CAE setup value."},
+            "timeout": {"type": "integer", "description": "Solver timeout in seconds (default 180)."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "[APPROVAL REQUIRED] CAE-evaluate ONE design-study candidate with the REAL static "
+            "solver. Derives candidate-local CAE setup from the baseline, and when "
+            "allow_solver_execution=true compiles the candidate geometry on a throwaway copy "
+            "and solves it (Gmsh + CalculiX), writing candidate-local computed_metrics + a "
+            "candidate evaluation whose honesty.solver_executed reflects reality. The baseline "
+            "is NEVER modified; no candidate is accepted/promoted. Degrades honestly (no fake "
+            "success) when tools are unavailable or the candidate topology is stale. With "
+            "allow_solver_execution=false it only normalizes existing candidate-local metrics."
+        ),
+    },
     "cae.mesh_convergence": {
         "type": "object",
         "required": ["project_id", "mesh_sizes"],

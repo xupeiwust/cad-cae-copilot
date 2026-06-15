@@ -19,12 +19,12 @@
   "surfaces": {
     "artifact_schemas": {
       "policy": "unstable",
-      "sha256": "ea9f409f9f334c7af098917960617d7617c4c59d6f9c7be00bd69566213684fe",
+      "sha256": "3ec993eb1aa9cdea045fdb4fe42cd833dfd92b89c3aa5a946bcbf654691388a0",
       "version": "0.1.0-alpha.1"
     },
     "mcp_tool_surface": {
       "policy": "unstable",
-      "sha256": "74fce2cdaa8068f4c6be092f7baf4f8f1fd0fe1b705c0ee07f763aef4332cd28",
+      "sha256": "1783078c5923d877cac6690d4a20a9f8ed1ec0885f4f5ba5af0246d78db1d1bc",
       "version": "0.1.0-alpha.1"
     },
     "skill_prompts": {

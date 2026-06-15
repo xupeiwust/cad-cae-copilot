@@ -809,10 +809,11 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
     )
 
     def _tool_opt_sizing_sweep(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
-        """Sweep ONE editable dimension across given values, solving EACH variant with
-        the real static solver, and rank by objective subject to a stress/displacement
-        constraint. Baseline never modified (throwaway copies); recommend-only — apply
-        the winner via approval-gated cad.edit_parameter. Runs N solver executions."""
+        """Sweep ONE editable dimension across explicit values or a {min,max,steps/step}
+        range, solving EACH variant with the real static solver, and rank by objective
+        subject to a stress/displacement constraint. Baseline is never modified unless
+        apply_winner=true, in which case the winning value is applied through the
+        audited cad.edit_parameter path. Runs N solver executions."""
         from ..sizing_sweep_runner import run_sizing_sweep
 
         pid = str(inp.get("project_id") or "").strip()
@@ -822,9 +823,10 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             return {"status": "error", "code": "bad_input",
                     "message": "project_id, featureId and parameterName are required"}
         values = inp.get("values")
-        if not isinstance(values, list) or not values:
+        range_spec = inp.get("range") if isinstance(inp.get("range"), dict) else None
+        if values is None and range_spec is None:
             return {"status": "error", "code": "bad_input",
-                    "message": "values must be a non-empty array of numbers"}
+                    "message": "provide either values or range"}
         try:
             return run_sizing_sweep(
                 active_settings,
@@ -832,6 +834,7 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                 feature_id=feature_id,
                 parameter_name=parameter_name,
                 values=values,
+                range=range_spec,
                 objective=str(inp.get("objective") or "min_mass"),
                 stress_limit=inp.get("stress_limit"),
                 safety_factor=float(inp.get("safety_factor", 1.0)),
@@ -839,6 +842,7 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                 mesh_size_mm=inp.get("mesh_size_mm"),
                 timeout=int(inp.get("timeout", 180)),
                 density=inp.get("density"),
+                apply_winner=bool(inp.get("apply_winner", False)),
             )
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "code": "sweep_failed", "message": f"{type(exc).__name__}: {exc}"}
@@ -849,15 +853,15 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         description=(
             "[APPROVAL REQUIRED] Parametric sizing sweep that CLOSES the optimize→verify "
             "loop on static FEA: vary ONE editable dimension (an UPPER_SNAKE_CASE constant, "
-            "see cad.list_editable_parameters) across the given values, solve EACH variant "
-            "with the real static solver (Gmsh + CalculiX), and rank by objective "
-            "(min_mass / min_displacement / min_stress) subject to a stress "
-            "(yield / safety-factor) + optional displacement constraint. The baseline is "
-            "NEVER modified — every variant is built and solved on a throwaway copy. "
-            "Recommend-only: apply the recommended value via the approval-gated "
-            "cad.edit_parameter. A variant that fails to build or solve is reported "
-            "honestly (solver_executed=false) and never recommended. Runs N solver "
-            "executions, so it is approval-gated as one operation."
+            "see cad.list_editable_parameters) across explicit values OR a {min,max,steps/step} "
+            "range, solve EACH variant with the real static solver (Gmsh + CalculiX), and rank "
+            "by objective (min_mass / min_displacement / min_stress) subject to a stress "
+            "(yield / safety-factor) + optional displacement constraint. Range values are "
+            "clamped to the parameter's declared min/max. The baseline is NEVER modified unless "
+            "apply_winner=true, in which case the winning value is applied through the audited "
+            "cad.edit_parameter path and the regression_diff is reported. A variant that fails "
+            "to build or solve is reported honestly (solver_executed=false) and never recommended. "
+            "Runs N solver executions, so it is approval-gated as one operation."
         ),
         input_schema=_schema("opt.sizing_sweep"),
         requires_approval=True,

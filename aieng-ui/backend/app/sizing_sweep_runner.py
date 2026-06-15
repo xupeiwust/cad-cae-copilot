@@ -31,6 +31,111 @@ from aieng.converters.sizing_sweep import rank_sizing_sweep
 EvaluateValue = Callable[[float], dict[str, Any]]
 
 
+def _expand_sweep_values(
+    values: list[float] | None,
+    range_spec: dict[str, Any] | None,
+    package_path: Path,
+    feature_id: str,
+    parameter_name: str,
+) -> tuple[list[float], dict[str, Any] | None]:
+    """Normalize an explicit value list or a {min, max, steps/step} range.
+
+    Returns ``(clean_values, range_metadata)``. ``range_metadata`` is non-None when
+    the caller supplied a range object, so the report can echo what was expanded.
+    The returned values are clamped to the parameter's declared min/max, deduped,
+    and capped at 25.
+    """
+    from .project_io import _validate_cad_parameter_edit_contract
+
+    if values is not None and range_spec is not None:
+        raise ValueError("provide either values or range, not both")
+
+    if range_spec is not None:
+        if not isinstance(range_spec, dict):
+            raise ValueError("range must be an object with min/max and steps or step")
+        rmin = range_spec.get("min")
+        rmax = range_spec.get("max")
+        if rmin is None or rmax is None:
+            raise ValueError("range must include min and max")
+        try:
+            rmin_f = float(rmin)
+            rmax_f = float(rmax)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"bad_input: range min/max must be numbers: {exc}") from exc
+        if rmax_f < rmin_f:
+            raise ValueError("bad_input: range max must be >= min")
+
+        # Load parameter bounds (pass None so the contract check doesn't reject a
+        # specific test value).
+        contract = _validate_cad_parameter_edit_contract(
+            package_path, feature_id, parameter_name, None
+        )
+        param = contract.get("parameter", {})
+        param_min = param.get("min_value")
+        param_max = param.get("max_value")
+
+        # Clamp the range to declared bounds before generating values so that
+        # step-based sweeps align with the feasible interval.
+        if param_min is not None:
+            rmin_f = max(rmin_f, float(param_min))
+        if param_max is not None:
+            rmax_f = min(rmax_f, float(param_max))
+
+        if "steps" in range_spec:
+            steps = int(range_spec["steps"])
+            if steps < 2:
+                raise ValueError("bad_input: range steps must be >= 2")
+            if steps > 25:
+                raise ValueError("too_many_values: range expands to more than 25 values (MVP cap)")
+            step = (rmax_f - rmin_f) / (steps - 1)
+            raw_values = [rmin_f + i * step for i in range(steps)]
+        elif "step" in range_spec:
+            step = float(range_spec["step"])
+            if step == 0:
+                raise ValueError("bad_input: range step cannot be zero")
+            n_steps = int((rmax_f - rmin_f) / step) + 1
+            if n_steps > 25:
+                raise ValueError("too_many_values: range expands to more than 25 values (MVP cap)")
+            raw_values = [rmin_f + i * step for i in range(n_steps)]
+        else:
+            raise ValueError("bad_input: range must include steps or step")
+
+        range_clean: list[float] = []
+        range_seen: set[float] = set()
+        for v in raw_values:
+            if v not in range_seen:
+                range_clean.append(v)
+                range_seen.add(v)
+        if not range_clean:
+            raise ValueError("bad_input: range expands to an empty value list after clamping")
+        return range_clean, {
+            "min": rmin_f,
+            "max": rmax_f,
+            "steps_or_step": range_spec.get("steps", range_spec.get("step")),
+            "clamped_to_bounds": (param_min, param_max),
+        }
+
+    if values is None:
+        raise ValueError("bad_input: values or range is required")
+    if not isinstance(values, list):
+        raise ValueError("bad_input: values must be a list of numbers")
+    clean: list[float] = []
+    seen: set[float] = set()
+    for v in values:
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv not in seen:
+            clean.append(fv)
+            seen.add(fv)
+    if len(clean) > 25:
+        raise ValueError("too_many_values: sweep is capped at 25 values per run (MVP scope)")
+    if not clean:
+        raise ValueError("bad_input: values must contain at least one valid number")
+    return clean, None
+
+
 def _total_solid_volume(topology_map: dict[str, Any]) -> float | None:
     """Sum solid-entity volumes from a topology map (mass ∝ volume for one material)."""
     if not isinstance(topology_map, dict):
@@ -150,7 +255,8 @@ def run_sizing_sweep(
     *,
     feature_id: str,
     parameter_name: str,
-    values: list[float],
+    values: list[float] | None = None,
+    range: dict[str, Any] | None = None,  # noqa: A002  # shadows builtin for API clarity
     objective: str = "min_mass",
     stress_limit: float | None = None,
     safety_factor: float = 1.0,
@@ -158,31 +264,18 @@ def run_sizing_sweep(
     mesh_size_mm: float | None = None,
     timeout: int = 180,
     density: float | None = None,
+    apply_winner: bool = False,
     evaluate_value: EvaluateValue | None = None,
 ) -> dict[str, Any]:
-    """Sweep one parameter across ``values``, solve each variant, and rank them.
+    """Sweep one parameter across ``values`` or a ``range``, solve each variant, and rank them.
 
     Resolves the project's package, evaluates each value via ``evaluate_value``
     (production default: copy → edit → solve), and feeds the per-variant results to
-    the pure ranker. Returns the ranker report enriched with project/parameter
-    context. Recommend-only; the baseline is never modified.
+    the pure ranker. By default the baseline is never modified; set
+    ``apply_winner=True`` to apply the recommended value through the existing
+    approval-gated ``cad.edit_parameter`` path.
     """
     from .project_io import get_project, resolve_project_path
-
-    clean_values: list[float] = []
-    for v in values or []:
-        try:
-            fv = float(v)
-        except (TypeError, ValueError):
-            continue
-        if fv not in clean_values:
-            clean_values.append(fv)
-    if not clean_values:
-        return {"status": "error", "code": "bad_input",
-                "message": "values must be a non-empty list of numbers"}
-    if len(clean_values) > 25:
-        return {"status": "error", "code": "too_many_values",
-                "message": "sweep is capped at 25 values per run (MVP scope)"}
 
     try:
         project = get_project(settings, project_id)
@@ -191,6 +284,20 @@ def run_sizing_sweep(
     pkg = resolve_project_path(settings, project_id, project.get("aieng_file"))
     if pkg is None or not Path(pkg).exists():
         return {"status": "error", "code": "no_package", "message": ".aieng package not found"}
+
+    try:
+        clean_values, range_metadata = _expand_sweep_values(
+            values, range, Path(pkg), feature_id, parameter_name
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        code = "bad_input"
+        if msg.startswith("too_many_values:"):
+            code = "too_many_values"
+            msg = msg.split(":", 1)[1].strip()
+        elif msg.startswith("bad_input:"):
+            msg = msg.split(":", 1)[1].strip()
+        return {"status": "error", "code": code, "message": msg}
 
     if evaluate_value is None:
         evaluate_value = make_default_evaluate_value(
@@ -214,11 +321,47 @@ def run_sizing_sweep(
         "project_id": project_id,
         "feature_id": feature_id,
         "swept_values": clean_values,
-        "next_step": (
+        "range": range_metadata,
+        "apply_winner_requested": apply_winner,
+    })
+
+    # Optional: apply the winning value through the audited edit path.
+    if apply_winner and report.get("recommended") is not None:
+        from .cad_generation import edit_build123d_parameter
+
+        winner = report["recommended"]["value"]
+        edit_result = edit_build123d_parameter(
+            settings,
+            project_id,
+            feature_id,
+            parameter_name,
+            winner,
+            timeout=timeout,
+            response_detail="summary",
+        )
+        report["apply_status"] = edit_result.get("status", "error")
+        report["applied_value"] = winner
+        if edit_result.get("status") == "ok":
+            report["regression_diff"] = edit_result.get("regression_diff")
+            report["baseline_modified"] = True
+            report["next_step"] = (
+                f"Applied recommended value {winner} to baseline via cad.edit_parameter. "
+                "Review regression_diff and viewer thumbnail."
+            )
+        else:
+            report["baseline_modified"] = False
+            report["apply_error"] = edit_result.get("message") or edit_result.get("error")
+            report["next_step"] = (
+                f"Recommended value {winner} could not be applied: {report['apply_error']}. "
+                "Apply it manually with cad.edit_parameter."
+            )
+    else:
+        report["baseline_modified"] = False
+        report["next_step"] = (
             "Apply the recommended value with cad.edit_parameter (approval-gated). "
             "This sweep modified nothing."
             if report.get("recommended") is not None
             else "No value recommended — see recommendation_reason."
-        ),
-    })
+        )
+
     return report

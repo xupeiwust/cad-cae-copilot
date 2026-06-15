@@ -215,7 +215,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "opt.sizing_sweep": {
         "type": "object",
-        "required": ["project_id", "featureId", "parameterName", "values"],
+        "required": ["project_id", "featureId", "parameterName"],
         "properties": {
             "project_id": {"type": "string"},
             "featureId": {"type": "string", "description": "Feature id carrying the editable parameter (from cad.list_editable_parameters / feature_graph)."},
@@ -223,7 +223,19 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "values": {
                 "type": "array",
                 "items": {"type": "number"},
-                "description": "Explicit list of dimension values to try (max 25). Each is solved with the real static solver.",
+                "description": "Explicit list of dimension values to try (max 25). Mutually exclusive with range.",
+            },
+            "range": {
+                "type": "object",
+                "required": ["min", "max"],
+                "properties": {
+                    "min": {"type": "number", "description": "Start value (inclusive)."},
+                    "max": {"type": "number", "description": "End value (inclusive)."},
+                    "steps": {"type": "integer", "minimum": 2, "maximum": 25, "description": "Number of evenly spaced values to generate (e.g. steps=5 for 2/3/4/5/6)."},
+                    "step": {"type": "number", "exclusiveMinimum": 0, "description": "Fixed increment between values (max 25 generated)."},
+                },
+                "additionalProperties": False,
+                "description": "Range-based sweep specification. Mutually exclusive with values. Values are clamped to the parameter's declared min/max.",
             },
             "objective": {
                 "type": "string",
@@ -236,14 +248,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "mesh_size_mm": {"type": "number", "description": "Gmsh target element size (mm); defaults to the CAE setup value or 2.5."},
             "density": {"type": "number", "description": "Optional material density to convert solid volume to mass; omitted -> mass ranks by volume (equivalent for one material)."},
             "timeout": {"type": "integer", "description": "Per-variant solver timeout in seconds (default 180)."},
+            "apply_winner": {"type": "boolean", "default": False, "description": "If true, apply the recommended value to the baseline through the audited cad.edit_parameter path (still one approval; reports regression_diff). Default false = recommend-only."},
         },
         "additionalProperties": False,
         "description": (
-            "[APPROVAL REQUIRED] Parametric sizing sweep: vary ONE editable dimension across the "
-            "given values, solve EACH variant with the real static solver (Gmsh + CalculiX), and "
-            "rank by objective subject to a stress/displacement constraint. Baseline is never "
-            "modified (each variant runs on a throwaway copy); recommend-only — apply the winner "
-            "via approval-gated cad.edit_parameter. Runs N solver executions."
+            "[APPROVAL REQUIRED] Parametric sizing sweep: vary ONE editable dimension across values "
+            "or a {min,max,steps/step} range, solve EACH variant with the real static solver "
+            "(Gmsh + CalculiX), and rank by objective subject to a stress/displacement constraint. "
+            "Baseline is never modified unless apply_winner=true, in which case the winning value "
+            "is applied through the approval-gated cad.edit_parameter path. Runs N solver executions."
         ),
     },
     "opt.derive_problem_from_cae": {

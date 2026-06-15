@@ -341,6 +341,18 @@ single-part edit.
   around each part in a broken / missing left-right symmetry pair — the same
   `geometry_report` structural signals `cad.design_review` folds in, made visible
   in 3D. Read-only; the toggle only appears when there is at least one alert.
+- **Field legend controls (in-legend colormap + range + bands + threshold).**
+  The floating legend for the active solver result field
+  ([`FieldLegend.tsx`](aieng-ui/frontend/src/components/FieldLegend.tsx)) is now
+  interactive. Users can clamp the min/max range, pick from the built-in colormaps
+  (`thermal`, `coolwarm`, `viridis`, `grayscale`), switch between continuous and
+  discrete bands, and isolate regions above a threshold. The mapping is recomputed
+  client-side in
+  [`fieldColors.ts`](aieng-ui/frontend/src/components/viewer/fieldColors.ts)
+  (`applyFieldColors`, `effectiveFieldRange`, `normalizeFieldValue`) and reapplied
+  by `useFieldColorOverlay` without reloading the preview asset. Reset restores the
+  solver-derived defaults. State lives in `useWorkbenchApp` and is reset when the
+  project or selected field changes.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

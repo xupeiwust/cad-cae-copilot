@@ -3,7 +3,7 @@ import { FieldPicker } from "./FieldPicker";
 import { FieldLegend } from "./FieldLegend";
 import { resultFieldLabel } from "./viewer/resultFields";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace } from "../appTypes";
-import type { ProjectRecord, SolverFieldDescriptor } from "../types";
+import type { FieldOverlayConfig, ProjectRecord, SolverFieldDescriptor } from "../types";
 
 type ViewerPaneProps = {
   runtimeReady: boolean;
@@ -23,6 +23,8 @@ type ViewerPaneProps = {
   highlightedFaceIds: Set<string>;
   brepSnapshot: BrepGraphSnapshot | null;
   onClearHighlightedFaces(): void;
+  fieldOverlayConfig?: FieldOverlayConfig | null;
+  onFieldOverlayConfigChange?(config: FieldOverlayConfig | null): void;
 };
 
 export function ViewerPane({
@@ -43,6 +45,8 @@ export function ViewerPane({
   highlightedFaceIds,
   brepSnapshot,
   onClearHighlightedFaces,
+  fieldOverlayConfig,
+  onFieldOverlayConfigChange,
 }: ViewerPaneProps) {
   return (
     <section className="viewer-pane">
@@ -74,11 +78,16 @@ export function ViewerPane({
           {caeResultsAvailable ? (
             <FieldPicker value={selectedCaeField} onChange={onSelectCaeField} />
           ) : null}
-          <FieldLegend descriptor={activeFieldDescriptor} />
+          <FieldLegend
+            descriptor={activeFieldDescriptor}
+            config={fieldOverlayConfig}
+            onChange={onFieldOverlayConfigChange}
+          />
           <ModelViewer
             assetUrl={effectiveViewerUrl}
             assetFormat={effectiveViewerFormat}
             fieldDescriptor={activeFieldDescriptor}
+            fieldOverlayConfig={fieldOverlayConfig}
             projectId={selectedProject?.id ?? null}
             pickedFaces={pickedFaces}
             onAddPickedFace={onAddPickedFace}

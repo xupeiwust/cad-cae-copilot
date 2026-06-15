@@ -5,7 +5,7 @@ import { assemblyAlertCounts } from "../app/geometryReport";
 import { useGeometryReport } from "../app/useGeometryReport";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
-import type { SolverFieldDescriptor } from "../types";
+import type { FieldOverlayConfig, SolverFieldDescriptor } from "../types";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
 import {
   useThreeScene,
@@ -15,12 +15,14 @@ import {
   useHighlightOverlay,
   useAssemblyCheckOverlay,
   useFieldMarkerOverlay,
+  useFieldColorOverlay,
 } from "./viewer/hooks";
 
 export function ModelViewer({
   assetUrl,
   assetFormat,
   fieldDescriptor,
+  fieldOverlayConfig,
   projectId,
   pickedFaces,
   onAddPickedFace,
@@ -34,6 +36,7 @@ export function ModelViewer({
   assetUrl?: string | null;
   assetFormat?: string | null;
   fieldDescriptor?: SolverFieldDescriptor | null;
+  fieldOverlayConfig?: FieldOverlayConfig | null;
   projectId?: string | null;
   pickedFaces: PickedFace[];
   onAddPickedFace(face: PickedFace): void;
@@ -85,7 +88,11 @@ export function ModelViewer({
     fieldDescriptor,
     () => setObjectReadyKey((k) => k + 1),
     setViewerState,
+    fieldOverlayConfig,
   );
+
+  // 8. Re-apply field colormap when legend controls change.
+  useFieldColorOverlay(objectRef, fieldDescriptor, fieldOverlayConfig, objectReadyKey);
 
   // 3. Face identity maps (viewer↔model transform + primitive↔face)
   const { displayTransformRef, primitiveFaceRef, faceMeshesRef } = useFaceIdentityMaps(

@@ -148,6 +148,145 @@ def test_solve_package_static_degrades_when_tools_unavailable(tmp_path: Path) ->
     assert result["metrics"] == {}
 
 
+def _make_pkg_with_feature_graph(tmp_path: Path) -> Path:
+    import json
+    import zipfile
+
+    pkg = tmp_path / "proj.aieng"
+    feature_graph = {
+        "features": [
+            {
+                "id": "f_wall",
+                "parameters": {
+                    "thickness": {
+                        "current_value": 3.0,
+                        "min_value": 2.0,
+                        "max_value": 8.0,
+                        "cad_parameter_name": "THICKNESS",
+                    }
+                },
+            }
+        ]
+    }
+    with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("graph/feature_graph.json", json.dumps(feature_graph))
+    return pkg
+
+
+def test_sweep_expands_range_with_steps(monkeypatch, tmp_path: Path) -> None:
+    pkg = _make_pkg_with_feature_graph(tmp_path)
+    monkeypatch.setattr(project_io, "get_project", lambda settings, pid: {"aieng_file": str(pkg)})
+    monkeypatch.setattr(project_io, "resolve_project_path", lambda settings, pid, f: pkg)
+
+    table = {v: {"max_von_mises_stress": 100.0, "mass": float(v)} for v in [2.0, 3.0, 4.0, 5.0, 6.0]}
+    report = run_sizing_sweep(
+        None, "proj1",
+        feature_id="f_wall", parameter_name="thickness",
+        range={"min": 2.0, "max": 6.0, "steps": 5},
+        objective="min_mass", stress_limit=200.0,
+        evaluate_value=_fake_evaluator(table),
+    )
+    assert report["status"] == "ok"
+    assert report["swept_values"] == [2.0, 3.0, 4.0, 5.0, 6.0]
+    assert report["range"]["min"] == 2.0
+    assert report["recommended"]["value"] == 2.0
+
+
+def test_sweep_expands_range_with_step_and_clamps(monkeypatch, tmp_path: Path) -> None:
+    pkg = _make_pkg_with_feature_graph(tmp_path)
+    monkeypatch.setattr(project_io, "get_project", lambda settings, pid: {"aieng_file": str(pkg)})
+    monkeypatch.setattr(project_io, "resolve_project_path", lambda settings, pid, f: pkg)
+
+    # Range extends beyond declared max (8.0); should clamp to 8.
+    table = {v: {"max_von_mises_stress": 100.0, "mass": float(v)} for v in [2.0, 4.0, 6.0, 8.0]}
+    report = run_sizing_sweep(
+        None, "proj1",
+        feature_id="f_wall", parameter_name="thickness",
+        range={"min": 1.0, "max": 10.0, "step": 2.0},
+        objective="min_mass", stress_limit=200.0,
+        evaluate_value=_fake_evaluator(table),
+    )
+    assert report["status"] == "ok"
+    assert report["swept_values"] == [2.0, 4.0, 6.0, 8.0]
+
+
+def test_sweep_range_rejects_too_many_steps(monkeypatch, tmp_path: Path) -> None:
+    pkg = _make_pkg_with_feature_graph(tmp_path)
+    monkeypatch.setattr(project_io, "get_project", lambda settings, pid: {"aieng_file": str(pkg)})
+    monkeypatch.setattr(project_io, "resolve_project_path", lambda settings, pid, f: pkg)
+
+    report = run_sizing_sweep(
+        None, "proj1",
+        feature_id="f_wall", parameter_name="thickness",
+        range={"min": 2.0, "max": 8.0, "steps": 30},
+        evaluate_value=_fake_evaluator({}),
+    )
+    assert report["status"] == "error"
+    assert report["code"] == "too_many_values"
+    assert "25" in report["message"]
+
+
+def test_sweep_apply_winner_calls_edit_parameter(monkeypatch, tmp_path: Path) -> None:
+    pkg = _make_pkg_with_feature_graph(tmp_path)
+    monkeypatch.setattr(project_io, "get_project", lambda settings, pid: {"aieng_file": str(pkg)})
+    monkeypatch.setattr(project_io, "resolve_project_path", lambda settings, pid, f: pkg)
+
+    table = {
+        2.0: {"max_von_mises_stress": 260.0, "mass": 1.0},
+        3.0: {"max_von_mises_stress": 170.0, "mass": 1.5},
+        4.0: {"max_von_mises_stress": 120.0, "mass": 2.0},
+    }
+
+    applied = {}
+
+    def fake_edit(settings, project_id, feature_id, parameter_name, new_value, **kwargs):
+        applied.update({"project_id": project_id, "feature_id": feature_id, "value": new_value})
+        return {"status": "ok", "regression_diff": {"verdict": "clean"}}
+
+    monkeypatch.setattr("app.cad_generation.edit_build123d_parameter", fake_edit)
+
+    report = run_sizing_sweep(
+        None, "proj1",
+        feature_id="f_wall", parameter_name="thickness",
+        values=[2.0, 3.0, 4.0],
+        objective="min_mass", stress_limit=200.0,
+        apply_winner=True,
+        evaluate_value=_fake_evaluator(table),
+    )
+    assert report["status"] == "ok"
+    assert report["apply_status"] == "ok"
+    assert report["baseline_modified"] is True
+    assert report["applied_value"] == 3.0
+    assert applied["value"] == 3.0
+    assert report["regression_diff"]["verdict"] == "clean"
+
+
+def test_sweep_apply_winner_honestly_reports_edit_failure(monkeypatch, tmp_path: Path) -> None:
+    pkg = _make_pkg_with_feature_graph(tmp_path)
+    monkeypatch.setattr(project_io, "get_project", lambda settings, pid: {"aieng_file": str(pkg)})
+    monkeypatch.setattr(project_io, "resolve_project_path", lambda settings, pid, f: pkg)
+
+    table = {3.0: {"max_von_mises_stress": 170.0, "mass": 1.5}}
+
+    def fake_edit(*args, **kwargs):
+        return {"status": "error", "message": "build failed"}
+
+    monkeypatch.setattr("app.cad_generation.edit_build123d_parameter", fake_edit)
+
+    report = run_sizing_sweep(
+        None, "proj1",
+        feature_id="f_wall", parameter_name="thickness",
+        values=[3.0],
+        objective="min_mass", stress_limit=200.0,
+        apply_winner=True,
+        evaluate_value=_fake_evaluator(table),
+    )
+    assert report["status"] == "ok"
+    assert report["apply_status"] == "error"
+    assert report["baseline_modified"] is False
+    assert "build failed" in report["apply_error"]
+
+
 def test_sweep_persists_report_to_package(valid_project: Path) -> None:
     table = {
         2.0: {"max_von_mises_stress": 260.0, "mass": 1.0},

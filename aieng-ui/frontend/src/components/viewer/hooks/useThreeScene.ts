@@ -24,6 +24,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
   const controlsRef = useRef<OrbitControlsInstance | null>(null);
   const highlightGroupRef = useRef<THREE.Group | null>(null);
   const assemblyGroupRef = useRef<THREE.Group | null>(null);
+  const markerGroupRef = useRef<THREE.Group | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -49,6 +50,11 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     assemblyGroup.name = "assembly-check-group";
     scene.add(assemblyGroup);
     assemblyGroupRef.current = assemblyGroup;
+
+    const markerGroup = new THREE.Group();
+    markerGroup.name = "field-marker-group";
+    scene.add(markerGroup);
+    markerGroupRef.current = markerGroup;
 
     // ── Camera ──
     const initialSize = getHostSize();
@@ -112,6 +118,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
       sceneRef.current = null;
       highlightGroupRef.current = null;
       assemblyGroupRef.current = null;
+      markerGroupRef.current = null;
       cameraRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
@@ -125,5 +132,6 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     controlsRef,
     highlightGroupRef,
     assemblyGroupRef,
+    markerGroupRef,
   };
 }

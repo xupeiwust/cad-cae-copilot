@@ -14,6 +14,7 @@ import {
   useFaceIdentityMaps,
   useHighlightOverlay,
   useAssemblyCheckOverlay,
+  useFieldMarkerOverlay,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -52,6 +53,15 @@ export function ModelViewer({
   });
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
   const [showAssemblyCheck, setShowAssemblyCheck] = useState(false);
+  const [showFieldMarkers, setShowFieldMarkers] = useState(true);
+
+  // Peak/min markers only make sense for a real solver field with per-node data.
+  const fieldMarkersAvailable = Boolean(
+    fieldDescriptor &&
+      fieldDescriptor.source === "frd" &&
+      Array.isArray(fieldDescriptor.values) &&
+      fieldDescriptor.values.length > 0,
+  );
 
   const { geometryReport } = useGeometryReport({
     selectedId: projectId ?? null,
@@ -61,7 +71,7 @@ export function ModelViewer({
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
 
   // 1. Three.js scene lifecycle
-  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef } =
+  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef } =
     useThreeScene(hostRef);
 
   // 2. Asset loading
@@ -117,6 +127,15 @@ export function ModelViewer({
     objectReadyKey,
   );
 
+  // 7. Field peak/min markers
+  useFieldMarkerOverlay(
+    markerGroupRef,
+    showFieldMarkers && fieldMarkersAvailable,
+    fieldDescriptor,
+    displayTransformRef,
+    objectReadyKey,
+  );
+
   return (
     <div className="viewer-canvas-shell">
       <div className="viewer-canvas" ref={hostRef} />
@@ -141,6 +160,29 @@ export function ModelViewer({
           }}
         >
           {showAssemblyCheck ? "Hide" : "Show"} assembly check ({assemblyAlerts.total})
+        </button>
+      )}
+      {fieldMarkersAvailable && (
+        <button
+          type="button"
+          className="viewer-field-marker-toggle"
+          onClick={() => setShowFieldMarkers((value) => !value)}
+          title="Mark the peak (red) and minimum (blue) of the active result field in 3D"
+          style={{
+            position: "absolute",
+            bottom: 8,
+            left: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: showFieldMarkers ? "#7f1d1d" : "rgba(20,20,20,0.78)",
+            color: "#f5f5f5",
+            cursor: "pointer",
+          }}
+        >
+          {showFieldMarkers ? "Hide" : "Show"} peak/min
         </button>
       )}
       <ViewerOverlays

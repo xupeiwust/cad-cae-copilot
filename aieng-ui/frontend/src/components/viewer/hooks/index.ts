@@ -4,3 +4,4 @@ export { useFacePicker } from "./useFacePicker";
 export { useFaceIdentityMaps } from "./useFaceIdentityMaps";
 export { useHighlightOverlay } from "./useHighlightOverlay";
 export { useAssemblyCheckOverlay } from "./useAssemblyCheckOverlay";
+export { useFieldMarkerOverlay } from "./useFieldMarkerOverlay";

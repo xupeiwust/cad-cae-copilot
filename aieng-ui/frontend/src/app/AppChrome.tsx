@@ -132,6 +132,9 @@ export function AppChrome({ app }: AppChromeProps) {
             selectedProject={app.selectedProject}
             effectiveViewerFormat={app.effectiveViewerFormat}
             activeFieldDescriptor={app.activeFieldDescriptor}
+            selectedCaeField={app.selectedCaeField}
+            onSelectCaeField={app.setSelectedCaeField}
+            caeResultsAvailable={app.caeResultsAvailable}
             effectiveViewerUrl={app.effectiveViewerUrl}
             pickedFaces={app.pickedFaces}
             onAddPickedFace={app.addPickedFace}

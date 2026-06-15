@@ -4,6 +4,17 @@ import * as THREE from "three";
 // or map per-node solver values onto displayed mesh vertices via a spatial grid.
 // All pure THREE.js — no React, unit-testable in isolation.
 
+// CSS color stops across a colormap, for a legend gradient bar (low→high).
+export function colormapCssStops(name?: string | null, count = 8): string[] {
+  const stops: string[] = [];
+  const n = Math.max(2, count);
+  for (let i = 0; i < n; i += 1) {
+    const c = sampleColormap(i / (n - 1), name);
+    stops.push(`rgb(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)})`);
+  }
+  return stops;
+}
+
 export function sampleColormap(t: number, name?: string | null): THREE.Color {
   const c = Math.max(0, Math.min(1, t));
   if (name === "coolwarm") {

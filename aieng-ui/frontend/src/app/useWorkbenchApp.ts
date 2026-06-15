@@ -4,9 +4,6 @@ import type { ChatHistoryItem } from "../appTypes";
 
 import { api } from "../api";
 import {
-  EMPTY_CAE_FIELDS,
-} from "../appConstants";
-import {
   projectViewerUrl,
   resolveAssetFormat,
   withAssetVersion,
@@ -281,11 +278,12 @@ export function useWorkbenchApp() {
     });
   }
 
-  const [selectedCaeField, setSelectedCaeField] = useState("stress");
+  // Selected post-processing result field (canonical names from resultFields catalog;
+  // "" = no field overlay / plain geometry). Default to the most-used field.
+  const [selectedCaeField, setSelectedCaeField] = useState("von_mises");
   const [fieldDescriptor, setFieldDescriptor] = useState<SolverFieldDescriptor | null>(null);
 
   const caeSummary = summary?.cae ?? null;
-  const caeFields = caeSummary?.available_fields ?? EMPTY_CAE_FIELDS;
   const hasCaeResultArtifacts = Boolean(
     caeSummary?.results_available ||
       (caeSummary?.result_evidence_count ?? 0) > 0 ||
@@ -295,21 +293,12 @@ export function useWorkbenchApp() {
       caeSummary?.result_summary?.status.has_results ||
       caeSummary?.result_summary?.status.has_fields,
   );
-  const renderableCaeFields = useMemo(
-    () => (hasCaeResultArtifacts ? caeFields : []),
-    [caeFields, hasCaeResultArtifacts],
-  );
   const activeFieldDescriptor = hasCaeResultArtifacts ? fieldDescriptor : null;
 
+  // Fetch the descriptor for the picked field. The picker offers the full result-field
+  // catalog; the backend serves any of them from the FRD (or falls back to synthetic).
   useEffect(() => {
-    if (!renderableCaeFields.length) return;
-    if (!renderableCaeFields.includes(selectedCaeField)) {
-      setSelectedCaeField(renderableCaeFields[0]);
-    }
-  }, [renderableCaeFields, selectedCaeField]);
-
-  useEffect(() => {
-    if (!selectedId || !hasCaeResultArtifacts || !renderableCaeFields.length) {
+    if (!selectedId || !hasCaeResultArtifacts || !selectedCaeField) {
       setFieldDescriptor(null);
       return;
     }
@@ -337,7 +326,7 @@ export function useWorkbenchApp() {
       })
       .catch(() => { if (!cancelled) setFieldDescriptor(null); });
     return () => { cancelled = true; };
-  }, [selectedId, selectedCaeField, hasCaeResultArtifacts, renderableCaeFields]);
+  }, [selectedId, selectedCaeField, hasCaeResultArtifacts]);
 
   const copyPointerText = useCallback((text: string) => {
     if (!text.trim()) return;
@@ -375,6 +364,9 @@ export function useWorkbenchApp() {
     resolveApproval,
     effectiveViewerFormat,
     activeFieldDescriptor,
+    selectedCaeField,
+    setSelectedCaeField,
+    caeResultsAvailable: hasCaeResultArtifacts,
     effectiveViewerUrl,
     pickedFaces,
     addPickedFace,

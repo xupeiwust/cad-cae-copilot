@@ -160,6 +160,36 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "minimization). Writes analysis/topology_optimization.json. No external solver."
         ),
     },
+    "cae.mesh_convergence": {
+        "type": "object",
+        "required": ["project_id", "mesh_sizes"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "mesh_sizes": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Gmsh target element sizes (mm) to solve at — 3+ progressively finer (smaller) sizes recommended for a Grid Convergence Index; 2-6 allowed.",
+            },
+            "metrics": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["max_von_mises_stress", "max_displacement"]},
+                "description": "Metrics to assess (default both).",
+            },
+            "safety_factor": {"type": "number", "description": "GCI factor of safety (default 1.25, per ASME V&V-20 for >=3 grids)."},
+            "converged_gci_percent": {"type": "number", "description": "Finest-grid GCI threshold (%) for the converged verdict (default 5)."},
+            "timeout": {"type": "integer", "description": "Per-solve timeout in seconds (default 180)."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "[APPROVAL REQUIRED] Mesh-convergence study: solve the project's current static "
+            "geometry at each mesh size and report, per metric, the apparent order of "
+            "convergence, the Richardson-extrapolated mesh-independent value, and the Grid "
+            "Convergence Index (ASME V&V-20 discretization uncertainty) with a converged / "
+            "not-converged verdict. Read-only on the package (mutates nothing); runs one "
+            "solver execution per mesh size. The GCI is discretization uncertainty for these "
+            "metrics on this geometry only - not model validity or certification."
+        ),
+    },
     "opt.sizing_sweep": {
         "type": "object",
         "required": ["project_id", "featureId", "parameterName", "values"],

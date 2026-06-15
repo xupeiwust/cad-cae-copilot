@@ -1501,4 +1501,52 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         input_schema=_schema("cae.import_solver_evidence"),
     )
 
+    def _tool_cae_mesh_convergence(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Solve the project's current static geometry at several mesh sizes and report,
+        per metric, the apparent order of convergence, the Richardson-extrapolated
+        mesh-independent value, and the Grid Convergence Index (ASME V&V-20) with a
+        converged / not-converged verdict. Read-only on the package; runs one solve per
+        mesh size."""
+        from ..mesh_convergence_runner import run_mesh_convergence
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        sizes = inp.get("mesh_sizes")
+        if not isinstance(sizes, list) or not sizes:
+            return {"status": "error", "code": "bad_input",
+                    "message": "mesh_sizes must be a non-empty array of element sizes (mm)"}
+        try:
+            return run_mesh_convergence(
+                active_settings,
+                pid,
+                mesh_sizes=sizes,
+                metrics=inp.get("metrics"),
+                safety_factor=float(inp.get("safety_factor", 1.25)),
+                converged_gci_percent=float(inp.get("converged_gci_percent", 5.0)),
+                timeout=int(inp.get("timeout", 180)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "convergence_failed", "message": f"{type(exc).__name__}: {exc}"}
+
+    rt.register_tool(
+        "cae.mesh_convergence",
+        _tool_cae_mesh_convergence,
+        description=(
+            "[APPROVAL REQUIRED] Mesh-convergence study — answers 'can I trust this "
+            "stress/deflection, or is it mesh noise?'. Solves the project's CURRENT static "
+            "geometry at each requested mesh size (3+ progressively finer sizes recommended) "
+            "and reports, per metric, the apparent order of convergence, the "
+            "Richardson-extrapolated mesh-independent value, and the Grid Convergence Index "
+            "(ASME V&V-20 discretization uncertainty) with a converged / not-converged "
+            "verdict + asymptotic-range check. Read-only on the package (mutates nothing); "
+            "runs ONE solver execution per mesh size, so it is approval-gated as one "
+            "operation. The GCI is discretization uncertainty for these metrics on this "
+            "geometry only — not model validity or certification."
+        ),
+        input_schema=_schema("cae.mesh_convergence"),
+        requires_approval=True,
+        read_only=False,
+    )
+
     return {}

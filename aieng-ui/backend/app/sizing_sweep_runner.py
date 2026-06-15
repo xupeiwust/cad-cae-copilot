@@ -121,8 +121,15 @@ def make_default_evaluate_value(
                 glb_bytes=built.get("glb_bytes"),
             )
 
-            # 4. Solve the variant geometry.
-            solve = solve_package_static(tmp_pkg, mesh_size_mm=mesh_size_mm, timeout=timeout)
+            # 4. Solve the variant geometry, rebinding baseline face references to the
+            #    regenerated variant topology. The baseline package is never mutated.
+            solve = solve_package_static(
+                tmp_pkg,
+                mesh_size_mm=mesh_size_mm,
+                timeout=timeout,
+                rebind_faces=True,
+                baseline_package_path=baseline_pkg,
+            )
             metrics = dict(solve.get("metrics") or {})
 
             # 5. Mass proxy from solid volume (∝ mass for a single material).

@@ -909,12 +909,24 @@ check the recorded hash and the existence of every referenced face. If they do n
 match the current topology, the run is refused with code
 `stale_topology_references` and a list of the stale or missing face IDs.
 
+For batch/parametric workflows (`opt.sizing_sweep`, `opt.cae_evaluate_candidate`,
+`solve_candidate_geometry`) the runner can attempt an **adaptive geometric rebind**
+instead of refusing outright. It matches each stale `@face:*` reference to the
+closest face in the regenerated topology by surface type, centroid, normal/axis,
+radius, and area, then continues the solve only when every match is high
+confidence. Ambiguous or low-confidence matches are still refused and reported;
+the baseline package is never mutated.
+
 To recover:
-1. Call `ai_preprocessing.run_ai_preprocessing` with the same (or updated) task
-   description to rebind loads/BCs against the new topology.
-2. Or use `cae.apply_setup_patch` to manually update `simulation/cae_mapping.json`
+1. For parametric variants / design-study candidates, enable adaptive rebind by
+   calling the solver with `rebind_faces=True` and a `baseline_package_path`.
+   `opt.sizing_sweep` and `solve_candidate_geometry` already do this.
+2. For one-off geometry edits, call `ai_preprocessing.run_ai_preprocessing` with
+   the same (or updated) task description to rebind loads/BCs against the new
+   topology.
+3. Or use `cae.apply_setup_patch` to manually update `simulation/cae_mapping.json`
    (`face_ids` and `topology_hash`) and `simulation/setup.yaml`.
-3. Then re-run `cae.prepare_solver_run` and `cae.run_solver`.
+4. Then re-run `cae.prepare_solver_run` and `cae.run_solver`.
 
 ---
 

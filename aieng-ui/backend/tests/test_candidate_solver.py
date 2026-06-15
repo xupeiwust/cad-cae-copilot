@@ -53,7 +53,7 @@ def test_solve_candidate_success(tmp_path, monkeypatch):
             swapped["ir"] = json.loads(zf.read("geometry/shape_ir.json"))
         return {"status": "ok"}
 
-    def fake_solve(package_path, mesh_size_mm=None, timeout=180):
+    def fake_solve(package_path, mesh_size_mm=None, timeout=180, **kwargs):
         return {"solver_executed": True, "status": "success", "metrics": {}, "computed_metrics": _COMPUTED}
 
     monkeypatch.setattr(cad_generation, "recompile_shape_ir_package", fake_recompile)
@@ -93,7 +93,7 @@ def test_solve_candidate_stale_topology_is_honest(tmp_path, monkeypatch):
     monkeypatch.setattr(cad_generation, "recompile_shape_ir_package", lambda p, timeout=120, use_cache=True: {"status": "ok"})
     monkeypatch.setattr(
         simulation_runner, "solve_package_static",
-        lambda p, mesh_size_mm=None, timeout=180: {
+        lambda p, mesh_size_mm=None, timeout=180, **kwargs: {
             "solver_executed": False, "status": "stale_topology_references",
             "error": "CAE face references do not match current topology", "metrics": {},
         },

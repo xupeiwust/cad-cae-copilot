@@ -615,6 +615,9 @@ def solve_package_static(
         "solver_executed": True,
         "status": "success",
         "metrics": extract_static_metrics(extracted),
+        # Full computed_metrics doc (carries metrics_source.software=CalculiX) — used
+        # by the design-study candidate solver to write candidate-local results.
+        "computed_metrics": extracted,
         "warnings": extracted.get("warnings") or [],
     }
 

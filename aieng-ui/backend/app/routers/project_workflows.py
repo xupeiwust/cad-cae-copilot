@@ -964,18 +964,34 @@ def register_project_workflow_routes(
         if package_path is None or not package_path.exists():
             raise HTTPException(status_code=404, detail=".aieng package not found")
         data = payload or {}
+        allow_solver = bool(data.get("allow_solver_execution", False))
+        # When solver execution is explicitly requested, inject the real candidate
+        # solver (compile candidate geometry + Gmsh + CalculiX). It degrades honestly
+        # if tools are unavailable / topology is stale. Default stays solver-free.
+        solver_fn = None
+        if allow_solver:
+            from ..candidate_solver import solve_candidate_geometry
+
+            def solver_fn(pkg, cid):  # noqa: ANN001
+                return solve_candidate_geometry(
+                    pkg, cid,
+                    timeout=int(data.get("timeout", 180)),
+                    mesh_size_mm=data.get("mesh_size_mm"),
+                )
+
         return {
             "project_id": project_id,
             **request_design_study_candidate_cae_evaluation(
                 package_path,
                 candidate_id,
                 mode=data.get("mode", "prepare_only"),
-                allow_solver_execution=bool(data.get("allow_solver_execution", False)),
+                allow_solver_execution=allow_solver,
                 allow_solver_deck_generation=bool(data.get("allow_solver_deck_generation", True)),
                 allow_ranking_refresh=bool(data.get("allow_ranking_refresh", False)),
                 requested_by=data.get("requested_by", "agent"),
                 load_case_ids=data.get("load_case_ids"),
                 constraints_to_evaluate=data.get("constraints_to_evaluate"),
+                solver_fn=solver_fn,
             ),
         }
 

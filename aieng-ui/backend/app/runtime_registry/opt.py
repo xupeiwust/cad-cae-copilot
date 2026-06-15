@@ -808,10 +808,67 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         read_only=False,
     )
 
+    def _tool_opt_sizing_sweep(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Sweep ONE editable dimension across given values, solving EACH variant with
+        the real static solver, and rank by objective subject to a stress/displacement
+        constraint. Baseline never modified (throwaway copies); recommend-only — apply
+        the winner via approval-gated cad.edit_parameter. Runs N solver executions."""
+        from ..sizing_sweep_runner import run_sizing_sweep
+
+        pid = str(inp.get("project_id") or "").strip()
+        feature_id = str(inp.get("featureId") or "").strip()
+        parameter_name = str(inp.get("parameterName") or "").strip()
+        if not (pid and feature_id and parameter_name):
+            return {"status": "error", "code": "bad_input",
+                    "message": "project_id, featureId and parameterName are required"}
+        values = inp.get("values")
+        if not isinstance(values, list) or not values:
+            return {"status": "error", "code": "bad_input",
+                    "message": "values must be a non-empty array of numbers"}
+        try:
+            return run_sizing_sweep(
+                active_settings,
+                pid,
+                feature_id=feature_id,
+                parameter_name=parameter_name,
+                values=values,
+                objective=str(inp.get("objective") or "min_mass"),
+                stress_limit=inp.get("stress_limit"),
+                safety_factor=float(inp.get("safety_factor", 1.0)),
+                displacement_limit=inp.get("displacement_limit"),
+                mesh_size_mm=inp.get("mesh_size_mm"),
+                timeout=int(inp.get("timeout", 180)),
+                density=inp.get("density"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "sweep_failed", "message": f"{type(exc).__name__}: {exc}"}
+
+    rt.register_tool(
+        "opt.sizing_sweep",
+        _tool_opt_sizing_sweep,
+        description=(
+            "[APPROVAL REQUIRED] Parametric sizing sweep that CLOSES the optimize→verify "
+            "loop on static FEA: vary ONE editable dimension (an UPPER_SNAKE_CASE constant, "
+            "see cad.list_editable_parameters) across the given values, solve EACH variant "
+            "with the real static solver (Gmsh + CalculiX), and rank by objective "
+            "(min_mass / min_displacement / min_stress) subject to a stress "
+            "(yield / safety-factor) + optional displacement constraint. The baseline is "
+            "NEVER modified — every variant is built and solved on a throwaway copy. "
+            "Recommend-only: apply the recommended value via the approval-gated "
+            "cad.edit_parameter. A variant that fails to build or solve is reported "
+            "honestly (solver_executed=false) and never recommended. Runs N solver "
+            "executions, so it is approval-gated as one operation."
+        ),
+        input_schema=_schema("opt.sizing_sweep"),
+        requires_approval=True,
+        read_only=False,
+    )
+
     return {
         "derive_topology_optimization_problem": _tool_opt_derive_problem_from_cae,
         "run_topology_optimization": _tool_opt_run_topology_optimization,
         "writeback_topology_optimization": _tool_opt_writeback_to_shape_ir,
         "topology_to_sizing": _tool_opt_topology_to_sizing,
         "run_assembly_topology_optimization": _tool_opt_run_assembly_topology_optimization,
+        "sizing_sweep": _tool_opt_sizing_sweep,
     }

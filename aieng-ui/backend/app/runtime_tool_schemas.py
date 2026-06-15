@@ -160,6 +160,39 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "minimization). Writes analysis/topology_optimization.json. No external solver."
         ),
     },
+    "opt.sizing_sweep": {
+        "type": "object",
+        "required": ["project_id", "featureId", "parameterName", "values"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "featureId": {"type": "string", "description": "Feature id carrying the editable parameter (from cad.list_editable_parameters / feature_graph)."},
+            "parameterName": {"type": "string", "description": "Parameter name on that feature (its UPPER_SNAKE_CASE constant is what gets swept)."},
+            "values": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Explicit list of dimension values to try (max 25). Each is solved with the real static solver.",
+            },
+            "objective": {
+                "type": "string",
+                "enum": ["min_mass", "min_displacement", "min_stress"],
+                "description": "What to minimize among feasible variants (default min_mass; mass is proportional to solid volume for a single material).",
+            },
+            "stress_limit": {"type": "number", "description": "Allowable-stress numerator, e.g. material yield (MPa). Constraint: max_von_mises_stress <= stress_limit / safety_factor."},
+            "safety_factor": {"type": "number", "description": "Divides stress_limit to set the allowable stress (default 1.0)."},
+            "displacement_limit": {"type": "number", "description": "Optional max-displacement constraint (mm)."},
+            "mesh_size_mm": {"type": "number", "description": "Gmsh target element size (mm); defaults to the CAE setup value or 2.5."},
+            "density": {"type": "number", "description": "Optional material density to convert solid volume to mass; omitted -> mass ranks by volume (equivalent for one material)."},
+            "timeout": {"type": "integer", "description": "Per-variant solver timeout in seconds (default 180)."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "[APPROVAL REQUIRED] Parametric sizing sweep: vary ONE editable dimension across the "
+            "given values, solve EACH variant with the real static solver (Gmsh + CalculiX), and "
+            "rank by objective subject to a stress/displacement constraint. Baseline is never "
+            "modified (each variant runs on a throwaway copy); recommend-only — apply the winner "
+            "via approval-gated cad.edit_parameter. Runs N solver executions."
+        ),
+    },
     "opt.derive_problem_from_cae": {
         "type": "object",
         "required": ["project_id"],

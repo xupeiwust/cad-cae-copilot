@@ -520,6 +520,105 @@ def _extract_metrics(frd_path: Path) -> dict[str, Any]:
     return extract_computed_metrics(frd_path)
 
 
+def solve_package_static(
+    package_path: Path,
+    *,
+    mesh_size_mm: float | None = None,
+    timeout: int = 180,
+) -> dict[str, Any]:
+    """Mesh + solve a package's CURRENT static geometry; return scalar metrics.
+
+    Package-level counterpart to ``_run_simulation_core`` (no project/SSE/approval
+    machinery) intended for batch use — e.g. a parametric sizing sweep that solves
+    each dimension variant. Reuses the same proven leaf helpers: extract STEP →
+    Gmsh mesh → NSETs from topology + cae_mapping → CalculiX deck → solve → parse
+    FRD. Never mutates the package.
+
+    Returns ``{solver_executed, status, metrics, warnings, [error]}`` where
+    ``metrics`` carries scalar ``max_von_mises_stress`` / ``max_displacement``.
+    Degrades honestly (``solver_executed=False`` + a reason) when Gmsh/ccx are
+    unavailable, the setup is missing, face references are stale, or the solve
+    fails — it never reports an unsolved variant as success.
+    """
+    package_path = Path(package_path)
+    tools = check_simulation_tools()
+    if not tools["ready"]:
+        return {
+            "solver_executed": False,
+            "status": "tools_unavailable",
+            "metrics": {},
+            "warnings": [],
+            "error": f"required tools unavailable: {', '.join(tools['missing'])}",
+        }
+
+    setup_raw = _read_member(package_path, "simulation/setup.yaml")
+    if not setup_raw:
+        return {
+            "solver_executed": False, "status": "no_setup", "metrics": {}, "warnings": [],
+            "error": "simulation/setup.yaml not found — run CAE setup first",
+        }
+    setup = yaml.safe_load(setup_raw)
+    cae_raw = _read_member(package_path, "simulation/cae_mapping.json")
+    cae_mapping: dict[str, Any] = json.loads(cae_raw) if cae_raw else {"mappings": []}
+    topo_raw = _read_member(package_path, "geometry/topology_map.json")
+    topology: dict[str, Any] = json.loads(topo_raw) if topo_raw else {}
+
+    # Stale face refs would silently drop loads/BCs → refuse rather than mis-solve.
+    topo_val = validate_cae_topology_references(package_path)
+    if not topo_val.get("valid", True):
+        return {
+            "solver_executed": False, "status": "stale_topology_references", "metrics": {},
+            "warnings": [], "error": "CAE face references do not match current topology",
+        }
+
+    size = float(mesh_size_mm or (setup.get("mesh") or {}).get("target_size_mm") or 2.5)
+    with tempfile.TemporaryDirectory(prefix="aieng_sweep_solve_") as tmp_str:
+        work = Path(tmp_str)
+        step_path = _extract_step(package_path, work)
+        if not step_path:
+            return {
+                "solver_executed": False, "status": "no_step", "metrics": {}, "warnings": [],
+                "error": "no STEP geometry in package",
+            }
+        try:
+            mesh_inp = _mesh_with_gmsh(step_path, work, size)
+            nodes = _parse_inp_nodes(mesh_inp)
+            nsets = _build_nsets(nodes, topology, cae_mapping)
+            unresolved = _unresolved_bc_load_faces(setup, cae_mapping, nsets)
+            if unresolved:
+                return {
+                    "solver_executed": False, "status": "unresolved_face_mapping", "metrics": {},
+                    "warnings": [], "error": "load/BC face(s) matched zero mesh nodes",
+                }
+            mesh_text = mesh_inp.read_text(errors="replace")
+            deck_text, _bc_count, _load_count = _build_calculix_deck(
+                mesh_text, setup, nsets, cae_mapping
+            )
+            deck_inp = work / "aieng_run.inp"
+            deck_inp.write_text(deck_text)
+            returncode, _solver_log, frd_path = _run_calculix(deck_inp, work, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "solver_executed": False, "status": "solve_error", "metrics": {}, "warnings": [],
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        if returncode != 0 or not frd_path:
+            return {
+                "solver_executed": False, "status": "solver_error", "metrics": {}, "warnings": [],
+                "error": f"CalculiX returned code {returncode} or produced no FRD",
+            }
+        extracted = _extract_metrics(frd_path)
+
+    from aieng.converters.sizing_sweep import extract_static_metrics
+
+    return {
+        "solver_executed": True,
+        "status": "success",
+        "metrics": extract_static_metrics(extracted),
+        "warnings": extracted.get("warnings") or [],
+    }
+
+
 # ── Orchestration ─────────────────────────────────────────────────────────────
 #
 # run_simulation (sync) and run_simulation_stream (SSE) share ONE pipeline,

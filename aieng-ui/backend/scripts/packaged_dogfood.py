@@ -46,6 +46,16 @@ rib.color = Color(0.75, 0.42, 0.20)
 result = Compound(children=[base_plate, rib])
 """
 
+MANAGED_PROBE_CODE = """\
+from build123d import *
+
+PROBE_SIZE = 1
+probe_cube = Box(PROBE_SIZE, PROBE_SIZE, PROBE_SIZE)
+probe_cube.label = "probe_cube"
+probe_cube.color = Color(0.45, 0.58, 0.70)
+result = Compound(children=[probe_cube])
+"""
+
 
 def _result_text(result: Any) -> str:
     return "\n".join(getattr(block, "text", "") for block in result.content)
@@ -63,12 +73,14 @@ def _assert_http_url(url: str) -> str:
 
 
 def _get_json(url: str) -> dict[str, Any]:
-    with urllib.request.urlopen(_assert_http_url(url), timeout=15) as response:
+    http_url = _assert_http_url(url)
+    with urllib.request.urlopen(http_url, timeout=15) as response:  # noqa: S310
         return json.load(response)
 
 
 def _get_size(url: str) -> tuple[int, int]:
-    with urllib.request.urlopen(_assert_http_url(url), timeout=15) as response:
+    http_url = _assert_http_url(url)
+    with urllib.request.urlopen(http_url, timeout=15) as response:  # noqa: S310
         return response.status, len(response.read())
 
 
@@ -94,7 +106,7 @@ async def _managed_cad_mutation(mcp_url: str) -> dict[str, Any]:
                     {
                         "project_id": str(created["id"]),
                         "name": "Approval fail-safe probe",
-                        "code": "from build123d import *\nresult = Box(1, 1, 1)",
+                        "code": MANAGED_PROBE_CODE,
                         "thumbnail": False,
                     },
                 )

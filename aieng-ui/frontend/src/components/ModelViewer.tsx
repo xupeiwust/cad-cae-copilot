@@ -5,7 +5,7 @@ import { assemblyAlertCounts } from "../app/geometryReport";
 import { useGeometryReport } from "../app/useGeometryReport";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
-import type { FieldOverlayConfig, FieldProbe, SolverFieldDescriptor } from "../types";
+import type { CaeSetupOverlayResponse, FieldOverlayConfig, FieldProbe, SolverFieldDescriptor } from "../types";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
 import {
   useThreeScene,
@@ -17,6 +17,7 @@ import {
   useFieldMarkerOverlay,
   useFieldProbe,
   useFieldColorOverlay,
+  useCaeSetupOverlay,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -24,6 +25,7 @@ export function ModelViewer({
   assetFormat,
   fieldDescriptor,
   fieldOverlayConfig,
+  caeSetupOverlay,
   projectId,
   pickedFaces,
   onAddPickedFace,
@@ -38,6 +40,7 @@ export function ModelViewer({
   assetFormat?: string | null;
   fieldDescriptor?: SolverFieldDescriptor | null;
   fieldOverlayConfig?: FieldOverlayConfig | null;
+  caeSetupOverlay?: CaeSetupOverlayResponse | null;
   projectId?: string | null;
   pickedFaces: PickedFace[];
   onAddPickedFace(face: PickedFace): void;
@@ -59,11 +62,18 @@ export function ModelViewer({
   const [showAssemblyCheck, setShowAssemblyCheck] = useState(false);
   const [showFieldMarkers, setShowFieldMarkers] = useState(true);
   const [fieldProbe, setFieldProbe] = useState<FieldProbe | null>(null);
+  const [showCaeSetup, setShowCaeSetup] = useState(true);
 
   // Clear the probe readout when the active field or project changes.
   useEffect(() => {
     setFieldProbe(null);
   }, [fieldDescriptor?.project_id, fieldDescriptor?.field_name]);
+
+  const caeSetupAvailable = Boolean(
+    caeSetupOverlay &&
+      ((caeSetupOverlay.loads && caeSetupOverlay.loads.length > 0) ||
+        (caeSetupOverlay.constraints && caeSetupOverlay.constraints.length > 0)),
+  );
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -81,7 +91,7 @@ export function ModelViewer({
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
 
   // 1. Three.js scene lifecycle
-  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef } =
+  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef, caeSetupGroupRef } =
     useThreeScene(hostRef);
 
   // 2. Asset loading
@@ -150,7 +160,7 @@ export function ModelViewer({
     objectReadyKey,
   );
 
-  // 8. Click-to-query field probe
+  // 9. Click-to-query field probe
   useFieldProbe(
     hostRef,
     objectRef,
@@ -159,6 +169,18 @@ export function ModelViewer({
     displayTransformRef,
     fieldDescriptor,
     setFieldProbe,
+  );
+
+  // 10. CAE setup overlay (loads, constraints, bound faces)
+  useCaeSetupOverlay(
+    caeSetupGroupRef,
+    showCaeSetup && caeSetupAvailable,
+    caeSetupOverlay ?? null,
+    faceMeshesRef,
+    objectRef,
+    brepSnapshot,
+    displayTransformRef,
+    objectReadyKey,
   );
 
   return (
@@ -208,6 +230,29 @@ export function ModelViewer({
           }}
         >
           {showFieldMarkers ? "Hide" : "Show"} peak/min
+        </button>
+      )}
+      {caeSetupAvailable && (
+        <button
+          type="button"
+          className="viewer-cae-setup-toggle"
+          onClick={() => setShowCaeSetup((value) => !value)}
+          title="Show loads, constraints, and bound faces from the CAE setup"
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: showCaeSetup ? "#1e3a8a" : "rgba(20,20,20,0.78)",
+            color: "#f5f5f5",
+            cursor: "pointer",
+          }}
+        >
+          {showCaeSetup ? "Hide" : "Show"} CAE setup
         </button>
       )}
       <ViewerOverlays

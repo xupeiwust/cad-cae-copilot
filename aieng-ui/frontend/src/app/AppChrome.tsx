@@ -136,6 +136,7 @@ export function AppChrome({ app }: AppChromeProps) {
             activeFieldDescriptor={app.activeFieldDescriptor}
             selectedCaeField={app.selectedCaeField}
             onSelectCaeField={app.setSelectedCaeField}
+            caeSetupOverlay={app.caeSetupOverlay}
             caeResultsAvailable={app.caeResultsAvailable}
             effectiveViewerUrl={app.effectiveViewerUrl}
             fieldOverlayConfig={app.fieldOverlayConfig}

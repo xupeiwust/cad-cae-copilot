@@ -25,6 +25,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
   const highlightGroupRef = useRef<THREE.Group | null>(null);
   const assemblyGroupRef = useRef<THREE.Group | null>(null);
   const markerGroupRef = useRef<THREE.Group | null>(null);
+  const caeSetupGroupRef = useRef<THREE.Group | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -55,6 +56,11 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     markerGroup.name = "field-marker-group";
     scene.add(markerGroup);
     markerGroupRef.current = markerGroup;
+
+    const caeSetupGroup = new THREE.Group();
+    caeSetupGroup.name = "cae-setup-group";
+    scene.add(caeSetupGroup);
+    caeSetupGroupRef.current = caeSetupGroup;
 
     // ── Camera ──
     const initialSize = getHostSize();
@@ -119,6 +125,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
       highlightGroupRef.current = null;
       assemblyGroupRef.current = null;
       markerGroupRef.current = null;
+      caeSetupGroupRef.current = null;
       cameraRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
@@ -133,5 +140,6 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     highlightGroupRef,
     assemblyGroupRef,
     markerGroupRef,
+    caeSetupGroupRef,
   };
 }

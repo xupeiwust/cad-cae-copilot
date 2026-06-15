@@ -183,6 +183,67 @@ def write_artifact_to_package(
     }
 
 
+def write_json_artifact_to_package(
+    package_path: str | Path,
+    artifact_path: str,
+    data: Any,
+    *,
+    overwrite: bool = True,
+    indent: int | None = 2,
+    sort_keys: bool = True,
+) -> dict[str, Any]:
+    """Write a JSON artifact into an existing `.aieng` package ZIP atomically.
+
+    Mirrors :func:`write_artifact_to_package` but accepts an in-memory dict/list
+    instead of a source file path.
+    """
+    path = Path(package_path)
+    if path.suffix != ".aieng":
+        raise ValueError("package path must end with .aieng")
+
+    payload = json.dumps(data, indent=indent, sort_keys=sort_keys, default=str).encode("utf-8")
+
+    with zipfile.ZipFile(path, mode="r") as package:
+        names = set(package.namelist())
+        if "manifest.json" not in names:
+            raise ValueError("package is missing manifest.json")
+        if not overwrite and artifact_path in names:
+            raise FileExistsError(
+                f"{artifact_path} already exists in package; use overwrite=True to replace"
+            )
+        manifest = json.loads(package.read("manifest.json"))
+        existing_members: list[tuple[zipfile.ZipInfo, bytes]] = []
+        seen: set[str] = set()
+        for info in package.infolist():
+            if info.filename in seen or info.filename == artifact_path or info.filename == "manifest.json":
+                continue
+            seen.add(info.filename)
+            data_bytes = b"" if info.is_dir() else package.read(info.filename)
+            existing_members.append((info, data_bytes))
+
+    manifest_json = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".aieng", dir=path.parent) as temp_handle:
+        temp_path = Path(temp_handle.name)
+
+    try:
+        with zipfile.ZipFile(temp_path, mode="w", compression=zipfile.ZIP_DEFLATED) as out_package:
+            for info, data_bytes in existing_members:
+                out_package.writestr(info, data_bytes)
+            out_package.writestr("manifest.json", manifest_json)
+            out_package.writestr(artifact_path, payload)
+        shutil.move(str(temp_path), path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+    return {
+        "path": artifact_path,
+        "kind": Path(artifact_path).stem,
+        "role": "artifact",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Artifact review (Phase 26) — read-only inspection of .aieng package contents
 # ---------------------------------------------------------------------------

@@ -294,6 +294,45 @@ def register_project_workflow_routes(
             setup_artifact = None
         return build_simulation_readiness_report(cae_block, setup_artifact=setup_artifact)
 
+    def _load_latest_json_artifact(project_id: str, artifact_path: str) -> dict[str, Any]:
+        import json as _json
+        import zipfile as _zipfile
+        from ..project_io import get_project, resolve_project_path
+
+        try:
+            project = get_project(active_settings, project_id)
+        except Exception:
+            return {"available": False, "reason": "project_not_found"}
+        pkg_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if pkg_path is None or not pkg_path.exists():
+            return {"available": False, "reason": "no_package"}
+        try:
+            with _zipfile.ZipFile(pkg_path, "r") as zf:
+                if artifact_path not in zf.namelist():
+                    return {"available": False, "reason": "not_found"}
+                data = _json.loads(zf.read(artifact_path).decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            return {"available": False, "reason": "read_failed", "error": str(exc)}
+        return {"available": True, "report": data}
+
+    @app.get("/api/projects/{project_id}/sizing-sweep-report")
+    def get_sizing_sweep_report_endpoint(project_id: str) -> dict[str, Any]:
+        """Latest sizing-sweep report for the workbench panel (read-only).
+
+        Returns the persisted ``analysis/sizing_sweep_report.json`` if present;
+        ``available=false`` when the project has no package or no report yet.
+        """
+        return _load_latest_json_artifact(project_id, "analysis/sizing_sweep_report.json")
+
+    @app.get("/api/projects/{project_id}/mesh-convergence-report")
+    def get_mesh_convergence_report_endpoint(project_id: str) -> dict[str, Any]:
+        """Latest mesh-convergence report for the workbench panel (read-only).
+
+        Returns the persisted ``analysis/mesh_convergence_report.json`` if present;
+        ``available=false`` when the project has no package or no report yet.
+        """
+        return _load_latest_json_artifact(project_id, "analysis/mesh_convergence_report.json")
+
     @app.post("/api/projects/{project_id}/shape-ir-patch")
     def apply_shape_ir_patch_endpoint(
         project_id: str,

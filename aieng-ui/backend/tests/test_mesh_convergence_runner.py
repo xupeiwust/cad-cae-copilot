@@ -4,18 +4,31 @@ Per-size solves are injected so the orchestration runs without Gmsh/CalculiX.
 """
 from __future__ import annotations
 
+import json
+import zipfile
 from pathlib import Path
 
 import pytest
 
 import app.project_io as project_io
-from app.mesh_convergence_runner import run_mesh_convergence
+from app.mesh_convergence_runner import MESH_CONVERGENCE_REPORT_PATH, run_mesh_convergence
 
 
 @pytest.fixture
 def fake_project(monkeypatch, tmp_path: Path):
     pkg = tmp_path / "proj.aieng"
     pkg.write_bytes(b"PK\x03\x04")
+    monkeypatch.setattr(project_io, "get_project", lambda s, p: {"aieng_file": str(pkg)})
+    monkeypatch.setattr(project_io, "resolve_project_path", lambda s, p, f: pkg)
+    return pkg
+
+
+@pytest.fixture
+def valid_project(monkeypatch, tmp_path: Path):
+    pkg = tmp_path / "proj.aieng"
+    with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"version": "0.1.0"}))
+        zf.writestr("graph/feature_graph.json", json.dumps({"features": []}))
     monkeypatch.setattr(project_io, "get_project", lambda s, p: {"aieng_file": str(pkg)})
     monkeypatch.setattr(project_io, "resolve_project_path", lambda s, p, f: pkg)
     return pkg
@@ -99,3 +112,24 @@ def test_no_package(monkeypatch) -> None:
     monkeypatch.setattr(project_io, "resolve_project_path", lambda s, p, f: None)
     r = run_mesh_convergence(None, "p", mesh_sizes=[1.0, 2.0], evaluate_value=_evaluator({}))
     assert r["status"] == "error" and r["code"] == "no_package"
+
+
+def test_convergence_persists_report_to_package(valid_project: Path) -> None:
+    table = {
+        1.0: {"max_von_mises_stress": 11.0, "max_displacement": 2.0},
+        0.5: {"max_von_mises_stress": 10.25, "max_displacement": 2.0},
+        0.25: {"max_von_mises_stress": 10.0625, "max_displacement": 2.0},
+    }
+    report = run_mesh_convergence(
+        None, "proj1", mesh_sizes=[1.0, 0.5, 0.25],
+        evaluate_value=_evaluator(table),
+    )
+    assert report["status"] == "ok"
+    assert report["artifact_path"] == MESH_CONVERGENCE_REPORT_PATH
+    assert "artifact_write_error" not in report
+
+    with zipfile.ZipFile(valid_project, "r") as zf:
+        assert MESH_CONVERGENCE_REPORT_PATH in zf.namelist()
+        persisted = json.loads(zf.read(MESH_CONVERGENCE_REPORT_PATH).decode("utf-8"))
+    assert persisted["tool"] == "cae.mesh_convergence"
+    assert persisted["overall_verdict"] == "converged"

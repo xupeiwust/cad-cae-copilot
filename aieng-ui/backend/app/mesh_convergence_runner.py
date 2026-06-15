@@ -20,6 +20,8 @@ from aieng.converters.mesh_convergence import (
     analyze_mesh_convergence,
 )
 
+MESH_CONVERGENCE_REPORT_PATH = "analysis/mesh_convergence_report.json"
+
 # size → {size, metrics:{...}, solver_executed, [node_count], [error]}
 EvaluateSize = Callable[[float], dict[str, Any]]
 
@@ -132,7 +134,7 @@ def run_mesh_convergence(
     else:
         overall = "not_converged"
 
-    return {
+    report: dict[str, Any] = {
         "status": "ok",
         "tool": "cae.mesh_convergence",
         "project_id": project_id,
@@ -157,3 +159,12 @@ def run_mesh_convergence(
             "production_ready": False,
         },
     }
+
+    try:
+        from .project_io import write_json_artifact_to_package
+        write_json_artifact_to_package(pkg, MESH_CONVERGENCE_REPORT_PATH, report)
+        report["artifact_path"] = MESH_CONVERGENCE_REPORT_PATH
+    except Exception as exc:  # noqa: BLE001
+        report["artifact_write_error"] = str(exc)
+
+    return report

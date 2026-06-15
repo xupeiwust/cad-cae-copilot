@@ -317,8 +317,8 @@ single-part edit.
   shows each parameter's current value + allowed range + editable constant, and a
   click drafts a `/modify set <name> to ` into the composer — so editing still
   flows through the existing modeling-plan-confirmed path (the panel itself never mutates).
-- **Sibling read-only panels (same draft-into-composer pattern).** Two more
-  workbench panels surface backend audits the agent already produces:
+- **Sibling read-only panels (same draft-into-composer pattern).** Workbench
+  panels surface backend audits the agent already produces:
   - **Critique panel** ([`CritiquePanel.tsx`](aieng-ui/frontend/src/components/CritiquePanel.tsx),
     `useProjectCritique` → `GET /api/projects/{id}/critique`, shaped by
     [`critiqueFindings.ts`](aieng-ui/frontend/src/app/critiqueFindings.ts)) — the
@@ -330,7 +330,20 @@ single-part edit.
     the six core CAE inputs as present / missing / defaultable / unknown; a missing
     **required** input (material / loads / constraints) gets an **Add** that drafts
     a `/simulate …`. Hidden for pure-CAD projects (`setup_source == not_found`).
-  Both are read-only (run no solver, mutate nothing); actions flow through the
+  - **Sizing Sweep panel** ([`SizingSweepPanel.tsx`](aieng-ui/frontend/src/components/SizingSweepPanel.tsx),
+    `useSizingSweepReport` → `GET /api/projects/{id}/sizing-sweep-report`,
+    shaped by [`sizingSweepReport.ts`](aieng-ui/frontend/src/app/sizingSweepReport.ts)) —
+    renders the latest `analysis/sizing_sweep_report.json` (written by
+    `opt.sizing_sweep`) as a ranked variant table; the **Apply winner** button
+    drafts `/modify set <param> to <winner>` into the composer.
+  - **Mesh Convergence panel** ([`MeshConvergencePanel.tsx`](aieng-ui/frontend/src/components/MeshConvergencePanel.tsx),
+    `useMeshConvergenceReport` → `GET /api/projects/{id}/mesh-convergence-report`,
+    shaped by [`meshConvergenceReport.ts`](aieng-ui/frontend/src/app/meshConvergenceReport.ts)) —
+    renders the latest `analysis/mesh_convergence_report.json` (written by
+    `cae.mesh_convergence`) with per-metric GCI / apparent-order / verdict; a
+    **Finer mesh** button drafts `/simulate mesh_size_mm=<half finest>` when the
+    result is not converged.
+  All are read-only (run no solver, mutate nothing); actions flow through the
   existing plan-confirmed `/modify` path or approval-gated `/simulate` solver path.
 - **Assembly-check viewer overlay (in-3D affordance).** The model viewer has a
   "Show assembly check" toggle ([`ModelViewer.tsx`](aieng-ui/frontend/src/components/ModelViewer.tsx),

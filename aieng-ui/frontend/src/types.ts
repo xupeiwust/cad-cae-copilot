@@ -1,4 +1,4 @@
-﻿export type CadRecommendationProposal = {
+export type CadRecommendationProposal = {
   proposal_id: string;
   rank?: number;
   feature_ref: string;
@@ -1481,6 +1481,98 @@ export type SimulationReadinessResponse = {
   missing_required_inputs?: string[];
   defaultable_inputs?: string[];
   summary?: string;
+};
+
+/** One variant from a sizing sweep (from analysis/sizing_sweep_report.json). */
+export type SizingSweepVariant = {
+  value: number;
+  metrics?: Record<string, number | null>;
+  solver_executed?: boolean;
+  status?: "feasible" | "infeasible" | "unknown" | "error" | string;
+  reason?: string;
+  rank?: number;
+  objective_value?: number | null;
+  credibility?: CredibilityStamp;
+};
+
+export type SizingSweepReport = {
+  status?: string;
+  tool?: string;
+  project_id?: string;
+  feature_id?: string;
+  parameter_name?: string | null;
+  objective?: string;
+  objective_metric?: string;
+  swept_values?: number[];
+  constraint?: {
+    stress_limit?: number | null;
+    safety_factor?: number;
+    allowable_stress?: number | null;
+    displacement_limit?: number | null;
+  };
+  variants?: SizingSweepVariant[];
+  variant_count?: number;
+  feasible_count?: number;
+  recommended?: SizingSweepVariant | null;
+  recommendation_reason?: string;
+  safe_to_apply?: boolean;
+  next_step?: string;
+  credibility?: CredibilityStamp;
+  honesty?: Record<string, unknown>;
+  artifact_path?: string;
+};
+
+export type SizingSweepReportResponse = {
+  available: boolean;
+  reason?: string;
+  report?: SizingSweepReport;
+  error?: string;
+};
+
+/** Per-metric convergence report from analysis/mesh_convergence_report.json. */
+export type MeshConvergenceMetricReport = {
+  metric?: string;
+  levels?: Array<{ size: number; value: number; node_count?: number }>;
+  level_count?: number;
+  apparent_order?: number | null;
+  extrapolated_value?: number | null;
+  gci_fine_percent?: number | null;
+  gci_coarse_percent?: number | null;
+  asymptotic_range?: boolean | null;
+  converged?: boolean | null;
+  verdict?: string;
+  message?: string;
+  relative_change_finest_pair_percent?: number | null;
+  refinement_ratio_finest_pair?: number | null;
+  honesty?: Record<string, unknown>;
+};
+
+export type MeshConvergenceReport = {
+  status?: string;
+  tool?: string;
+  project_id?: string;
+  mesh_sizes?: number[];
+  solved_count?: number;
+  solves?: Array<{
+    size: number;
+    metrics?: Record<string, number | null>;
+    solver_executed?: boolean;
+    solve_status?: string;
+    error?: string | null;
+  }>;
+  convergence?: Record<string, MeshConvergenceMetricReport>;
+  verdicts?: Record<string, string | null>;
+  overall_verdict?: string;
+  next_step?: string;
+  honesty?: Record<string, unknown>;
+  artifact_path?: string;
+};
+
+export type MeshConvergenceReportResponse = {
+  available: boolean;
+  reason?: string;
+  report?: MeshConvergenceReport;
+  error?: string;
 };
 
 export type ChatConnection = {

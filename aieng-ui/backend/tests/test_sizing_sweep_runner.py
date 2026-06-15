@@ -6,12 +6,14 @@ honest degradation when the solver tools are unavailable.
 """
 from __future__ import annotations
 
+import json
+import zipfile
 from pathlib import Path
 
 import pytest
 
 import app.project_io as project_io
-from app.sizing_sweep_runner import run_sizing_sweep
+from app.sizing_sweep_runner import SIZING_SWEEP_REPORT_PATH, run_sizing_sweep
 
 
 @pytest.fixture
@@ -19,6 +21,18 @@ def fake_project(monkeypatch, tmp_path: Path):
     """Make get_project / resolve_project_path resolve to an existing dummy package."""
     pkg = tmp_path / "proj.aieng"
     pkg.write_bytes(b"PK\x03\x04")  # existence is all the orchestrator checks
+    monkeypatch.setattr(project_io, "get_project", lambda settings, pid: {"aieng_file": str(pkg)})
+    monkeypatch.setattr(project_io, "resolve_project_path", lambda settings, pid, f: pkg)
+    return pkg
+
+
+@pytest.fixture
+def valid_project(monkeypatch, tmp_path: Path):
+    """Make get_project / resolve_project_path resolve to a valid .aieng package."""
+    pkg = tmp_path / "proj.aieng"
+    with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"version": "0.1.0"}))
+        zf.writestr("graph/feature_graph.json", json.dumps({"features": []}))
     monkeypatch.setattr(project_io, "get_project", lambda settings, pid: {"aieng_file": str(pkg)})
     monkeypatch.setattr(project_io, "resolve_project_path", lambda settings, pid, f: pkg)
     return pkg
@@ -132,3 +146,27 @@ def test_solve_package_static_degrades_when_tools_unavailable(tmp_path: Path) ->
     assert result["solver_executed"] is False
     assert result["status"] == "tools_unavailable"
     assert result["metrics"] == {}
+
+
+def test_sweep_persists_report_to_package(valid_project: Path) -> None:
+    table = {
+        2.0: {"max_von_mises_stress": 260.0, "mass": 1.0},
+        3.0: {"max_von_mises_stress": 170.0, "mass": 1.5},
+        4.0: {"max_von_mises_stress": 120.0, "mass": 2.0},
+    }
+    report = run_sizing_sweep(
+        None, "proj1",
+        feature_id="f_wall", parameter_name="thickness",
+        values=[2.0, 3.0, 4.0],
+        objective="min_mass", stress_limit=200.0,
+        evaluate_value=_fake_evaluator(table),
+    )
+    assert report["status"] == "ok"
+    assert report["artifact_path"] == SIZING_SWEEP_REPORT_PATH
+    assert "artifact_write_error" not in report
+
+    with zipfile.ZipFile(valid_project, "r") as zf:
+        assert SIZING_SWEEP_REPORT_PATH in zf.namelist()
+        persisted = json.loads(zf.read(SIZING_SWEEP_REPORT_PATH).decode("utf-8"))
+    assert persisted["tool"] == "opt.sizing_sweep"
+    assert persisted["recommended"]["value"] == 3.0

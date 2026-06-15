@@ -25,6 +25,8 @@ import { useWorkbenchStages } from "./useWorkbenchStages";
 import { useOptimizationStudy } from "./useOptimizationStudy";
 import { useEditDiff } from "./useEditDiff";
 import { useOptimizationConvergence } from "./useOptimizationConvergence";
+import { useSizingSweepReport } from "./useSizingSweepReport";
+import { useMeshConvergenceReport } from "./useMeshConvergenceReport";
 
 export function useWorkbenchApp() {
   const {
@@ -121,6 +123,8 @@ export function useWorkbenchApp() {
   const { optimizationStudy, surrogateProposals } = useOptimizationStudy({ selectedId, geometryVersion });
   const { editDiff } = useEditDiff({ selectedId, geometryVersion });
   const { optimizationConvergence } = useOptimizationConvergence({ selectedId, geometryVersion });
+  const { sizingSweepReport } = useSizingSweepReport({ selectedId, geometryVersion });
+  const { meshConvergenceReport } = useMeshConvergenceReport({ selectedId, geometryVersion });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
   const rawViewerUrl = cadPreviewUrl ?? summary?.viewer_url ?? fallbackViewerUrl;
@@ -400,5 +404,7 @@ export function useWorkbenchApp() {
     surrogateProposals,
     optimizationConvergence,
     editDiff,
+    sizingSweepReport,
+    meshConvergenceReport,
   };
 }

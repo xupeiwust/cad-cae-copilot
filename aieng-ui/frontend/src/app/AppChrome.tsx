@@ -12,6 +12,8 @@ import { StandardPartsPanel } from "../components/StandardPartsPanel";
 import { BOMPanel } from "../components/BOMPanel";
 import { OptimizationPanel } from "../components/OptimizationPanel";
 import { EditDiffPanel } from "../components/EditDiffPanel";
+import { SizingSweepPanel } from "../components/SizingSweepPanel";
+import { MeshConvergencePanel } from "../components/MeshConvergencePanel";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
 import { isEmbedMode } from "./embed";
@@ -160,6 +162,16 @@ export function AppChrome({ app }: AppChromeProps) {
             surrogate={app.surrogateProposals}
             convergence={app.optimizationConvergence}
             onUseInChat={(draft) => app.setNotice({ tone: "info", title: "Draft ready", detail: draft })}
+          />
+
+          <SizingSweepPanel
+            report={app.sizingSweepReport}
+            onUseInChat={(draft) => app.setNotice({ tone: "info", title: "Sizing sweep draft", detail: draft })}
+          />
+
+          <MeshConvergencePanel
+            report={app.meshConvergenceReport}
+            onUseInChat={(draft) => app.setNotice({ tone: "info", title: "Mesh convergence draft", detail: draft })}
           />
 
           {libraryTab && !embed && (

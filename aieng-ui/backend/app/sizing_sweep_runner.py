@@ -27,6 +27,8 @@ from typing import Any, Callable
 
 from aieng.converters.sizing_sweep import rank_sizing_sweep
 
+SIZING_SWEEP_REPORT_PATH = "analysis/sizing_sweep_report.json"
+
 # A per-variant evaluator: value → {value, metrics, solver_executed, [error]}.
 EvaluateValue = Callable[[float], dict[str, Any]]
 
@@ -221,4 +223,12 @@ def run_sizing_sweep(
             else "No value recommended — see recommendation_reason."
         ),
     })
+
+    try:
+        from .project_io import write_json_artifact_to_package
+        write_json_artifact_to_package(pkg, SIZING_SWEEP_REPORT_PATH, report)
+        report["artifact_path"] = SIZING_SWEEP_REPORT_PATH
+    except Exception as exc:  # noqa: BLE001
+        report["artifact_write_error"] = str(exc)
+
     return report

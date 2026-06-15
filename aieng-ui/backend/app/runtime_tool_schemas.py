@@ -259,6 +259,69 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "is applied through the approval-gated cad.edit_parameter path. Runs N solver executions."
         ),
     },
+
+    "opt.doe_sizing_study": {
+        "type": "object",
+        "required": ["project_id", "parameters"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "parameters": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                    "type": "object",
+                    "required": ["featureId", "parameterName"],
+                    "properties": {
+                        "featureId": {"type": "string", "description": "Feature id carrying the editable parameter."},
+                        "parameterName": {"type": "string", "description": "Parameter name on that feature (its UPPER_SNAKE_CASE constant is swept)."},
+                        "values": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "description": "Explicit list of values for this parameter (max 25). Mutually exclusive with range.",
+                        },
+                        "range": {
+                            "type": "object",
+                            "required": ["min", "max"],
+                            "properties": {
+                                "min": {"type": "number"},
+                                "max": {"type": "number"},
+                                "steps": {"type": "integer", "minimum": 2, "maximum": 25},
+                                "step": {"type": "number", "exclusiveMinimum": 0},
+                            },
+                            "additionalProperties": False,
+                            "description": "Range specification; provide steps or step. Values clamped to declared parameter bounds.",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+                "description": "List of 2+ editable parameters to vary jointly.",
+            },
+            "method": {
+                "type": "string",
+                "enum": ["full_factorial", "lhs"],
+                "default": "full_factorial",
+                "description": "Design-point generation strategy. full_factorial enumerates the Cartesian product (must fit inside budget). lhs draws a Latin-hypercube-style sample up to budget.",
+            },
+            "budget": {"type": "integer", "minimum": 2, "maximum": 64, "default": 64, "description": "Maximum number of design points to solve."},
+            "objective": {"type": "string", "enum": ["min_mass", "min_displacement", "min_stress"], "default": "min_mass"},
+            "stress_limit": {"type": "number"},
+            "safety_factor": {"type": "number", "default": 1.0},
+            "displacement_limit": {"type": "number"},
+            "mesh_size_mm": {"type": "number"},
+            "timeout": {"type": "integer", "default": 180},
+            "density": {"type": "number"},
+            "seed": {"type": "integer", "description": "Optional random seed for lhs reproducibility."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "[APPROVAL REQUIRED] Multi-parameter DOE sizing study: jointly vary 2+ editable "
+            "parameters, solve each design point with the real static solver (Gmsh + CalculiX), "
+            "and rank by objective subject to stress/displacement constraints. Baseline is never "
+            "modified; recommendation is applied through approval-gated cad.edit_parameter. "
+            "Budget capped at 64 solver executions."
+        ),
+    },
+
     "opt.derive_problem_from_cae": {
         "type": "object",
         "required": ["project_id"],

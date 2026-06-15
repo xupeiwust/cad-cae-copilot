@@ -868,6 +868,55 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         read_only=False,
     )
 
+    def _tool_opt_doe_sizing_study(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Multi-parameter DOE sizing study: jointly vary 2+ editable parameters,
+        solve each design point with the real static solver, and rank by objective +
+        constraints. Budget-capped; baseline never mutated."""
+        from ..doe_sizing_runner import run_doe_sizing_study
+
+        pid = str(inp.get("project_id") or "").strip()
+        parameters = inp.get("parameters")
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        if not isinstance(parameters, list) or len(parameters) < 2:
+            return {"status": "error", "code": "bad_input",
+                    "message": "parameters must be a list with at least 2 entries"}
+        try:
+            return run_doe_sizing_study(
+                active_settings,
+                pid,
+                parameters=parameters,
+                method=str(inp.get("method") or "full_factorial"),
+                budget=int(inp.get("budget", 64)),
+                objective=str(inp.get("objective") or "min_mass"),
+                stress_limit=inp.get("stress_limit"),
+                safety_factor=float(inp.get("safety_factor", 1.0)),
+                displacement_limit=inp.get("displacement_limit"),
+                mesh_size_mm=inp.get("mesh_size_mm"),
+                timeout=int(inp.get("timeout", 180)),
+                density=inp.get("density"),
+                seed=inp.get("seed"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "code": "doe_study_failed", "message": f"{type(exc).__name__}: {exc}"}
+
+    rt.register_tool(
+        "opt.doe_sizing_study",
+        _tool_opt_doe_sizing_study,
+        description=(
+            "[APPROVAL REQUIRED] Multi-parameter DOE sizing study: jointly vary 2+ editable "
+            "parameters (each by explicit values or a {min,max,steps/step} range), generate a "
+            "full-factorial or Latin-hypercube design within the budget cap, solve EACH design "
+            "point with the real static solver (Gmsh + CalculiX), and rank by objective subject "
+            "to stress/displacement constraints. The baseline is never modified; the recommended "
+            "design point is applied through approval-gated cad.edit_parameter. Budget is capped "
+            "at 64 solver executions."
+        ),
+        input_schema=_schema("opt.doe_sizing_study"),
+        requires_approval=True,
+        read_only=False,
+    )
+
     def _tool_opt_cae_evaluate_candidate(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         """CAE-evaluate ONE design-study candidate with the real static solver. When
         allow_solver_execution is true, compiles the candidate geometry on a throwaway

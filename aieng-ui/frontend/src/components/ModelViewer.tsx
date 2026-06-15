@@ -1,11 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 import { assemblyAlertCounts } from "../app/geometryReport";
 import { useGeometryReport } from "../app/useGeometryReport";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
-import type { SolverFieldDescriptor } from "../types";
+import type { FieldProbe, SolverFieldDescriptor } from "../types";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
 import {
   useThreeScene,
@@ -15,6 +15,7 @@ import {
   useHighlightOverlay,
   useAssemblyCheckOverlay,
   useFieldMarkerOverlay,
+  useFieldProbe,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -54,6 +55,12 @@ export function ModelViewer({
   const [tooltipFace, setTooltipFace] = useState<PickedFace | null>(null);
   const [showAssemblyCheck, setShowAssemblyCheck] = useState(false);
   const [showFieldMarkers, setShowFieldMarkers] = useState(true);
+  const [fieldProbe, setFieldProbe] = useState<FieldProbe | null>(null);
+
+  // Clear the probe readout when the active field or project changes.
+  useEffect(() => {
+    setFieldProbe(null);
+  }, [fieldDescriptor?.project_id, fieldDescriptor?.field_name]);
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -136,6 +143,17 @@ export function ModelViewer({
     objectReadyKey,
   );
 
+  // 8. Click-to-query field probe
+  useFieldProbe(
+    hostRef,
+    objectRef,
+    cameraRef,
+    primitiveFaceRef,
+    displayTransformRef,
+    fieldDescriptor,
+    setFieldProbe,
+  );
+
   return (
     <div className="viewer-canvas-shell">
       <div className="viewer-canvas" ref={hostRef} />
@@ -188,6 +206,8 @@ export function ModelViewer({
       <ViewerOverlays
         viewerState={viewerState}
         tooltipFace={tooltipFace}
+        fieldProbe={fieldProbe}
+        onClearFieldProbe={() => setFieldProbe(null)}
         pickedFaces={pickedFaces}
         highlightedFaceIds={highlightedFaceIds}
         cadGenerationProgress={cadGenerationProgress}

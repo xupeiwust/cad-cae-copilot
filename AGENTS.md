@@ -361,6 +361,14 @@ single-part edit.
   `/api/projects/{id}/fields/{name}` and `/cae-result-fields` endpoints serve all
   of them from the FRD when available, with honest synthetic fallbacks and units
   when no solver result is present.
+- **Field peak/min markers + click-to-query probe (#252).** When a real FRD field
+  overlay is active, the viewer draws a red sphere/label at the field maximum and
+  a blue sphere/label at the minimum (`fieldMarkers.ts` +
+  `useFieldMarkerOverlay.ts`). Clicking anywhere on the model opens a probe tooltip
+  with the exact value, unit, nearest-node coordinates, and face pointer (if the
+  hit primitive maps to a B-Rep face). The probe is implemented in
+  `useFieldProbe.ts` and rendered by `ViewerOverlays.tsx`; it reuses the same
+  nearest-node grid as the colormap so the readout matches what the user sees.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

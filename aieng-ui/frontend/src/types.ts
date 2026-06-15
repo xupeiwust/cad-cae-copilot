@@ -848,6 +848,15 @@ export type SolverFieldDescriptor = {
   bbox_status?: "aligned" | "suspicious" | null;
 };
 
+export type FieldProbe = {
+  value: number;
+  unit: string | null;
+  coord: [number, number, number];
+  pointer: string | null;
+  screenX: number;
+  screenY: number;
+};
+
 export type RuntimeEventType =
   | "run_started"
   | "plan_created"

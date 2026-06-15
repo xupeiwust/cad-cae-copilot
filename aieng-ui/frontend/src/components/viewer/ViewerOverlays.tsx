@@ -1,13 +1,17 @@
 import type { CadGenerationProgress, PickedFace, ViewerLoadState } from "../../appTypes";
+import type { FieldProbe } from "../../types";
 import { CadProgressPanel } from "../CadProgressPanel";
+import { formatFieldValue } from "./resultFields";
 
 // Presentational overlays drawn on top of the THREE canvas: load/error state,
 // the hovered-face tooltip with MCP-instruction copy buttons, the multi-select
-// list, the highlight-count badge, and the CAD-generation progress panel. Pure
-// rendering — all interaction is delegated through callbacks.
+// list, the highlight-count badge, the CAD-generation progress panel, and the
+// field-probe readout. Pure rendering — all interaction is delegated through callbacks.
 export type ViewerOverlaysProps = {
   viewerState: { status: ViewerLoadState; detail: string };
   tooltipFace: PickedFace | null;
+  fieldProbe?: FieldProbe | null;
+  onClearFieldProbe?(): void;
   pickedFaces: PickedFace[];
   highlightedFaceIds: Set<string>;
   cadGenerationProgress: CadGenerationProgress | null;
@@ -19,6 +23,8 @@ export type ViewerOverlaysProps = {
 export function ViewerOverlays({
   viewerState,
   tooltipFace,
+  fieldProbe,
+  onClearFieldProbe,
   pickedFaces,
   highlightedFaceIds,
   cadGenerationProgress,
@@ -76,6 +82,54 @@ export function ViewerOverlays({
             </button>
           </div>
           <small>Shift+Click to multi-select</small>
+        </div>
+      )}
+      {fieldProbe && (
+        <div
+          className="viewer-field-probe"
+          style={{
+            position: "absolute",
+            left: fieldProbe.screenX + 12,
+            top: fieldProbe.screenY + 12,
+            zIndex: 6,
+            background: "rgba(17, 24, 39, 0.92)",
+            color: "#e5e7eb",
+            borderRadius: 6,
+            padding: "6px 10px",
+            font: "12px/1.35 system-ui, sans-serif",
+            maxWidth: 220,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+            pointerEvents: "auto",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+            <strong>Field probe</strong>
+            <button
+              type="button"
+              onClick={onClearFieldProbe}
+              title="Clear probe"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#9ca3af",
+                cursor: "pointer",
+                fontSize: 14,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600 }}>
+            {formatFieldValue(fieldProbe.value, fieldProbe.unit)}
+          </div>
+          <div style={{ marginTop: 2, opacity: 0.8, fontVariantNumeric: "tabular-nums" }}>
+            node ({fieldProbe.coord.map((c) => c.toFixed(2)).join(", ")})
+          </div>
+          {fieldProbe.pointer ? (
+            <div style={{ marginTop: 2, opacity: 0.8 }}>{fieldProbe.pointer}</div>
+          ) : null}
+          <small style={{ display: "block", marginTop: 4, opacity: 0.6 }}>Click another point to update</small>
         </div>
       )}
       {pickedFaces.length > 0 && (

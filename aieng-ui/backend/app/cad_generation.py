@@ -6000,8 +6000,9 @@ def critique(
 
     Payload (all optional):
         mode: "auto" (default) | "engineering" | "geometry"
-        min_wall_mm: float, default 3.0 (CNC aluminium minimum).
-        min_corner_radius_mm: float, default 2.0.
+        process: "cnc" (default) | "sheet_metal" | "fdm" | "sla"
+        min_wall_mm: float, override the selected rule pack's min wall.
+        min_corner_radius_mm: float, override the selected rule pack's min corner radius.
 
     Use this AFTER cad.execute_build123d to validate engineering parts before
     user review or simulation handoff.
@@ -6039,8 +6040,9 @@ def critique(
         topo,
         fg,
         mode=str(payload.get("mode", "auto")),
-        min_wall_mm=float(payload.get("min_wall_mm", 3.0)),
-        min_corner_radius_mm=float(payload.get("min_corner_radius_mm", 2.0)),
+        process=str(payload.get("process", "cnc")),
+        min_wall_mm=payload.get("min_wall_mm"),
+        min_corner_radius_mm=payload.get("min_corner_radius_mm"),
     )
     result["project_id"] = project_id
     return result

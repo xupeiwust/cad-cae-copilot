@@ -793,13 +793,18 @@ can query later:
 | `wall`, `wall_<face>` | Enclosure side walls |
 | `cover`, `lid` | Removable enclosure top |
 
-**Manufacturing rules to honor** (CNC aluminium defaults — adjust if
-the user specifies a different process):
-- Minimum wall thickness ≥ **3 mm** (CNC), ≥ **1 mm** (sheet metal), ≥ **1.5 mm** (FDM/SLA print).
+**Manufacturing rules to honor** (`cad.critique` selects rule packs by process;
+CNC aluminium is the default):
+- Minimum wall thickness ≥ **3 mm** (CNC), ≥ **2 mm** (sheet metal), ≥ **1.2 mm** (FDM), ≥ **0.8 mm** (SLA).
+- Minimum internal corner radius ≥ **2 mm** (CNC), ≥ **0.5 mm** (sheet metal), ≥ **1 mm** (FDM), ≥ **0.4 mm** (SLA).
 - Minimum hole-edge distance ≥ **2 × hole radius**.
-- Preferred internal corner radius ≥ **2 mm** — no sharp internal corners.
-- Through-holes prefer multiples of standard drill sizes (3, 4, 5, 6, 8, 10, 12, 16, 20 mm).
+- Through-holes prefer multiples of standard drill sizes for CNC/sheet metal; additive processes skip this check.
 - Avoid undercuts unless the user explicitly asks for them (machinable from one side).
+
+`cad.critique` accepts `process: cnc | sheet_metal | fdm | sla`. Each pack changes
+which thresholds trigger a finding; the finding itself reports the pack name and
+thresholds used. Explicit `min_wall_mm` or `min_corner_radius_mm` overrides the
+selected pack. This is a deterministic heuristic audit, not a GD&T solver.
 
 **Workflow:**
 1. Decompose the part into named features (base_plate + holes + ribs +
@@ -994,7 +999,7 @@ does not certify by default.
 | `cae.prepare_solver_run` | Solver preflight — checks readiness, runs nothing. Returns `recommended_next_calls` with tool/input/reason entries for missing artifacts and stale face references |
 | `cad.get_source` | Accumulated build123d source + `{named_parts, has_base}` — call before an incremental edit |
 | `cad.list_editable_parameters` | List the parameters editable fast via `cad.edit_parameter` (the "point" of point-and-shoot): per-parameter `featureId`/`parameterName`/`cad_parameter_name`/current/min-max + `scope` (`local`/`global`/`unscoped`) + a summary. Answers "what can I change here?" |
-| `cad.critique` | Deterministic engineering audit (min wall, hole sizes, floating components) — call after building an engineering part |
+| `cad.critique` | Deterministic engineering audit with process-aware DfM rule packs (`cnc`, `sheet_metal`, `fdm`, `sla`). Checks min wall, standard hole sizes (CNC/sheet_metal only), floating components, and missing mounting interfaces. Each finding cites the rule pack and thresholds. Call after building an engineering part. Read-only. |
 | `cad.design_review` | Read-only self-review: `cad.critique` + the left/right **symmetry** checks critique lacks + a concrete `cad.edit_parameter` **fix target** (featureId/parameterName/range) bound to each fixable finding. Returns a severity-ranked `actions` list + merged verdict. Changes nothing; fixes still go through approval. Use it to self-correct before presenting a result |
 | `cad.list_snapshots` | List the recent CAD undo timeline. A snapshot is recorded automatically after each successful `execute_build123d`/`edit_parameter`/`replace_part`/`remove_part`. Returns tiny metadata only (`snapshot_id`, `created_at`, `tool_name`, `part_count`, `named_parts`) — pair with `cad.restore_snapshot` |
 

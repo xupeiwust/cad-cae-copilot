@@ -927,13 +927,23 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "(component counts, floating components)."
                 ),
             },
+            "process": {
+                "type": "string",
+                "enum": ["cnc", "sheet_metal", "fdm", "sla"],
+                "description": (
+                    "Target manufacturing process rule pack. cnc (default) uses "
+                    "3mm wall / 2mm corner / standard drill checks. sheet_metal "
+                    "uses 2mm / 0.5mm / standard drills. fdm and sla relax wall "
+                    "and corner limits and skip standard-hole checking."
+                ),
+            },
             "min_wall_mm": {
                 "type": "number",
-                "description": "Override min wall thickness rule (default 3mm = CNC aluminium).",
+                "description": "Override the selected process rule pack's min wall thickness.",
             },
             "min_corner_radius_mm": {
                 "type": "number",
-                "description": "Override min internal corner radius rule (default 2mm).",
+                "description": "Override the selected process rule pack's min internal corner radius.",
             },
         },
         "additionalProperties": True,

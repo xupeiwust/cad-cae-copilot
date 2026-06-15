@@ -8,6 +8,7 @@ evaluation can share one source of truth.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from .credibility import classify_credibility
@@ -22,6 +23,68 @@ _STANDARD_HOLE_DIAMETERS_MM: tuple[float, ...] = (
     1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0,
     12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 27.0, 30.0,
 )
+
+
+@dataclass(frozen=True)
+class DfMRulePack:
+    """Declarative thresholds for a target manufacturing process."""
+
+    name: str
+    min_wall_mm: float
+    min_corner_radius_mm: float
+    check_standard_holes: bool = True
+    standard_hole_diameters_mm: tuple[float, ...] = _STANDARD_HOLE_DIAMETERS_MM
+    notes: tuple[str, ...] = ()
+
+
+_DFM_RULE_PACKS: dict[str, DfMRulePack] = {
+    "cnc": DfMRulePack(
+        name="cnc_aluminium",
+        min_wall_mm=3.0,
+        min_corner_radius_mm=2.0,
+        check_standard_holes=True,
+        notes=(
+            "Assumes 3-axis CNC machining in aluminium. "
+            "Does not check undercuts, deep pockets, or tool access.",
+        ),
+    ),
+    "sheet_metal": DfMRulePack(
+        name="sheet_metal",
+        min_wall_mm=2.0,
+        min_corner_radius_mm=0.5,
+        check_standard_holes=True,
+        notes=(
+            "Assumes brake-formed sheet metal. Flange length and bend radius are "
+            "coarse proxies; k-factor, bend relief, and hole-to-bend distance are "
+            "not modeled.",
+        ),
+    ),
+    "fdm": DfMRulePack(
+        name="fdm",
+        min_wall_mm=1.2,
+        min_corner_radius_mm=1.0,
+        check_standard_holes=False,
+        notes=(
+            "Assumes FDM/FFF printing. Does not check overhang angle, bridging, "
+            "support access, or layer orientation.",
+        ),
+    ),
+    "sla": DfMRulePack(
+        name="sla",
+        min_wall_mm=0.8,
+        min_corner_radius_mm=0.4,
+        check_standard_holes=False,
+        notes=(
+            "Assumes resin SLA printing. Does not check drain holes, support "
+            "scarring, or build orientation.",
+        ),
+    ),
+}
+
+
+def get_rule_pack(process: str) -> DfMRulePack:
+    """Return the rule pack for a process name, falling back to CNC."""
+    return _DFM_RULE_PACKS.get(str(process or "cnc").lower().replace("-", "_"), _DFM_RULE_PACKS["cnc"])
 
 
 def is_named_part_feature(feature: dict[str, Any]) -> bool:
@@ -68,12 +131,20 @@ def critique_geometry(
     feature_graph: dict[str, Any],
     *,
     mode: str = "auto",
-    min_wall_mm: float = 3.0,
-    min_corner_radius_mm: float = 2.0,
+    process: str = "cnc",
+    min_wall_mm: float | None = None,
+    min_corner_radius_mm: float | None = None,
+    rule_pack: DfMRulePack | None = None,
 ) -> dict[str, Any]:
     mode = str(mode or "auto")
-    min_wall = float(min_wall_mm)
-    min_corner_radius = float(min_corner_radius_mm)
+    pack = rule_pack or get_rule_pack(process)
+    min_wall = float(min_wall_mm if min_wall_mm is not None else pack.min_wall_mm)
+    min_corner_radius = float(
+        min_corner_radius_mm if min_corner_radius_mm is not None else pack.min_corner_radius_mm
+    )
+    standard_holes = (
+        pack.standard_hole_diameters_mm if pack.check_standard_holes else ()
+    )
 
     findings: list[dict[str, Any]] = []
     counter = 1
@@ -86,6 +157,7 @@ def critique_geometry(
         return {
             "status": "ok",
             "mode": mode,
+            "process": pack.name,
             "verdict": "skipped",
             "message": "No solids in the topology map; nothing to critique.",
             "findings": [],
@@ -96,11 +168,14 @@ def critique_geometry(
                 "engineering_audit_run": False,
             },
             "rules_applied": {
+                "process": pack.name,
                 "min_wall_mm": min_wall,
                 "min_corner_radius_mm": min_corner_radius,
-                "standard_hole_diameters_mm": list(_STANDARD_HOLE_DIAMETERS_MM),
+                "check_standard_holes": pack.check_standard_holes,
+                "standard_hole_diameters_mm": list(standard_holes),
             },
-            "rule_source": "aieng/schemas/constraints.schema.json (manufacturing_rule type)",
+            "rule_source": "aieng/converters/critique_engine DfMRulePack",
+            "assumptions": list(pack.notes),
             "credibility": classify_credibility("critique"),
         }
 
@@ -185,32 +260,33 @@ def critique_geometry(
                     "min_wall_thickness",
                     name,
                     body_id,
-                    f"{name}: thinnest dimension is {thinnest:.2f}mm; CNC minimum is {min_wall:.1f}mm.",
+                    f"{name}: thinnest dimension is {thinnest:.2f}mm; {pack.name} minimum is {min_wall:.1f}mm.",
                     f"Increase the thinnest dimension of {name} to at least {min_wall:.1f}mm "
-                    f"(or downgrade target process to sheet metal / FDM and lower min_wall_mm).",
+                    f"or switch to a process with a lower min wall threshold.",
                 )
 
-        for feat in features:
-            if feat.get("type") not in ("mounting_hole", "mounting_hole_pattern"):
-                continue
-            params = feat.get("parameters") or {}
-            diameter = params.get("hole_diameter_mm")
-            if isinstance(diameter, (int, float)):
-                nearest = min(_STANDARD_HOLE_DIAMETERS_MM, key=lambda d: abs(d - float(diameter)))
-                if abs(float(diameter) - nearest) > 0.3:
-                    counter = _add_finding(
-                        findings,
-                        counter,
-                        "low",
-                        "manufacturing_rule",
-                        "standard_hole_size",
-                        feat.get("name", "<unnamed>"),
-                        (feat.get("geometry_refs", {}) or {}).get("body")
-                        if isinstance(feat.get("geometry_refs"), dict) else None,
-                        f"{feat.get('name', '<unnamed>')}: hole diameter {float(diameter):.2f}mm is "
-                        f"non-standard; closest standard drill is {nearest:.1f}mm.",
-                        f"Round the hole diameter to {nearest:.1f}mm to use an off-the-shelf drill.",
-                    )
+        if standard_holes:
+            for feat in features:
+                if feat.get("type") not in ("mounting_hole", "mounting_hole_pattern"):
+                    continue
+                params = feat.get("parameters") or {}
+                diameter = params.get("hole_diameter_mm")
+                if isinstance(diameter, (int, float)):
+                    nearest = min(standard_holes, key=lambda d: abs(d - float(diameter)))
+                    if abs(float(diameter) - nearest) > 0.3:
+                        counter = _add_finding(
+                            findings,
+                            counter,
+                            "low",
+                            "manufacturing_rule",
+                            "standard_hole_size",
+                            feat.get("name", "<unnamed>"),
+                            (feat.get("geometry_refs", {}) or {}).get("body")
+                            if isinstance(feat.get("geometry_refs"), dict) else None,
+                            f"{feat.get('name', '<unnamed>')}: hole diameter {float(diameter):.2f}mm is "
+                            f"non-standard for {pack.name}; closest standard drill is {nearest:.1f}mm.",
+                            f"Round the hole diameter to {nearest:.1f}mm to use an off-the-shelf drill.",
+                        )
 
         looks_like_bracket = any(
             "bracket" in (b.get("name") or "").lower()
@@ -254,9 +330,18 @@ def critique_geometry(
         if f["severity"] in ("high", "medium")
     ][:5]
 
+    for f in findings:
+        f["rule_pack"] = pack.name
+        f["thresholds"] = {
+            "min_wall_mm": min_wall,
+            "min_corner_radius_mm": min_corner_radius,
+            "check_standard_holes": pack.check_standard_holes,
+        }
+
     return {
         "status": "ok",
         "mode": mode,
+        "process": pack.name,
         "verdict": verdict,
         "summary": {
             "findings_count": len(findings),
@@ -267,10 +352,13 @@ def critique_geometry(
         "fail_first_objections": fail_first,
         "findings": findings,
         "rules_applied": {
+            "process": pack.name,
             "min_wall_mm": min_wall,
             "min_corner_radius_mm": min_corner_radius,
-            "standard_hole_diameters_mm": list(_STANDARD_HOLE_DIAMETERS_MM),
+            "check_standard_holes": pack.check_standard_holes,
+            "standard_hole_diameters_mm": list(standard_holes),
         },
-        "rule_source": "aieng/schemas/constraints.schema.json (manufacturing_rule type)",
+        "rule_source": "aieng/converters/critique_engine DfMRulePack",
+        "assumptions": list(pack.notes),
         "credibility": classify_credibility("critique"),
     }

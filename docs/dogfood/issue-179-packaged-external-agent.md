@@ -13,7 +13,7 @@ Image digest: `sha256:4592a01d6c53a849437e70105a1982bfa4d68d66aada4cdaa9cd3d1215
 - Confirmed a real CAD mutation succeeds through the published image's default
   external-client-managed approval path.
 - In client-managed mode, built a real build123d bracket through MCP.
-- Project `502477adae2e` reached `viewer_ready_glb`.
+- Project `3aa0ddda3df2` reached `viewer_ready_glb`.
 - Published viewer asset `viewer/model.glb` returned HTTP 200 and was 69,288
   bytes.
 - The fixed-image full viewer refreshed on host port `18002`, rendered the

@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 def _load_module():
     script = Path(__file__).resolve().parents[1] / "scripts" / "packaged_dogfood.py"
@@ -49,3 +51,13 @@ def test_face_pointer_reads_first_brep_face() -> None:
     assert packaged_dogfood._face_pointer(context) == "@face:face_013"
     assert packaged_dogfood._pointer_in_context(context, "@face:face_013") is True
     assert packaged_dogfood._pointer_in_context(context, "@face:face_999") is False
+
+
+def test_backend_fetches_only_allow_http_schemes() -> None:
+    packaged_dogfood = _load_module()
+
+    assert packaged_dogfood._assert_http_url("https://example.test/api") == (
+        "https://example.test/api"
+    )
+    with pytest.raises(ValueError, match="unsupported URL scheme: file"):
+        packaged_dogfood._assert_http_url("file:///tmp/evidence.json")

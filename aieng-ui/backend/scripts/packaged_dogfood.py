@@ -8,6 +8,7 @@ import json
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -54,13 +55,20 @@ def _result_json(result: Any) -> dict[str, Any]:
     return json.loads(_result_text(result))
 
 
+def _assert_http_url(url: str) -> str:
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"unsupported URL scheme: {scheme or '(missing)'}")
+    return url
+
+
 def _get_json(url: str) -> dict[str, Any]:
-    with urllib.request.urlopen(url, timeout=15) as response:
+    with urllib.request.urlopen(_assert_http_url(url), timeout=15) as response:
         return json.load(response)
 
 
 def _get_size(url: str) -> tuple[int, int]:
-    with urllib.request.urlopen(url, timeout=15) as response:
+    with urllib.request.urlopen(_assert_http_url(url), timeout=15) as response:
         return response.status, len(response.read())
 
 

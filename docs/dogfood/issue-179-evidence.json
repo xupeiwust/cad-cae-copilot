@@ -4,7 +4,7 @@
   "image_digest": "sha256:4592a01d6c53a849437e70105a1982bfa4d68d66aada4cdaa9cd3d1215d17bec",
   "managed_cad_mutation": {
     "status": "ok",
-    "project_id": "1b67cad972e7",
+    "project_id": "d6732a327742",
     "geometry_report_summary": "geometry: 1 part(s), size=1.0x1.0x1.0 mm, proportions=1.0/1.0/1.0, floating=0, symmetry_issues=0"
   },
   "client_managed_flow": {
@@ -14,8 +14,8 @@
     "onboarding_messages": 1,
     "discipline_chunks": 1,
     "registry_hash": "sha256:d438e64a51ea5a1a",
-    "project_count_before": 4,
-    "project_id": "502477adae2e",
+    "project_count_before": 5,
+    "project_id": "3aa0ddda3df2",
     "project_status": "viewer_ready_glb",
     "named_parts": [
       "base_plate",
@@ -41,7 +41,7 @@
       {
         "tool": "cae.write_mesh_handoff",
         "input": {
-          "project_id": "502477adae2e",
+          "project_id": "3aa0ddda3df2",
           "handoff_id": "mesh_handoff_001"
         },
         "reason": "No mesh files found in package. Write a mesh handoff contract or import a meshed CalculiX deck before generating solver input."
@@ -49,7 +49,7 @@
       {
         "tool": "cae.apply_setup_patch",
         "input": {
-          "project_id": "502477adae2e",
+          "project_id": "3aa0ddda3df2",
           "patches": [
             {
               "path": "simulation/solver_settings.json",
@@ -66,7 +66,7 @@
       {
         "tool": "cae.generate_solver_input",
         "input": {
-          "project_id": "502477adae2e",
+          "project_id": "3aa0ddda3df2",
           "run_id": "run_001",
           "overwrite": true
         },

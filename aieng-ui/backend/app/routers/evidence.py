@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -11,6 +13,72 @@ from ..legacy_app_symbols import sync_main_symbols
 from ..logging_utils import log_exception
 
 LOGGER = logging.getLogger("app.app_factory")
+
+# Synthetic fallback metadata for every selectable CAE result field.
+# Real FRD data overrides these min/max values; this map only ensures
+# honest units and colormaps when no solver result is present yet.
+_FIELD_SYNTHETIC_DEFAULTS: dict[str, dict[str, Any]] = {
+    # Von Mises stress and legacy alias
+    "von_mises": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "stress": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    # Stress tensor components (signed)
+    "sxx": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+    "syy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+    "szz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+    "sxy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+    "sxz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+    "syz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "coolwarm"},
+    # Principal stresses and derived scalar stress measures
+    "s1": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "s2": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "s3": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "tresca": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    "max_shear": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
+    # Displacement magnitude and legacy alias
+    "disp_magnitude": {"min_value": 0.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+    "displacement": {"min_value": 0.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+    # Per-axis displacement components (signed)
+    "ux": {"min_value": -5.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+    "uy": {"min_value": -5.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+    "uz": {"min_value": -5.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
+    # Safety factor (yield / von Mises)
+    "safety_factor": {"min_value": 0.0, "max_value": 10.0, "unit": "", "colormap": "thermal"},
+}
+
+
+def _field_credibility(source: str, aieng_root: Path) -> dict[str, Any]:
+    """Return the V&V-40 credibility stamp for a field descriptor response.
+
+    FRD-backed fields are stamped as ``executed_solver_result``; synthetic
+    fallbacks are downgraded to ``unverified`` so they cannot be mistaken for
+    solver evidence.
+    """
+    aieng_src = aieng_root / "src"
+    injected = False
+    if str(aieng_src) not in sys.path:
+        sys.path.insert(0, str(aieng_src))
+        injected = True
+    try:
+        from aieng.converters.credibility import classify_credibility  # type: ignore[import]
+
+        if source == "frd":
+            return classify_credibility(
+                "solver",
+                solver_executed=True,
+                is_solver_evidence=True,
+                notes="Per-node FRD data extracted from an executed solver run.",
+            )
+        return classify_credibility(
+            "solver",
+            solver_executed=False,
+            notes="Synthetic fallback; no solver result available for this field.",
+        )
+    finally:
+        if injected:
+            try:
+                sys.path.remove(str(aieng_src))
+            except ValueError:
+                pass
 
 
 def _sync_main_symbols() -> None:
@@ -23,11 +91,9 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
     @app.get("/api/projects/{project_id}/fields/{field_name}")
     def get_field_descriptor(project_id: str, field_name: str) -> dict[str, Any]:
         project = get_project(active_settings, project_id)
-        _known: dict[str, dict[str, Any]] = {
-            "stress": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa", "colormap": "thermal"},
-            "displacement": {"min_value": 0.0, "max_value": 5.0, "unit": "mm", "colormap": "coolwarm"},
-        }
-        meta = _known.get(field_name, {"min_value": 0.0, "max_value": 1.0, "unit": "", "colormap": "thermal"})
+        meta = _FIELD_SYNTHETIC_DEFAULTS.get(
+            field_name, {"min_value": 0.0, "max_value": 1.0, "unit": "", "colormap": "thermal"}
+        )
 
         # Attempt real FRD extraction
         pkg = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
@@ -58,6 +124,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
                 "values": frd_data["values"],
                 "node_coords": frd_data["node_coords"],
                 "warnings": frd_data["warnings"],
+                "credibility": _field_credibility("frd", active_settings.aieng_root),
             }
 
         # Fallback to synthetic
@@ -71,6 +138,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
             "unit": meta["unit"],
             "colormap": meta["colormap"],
             "source": "synthetic_mock",
+            "credibility": _field_credibility("synthetic", active_settings.aieng_root),
         }
 
     @app.get("/api/projects/{project_id}/cae-result-fields")

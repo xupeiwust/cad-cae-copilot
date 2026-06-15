@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app import aieng_bridge
 
 
@@ -693,10 +695,44 @@ def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
 
     _cae = summary.get("cae")
     if isinstance(_cae, dict):
+        # Default metadata for every selectable CAE result field. These are
+        # overridden by real FRD extrema when a result file is present.
         _field_defaults: dict[str, dict[str, Any]] = {
+            "von_mises": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
             "stress": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "sxx": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "syy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "szz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "sxy": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "sxz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "syz": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "s1": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "s2": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "s3": {"min_value": -250.0, "max_value": 250.0, "unit": "MPa"},
+            "tresca": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "max_shear": {"min_value": 0.0, "max_value": 250.0, "unit": "MPa"},
+            "disp_magnitude": {"min_value": 0.0, "max_value": 5.0, "unit": "mm"},
             "displacement": {"min_value": 0.0, "max_value": 5.0, "unit": "mm"},
+            "ux": {"min_value": -5.0, "max_value": 5.0, "unit": "mm"},
+            "uy": {"min_value": -5.0, "max_value": 5.0, "unit": "mm"},
+            "uz": {"min_value": -5.0, "max_value": 5.0, "unit": "mm"},
+            "safety_factor": {"min_value": 0.0, "max_value": 10.0, "unit": ""},
         }
+        # Legacy aliases share the same FRD data as their canonical names.
+        # Keep them in defaults for fallback metadata, but only extract each
+        # physical field once to avoid redundant FRD parsing.
+        _FIELD_NAME_ALIASES: dict[str, str] = {
+            "stress": "von_mises",
+            "displacement": "disp_magnitude",
+        }
+
+        def _canonical_field_name(name: str) -> str:
+            return _FIELD_NAME_ALIASES.get(name, name)
+
+        _SELECTABLE_FIELD_NAMES: tuple[str, ...] = tuple(
+            name for name in _field_defaults if name not in _FIELD_NAME_ALIASES
+        )
+
         # Check whether a real FRD exists so solver_fields can advertise the
         # correct format upfront.
         _has_frd = False
@@ -706,7 +742,7 @@ def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
         _available_fields = list(_cae.get("available_fields") or [])
         _real_field_cache: dict[str, dict[str, Any]] = {}
         if _has_frd and package_path and package_path.exists():
-            for candidate in ("stress", "displacement"):
+            for candidate in _SELECTABLE_FIELD_NAMES:
                 try:
                     real_field = _extract_frd_field_data(package_path, candidate, settings.aieng_root)
                 except Exception:
@@ -731,12 +767,16 @@ def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
                 "available": True,
             }
             # If FRD is present, try to fetch real extrema so the frontend
-            # legend is accurate before the first descriptor fetch.
+            # legend is accurate before the first descriptor fetch. Aliases
+            # reuse the canonical field's cached extraction.
             if _has_frd:
                 try:
-                    _real = _real_field_cache.get(f)
+                    canonical = _canonical_field_name(f)
+                    _real = _real_field_cache.get(canonical)
                     if _real is None and package_path and package_path.exists():
-                        _real = _extract_frd_field_data(package_path, f, settings.aieng_root)
+                        _real = _extract_frd_field_data(package_path, canonical, settings.aieng_root)
+                        if _real is not None:
+                            _real_field_cache[canonical] = _real
                     if _real is not None:
                         _field_entry["min_value"] = _real["min_value"]
                         _field_entry["max_value"] = _real["max_value"]

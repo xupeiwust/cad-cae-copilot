@@ -207,9 +207,11 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         input_schema=_schema("cad.critique"),
         description=(
             "Run a deterministic engineering critique of the project geometry. Walks the "
-            "feature graph + topology bounding boxes and checks them against manufacturing "
-            "rules derived from aieng/schemas/constraints.schema.json: min wall thickness "
-            "(3mm CNC default), standard hole sizes, floating-component detection, missing "
+            "feature graph + topology bounding boxes and checks them against process-aware "
+            "manufacturing rule packs: cnc (default 3mm wall / 2mm corner / standard drills), "
+            "sheet_metal (2mm / 0.5mm / standard drills), fdm (1.2mm / 1mm / no standard-hole "
+            "check), sla (0.8mm / 0.4mm / no standard-hole check). Each finding reports the "
+            "rule pack and thresholds used. Also detects floating components and missing "
             "mounting interfaces on plate-like parts. Returns structured findings (severity, "
             "category, rule, affected feature, observation, suggested fix) plus a "
             "fail_first_objections list of the top blocking issues. Call after "

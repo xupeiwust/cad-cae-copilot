@@ -1,0 +1,992 @@
+diff --git a/aieng/benchmarks/datasets/analytical_fea/README.md b/aieng/benchmarks/datasets/analytical_fea/README.md
+new file mode 100644
+index 00000000..60707d93
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/README.md
+@@ -0,0 +1,63 @@
++# Analytical FEA benchmark corpus
++
++This directory is the seed of the quantitative benchmark corpus requested in
++issue #257. It contains a curated set of closed-form / analytical structural
++reference cases plus a machine-readable `reference.json` per case.
++
++## Scope
++
++| Layer | Content |
++|-------|---------|
++| `fea_accuracy` | Linear-static and linear-eigenvalue cases (beam, rod, plate, column) with analytical reference answers |
++| `mesh_convergence_quality` | Optional multi-refinement studies that feed the ASME V&V-20 / Roache GCI analyzer |
++
++The cases are **not** official NAFEMS certification benchmarks and are **not**
++ASME V&V-10 certified. The only claim made is:
++
++> Computed results agree with the documented analytical reference value within
++documented tolerance band.
++
++## Layout
++
++```text
++analytical_fea/
++├── corpus.json              # manifest: case list + analysis type + reference paths
++├── README.md                # this file
++├── build_packages.py        # helper: build runnable .aieng packages from the fixtures
++└── <case_id>/
++    └── reference.json       # ground-truth answer + tolerance for the case
++```
++
++## Cases
++
++| Case ID | Analysis | Reference physics |
++|---------|----------|-------------------|
++| `tension_rod` | static | axial stress / displacement of a square rod |
++| `cantilever_end_load` | static | end-loaded cantilever (strong axis) |
++| `cantilever_udl` | static | uniformly distributed load on a cantilever |
++| `fixed_fixed_udl` | static | fixed-fixed beam under UDL |
++| `fixed_fixed_center_load` | static | fixed-fixed beam with center point load |
++
++## Provenance / license
++
++All geometry, loads, and reference values are authored from first principles
++(beam/rod/column theory). No external dataset is vendored. Any future external
++benchmarks added here must record their license / source in the case
++`reference.json` under `provenance`.
++
++## Running the harness
++
++```bash
++# Build the runnable .aieng packages
++python benchmarks/datasets/analytical_fea/build_packages.py --out-dir build/analytical_fea
++
++# Run the scorer (from the aieng directory)
++cd aieng
++python -m aieng.benchmarks.analytical_fea \
++    --packages-dir build/analytical_fea \
++    --out analytical_fea_scorecard.json
++```
++
++The scorer produces a machine-readable scorecard (`aieng.benchmark.analytical_fea.scorecard`)
++with per-case verdict, deviation percent, and tolerance. It is designed to be
++consumed by CI and by the regression runner from issue #237.
+diff --git a/aieng/benchmarks/datasets/analytical_fea/build_packages.py b/aieng/benchmarks/datasets/analytical_fea/build_packages.py
+new file mode 100644
+index 00000000..0ad9ce47
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/build_packages.py
+@@ -0,0 +1,44 @@
++"""Build runnable ``.aieng`` packages for the analytical FEA benchmark corpus.
++
++Usage:
++    python build_packages.py --out-dir build/analytical_fea
++"""
++from __future__ import annotations
++
++import argparse
++import sys
++from pathlib import Path
++
++# The fixture builder currently lives under aieng/tests/fixtures. Make it
++# importable when this script is run from the repo checkout.
++_REPO_ROOT = Path(__file__).resolve().parents[3]
++_TESTS_FIXTURES = _REPO_ROOT / "tests" / "fixtures"
++if str(_TESTS_FIXTURES) not in sys.path:
++    sys.path.insert(0, str(_TESTS_FIXTURES))
++
++from nafems.build_fixtures import build_all_fixtures  # type: ignore[import-not-found]
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(
++        description="Build .aieng packages for the analytical FEA benchmark corpus"
++    )
++    parser.add_argument(
++        "--out-dir",
++        type=Path,
++        default=Path("build") / "analytical_fea",
++        help="Directory to write the .aieng packages to",
++    )
++    args = parser.parse_args(argv)
++
++    out_dir = Path(args.out_dir)
++    out_dir.mkdir(parents=True, exist_ok=True)
++    paths = build_all_fixtures(out_dir)
++    print(f"Built {len(paths)} packages in {out_dir}")
++    for case_id, path in sorted(paths.items()):
++        print(f"  {case_id}: {path}")
++    return 0
++
++
++if __name__ == "__main__":  # pragma: no cover
++    raise SystemExit(main())
+diff --git a/aieng/benchmarks/datasets/analytical_fea/cantilever_end_load/reference.json b/aieng/benchmarks/datasets/analytical_fea/cantilever_end_load/reference.json
+new file mode 100644
+index 00000000..1270f20a
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/cantilever_end_load/reference.json
+@@ -0,0 +1,17 @@
++{
++  "analysis_type": "static",
++  "case_id": "cantilever_end_load",
++  "description": "End-loaded cantilever beam",
++  "metrics": {
++    "max_displacement": {
++      "tolerance_percent": 10.0,
++      "unit": "mm",
++      "value": 0.023809523809523808
++    },
++    "max_von_mises_stress": {
++      "tolerance_percent": 10.0,
++      "unit": "MPa",
++      "value": 15.0
++    }
++  }
++}
+diff --git a/aieng/benchmarks/datasets/analytical_fea/cantilever_udl/reference.json b/aieng/benchmarks/datasets/analytical_fea/cantilever_udl/reference.json
+new file mode 100644
+index 00000000..44c9d9d6
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/cantilever_udl/reference.json
+@@ -0,0 +1,17 @@
++{
++  "analysis_type": "static",
++  "case_id": "cantilever_udl",
++  "description": "Uniformly distributed downward load on cantilever",
++  "metrics": {
++    "max_displacement": {
++      "tolerance_percent": 10.0,
++      "unit": "mm",
++      "value": 0.008928571428571428
++    },
++    "max_von_mises_stress": {
++      "tolerance_percent": 10.0,
++      "unit": "MPa",
++      "value": 7.5
++    }
++  }
++}
+diff --git a/aieng/benchmarks/datasets/analytical_fea/corpus.json b/aieng/benchmarks/datasets/analytical_fea/corpus.json
+new file mode 100644
+index 00000000..958e55af
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/corpus.json
+@@ -0,0 +1,34 @@
++{
++  "cases": [
++    {
++      "analysis_type": "static",
++      "case_id": "tension_rod",
++      "reference_path": "tension_rod/reference.json"
++    },
++    {
++      "analysis_type": "static",
++      "case_id": "cantilever_end_load",
++      "reference_path": "cantilever_end_load/reference.json"
++    },
++    {
++      "analysis_type": "static",
++      "case_id": "cantilever_udl",
++      "reference_path": "cantilever_udl/reference.json"
++    },
++    {
++      "analysis_type": "static",
++      "case_id": "fixed_fixed_udl",
++      "reference_path": "fixed_fixed_udl/reference.json"
++    },
++    {
++      "analysis_type": "static",
++      "case_id": "fixed_fixed_center_load",
++      "reference_path": "fixed_fixed_center_load/reference.json"
++    }
++  ],
++  "corpus_id": "analytical_fea",
++  "description": "Closed-form / analytical reference cases for linear static and linear eigenvalue FEA.",
++  "layer": "fea_accuracy",
++  "standard": "NAFEMS-style / ASME V&V-10 inspired; not certification",
++  "title": "Analytical FEA benchmark corpus"
++}
+diff --git a/aieng/benchmarks/datasets/analytical_fea/fixed_fixed_center_load/reference.json b/aieng/benchmarks/datasets/analytical_fea/fixed_fixed_center_load/reference.json
+new file mode 100644
+index 00000000..4d0efb82
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/fixed_fixed_center_load/reference.json
+@@ -0,0 +1,12 @@
++{
++  "analysis_type": "static",
++  "case_id": "fixed_fixed_center_load",
++  "description": "Fixed-fixed beam with center point load on top face",
++  "metrics": {
++    "max_displacement": {
++      "tolerance_percent": 10.0,
++      "unit": "mm",
++      "value": 0.00037202380952380956
++    }
++  }
++}
+diff --git a/aieng/benchmarks/datasets/analytical_fea/fixed_fixed_udl/reference.json b/aieng/benchmarks/datasets/analytical_fea/fixed_fixed_udl/reference.json
+new file mode 100644
+index 00000000..e72ef0f8
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/fixed_fixed_udl/reference.json
+@@ -0,0 +1,17 @@
++{
++  "analysis_type": "static",
++  "case_id": "fixed_fixed_udl",
++  "description": "Fixed-fixed beam under uniformly distributed downward load",
++  "metrics": {
++    "max_displacement": {
++      "tolerance_percent": 10.0,
++      "unit": "mm",
++      "value": 0.00018601190476190478
++    },
++    "max_von_mises_stress": {
++      "tolerance_percent": 10.0,
++      "unit": "MPa",
++      "value": 1.25
++    }
++  }
++}
+diff --git a/aieng/benchmarks/datasets/analytical_fea/tension_rod/reference.json b/aieng/benchmarks/datasets/analytical_fea/tension_rod/reference.json
+new file mode 100644
+index 00000000..c60b2f6b
+--- /dev/null
++++ b/aieng/benchmarks/datasets/analytical_fea/tension_rod/reference.json
+@@ -0,0 +1,17 @@
++{
++  "analysis_type": "static",
++  "case_id": "tension_rod",
++  "description": "Axial tension of a square steel rod",
++  "metrics": {
++    "max_displacement": {
++      "tolerance_percent": 10.0,
++      "unit": "mm",
++      "value": 0.004761904761904762
++    },
++    "max_von_mises_stress": {
++      "tolerance_percent": 10.0,
++      "unit": "MPa",
++      "value": 10.0
++    }
++  }
++}
+diff --git a/aieng/src/aieng/benchmarks/__init__.py b/aieng/src/aieng/benchmarks/__init__.py
+new file mode 100644
+index 00000000..571fb4a8
+--- /dev/null
++++ b/aieng/src/aieng/benchmarks/__init__.py
+@@ -0,0 +1 @@
++"""Quantitative benchmark harnesses for the AIENG package."""
+diff --git a/aieng/src/aieng/benchmarks/analytical_fea.py b/aieng/src/aieng/benchmarks/analytical_fea.py
+new file mode 100644
+index 00000000..e957507c
+--- /dev/null
++++ b/aieng/src/aieng/benchmarks/analytical_fea.py
+@@ -0,0 +1,410 @@
++"""Quantitative analytical-FEA benchmark scorer.
++
++This module implements the verify harness for the benchmark corpus requested in
++issue #257. It consumes the per-case ``reference.json`` files in
++``aieng/benchmarks/datasets/analytical_fea`` and the runnable ``.aieng``
++packages produced by ``build_packages.py``.
++
++The output is a machine-readable scorecard (``aieng.benchmark.analytical_fea.scorecard``)
++with per-case verdict, deviation percent, and tolerance — suitable for CI and
++for the regression runner described in issue #237.
++
++Honesty boundary
++----------------
++
++* The scorecard records "agreement with analytical reference within tolerance".
++* It never claims certification, ASME V&V-10 compliance, or NAFEMS endorsement.
++* Meshes are intentionally coarse for CI runtime; tolerance bands absorb
++  discretisation error.
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++import tempfile
++from collections.abc import Callable
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++
++from aieng import FORMAT_VERSION
++from aieng.nafems_verification import (
++    REFERENCE_CASES,
++    run_case,
++    run_mesh_convergence_study,
++    verify_case,
++)
++
++
++SCORECARD_FORMAT = "aieng.benchmark.analytical_fea.scorecard"
++SCORECARD_VERSION = "0.1.0"
++
++
++def _default_dataset_root() -> Path:
++    """Resolve the default corpus directory relative to this source file."""
++    # aieng/src/aieng/benchmarks/analytical_fea.py -> aieng/benchmarks/datasets/analytical_fea
++    return Path(__file__).resolve().parents[3] / "benchmarks" / "datasets" / "analytical_fea"
++
++
++def load_corpus(dataset_root: Path | str | None = None) -> dict[str, Any]:
++    """Load ``corpus.json`` from the analytical FEA dataset directory."""
++    root = Path(dataset_root or _default_dataset_root())
++    path = root / "corpus.json"
++    if not path.exists():
++        raise FileNotFoundError(f"corpus manifest not found: {path}")
++    return json.loads(path.read_text(encoding="utf-8"))
++
++
++def load_reference(case_id: str, dataset_root: Path | str | None = None) -> dict[str, Any]:
++    """Load a single case's ``reference.json``."""
++    root = Path(dataset_root or _default_dataset_root())
++    path = root / case_id / "reference.json"
++    if not path.exists():
++        raise FileNotFoundError(f"reference file not found: {path}")
++    return json.loads(path.read_text(encoding="utf-8"))
++
++
++def _import_fixture_builder() -> Any:
++    """Import the NAFEMS fixture builder from the tests fixtures tree.
++
++    The builder is kept alongside the existing NAFEMS regression tests so it can
++    be reused without duplication. This import is delayed and path-limited so
++    the scorer module remains importable outside the test tree.
++    """
++    repo_root = _default_dataset_root().parents[2]
++    fixtures_root = repo_root / "tests" / "fixtures"
++    if not fixtures_root.exists():
++        raise RuntimeError(
++            "Cannot locate tests/fixtures directory; run from a source checkout."
++        )
++    if str(fixtures_root) not in sys.path:
++        sys.path.insert(0, str(fixtures_root))
++    try:
++        from nafems import build_fixtures  # type: ignore[import-not-found]
++    except Exception as exc:
++        raise RuntimeError(
++            "Failed to import nafems.build_fixtures; ensure the repo checkout is intact."
++        ) from exc
++    return build_fixtures
++
++
++def build_fixture_packages(
++    packages_dir: Path | str,
++    dataset_root: Path | str | None = None,
++) -> dict[str, Path]:
++    """Build all analytical FEA ``.aieng`` packages into ``packages_dir``.
++
++    Returns a mapping from ``case_id`` to package path.
++    """
++    build_fixtures = _import_fixture_builder()
++    out_dir = Path(packages_dir)
++    out_dir.mkdir(parents=True, exist_ok=True)
++
++    corpus = load_corpus(dataset_root)
++    case_ids = [c["case_id"] for c in corpus.get("cases", [])]
++    built: dict[str, Path] = {}
++    for case_id in case_ids:
++        builder = build_fixtures.CASE_BUILDERS.get(case_id)
++        if builder is None:
++            raise KeyError(f"no fixture builder for case {case_id}")
++        path = builder(out_dir / f"{case_id}.aieng")
++        built[case_id] = path
++    return built
++
++
++def ensure_packages(
++    packages_dir: Path | str | None,
++    dataset_root: Path | str | None = None,
++) -> Path:
++    """Return a directory containing all case packages, building them if needed."""
++    if packages_dir is not None:
++        path = Path(packages_dir)
++        missing = [
++            case["case_id"]
++            for case in load_corpus(dataset_root).get("cases", [])
++            if not (path / f"{case['case_id']}.aieng").exists()
++        ]
++        if not missing:
++            return path
++        build_fixture_packages(path, dataset_root)
++        return path
++
++    # No packages directory supplied: build into a temp directory.
++    tmp = Path(tempfile.mkdtemp(prefix="analytical_fea_"))
++    build_fixture_packages(tmp, dataset_root)
++    return tmp
++
++
++CaseRunner = Callable[[Path, str], dict[str, Any]]
++
++
++def score_case(
++    case_id: str,
++    package_path: Path | str,
++    reference: dict[str, Any],
++    *,
++    run_id: str = "analytical_fea_run_001",
++    runner: CaseRunner = run_case,
++) -> dict[str, Any]:
++    """Run one case and compare its computed metrics to the reference.
++
++    Args:
++        case_id: Canonical case identifier.
++        package_path: Path to the ``.aieng`` package for the case.
++        reference: Loaded ``reference.json`` content.
++        run_id: Solver run identifier.
++        runner: Callable that executes the case and returns computed metrics.
++            Defaults to :func:`aieng.nafems_verification.run_case`.
++
++    Returns:
++        Scorecard entry with ``case_id``, ``status``, ``verdict``, and per-metric
++        comparisons.
++    """
++    run_result = runner(Path(package_path), run_id=run_id)
++    status = run_result.get("status")
++
++    if status == "skipped":
++        return {
++            "case_id": case_id,
++            "status": "skipped",
++            "verdict": "skipped",
++            "missing_tools": run_result.get("missing_tools"),
++            "message": run_result.get("message"),
++            "metrics": [],
++        }
++
++    if status != "ok" or run_result.get("computed_metrics") is None:
++        return {
++            "case_id": case_id,
++            "status": status or "error",
++            "verdict": "fail",
++            "message": run_result.get("message"),
++            "solver_log_tail": run_result.get("solver_log_tail"),
++            "metrics": [],
++        }
++
++    verification = verify_case(case_id, run_result["computed_metrics"], reference=reference)
++    return {
++        "case_id": case_id,
++        "status": "ok",
++        "verdict": verification["verdict"],
++        "analysis_type": run_result.get("analysis_type", reference.get("analysis_type", "static")),
++        "metrics": verification["metrics"],
++    }
++
++
++def _default_mesh_refinements() -> dict[str, list[tuple[int, int, int]]]:
++    return {
++        "tension_rod": [(10, 2, 2), (20, 2, 2), (40, 4, 4)],
++        "cantilever_end_load": [(10, 2, 2), (20, 4, 4), (40, 8, 8)],
++    }
++
++
++def run_mesh_convergence_score(
++    case_id: str,
++    packages_dir: Path,
++    refinements: list[tuple[int, int, int]] | None = None,
++    *,
++    run_id_prefix: str = "mesh_conv",
++) -> dict[str, Any]:
++    """Run a mesh-convergence sub-study for one case and return a scorecard fragment."""
++    if refinements is None:
++        refinements = _default_mesh_refinements().get(case_id, [])
++    if len(refinements) < 2:
++        return {
++            "case_id": case_id,
++            "status": "skipped",
++            "message": "fewer than two refinement levels configured",
++        }
++
++    build_fixtures = _import_fixture_builder()
++    builder = build_fixtures.CASE_BUILDERS.get(case_id)
++    if builder is None:
++        return {
++            "case_id": case_id,
++            "status": "skipped",
++            "message": f"no fixture builder for case {case_id}",
++        }
++
++    levels: dict[tuple[int, int, int], Path] = {}
++    for divisions in refinements:
++        path = packages_dir / f"{case_id}_{divisions[0]}x{divisions[1]}x{divisions[2]}.aieng"
++        builder(path, mesh_divisions=divisions)
++        levels[divisions] = path
++
++    try:
++        study = run_mesh_convergence_study(case_id, levels, run_id_prefix=run_id_prefix)
++    except Exception as exc:
++        return {
++            "case_id": case_id,
++            "status": "error",
++            "message": f"mesh convergence study failed: {type(exc).__name__}: {exc}",
++        }
++    return study
++
++
++def score_corpus(
++    packages_dir: Path | str | None = None,
++    *,
++    dataset_root: Path | str | None = None,
++    run_id: str = "analytical_fea_run_001",
++    runner: CaseRunner | None = None,
++    mesh_convergence: bool = False,
++) -> dict[str, Any]:
++    """Run the full analytical FEA corpus and emit a scorecard.
++
++    Args:
++        packages_dir: Directory containing pre-built ``.aieng`` packages. If
++            omitted, packages are built into a temporary directory.
++        dataset_root: Directory containing ``corpus.json`` and per-case
++            ``reference.json`` files.
++        run_id: Solver run identifier.
++        runner: Optional case runner override (useful for testing / mocking).
++        mesh_convergence: Whether to run optional mesh-convergence substudies.
++
++    Returns:
++        Machine-readable scorecard dict.
++    """
++    corpus = load_corpus(dataset_root)
++    pkg_dir = ensure_packages(packages_dir, dataset_root)
++    active_runner: CaseRunner = runner or run_case
++
++    case_results: list[dict[str, Any]] = []
++    any_fail = False
++    any_skip = False
++
++    for entry in corpus.get("cases", []):
++        case_id = entry["case_id"]
++        reference = load_reference(case_id, dataset_root)
++        package_path = pkg_dir / f"{case_id}.aieng"
++        case_result = score_case(
++            case_id,
++            package_path,
++            reference,
++            run_id=run_id,
++            runner=active_runner,
++        )
++        if case_result["verdict"] == "fail":
++            any_fail = True
++        elif case_result["verdict"] == "skipped":
++            any_skip = True
++
++        if mesh_convergence and case_result["status"] == "ok":
++            case_result["mesh_convergence"] = run_mesh_convergence_score(case_id, pkg_dir)
++
++        case_results.append(case_result)
++
++    total = len(case_results)
++    passed = sum(1 for c in case_results if c["verdict"] == "pass")
++    failed = sum(1 for c in case_results if c["verdict"] == "fail")
++    skipped = sum(1 for c in case_results if c["verdict"] == "skipped")
++
++    if any_fail:
++        status = "failed"
++    elif any_skip:
++        status = "skipped"
++    else:
++        status = "passed"
++
++    return {
++        "format": SCORECARD_FORMAT,
++        "format_version": SCORECARD_VERSION,
++        "aieng_format_version": FORMAT_VERSION,
++        "run_id": run_id,
++        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
++        "layer": "analytical_fea",
++        "corpus": corpus.get("corpus_id"),
++        "status": status,
++        "cases": case_results,
++        "summary": {
++            "total": total,
++            "passed": passed,
++            "failed": failed,
++            "skipped": skipped,
++        },
++        "honesty": {
++            "claim": "agreement with analytical reference within documented tolerance",
++            "certified": False,
++            "asme_vv_10_certified": False,
++            "nafems_certified": False,
++            "reference_basis": "closed-form beam/rod/column theory",
++            "mesh_note": "Coarse C3D8 meshes for fast CI; tolerance bands absorb discretisation error.",
++        },
++    }
++
++
++def write_scorecard(scorecard: dict[str, Any], out_path: Path | str) -> Path:
++    """Write the scorecard to disk as sorted, indented JSON."""
++    path = Path(out_path)
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(json.dumps(scorecard, indent=2, sort_keys=True) + "\n", encoding="utf-8")
++    return path
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description="Run the analytical FEA benchmark corpus and emit a scorecard"
++    )
++    parser.add_argument(
++        "--packages-dir",
++        type=Path,
++        default=None,
++        help="Directory with pre-built .aieng packages (default: build temp packages)",
++    )
++    parser.add_argument(
++        "--dataset-root",
++        type=Path,
++        default=None,
++        help="Root of the analytical_fea dataset (default: aieng/benchmarks/datasets/analytical_fea)",
++    )
++    parser.add_argument(
++        "--run-id",
++        default="analytical_fea_run_001",
++        help="Solver run identifier",
++    )
++    parser.add_argument(
++        "--out",
++        type=Path,
++        default=None,
++        help="Path to write the JSON scorecard (default: print to stdout)",
++    )
++    parser.add_argument(
++        "--mesh-convergence",
++        action="store_true",
++        help="Run optional mesh-convergence substudies",
++    )
++    parser.add_argument(
++        "--build-only",
++        action="store_true",
++        help="Build fixture packages and exit without running the scorer",
++    )
++    return parser
++
++
++def main(argv: list[str] | None = None) -> int:
++    args = build_parser().parse_args(argv)
++
++    if args.build_only:
++        pkg_dir = ensure_packages(args.packages_dir, args.dataset_root)
++        print(f"Built fixture packages in {pkg_dir}")
++        return 0
++
++    scorecard = score_corpus(
++        packages_dir=args.packages_dir,
++        dataset_root=args.dataset_root,
++        run_id=args.run_id,
++        mesh_convergence=args.mesh_convergence,
++    )
++    text = json.dumps(scorecard, indent=2, sort_keys=True) + "\n"
++    if args.out:
++        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
++        Path(args.out).write_text(text, encoding="utf-8")
++        print(f"Wrote scorecard to {args.out}")
++    else:
++        print(text)
++    return 0 if scorecard["status"] in ("passed", "skipped") else 1
++
++
++if __name__ == "__main__":  # pragma: no cover
++    raise SystemExit(main())
+diff --git a/aieng/tests/test_benchmarks_analytical_fea.py b/aieng/tests/test_benchmarks_analytical_fea.py
+new file mode 100644
+index 00000000..4f64357a
+--- /dev/null
++++ b/aieng/tests/test_benchmarks_analytical_fea.py
+@@ -0,0 +1,294 @@
++"""Tests for the analytical FEA benchmark corpus + scorer harness (issue #257)."""
++from __future__ import annotations
++
++import json
++from pathlib import Path
++from typing import Any
++
++import pytest
++
++from aieng.benchmarks.analytical_fea import (
++    SCORECARD_FORMAT,
++    SCORECARD_VERSION,
++    build_fixture_packages,
++    ensure_packages,
++    load_corpus,
++    load_reference,
++    score_case,
++    score_corpus,
++    write_scorecard,
++)
++from aieng.nafems_verification import REFERENCE_CASES
++
++
++DATASET_ROOT = Path("benchmarks/datasets/analytical_fea")
++
++
++# ---------------------------------------------------------------------------
++# Dataset integrity
++# ---------------------------------------------------------------------------
++
++
++def test_corpus_and_reference_files_exist() -> None:
++    corpus = load_corpus(DATASET_ROOT)
++    assert corpus["corpus_id"] == "analytical_fea"
++    assert len(corpus["cases"]) == len(REFERENCE_CASES)
++    for entry in corpus["cases"]:
++        ref = load_reference(entry["case_id"], DATASET_ROOT)
++        assert ref["case_id"] == entry["case_id"]
++        assert ref["analysis_type"] == entry["analysis_type"]
++        assert ref["metrics"]
++
++
++def test_references_match_nafems_reference_cases() -> None:
++    """The JSON references are derived from the canonical REFERENCE_CASES table."""
++    for case_id, expected in REFERENCE_CASES.items():
++        ref = load_reference(case_id, DATASET_ROOT)
++        assert ref["description"] == expected["description"]
++        assert ref["analysis_type"] == expected.get("analysis_type", "static")
++        for metric_name, metric in expected["metrics"].items():
++            assert metric_name in ref["metrics"]
++            assert ref["metrics"][metric_name]["value"] == pytest.approx(metric["value"])
++            assert ref["metrics"][metric_name]["unit"] == metric["unit"]
++            assert (
++                ref["metrics"][metric_name]["tolerance_percent"]
++                == metric["tolerance_percent"]
++            )
++
++
++# ---------------------------------------------------------------------------
++# Fixture package builder
++# ---------------------------------------------------------------------------
++
++
++def test_build_fixture_packages_creates_all_cases(tmp_path: Path) -> None:
++    paths = build_fixture_packages(tmp_path, DATASET_ROOT)
++    assert set(paths) == set(REFERENCE_CASES)
++    for path in paths.values():
++        assert path.exists()
++        assert path.suffix == ".aieng"
++
++
++def test_ensure_packages_reuses_existing_packages(tmp_path: Path) -> None:
++    build_fixture_packages(tmp_path, DATASET_ROOT)
++    pkg_dir = ensure_packages(tmp_path, DATASET_ROOT)
++    assert pkg_dir == tmp_path
++    assert len(list(pkg_dir.glob("*.aieng"))) == len(REFERENCE_CASES)
++
++
++def test_ensure_packages_builds_missing_packages(tmp_path: Path) -> None:
++    partial = tmp_path / "partial"
++    partial.mkdir()
++    # Build only one package manually.
++    build_fixture_packages(partial, DATASET_ROOT)
++    for extra in list(partial.glob("*.aieng"))[1:]:
++        extra.unlink()
++
++    pkg_dir = ensure_packages(partial, DATASET_ROOT)
++    assert len(list(pkg_dir.glob("*.aieng"))) == len(REFERENCE_CASES)
++
++
++# ---------------------------------------------------------------------------
++# Scorer unit tests (no solver required)
++# ---------------------------------------------------------------------------
++
++
++def _fake_runner(
++    computed_metrics: dict[str, Any],
++    *,
++    status: str = "ok",
++    analysis_type: str = "static",
++) -> Any:
++    def _run(package_path: Path, run_id: str = "") -> dict[str, Any]:
++        return {
++            "status": status,
++            "analysis_type": analysis_type,
++            "computed_metrics": computed_metrics,
++        }
++
++    return _run
++
++
++def test_score_case_passes_within_tolerance(tmp_path: Path) -> None:
++    ref = load_reference("tension_rod", DATASET_ROOT)
++    computed = {
++        "load_cases": [
++            {
++                "id": "run_001",
++                "metrics": {
++                    "max_displacement": {
++                        "value": ref["metrics"]["max_displacement"]["value"] * 0.98,
++                        "unit": "mm",
++                    },
++                    "max_von_mises_stress": {
++                        "value": ref["metrics"]["max_von_mises_stress"]["value"] * 1.02,
++                        "unit": "MPa",
++                    },
++                },
++            }
++        ]
++    }
++    result = score_case(
++        "tension_rod",
++        tmp_path / "x.aieng",
++        ref,
++        run_id="run_001",
++        runner=_fake_runner(computed),
++    )
++    assert result["status"] == "ok"
++    assert result["verdict"] == "pass"
++    for m in result["metrics"]:
++        assert m["verdict"] == "pass"
++
++
++def test_score_case_fails_outside_tolerance(tmp_path: Path) -> None:
++    ref = load_reference("tension_rod", DATASET_ROOT)
++    computed = {
++        "load_cases": [
++            {
++                "id": "run_001",
++                "metrics": {
++                    "max_displacement": {
++                        "value": ref["metrics"]["max_displacement"]["value"] * 1.50,
++                        "unit": "mm",
++                    },
++                    "max_von_mises_stress": {
++                        "value": ref["metrics"]["max_von_mises_stress"]["value"],
++                        "unit": "MPa",
++                    },
++                },
++            }
++        ]
++    }
++    result = score_case(
++        "tension_rod",
++        tmp_path / "x.aieng",
++        ref,
++        run_id="run_001",
++        runner=_fake_runner(computed),
++    )
++    assert result["verdict"] == "fail"
++    disp = next(m for m in result["metrics"] if m["metric"] == "max_displacement")
++    stress = next(m for m in result["metrics"] if m["metric"] == "max_von_mises_stress")
++    assert disp["verdict"] == "fail"
++    assert stress["verdict"] == "pass"
++
++
++def test_score_case_skips_when_solver_unavailable(tmp_path: Path) -> None:
++    ref = load_reference("tension_rod", DATASET_ROOT)
++
++    def _skip_runner(package_path: Path, run_id: str = "") -> dict[str, Any]:
++        return {
++            "status": "skipped",
++            "missing_tools": ["ccx"],
++            "message": "no solver",
++        }
++
++    result = score_case("tension_rod", tmp_path / "x.aieng", ref, runner=_skip_runner)
++    assert result["status"] == "skipped"
++    assert result["verdict"] == "skipped"
++
++
++def test_score_corpus_shape_with_mock_runner(tmp_path: Path) -> None:
++    build_fixture_packages(tmp_path, DATASET_ROOT)
++
++    def _passing_runner(package_path: Path, run_id: str = "") -> dict[str, Any]:
++        case_id = package_path.stem
++        ref = load_reference(case_id, DATASET_ROOT)
++        metrics: dict[str, Any] = {}
++        for name, spec in ref["metrics"].items():
++            metrics[name] = {"value": spec["value"], "unit": spec.get("unit", "")}
++        return {
++            "status": "ok",
++            "analysis_type": ref.get("analysis_type", "static"),
++            "computed_metrics": {"load_cases": [{"id": run_id, "metrics": metrics}]},
++        }
++
++    scorecard = score_corpus(
++        tmp_path,
++        dataset_root=DATASET_ROOT,
++        run_id="mock_run_001",
++        runner=_passing_runner,
++    )
++    assert scorecard["format"] == SCORECARD_FORMAT
++    assert scorecard["format_version"] == SCORECARD_VERSION
++    assert scorecard["corpus"] == "analytical_fea"
++    assert scorecard["status"] == "passed"
++    assert scorecard["summary"]["total"] == len(REFERENCE_CASES)
++    assert scorecard["summary"]["passed"] == len(REFERENCE_CASES)
++    assert scorecard["summary"]["failed"] == 0
++    assert "honesty" in scorecard
++    assert scorecard["honesty"]["certified"] is False
++
++
++def test_score_corpus_status_is_failed_when_any_case_fails(tmp_path: Path) -> None:
++    build_fixture_packages(tmp_path, DATASET_ROOT)
++    ref = load_reference("tension_rod", DATASET_ROOT)
++
++    def _bad_runner(package_path: Path, run_id: str = "") -> dict[str, Any]:
++        return {
++            "status": "ok",
++            "analysis_type": "static",
++            "computed_metrics": {
++                "load_cases": [
++                    {
++                        "id": run_id,
++                        "metrics": {
++                            "max_displacement": {
++                                "value": ref["metrics"]["max_displacement"]["value"] * 2.0,
++                                "unit": "mm",
++                            },
++                            "max_von_mises_stress": {
++                                "value": ref["metrics"]["max_von_mises_stress"]["value"] * 2.0,
++                                "unit": "MPa",
++                            },
++                        },
++                    }
++                ]
++            },
++        }
++
++    scorecard = score_corpus(
++        tmp_path,
++        dataset_root=DATASET_ROOT,
++        run_id="mock_run_002",
++        runner=_bad_runner,
++    )
++    assert scorecard["status"] == "failed"
++    assert scorecard["summary"]["failed"] == len(REFERENCE_CASES)
++
++
++def test_write_scorecard_roundtrips(tmp_path: Path) -> None:
++    scorecard = {"format": SCORECARD_FORMAT, "summary": {"total": 1}}
++    path = write_scorecard(scorecard, tmp_path / "sc.json")
++    assert path.exists()
++    loaded = json.loads(path.read_text(encoding="utf-8"))
++    assert loaded == scorecard
++
++
++# ---------------------------------------------------------------------------
++# CLI smoke test
++# ---------------------------------------------------------------------------
++
++
++def test_cli_module_smoke(tmp_path: Path) -> None:
++    from aieng.benchmarks import analytical_fea
++
++    out = tmp_path / "scorecard.json"
++    rc = analytical_fea.main(
++        [
++            "--packages-dir",
++            str(tmp_path / "packages"),
++            "--dataset-root",
++            str(DATASET_ROOT),
++            "--run-id",
++            "cli_smoke",
++            "--out",
++            str(out),
++        ]
++    )
++    assert rc == 0
++    assert out.exists()
++    data = json.loads(out.read_text(encoding="utf-8"))
++    assert data["format"] == SCORECARD_FORMAT
++    assert data["run_id"] == "cli_smoke"

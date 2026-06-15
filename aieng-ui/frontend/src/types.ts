@@ -857,6 +857,21 @@ export type FieldProbe = {
   screenY: number;
 };
 
+export type FieldOverlayConfig = {
+  /** Active colormap name. `null` / omitted = use the descriptor default. */
+  colormap?: string | null;
+  /** Manual range minimum. `null` / omitted = auto (descriptor min_value). */
+  clampMin?: number | null;
+  /** Manual range maximum. `null` / omitted = auto (descriptor max_value). */
+  clampMax?: number | null;
+  /** Number of discrete contour bands. `null` / omitted / <2 = continuous. */
+  bands?: number | null;
+  /** Hide values below this threshold (isolate everything >= threshold). */
+  thresholdMin?: number | null;
+  /** Hide values above this threshold (isolate everything <= threshold). */
+  thresholdMax?: number | null;
+};
+
 export type RuntimeEventType =
   | "run_started"
   | "plan_created"

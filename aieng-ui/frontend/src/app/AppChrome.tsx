@@ -138,6 +138,8 @@ export function AppChrome({ app }: AppChromeProps) {
             onSelectCaeField={app.setSelectedCaeField}
             caeResultsAvailable={app.caeResultsAvailable}
             effectiveViewerUrl={app.effectiveViewerUrl}
+            fieldOverlayConfig={app.fieldOverlayConfig}
+            onFieldOverlayConfigChange={app.setFieldOverlayConfig}
             pickedFaces={app.pickedFaces}
             onAddPickedFace={app.addPickedFace}
             onClearPickedFaces={app.clearPickedFaces}

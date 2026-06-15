@@ -9,6 +9,7 @@ import {
   withAssetVersion,
 } from "../appUtils";
 import type {
+  FieldOverlayConfig,
   RuntimeConfigSnapshot,
   SolverFieldDescriptor,
 } from "../types";
@@ -286,6 +287,7 @@ export function useWorkbenchApp() {
   // "" = no field overlay / plain geometry). Default to the most-used field.
   const [selectedCaeField, setSelectedCaeField] = useState("von_mises");
   const [fieldDescriptor, setFieldDescriptor] = useState<SolverFieldDescriptor | null>(null);
+  const [fieldOverlayConfig, setFieldOverlayConfig] = useState<FieldOverlayConfig | null>(null);
 
   const caeSummary = summary?.cae ?? null;
   const hasCaeResultArtifacts = Boolean(
@@ -301,6 +303,12 @@ export function useWorkbenchApp() {
 
   // Fetch the descriptor for the picked field. The picker offers the full result-field
   // catalog; the backend serves any of them from the FRD (or falls back to synthetic).
+  useEffect(() => {
+    // Reset manual legend controls when the project or field changes so the
+    // user starts from the solver-derived range/colormap for the new result.
+    setFieldOverlayConfig(null);
+  }, [selectedId, selectedCaeField]);
+
   useEffect(() => {
     if (!selectedId || !hasCaeResultArtifacts || !selectedCaeField) {
       setFieldDescriptor(null);
@@ -370,6 +378,8 @@ export function useWorkbenchApp() {
     activeFieldDescriptor,
     selectedCaeField,
     setSelectedCaeField,
+    fieldOverlayConfig,
+    setFieldOverlayConfig,
     caeResultsAvailable: hasCaeResultArtifacts,
     effectiveViewerUrl,
     pickedFaces,

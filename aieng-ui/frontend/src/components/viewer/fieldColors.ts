@@ -4,6 +4,47 @@ import * as THREE from "three";
 // or map per-node solver values onto displayed mesh vertices via a spatial grid.
 // All pure THREE.js — no React, unit-testable in isolation.
 
+export const FIELD_COLORMAPS = ["thermal", "coolwarm", "viridis", "grayscale"] as const;
+export type FieldColormapName = (typeof FIELD_COLORMAPS)[number];
+
+export type FieldColorOptions = {
+  clampMin?: number | null;
+  clampMax?: number | null;
+  bands?: number | null;
+  thresholdMin?: number | null;
+  thresholdMax?: number | null;
+  maskColor?: THREE.Color | null;
+};
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+// Approximation of matplotlib's viridis, sampled at 11 points and linearly
+// interpolated. Expressed in sRGB so it matches the CSS gradient closely.
+const VIRIDIS_STOPS: [number, number, number][] = [
+  [0.26700401, 0.00487433, 0.32941519],
+  [0.28358203, 0.14067818, 0.45875764],
+  [0.25393521, 0.26525418, 0.52998327],
+  [0.20684336, 0.37157568, 0.55399623],
+  [0.16362543, 0.47113298, 0.55814834],
+  [0.12756771, 0.56694976, 0.55055605],
+  [0.13469223, 0.65863613, 0.51764919],
+  [0.26694091, 0.74889532, 0.44059495],
+  [0.47765785, 0.82108007, 0.3183956],
+  [0.74138862, 0.8733418, 0.15350678],
+  [0.99324805, 0.90615665, 0.14393626],
+];
+
+function sampleViridis(t: number): THREE.Color {
+  const scaled = t * (VIRIDIS_STOPS.length - 1);
+  const i = Math.max(0, Math.min(VIRIDIS_STOPS.length - 2, Math.floor(scaled)));
+  const f = scaled - i;
+  const [r1, g1, b1] = VIRIDIS_STOPS[i];
+  const [r2, g2, b2] = VIRIDIS_STOPS[i + 1];
+  return new THREE.Color(lerp(r1, r2, f), lerp(g1, g2, f), lerp(b1, b2, f));
+}
+
 // CSS color stops across a colormap, for a legend gradient bar (low→high).
 export function colormapCssStops(name?: string | null, count = 8): string[] {
   const stops: string[] = [];
@@ -15,6 +56,28 @@ export function colormapCssStops(name?: string | null, count = 8): string[] {
   return stops;
 }
 
+/**
+ * Build a CSS `linear-gradient(...)` string for a colormap.
+ * When `bands` is >= 2 the gradient is stepped into N solid bands so the legend
+ * matches the discrete contour colouring applied to the mesh.
+ */
+export function colormapCssGradient(name?: string | null, bands?: number | null): string {
+  const stops = colormapCssStops(name, 64);
+  if (!bands || bands < 2) {
+    return `linear-gradient(to top, ${stops.map((color, i) => `${color} ${(i / (stops.length - 1)) * 100}%`).join(", ")})`;
+  }
+  const bandStops: string[] = [];
+  const n = Math.max(2, Math.round(bands));
+  for (let i = 0; i < n; i += 1) {
+    const t = i / (n - 1);
+    const color = stops[Math.round(t * (stops.length - 1))];
+    const start = (i / n) * 100;
+    const end = ((i + 1) / n) * 100;
+    bandStops.push(`${color} ${start.toFixed(2)}%, ${color} ${end.toFixed(2)}%`);
+  }
+  return `linear-gradient(to top, ${bandStops.join(", ")})`;
+}
+
 export function sampleColormap(t: number, name?: string | null): THREE.Color {
   const c = Math.max(0, Math.min(1, t));
   if (name === "coolwarm") {
@@ -24,11 +87,69 @@ export function sampleColormap(t: number, name?: string | null): THREE.Color {
     const b = c < 0.5 ? 1.0 : 1.0 - (c - 0.5) * 1.6;
     return new THREE.Color(r, g, b);
   }
+  if (name === "viridis") {
+    return sampleViridis(c);
+  }
+  if (name === "grayscale") {
+    return new THREE.Color(c, c, c);
+  }
   // thermal: blue -> cyan -> green -> yellow -> red
   const r = Math.max(0, Math.min(1, 1.5 - Math.abs(4 * c - 3)));
   const g = Math.max(0, Math.min(1, 1.5 - Math.abs(4 * c - 2)));
   const b = Math.max(0, Math.min(1, 1.5 - Math.abs(4 * c - 1)));
   return new THREE.Color(r, g, b);
+}
+
+export function effectiveFieldRange(
+  minVal: number,
+  maxVal: number,
+  options?: FieldColorOptions | null,
+): { min: number; max: number } {
+  let min = minVal;
+  let max = maxVal;
+  if (options?.clampMin !== undefined && options.clampMin !== null && Number.isFinite(options.clampMin)) {
+    min = options.clampMin;
+  }
+  if (options?.clampMax !== undefined && options.clampMax !== null && Number.isFinite(options.clampMax)) {
+    max = options.clampMax;
+  }
+  if (min > max) {
+    // Invalid clamp range: fall back to the original ordering to avoid an
+    // inverted scale, but keep the requested boundary that makes sense.
+    min = minVal;
+    max = maxVal;
+  }
+  return { min, max };
+}
+
+function isMaskedValue(value: number, options?: FieldColorOptions | null): boolean {
+  if (!options) return false;
+  if (options.thresholdMin !== undefined && options.thresholdMin !== null && value < options.thresholdMin) {
+    return true;
+  }
+  if (options.thresholdMax !== undefined && options.thresholdMax !== null && value > options.thresholdMax) {
+    return true;
+  }
+  return false;
+}
+
+export function normalizeFieldValue(
+  value: number,
+  minVal: number,
+  maxVal: number,
+  options?: FieldColorOptions | null,
+): number | null {
+  if (isMaskedValue(value, options)) return null;
+  const range = effectiveFieldRange(minVal, maxVal, options);
+  let t = range.max > range.min ? (value - range.min) / (range.max - range.min) : 0;
+  t = Math.max(0, Math.min(1, t));
+  const bands = options?.bands ?? 0;
+  if (bands && bands >= 2) {
+    const n = Math.round(bands);
+    const band = Math.min(n - 1, Math.floor(t * n));
+    t = band / (n - 1);
+  }
+  return t;
 }
 
 export function applyYNormalizedColors(object: THREE.Object3D, colormap?: string | null): boolean {
@@ -214,10 +335,13 @@ export function applyFieldColors(
   minVal: number,
   maxVal: number,
   colormap?: string | null,
+  options?: FieldColorOptions | null,
 ): { applied: boolean; bboxStatus: "aligned" | "suspicious" | null; warnings: string[] } {
   let applied = false;
   const warnings: string[] = [];
-  const valueRange = maxVal > minVal ? maxVal - minVal : 1;
+  const range = effectiveFieldRange(minVal, maxVal, options);
+  const valueRange = range.max > range.min ? range.max - range.min : 1;
+  const maskColor = options?.maskColor ?? new THREE.Color(0x888888);
 
   const grid = buildUniformGrid(nodeCoords);
   const bboxCheck = checkBboxAlignment(nodeCoords, object);
@@ -234,8 +358,8 @@ export function applyFieldColors(
       const vz = pos.getZ(i);
       const bestIdx = nearestNodeIndex(vx, vy, vz, grid, nodeCoords);
       const val = values[bestIdx] ?? minVal;
-      const t = (val - minVal) / valueRange;
-      const col = sampleColormap(t, colormap);
+      const t = normalizeFieldValue(val, minVal, maxVal, options);
+      const col = t === null ? maskColor : sampleColormap(t, colormap);
       colors[i * 3] = col.r;
       colors[i * 3 + 1] = col.g;
       colors[i * 3 + 2] = col.b;

@@ -6,3 +6,4 @@ export { useHighlightOverlay } from "./useHighlightOverlay";
 export { useAssemblyCheckOverlay } from "./useAssemblyCheckOverlay";
 export { useFieldMarkerOverlay } from "./useFieldMarkerOverlay";
 export { useFieldProbe } from "./useFieldProbe";
+export { useFieldColorOverlay } from "./useFieldColorOverlay";

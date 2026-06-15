@@ -6,7 +6,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { api } from "../../../api";
 import type { ViewerLoadState } from "../../../appTypes";
 import { fieldLabel, resolveAssetFormat } from "../../../appUtils";
-import type { SolverFieldDescriptor } from "../../../types";
+import type { FieldOverlayConfig, SolverFieldDescriptor } from "../../../types";
 import { fitCameraToObject } from "../../viewer/camera";
 import { applyFieldColors, applyYNormalizedColors } from "../../viewer/fieldColors";
 
@@ -27,6 +27,7 @@ export function useAssetLoader(
   fieldDescriptor: SolverFieldDescriptor | null | undefined,
   onObjectReady: () => void,
   setViewerState: (state: { status: ViewerLoadState; detail: string }) => void,
+  fieldOverlayConfig?: FieldOverlayConfig | null,
 ) {
   // Stable callback refs so the effect can read the latest callbacks
   // without adding them to the dependency array.
@@ -87,7 +88,8 @@ export function useAssetLoader(
           fieldDescriptor.node_coords,
           fieldDescriptor.min_value,
           fieldDescriptor.max_value,
-          fieldDescriptor.colormap,
+          fieldOverlayConfig?.colormap ?? fieldDescriptor.colormap,
+          fieldOverlayConfig,
         );
         if (applied && fieldDescriptor) {
           fieldDescriptor.bbox_status = bboxStatus;

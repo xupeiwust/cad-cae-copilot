@@ -369,6 +369,18 @@ single-part edit.
   hit primitive maps to a B-Rep face). The probe is implemented in
   `useFieldProbe.ts` and rendered by `ViewerOverlays.tsx`; it reuses the same
   nearest-node grid as the colormap so the readout matches what the user sees.
+- **Field legend controls (in-legend colormap + range + bands + threshold) (#254).**
+  The floating legend for the active solver result field
+  ([`FieldLegend.tsx`](aieng-ui/frontend/src/components/FieldLegend.tsx)) is now
+  interactive. Users can clamp the min/max range, pick from the built-in colormaps
+  (`thermal`, `coolwarm`, `viridis`, `grayscale`), switch between continuous and
+  discrete bands, and isolate regions above a threshold. The mapping is recomputed
+  client-side in
+  [`fieldColors.ts`](aieng-ui/frontend/src/components/viewer/fieldColors.ts)
+  (`applyFieldColors`, `effectiveFieldRange`, `normalizeFieldValue`) and reapplied
+  by `useFieldColorOverlay` without reloading the preview asset. Reset restores the
+  solver-derived defaults. State lives in `useWorkbenchApp` and is reset when the
+  project or selected field changes.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

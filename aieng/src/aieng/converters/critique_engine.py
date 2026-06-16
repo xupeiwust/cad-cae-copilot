@@ -140,6 +140,18 @@ def _bbox_contains(outer: list[float], inner: list[float], tol: float = 1.0) -> 
     )
 
 
+def _bbox_volume(bb: list[float]) -> float:
+    if len(bb) < 6:
+        return 0.0
+    return max(0.0, bb[3] - bb[0]) * max(0.0, bb[4] - bb[1]) * max(0.0, bb[5] - bb[2])
+
+
+# A body whose actual volume is well below its bounding-box volume is a HOLLOW
+# enclosure (housing / shell). Parts inside it (bearing seats, gears) are
+# legitimately internal — not a 'hidden part' fidelity problem.
+_HOLLOW_FILL_RATIO = 0.6
+
+
 def assess_modeling_fidelity(
     topology_map: dict[str, Any],
     feature_graph: dict[str, Any],
@@ -178,15 +190,20 @@ def assess_modeling_fidelity(
             "~5–15mm on enclosures/housings, ~1–4mm on machined parts.",
         )
     if bodies and not has_shaped and len(bodies) >= 1:
-        score -= 20
+        # A filleted/chamfered model shows finishing intent, so primitive (boxy)
+        # massing is a mild note, not a heavy penalty — many good mechanical parts
+        # are box-based with broken edges. Only raw, unfinished primitives are docked hard.
+        score -= 5 if has_finishing else 20
+        extra = (
+            " Edge-breaking is present, so this is a mild note (boxy mechanical massing is fine)."
+            if has_finishing else ""
+        )
         counter = _add_finding(
             findings, counter, "low", "modeling_fidelity", "primitive_stacking_only",
             "(model)", None,
-            "The model is built entirely from primitive boxes/cylinders (no loft / sweep / "
-            "revolve). For mechanical massing that can be fine; for any body meant to read "
-            "as designed or organic it caps quality at 'blocky'.",
-            "Shape designed/visible bodies with loft() / sweep() / revolve() between profiles "
-            "instead of stacking primitives.",
+            "The model uses no loft / sweep / revolve (primitive boxes/cylinders only)." + extra,
+            "If any body is meant to read as designed or organic, shape it with loft() / "
+            "sweep() / revolve() between profiles instead of stacking primitives.",
         )
 
     # Per-part: a bare 6-face axis-aligned box with no features (cylinders excluded).
@@ -207,14 +224,30 @@ def assess_modeling_fidelity(
                     "the part actually needs (seats, bosses, ribs); a raw box rarely is the part.",
                 )
 
-    # Per-part: a solid fully inside another solid's bbox is likely not externally visible.
+    # Per-part: a solid buried inside ANOTHER SOLID body is likely not visible and
+    # usually a mistake. But a part inside a HOLLOW enclosure (housing/shell) — a
+    # bearing seat, a gear, internals — is legitimately internal, so it is NOT
+    # flagged. Hollowness is judged from the container's actual volume vs its bbox
+    # volume (per-solid volume is recorded in the topology); unknown volume falls
+    # back to flagging (bbox containment is then the only signal).
     hidden = 0
-    body_list = [(bid, b.get("bounding_box") or [], b.get("name", bid)) for bid, b in bodies.items()]
-    for bid, bb, name in body_list:
+    body_list = [
+        (bid, b.get("bounding_box") or [], b.get("name", bid), b.get("volume"))
+        for bid, b in bodies.items()
+    ]
+
+    def _container_is_hollow(obb: list[float], ovol: Any) -> bool:
+        bvol = _bbox_volume(obb)
+        return isinstance(ovol, (int, float)) and bvol > 0 and (float(ovol) / bvol) < _HOLLOW_FILL_RATIO
+
+    for bid, bb, name, _vol in body_list:
         if len(bb) < 6:
             continue
         container = next(
-            (onm for oid, obb, onm in body_list if oid != bid and _bbox_contains(obb, bb)),
+            (
+                onm for oid, obb, onm, ovol in body_list
+                if oid != bid and _bbox_contains(obb, bb) and not _container_is_hollow(obb, ovol)
+            ),
             None,
         )
         if container is not None:

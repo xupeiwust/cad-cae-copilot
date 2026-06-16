@@ -86,3 +86,22 @@ Gaps **confirmed on a real complex model** (worse than on the NEMA part):
 Not yet exercised live: `cad.validate_subpart` / `cad.define_*` — they are on the
 backend (84 tools) but this Claude Code session's MCP tool list predates them;
 calling them needs an MCP reconnect (not a `dev.py` restart). Already test-validated.
+
+## Modeling-quality demo (crude vs scaffolded gearbox)
+
+`aieng-ui/backend/scripts/gearbox_quality_demo.py` builds the SAME gearbox two
+ways through the real pipeline and scores both with the modeling-fidelity check:
+
+| build | parts | fidelity |
+|-------|-------|----------|
+| crude (`Box - Box` + flat disks) | 4 | **40 / crude** — no edge-breaking, raw primitives |
+| scaffolded (`housing()` + `boss()` bearing seats + `rib()` + `mounting_tab()` feet + `rounded_box()` cover) | 16 | **95 / designed** |
+
+This closes the loop on the "gearbox looks bad" report: lever-1 (fidelity) flags
+the crude build for the right reason, lever-2 (scaffolds) fixes it, and the score
+moves crude→designed. Two heuristic false-positives surfaced by the demo were
+fixed in the same pass: parts inside a HOLLOW enclosure (bearing seats/gears in a
+housing) are no longer penalised as "hidden" (judged via per-solid volume vs bbox
+volume), and a filleted boxy mechanical part is no longer docked hard for lacking
+loft/sweep (mild note only). Internal gears/seats are correct engineering, not a
+quality defect.

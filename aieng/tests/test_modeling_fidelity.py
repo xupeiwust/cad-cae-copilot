@@ -68,6 +68,40 @@ def test_hidden_part_detected_by_bbox_containment() -> None:
     assert any(f["rule"] == "possibly_hidden_part" and "inner" in f["feature"] for f in fid["findings"])
 
 
+def test_part_inside_hollow_enclosure_is_not_flagged_hidden() -> None:
+    # housing bbox 100x80x60 = 480k; actual volume 40k -> hollow shell.
+    # the bearing seat inside it is legitimately internal, not "hidden".
+    topo = {"entities": [
+        {"id": "b1", "type": "solid", "name": "housing", "bounding_box": [0, 0, 0, 100, 80, 60], "volume": 40000.0},
+        {"id": "b2", "type": "solid", "name": "bearing_seat", "bounding_box": [40, 30, 20, 60, 50, 40], "volume": 6000.0},
+    ]}
+    fid = assess_modeling_fidelity(topo, _fg([("housing", 18, "b1"), ("bearing_seat", 4, "b2")], adv=("fillet",)))
+    assert fid["signals"]["possibly_hidden_parts"] == 0
+    assert not any(f["rule"] == "possibly_hidden_part" for f in fid["findings"])
+
+
+def test_part_inside_solid_block_is_still_flagged_hidden() -> None:
+    # same containment, but the container is a SOLID block (fill ~1.0) -> burial is a real flag
+    topo = {"entities": [
+        {"id": "b1", "type": "solid", "name": "block", "bounding_box": [0, 0, 0, 100, 80, 60], "volume": 470000.0},
+        {"id": "b2", "type": "solid", "name": "insert", "bounding_box": [40, 30, 20, 60, 50, 40], "volume": 6000.0},
+    ]}
+    fid = assess_modeling_fidelity(topo, _fg([("block", 6, "b1"), ("insert", 3, "b2")], adv=("fillet",)))
+    assert any(f["rule"] == "possibly_hidden_part" and "insert" in f["feature"] for f in fid["findings"])
+
+
+def test_finished_boxy_model_is_designed_not_penalized_for_no_loft() -> None:
+    # a filleted housing (no loft) should be 'designed' — boxy mechanical massing
+    # with broken edges is only a mild note, not a heavy penalty.
+    topo = {"entities": [
+        {"id": "b1", "type": "solid", "name": "housing", "bounding_box": [0, 0, 0, 120, 80, 60], "volume": 140000.0},
+    ]}
+    fid = assess_modeling_fidelity(topo, _fg([("housing", 18, "b1")], adv=("fillet",)))
+    assert fid["level"] == "designed"
+    assert fid["score"] >= 90  # mild -5 for no-loft, nothing else
+    assert any(f["rule"] == "primitive_stacking_only" for f in fid["findings"])  # still noted, just mild
+
+
 def test_critique_geometry_includes_fidelity_block() -> None:
     topo = _topo([("body_001", "housing", [0, 0, 0, 120, 80, 60])])
     out = critique_geometry(topo, _fg([("housing", 15, "body_001")]))

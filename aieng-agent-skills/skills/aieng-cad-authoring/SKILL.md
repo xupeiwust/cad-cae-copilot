@@ -99,10 +99,14 @@ Do not one-shot a whole complex model (multi-part assembly, gearbox, robot arm,
 multi-shell housing, anything with a kinematic chain or many mates). A single
 large `cad.execute_build123d` script is the highest-failure path. Instead:
 
-1. **Plan the parts list first.** Name every part and its role; identify the
-   inter-part relationships that must hold (shaft-in-bore, gear mesh center
-   distance, links connecting end-to-end). State landmark coordinates / lengths /
-   angles as `UPPER_SNAKE_CASE` constants once, up front.
+1. **Plan the parts list first, with checkable targets.** Name every part and its
+   role; identify the inter-part relationships that must hold (shaft-in-bore, gear
+   mesh center distance, links connecting end-to-end). State landmark coordinates /
+   lengths / angles as `UPPER_SNAKE_CASE` constants once, up front. Capture the
+   exact geometric promises (overall size, per-part size/center, parts present,
+   no floating / deep-overlap) as targets and verify them after building with
+   `cad.validate_targets` — it returns pass/fail/unknown per target so a
+   plausible-but-mispositioned model can't pass silently.
 2. **Validate each sub-structure in isolation before committing it.** Use
    `cad.validate_subpart { code }` (read-only, no package write) to check that a
    sketch→solid, a boolean, or one sub-assembly builds into a non-empty solid and

@@ -3799,6 +3799,40 @@ def define_assembly_interface(settings: Any, project_id: str, inp: dict[str, Any
     )
 
 
+def validate_targets(settings: Any, project_id: str, inp: dict[str, Any]) -> dict[str, Any]:
+    """Read-only: check declared geometry targets against the built model (#291).
+
+    Verifies the exact geometric promises (named parts present, overall/part bbox
+    size + center within tolerance, part count, no floating/deep-overlap) from the
+    package's topology + feature graph. Deterministic; mutates nothing.
+    """
+    from aieng.converters.geometry_targets import validate_geometry_targets
+
+    targets = inp.get("targets")
+    if not isinstance(targets, list) or not targets:
+        return {"status": "error", "code": "missing_targets",
+                "message": "targets must be a non-empty list of target objects (e.g. {kind: 'named_part_present', part: 'housing'})."}
+    pkg, err = _resolve_package_for_assembly(settings, project_id)
+    if err is not None:
+        return err
+    topo: dict[str, Any] = {}
+    fg: dict[str, Any] = {}
+    try:
+        with zipfile.ZipFile(pkg, "r") as zf:
+            names = zf.namelist()
+            if "geometry/topology_map.json" in names:
+                topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+            if "graph/feature_graph.json" in names:
+                fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "code": "package_read_error", "message": f"{type(exc).__name__}: {exc}"}
+    if not topo.get("entities"):
+        return {"status": "error", "code": "no_geometry",
+                "message": "No geometry to validate — build the model with cad.execute_build123d first."}
+    report = validate_geometry_targets(topo, fg, targets)
+    return {"status": "ok", "project_id": project_id, **report}
+
+
 def _execute_build123d_code_streaming(
     code: str,
     timeout: int = 60,

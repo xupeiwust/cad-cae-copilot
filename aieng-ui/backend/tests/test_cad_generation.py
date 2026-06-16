@@ -1852,6 +1852,35 @@ def test_topology_extracts_edges_resolvable_in_brep_graph(tmp_path: Path) -> Non
     assert any(r["type"] == "face_adjacent_face" and r.get("confidence") == "explicit" for r in rels)
 
 
+def test_validate_targets_end_to_end(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code, validate_targets
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "validate-targets")
+    code = (
+        "from build123d import *\n"
+        "a = Box(80, 60, 10); a.label = 'base'\n"
+        "b = Cylinder(5, 30).moved(Location((0, 0, 10))); b.label = 'pin'\n"
+        "result = Compound(children=[a, b])\n"
+    )
+    assert execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})["status"] == "ok"
+
+    out = validate_targets(settings, pid, {"targets": [
+        {"kind": "named_part_present", "part": "base"},
+        {"kind": "named_part_present", "part": "ghost"},
+        {"kind": "part_count", "count": 2},
+        {"kind": "part_size", "part": "base", "size_mm": [80, 60, 10], "tolerance_mm": 1},
+    ]})
+    assert out["status"] == "ok"
+    statuses = [t["status"] for t in out["targets"]]
+    assert statuses == ["pass", "fail", "pass", "pass"]
+    assert out["verdict"] == "fail"  # the deliberate 'ghost' target fails
+
+    # input + error paths
+    assert validate_targets(settings, pid, {})["code"] == "missing_targets"
+
+
 def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import design_review, execute_build123d_code

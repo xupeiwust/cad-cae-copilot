@@ -1247,6 +1247,54 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ),
     },
 
+    "cad.validate_targets": {
+        "type": "object",
+        "required": ["project_id", "targets"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "targets": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["kind"],
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": [
+                                "named_part_present", "feature_present", "part_count",
+                                "overall_size", "part_size", "part_center",
+                                "no_floating_parts", "no_deep_overlap",
+                            ],
+                        },
+                        "id": {"type": "string", "description": "Optional stable id for this target."},
+                        "part": {"type": "string", "description": "Named part (for *_present / part_size / part_center)."},
+                        "feature_type": {"type": "string", "description": "Feature type for feature_present (e.g. mounting_hole_pattern, fillet)."},
+                        "size_mm": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "description": "[x,y,z] expected size."},
+                        "center_mm": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "description": "[x,y,z] expected center."},
+                        "tolerance_mm": {"type": "number", "description": "Size/position tolerance (default 1mm)."},
+                        "count": {"type": "integer"},
+                        "min": {"type": "integer"},
+                        "max": {"type": "integer"},
+                        "max_overlap_fraction": {"type": "number", "description": "no_deep_overlap threshold (default 0.5)."},
+                    },
+                    "additionalProperties": True,
+                },
+                "description": "Geometry targets to verify (the modeling brief's promises).",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Read-only deterministic geometry target validator (#291): check the exact "
+            "geometric promises of a build against its topology + feature graph — named parts "
+            "present, feature present, part count, overall/part bbox size + center within "
+            "tolerance, no floating parts, no deep bbox overlap. Each target returns pass / "
+            "fail / unknown (unknown = data absent, never guessed) with measured vs expected. "
+            "Catches plausible-looking but mispositioned / over-modeled results. Bbox-level, "
+            "not a GD&T solver; mutates nothing."
+        ),
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),

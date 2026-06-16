@@ -302,6 +302,29 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_validate_targets(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.validate_targets(active_settings, str(project_id), inp)
+
+    rt.register_tool(
+        "cad.validate_targets",
+        _tool_cad_validate_targets,
+        read_only=True,
+        input_schema=_schema("cad.validate_targets"),
+        description=(
+            "Read-only deterministic geometry target validator: verify a build's exact "
+            "geometric promises (named parts present, feature present, part count, overall/part "
+            "bbox size + center within tolerance, no floating parts, no deep bbox overlap) against "
+            "its topology + feature graph. Each target returns pass / fail / unknown with measured "
+            "vs expected — catching plausible-looking but mispositioned or over-modeled results. "
+            "Bbox-level, not a GD&T solver; mutates nothing."
+        ),
+    )
+
     def _tool_cad_define_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

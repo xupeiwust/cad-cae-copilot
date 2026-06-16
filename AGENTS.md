@@ -1529,7 +1529,12 @@ geometry, no approval):
   to an undefined part is refused; proxy connections always carry honest
   `limitations`). When it references interfaces, the response includes the
   resolved `connection_geometry` verdict (`plausible` / `warning` / `invalid` /
-  `insufficient_data`).
+  `insufficient_data`). Optionally add a **`mate_predicate`** (`concentric`
+  shaft-in-bore / `tangent` gear-mesh / `coincident` faces-flush / `clearance`)
+  with `mate_tolerance_mm` (+ `expected_clearance_mm` for `clearance`) to VERIFY
+  the engineering relationship against the resolved geometry — a violated
+  predicate marks the connection `invalid` (e.g. gear pitch circles that don't
+  meet). Needs cylindrical `@face` interfaces for concentric/tangent.
 
 Each call re-validates and refreshes the derived registry / connection graph /
 CAE draft; with interfaces present it also resolves interface geometry and

@@ -193,6 +193,7 @@ def resolve_interface(iface: dict[str, Any], topo_index: dict[str, dict[str, Any
             unresolved.append(rid)
 
     boxes, centers, normals, areas, face_count = [], [], [], [], 0
+    cyl_best: tuple[float, float, list[float], list[float]] | None = None  # (area, radius, axis_dir, axis_point)
     for ent in found:
         bb = ent.get("bounding_box")
         if isinstance(bb, (list, tuple)) and len(bb) == 6:
@@ -208,6 +209,17 @@ def resolve_interface(iface: dict[str, Any], topo_index: dict[str, dict[str, Any
                 normals.append(([float(x) for x in n], a if a > 0 else 1.0))
             if a > 0:
                 areas.append(a)
+            # Capture the dominant cylindrical face (radius + axis) for concentric /
+            # tangent mate predicates.
+            if ent.get("surface_type") == "cylinder" and isinstance(ent.get("radius"), (int, float)):
+                ax = ent.get("axis")
+                if isinstance(ax, (list, tuple)) and len(ax) == 3 and _norm(ax) > 1e-9:
+                    ap = ent.get("axis_point")
+                    apt = ([float(x) for x in ap] if isinstance(ap, (list, tuple)) and len(ap) == 3
+                           else (_bbox_center(bb) if isinstance(bb, (list, tuple)) and len(bb) == 6 else [0.0, 0.0, 0.0]))
+                    aw = a if a > 0 else 1.0
+                    if cyl_best is None or aw > cyl_best[0]:
+                        cyl_best = (aw, float(ent["radius"]), [float(x) for x in ax], apt)
 
     local: dict[str, Any] = {}
     world: dict[str, Any] = {}
@@ -239,6 +251,16 @@ def resolve_interface(iface: dict[str, Any], topo_index: dict[str, dict[str, Any
         world = {"bbox": [round(x, 6) for x in wbb], "centroid": [round(x, 6) for x in wcen],
                  "normal": [round(x, 6) for x in wnorm] if wnorm else None,
                  "area": local["area"]}
+        if cyl_best is not None:
+            _, radius, axdir, axpt = cyl_best
+            local["radius"] = round(radius, 4)
+            local["axis"] = [round(x, 6) for x in axdir]
+            local["axis_point"] = [round(x, 4) for x in axpt]
+            wax = _apply_vector(R, axdir)
+            wm = _norm(wax)
+            world["radius"] = local["radius"]
+            world["axis"] = [round(wax[k] / wm, 6) for k in range(3)] if wm > 1e-9 else None
+            world["axis_point"] = [round(x, 4) for x in _apply_point(R, tvec, axpt)]
 
     if not all_ids:
         status = "unresolved"
@@ -302,11 +324,113 @@ def resolve_assembly_interfaces(assembly: Any,
 def _status_from_reasons(reasons: list[str], insufficient: bool) -> str:
     if insufficient:
         return "insufficient_data"
-    if any(r in {"far_apart", "missing_transform_blocks_validation"} for r in reasons):
+    if any(r in {"far_apart", "missing_transform_blocks_validation", "mate_predicate_violated"} for r in reasons):
         return "invalid"
     if reasons:
         return "warning"
     return "plausible"
+
+
+# ── domain-aware mate predicates ───────────────────────────────────────────────
+# Beyond generic AABB/centroid plausibility, verify the specific ENGINEERING
+# relationship a connection intends: concentric (shaft-in-bore), tangent (gear
+# mesh), coincident (faces flush), or a clearance gap. Evaluated from the resolved
+# WORLD geometry (axis / radius / normal / centroid). Geometry-only; no physics.
+
+_MATE_PREDICATES = ("concentric", "tangent", "coincident", "clearance")
+_MATE_DEFAULT_TOL = {"concentric": 0.5, "tangent": 1.0, "coincident": 0.5, "clearance": 1.0}
+_PARALLEL_DOT = 0.985  # |a·b| above this ⇒ axes/normals (anti)parallel (~10°)
+
+
+def _dot3(a: list[float], b: list[float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _sub3(a: list[float], b: list[float]) -> list[float]:
+    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+
+
+def _cross3(a: list[float], b: list[float]) -> list[float]:
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+
+def _axis_line_distance(pa: list[float], da: list[float], pb: list[float], db: list[float]) -> float:
+    """Shortest distance between two infinite lines (pa,da) and (pb,db) (da/db unit)."""
+    n = _cross3(da, db)
+    nn = _norm(n)
+    if nn < 1e-6:  # parallel → perpendicular distance from pb to line a
+        v = _sub3(pb, pa)
+        proj = _dot3(v, da)
+        perp = [v[k] - proj * da[k] for k in range(3)]
+        return _norm(perp)
+    return abs(_dot3(_sub3(pb, pa), [n[k] / nn for k in range(3)]))
+
+
+def evaluate_mate_predicate(
+    predicate: str,
+    wa: dict[str, Any],
+    wb: dict[str, Any],
+    *,
+    tolerance_mm: Any = None,
+    expected_clearance_mm: Any = None,
+) -> dict[str, Any]:
+    """Evaluate an engineering mate predicate from two interfaces' WORLD geometry.
+
+    Returns ``{predicate, satisfied(True/False/None), measured_mm, expected_mm,
+    tolerance_mm, detail}``. ``satisfied=None`` means insufficient geometry
+    (reported honestly, never guessed). Geometry-only — implies no contact/preload.
+    """
+    pred = str(predicate or "").strip().lower()
+    tol = float(tolerance_mm) if isinstance(tolerance_mm, (int, float)) else _MATE_DEFAULT_TOL.get(pred, 0.5)
+    base = {"predicate": pred, "tolerance_mm": tol, "satisfied": None,
+            "measured_mm": None, "expected_mm": None}
+
+    def _insufficient(msg: str) -> dict[str, Any]:
+        return {**base, "satisfied": None, "detail": f"insufficient geometry: {msg}"}
+
+    if pred in ("concentric", "tangent"):
+        aa, ab = wa.get("axis"), wb.get("axis")
+        pa, pb = wa.get("axis_point"), wb.get("axis_point")
+        if not (aa and ab and pa and pb):
+            return _insufficient("both interfaces need a resolved cylindrical axis (use cylindrical @face refs)")
+        parallel = abs(_dot3(aa, ab)) > _PARALLEL_DOT
+        dist = _axis_line_distance(pa, aa, pb, ab)
+        if pred == "concentric":
+            measured = round(dist, 4)
+            sat = bool(parallel and dist <= tol)
+            return {**base, "satisfied": sat, "measured_mm": measured, "expected_mm": 0.0,
+                    "detail": f"axis offset {measured}mm (tol {tol}); axes {'parallel' if parallel else 'NOT parallel'}"}
+        ra, rb = wa.get("radius"), wb.get("radius")
+        if not (isinstance(ra, (int, float)) and isinstance(rb, (int, float))):
+            return _insufficient("tangent needs a radius on both interfaces")
+        measured, expected = round(dist, 4), round(float(ra) + float(rb), 4)
+        sat = bool(parallel and abs(dist - (ra + rb)) <= tol)
+        return {**base, "satisfied": sat, "measured_mm": measured, "expected_mm": expected,
+                "detail": f"axis center-distance {measured}mm vs r1+r2={expected}mm (tol {tol}); "
+                          f"axes {'parallel' if parallel else 'NOT parallel'}"}
+
+    if pred == "coincident":
+        na, nb, ca, cb = wa.get("normal"), wb.get("normal"), wa.get("centroid"), wb.get("centroid")
+        if not (na and nb and ca and cb):
+            return _insufficient("coincident needs a planar normal + centroid on both interfaces")
+        facing = _dot3(na, nb) < -_PARALLEL_DOT
+        dist = round(_dist(ca, cb), 4)
+        return {**base, "satisfied": bool(facing and dist <= tol), "measured_mm": dist, "expected_mm": 0.0,
+                "detail": f"face centroid gap {dist}mm (tol {tol}); normals {'opposed (mating)' if facing else 'NOT opposed'}"}
+
+    if pred == "clearance":
+        ca, cb = wa.get("centroid"), wb.get("centroid")
+        if not (ca and cb):
+            return _insufficient("clearance needs a centroid on both interfaces")
+        dist = round(_dist(ca, cb), 4)
+        if not isinstance(expected_clearance_mm, (int, float)):
+            return {**base, "measured_mm": dist,
+                    "detail": f"measured centroid gap {dist}mm (pass expected_clearance_mm to check it)"}
+        exp = round(float(expected_clearance_mm), 4)
+        return {**base, "satisfied": bool(abs(dist - exp) <= tol), "measured_mm": dist, "expected_mm": exp,
+                "detail": f"gap {dist}mm vs expected {exp}mm (tol {tol})"}
+
+    return {**base, "detail": f"unknown predicate '{pred}' (expected one of {list(_MATE_PREDICATES)})"}
 
 
 def validate_connection_geometry(assembly: Any, resolution: dict[str, Any]) -> dict[str, Any]:
@@ -379,6 +503,20 @@ def validate_connection_geometry(assembly: Any, resolution: dict[str, Any]) -> d
                 if ctype not in PROXY_CONNECTION_TYPES and ctype not in {"rigid_tie", "bonded"}:
                     reasons.append("unsupported_connection_type")
 
+                # Domain-aware mate predicate (concentric / tangent / coincident /
+                # clearance): verify the intended engineering relationship, not just
+                # generic proximity. A violated predicate is a real geometric defect.
+                pred = conn.get("mate_predicate")
+                if pred:
+                    mate = evaluate_mate_predicate(
+                        str(pred), wa, wb,
+                        tolerance_mm=conn.get("mate_tolerance_mm"),
+                        expected_clearance_mm=conn.get("expected_clearance_mm"),
+                    )
+                    metrics["mate_predicate"] = mate
+                    if mate.get("satisfied") is False:
+                        reasons.append("mate_predicate_violated")
+
         status = _status_from_reasons(reasons, insufficient)
         # spring/contact proxies never claim better than "warning"
         if ctype in {"spring_proxy", "contact_proxy"} and status == "plausible":
@@ -390,6 +528,7 @@ def validate_connection_geometry(assembly: Any, resolution: dict[str, Any]) -> d
             "interface_a": ia, "interface_b": ib,
             "geometry_status": status, "reasons": sorted(set(reasons)),
             "metrics": metrics, "is_proxy": ctype in PROXY_CONNECTION_TYPES,
+            "mate_predicate": metrics.get("mate_predicate"),
         })
 
     tally: dict[str, int] = {}

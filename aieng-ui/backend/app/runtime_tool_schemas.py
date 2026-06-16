@@ -1194,6 +1194,18 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {"type": "string"},
                 "description": "What the simplified proxy does NOT capture; auto-filled with an honest default for proxy types if omitted.",
             },
+            "mate_predicate": {
+                "type": "string",
+                "enum": ["concentric", "tangent", "coincident", "clearance"],
+                "description": (
+                    "Optional engineering relationship to VERIFY against the resolved interface "
+                    "geometry: concentric (shaft-in-bore coaxial), tangent (gear pitch circles "
+                    "mesh), coincident (mating faces flush), clearance (a target gap). Requires "
+                    "interface_a/interface_b. A violated predicate marks the connection geometry invalid."
+                ),
+            },
+            "mate_tolerance_mm": {"type": "number", "description": "Tolerance for the mate predicate (mm)."},
+            "expected_clearance_mm": {"type": "number", "description": "Target gap for the 'clearance' predicate (mm)."},
         },
         "additionalProperties": False,
         "description": (

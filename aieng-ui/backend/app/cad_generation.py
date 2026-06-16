@@ -834,7 +834,17 @@ def _face_entity(face, fid, body_id):
             data["normal"] = [0.0, 0.0, 1.0]
     elif surf_type == GeomAbs_Cylinder:
         data["surface_type"] = "cylinder"
-        data["radius"] = round(adaptor.Cylinder().Radius(), 4)
+        cyl = adaptor.Cylinder()
+        data["radius"] = round(cyl.Radius(), 4)
+        # Axis (direction + a point on it) so downstream mate predicates can check
+        # concentric (shaft-in-bore) / tangent (gear mesh) relationships.
+        try:
+            ax = cyl.Axis()
+            d, p = ax.Direction(), ax.Location()
+            data["axis"] = [round(d.X(), 6), round(d.Y(), 6), round(d.Z(), 6)]
+            data["axis_point"] = [round(p.X(), 4), round(p.Y(), 4), round(p.Z(), 4)]
+        except Exception:
+            pass
     else:
         # Free-form face (loft / sweep / sphere / spline) from the high-level
         # helpers. Still record a PROXY normal + true face centre so the face is
@@ -3503,6 +3513,9 @@ def define_assembly_mate(settings: Any, project_id: str, inp: dict[str, Any]) ->
         parameters=inp.get("parameters"),
         confidence=inp.get("confidence", "low"),
         limitations=inp.get("limitations"),
+        mate_predicate=inp.get("mate_predicate"),
+        mate_tolerance_mm=inp.get("mate_tolerance_mm"),
+        expected_clearance_mm=inp.get("expected_clearance_mm"),
     )
 
 

@@ -886,6 +886,9 @@ def define_assembly_mate(
     parameters: dict[str, Any] | None = None,
     confidence: Any = "low",
     limitations: list[str] | None = None,
+    mate_predicate: str | None = None,
+    mate_tolerance_mm: float | None = None,
+    expected_clearance_mm: float | None = None,
     process: bool = True,
 ) -> dict[str, Any]:
     """Add or update one connection (mate) between two **already-defined** parts.
@@ -932,6 +935,23 @@ def define_assembly_mate(
         conn["confidence"] = confidence
     if lims:
         conn["limitations"] = lims
+    # Domain-aware mate predicate (verified against resolved interface geometry
+    # by the connection-geometry validation). Requires interfaces to be set.
+    if mate_predicate:
+        mp = str(mate_predicate).strip().lower()
+        if mp not in ("concentric", "tangent", "coincident", "clearance"):
+            return {"status": "error", "code": "bad_mate_predicate",
+                    "message": "mate_predicate must be one of concentric / tangent / coincident / clearance.",
+                    "got": mate_predicate}
+        if not (interface_a and interface_b):
+            return {"status": "error", "code": "predicate_needs_interfaces",
+                    "message": (f"mate_predicate '{mp}' needs interface_a and interface_b — define "
+                                "interfaces (cad.define_interface) and reference them in the mate.")}
+        conn["mate_predicate"] = mp
+        if isinstance(mate_tolerance_mm, (int, float)):
+            conn["mate_tolerance_mm"] = float(mate_tolerance_mm)
+        if isinstance(expected_clearance_mm, (int, float)):
+            conn["expected_clearance_mm"] = float(expected_clearance_mm)
 
     conns = assembly.setdefault("connections", [])
     idx = next((i for i, c in enumerate(conns) if c.get("id") == cid), None)

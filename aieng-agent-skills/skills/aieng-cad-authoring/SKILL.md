@@ -129,7 +129,11 @@ large `cad.execute_build123d` script is the highest-failure path. Instead:
      proxy connections always carry honest limitations. When it references
      interfaces, the response carries a resolved `connection_geometry` verdict
      (`plausible` / `warning` / `invalid`) — read it to catch parts that don't
-     actually touch where you mated them.
+     actually touch where you mated them. Add a `mate_predicate` (`concentric` /
+     `tangent` / `coincident` / `clearance`, with `mate_tolerance_mm`) to verify
+     the engineering relationship — e.g. `tangent` flags gear pitch circles that
+     don't mesh, `concentric` flags a shaft not coaxial with its bore. A violated
+     predicate marks the connection `invalid`.
 
 Honesty: the Assembly IR records parts and **proxy** connections — it is
 representation + validation only. It models **no** contact mechanics, **no** bolt

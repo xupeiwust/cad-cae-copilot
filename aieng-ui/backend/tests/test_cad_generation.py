@@ -1711,6 +1711,18 @@ def test_housing_helper_builds_and_reads_designed(tmp_path: Path) -> None:
     assert not any(f["rule"] == "no_edge_breaking" for f in rev["fidelity"]["findings"])
 
 
+def test_cylinder_face_carries_axis_for_mate_predicates(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import _execute_build123d_code
+
+    # the concentric/tangent mate predicates need cylinder faces to carry an axis
+    _s, _st, _g, topo = _execute_build123d_code("from build123d import *\nresult = Cylinder(6, 40)\n")
+    cyls = [e for e in topo.get("entities", []) if e.get("type") == "face" and e.get("surface_type") == "cylinder"]
+    assert cyls, "expected at least one cylindrical face"
+    assert any(isinstance(c.get("axis"), list) and len(c["axis"]) == 3 for c in cyls)
+    assert any(isinstance(c.get("radius"), (int, float)) for c in cyls)
+
+
 def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import design_review, execute_build123d_code

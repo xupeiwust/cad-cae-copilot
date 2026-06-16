@@ -554,3 +554,243 @@ def process_assembly_package(package_path: str | Path) -> dict[str, Any]:
         "cae_draft_status": draft["status"],
         "artifacts": sorted(members.keys()),
     }
+
+
+# ── Part F: authoring (write parts / connections into a package's assembly IR) ──
+#
+# These let an agent build the assembly IR incrementally from the named parts of
+# a single .aieng package — define each part, then the mates between them — rather
+# than only consuming an IR produced elsewhere. Authoring stays inside the v0
+# honesty contract: connections are proxies, no contact/preload/solver is implied.
+
+GEOMETRY_TOPOLOGY_PATH = "geometry/topology_map.json"
+
+# Honest default limitation for each proxy connection type (the schema REQUIRES
+# proxy connections to carry limitations; we never let one be recorded without).
+_DEFAULT_PROXY_LIMITATION = {
+    "bolted_proxy": "Bolted proxy: no bolt preload, no thread engagement, no contact separation modeled.",
+    "welded_proxy": "Welded proxy: idealized as a bonded tie; no weld metallurgy, HAZ, or residual stress.",
+    "contact_proxy": "Contact proxy: no real contact mechanics (no separation, friction, or pressure distribution).",
+    "spring_proxy": "Spring proxy: a lumped linear stiffness, not a physical compliant member.",
+}
+
+
+def _read_member(package_path: Path, member: str) -> Any | None:
+    """Best-effort read of one JSON member from a .aieng package."""
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            if member in zf.namelist():
+                return json.loads(zf.read(member))
+    except Exception:
+        return None
+    return None
+
+
+def load_assembly_ir(package_path: str | Path) -> dict[str, Any]:
+    """Return the package's assembly IR, or a fresh skeleton if absent/corrupt."""
+    data = _read_member(Path(package_path), ASSEMBLY_IR_PATH)
+    if isinstance(data, dict) and data.get("format") == "aieng.assembly_ir":
+        data.setdefault("parts", [])
+        data.setdefault("interfaces", [])
+        data.setdefault("connections", [])
+        return data
+    return {
+        "format": "aieng.assembly_ir",
+        "schema_version": FORMAT_VERSION,
+        "unit": "mm",
+        "parts": [],
+        "interfaces": [],
+        "connections": [],
+    }
+
+
+def _named_parts_in_package(package_path: Path) -> set[str]:
+    """Named solids in the package's CAD topology (for geometry_ref verification)."""
+    topo = _read_member(package_path, GEOMETRY_TOPOLOGY_PATH)
+    names: set[str] = set()
+    if isinstance(topo, dict):
+        for e in topo.get("entities", []):
+            if isinstance(e, dict) and e.get("type") == "solid" and e.get("name"):
+                names.add(str(e["name"]))
+    return names
+
+
+def _assembly_summary(assembly: dict[str, Any], validation: dict[str, Any]) -> dict[str, Any]:
+    parts = assembly.get("parts", [])
+    conns = assembly.get("connections", [])
+    return {
+        "part_count": len(parts),
+        "connection_count": len(conns),
+        "parts": [p.get("id") for p in parts],
+        "connections": [c.get("id") for c in conns],
+        "validation_status": validation.get("status"),
+    }
+
+
+def _save_and_process(package_path: Path, assembly: dict[str, Any], process: bool) -> dict[str, Any]:
+    _rewrite_package_members(package_path, {ASSEMBLY_IR_PATH: _dumps(assembly)})
+    if process:
+        return process_assembly_package(package_path)
+    return {"assembly_present": True, "processed": False}
+
+
+def define_assembly_part(
+    package_path: str | Path,
+    *,
+    part_id: str | None = None,
+    name: str | None = None,
+    role: str = "design_part",
+    geometry_ref: str | None = None,
+    transform: dict[str, Any] | None = None,
+    material: Any = None,
+    editable: bool | None = None,
+    process: bool = True,
+) -> dict[str, Any]:
+    """Add or update one part in the package's assembly IR (initialising the IR if
+    absent). ``geometry_ref`` links the assembly part to a named solid in the
+    package's CAD model; it is verified against the topology when available and
+    reported honestly (``geometry_ref_known`` is ``True`` / ``False`` / ``None``
+    for verified / not-found / unverifiable) — never fabricated.
+    """
+    package_path = Path(package_path)
+    if not package_path.exists():
+        return {"status": "error", "code": "package_not_found", "message": f"package not found: {package_path}"}
+    role = str(role or "design_part")
+    if role not in PART_ROLES:
+        return {"status": "error", "code": "bad_role",
+                "message": f"role must be one of {sorted(PART_ROLES)}", "got": role}
+    pid = str(part_id or geometry_ref or name or "").strip()
+    if not pid:
+        return {"status": "error", "code": "missing_id",
+                "message": "Provide part_id, geometry_ref, or name to identify the part."}
+
+    assembly = load_assembly_ir(package_path)
+    named = _named_parts_in_package(package_path)
+    ref = (geometry_ref or name or pid)
+    if named:
+        geometry_ref_known: bool | None = ref in named
+    else:
+        geometry_ref_known = None
+
+    part: dict[str, Any] = {"id": pid, "role": role}
+    if name:
+        part["name"] = name
+    if ref:
+        part["geometry_ref"] = ref
+    if transform is not None:
+        part["transform"] = transform
+    if material is not None:
+        part["material"] = material
+    if editable is not None:
+        part["editable"] = bool(editable)
+
+    parts = assembly.setdefault("parts", [])
+    idx = next((i for i, p in enumerate(parts) if p.get("id") == pid), None)
+    action = "updated" if idx is not None else "added"
+    if idx is not None:
+        parts[idx] = {**parts[idx], **part}
+    else:
+        parts.append(part)
+
+    processed = _save_and_process(package_path, assembly, process)
+    validation = validate_assembly_ir(assembly)
+    if geometry_ref_known is True:
+        ref_note = f"geometry_ref '{ref}' matches a named part in the model."
+    elif geometry_ref_known is False:
+        ref_note = (f"geometry_ref '{ref}' does NOT match any named part {sorted(named)} — the part "
+                    "is recorded but unlinked. Fix the label or build that part first.")
+    else:
+        ref_note = "No CAD topology in the package to verify geometry_ref against (unverified, not a failure)."
+    return {
+        "status": "ok",
+        "action": action,
+        "part": part,
+        "geometry_ref_known": geometry_ref_known,
+        "geometry_ref_note": ref_note,
+        "assembly_summary": _assembly_summary(assembly, validation),
+        "processed": processed,
+        "honesty": ("Assembly IR is a representation + validation contract. It records parts and "
+                    "proxy connections; it implies no contact physics, no bolt preload, and no solver run."),
+    }
+
+
+def define_assembly_mate(
+    package_path: str | Path,
+    *,
+    connection_type: str,
+    part_a: str,
+    part_b: str,
+    connection_id: str | None = None,
+    interface_a: str | None = None,
+    interface_b: str | None = None,
+    behavior: Any = None,
+    parameters: dict[str, Any] | None = None,
+    confidence: Any = "low",
+    limitations: list[str] | None = None,
+    process: bool = True,
+) -> dict[str, Any]:
+    """Add or update one connection (mate) between two **already-defined** parts.
+    Refuses dangling connections (both parts must exist — call ``define_assembly_part``
+    first) and never records a proxy connection without ``limitations`` (auto-fills an
+    honest default for the proxy type when none is supplied).
+    """
+    package_path = Path(package_path)
+    if not package_path.exists():
+        return {"status": "error", "code": "package_not_found", "message": f"package not found: {package_path}"}
+    ctype = str(connection_type or "").strip()
+    if ctype not in CONNECTION_TYPES:
+        return {"status": "error", "code": "bad_type",
+                "message": f"connection_type must be one of {sorted(CONNECTION_TYPES)}", "got": ctype}
+    pa, pb = str(part_a or "").strip(), str(part_b or "").strip()
+    if not pa or not pb:
+        return {"status": "error", "code": "missing_parts", "message": "part_a and part_b are required."}
+    if pa == pb:
+        return {"status": "error", "code": "self_connection", "message": "part_a and part_b must differ."}
+
+    assembly = load_assembly_ir(package_path)
+    part_ids = {p.get("id") for p in assembly.get("parts", []) if p.get("id")}
+    missing = [p for p in (pa, pb) if p not in part_ids]
+    if missing:
+        return {"status": "error", "code": "unknown_parts",
+                "message": f"part(s) {missing} are not defined in the assembly — call cad.define_part first.",
+                "available_parts": sorted(part_ids)}
+
+    lims = list(limitations or [])
+    if ctype in PROXY_CONNECTION_TYPES and not lims:
+        lims = [_DEFAULT_PROXY_LIMITATION.get(ctype, "Simplified proxy: real physics not fully modeled.")]
+
+    cid = str(connection_id or f"conn_{pa}__{pb}_{ctype}").strip()
+    conn: dict[str, Any] = {"id": cid, "type": ctype, "part_a": pa, "part_b": pb}
+    if interface_a:
+        conn["interface_a"] = interface_a
+    if interface_b:
+        conn["interface_b"] = interface_b
+    if behavior is not None:
+        conn["behavior"] = behavior
+    if parameters:
+        conn["parameters"] = parameters
+    if confidence is not None:
+        conn["confidence"] = confidence
+    if lims:
+        conn["limitations"] = lims
+
+    conns = assembly.setdefault("connections", [])
+    idx = next((i for i, c in enumerate(conns) if c.get("id") == cid), None)
+    action = "updated" if idx is not None else "added"
+    if idx is not None:
+        conns[idx] = conn
+    else:
+        conns.append(conn)
+
+    processed = _save_and_process(package_path, assembly, process)
+    validation = validate_assembly_ir(assembly)
+    return {
+        "status": "ok",
+        "action": action,
+        "connection": conn,
+        "is_proxy": ctype in PROXY_CONNECTION_TYPES,
+        "assembly_summary": _assembly_summary(assembly, validation),
+        "processed": processed,
+        "honesty": ("Connection is a v0 proxy: positioning + simplified load transfer only. No "
+                    "contact mechanics, no bolt preload, no solver execution is implied."),
+    }

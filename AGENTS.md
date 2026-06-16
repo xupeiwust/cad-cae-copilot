@@ -1506,6 +1506,18 @@ contact physics. When present, the backend best-effort writes
 (auto on recompile, or via `POST /api/projects/{id}/assembly/process`). Schema:
 `aieng/schemas/assembly_ir.schema.json`. Single-part packages are unaffected.
 
+**Authoring the IR (no approval).** An agent builds the IR incrementally from a
+package's named CAD parts with two tools (they mutate only assembly metadata, no
+geometry, no approval): `cad.define_part { project_id, geometry_ref, role }` adds
+a part and links it to a named solid (verifying the ref against the topology and
+reporting `geometry_ref_known` true/false/null — never fabricated); then
+`cad.define_mate { project_id, connection_type, part_a, part_b }` adds a
+connection between two **already-defined** parts (a mate to an undefined part is
+refused, and proxy connections always carry honest `limitations`). Each call
+re-validates and refreshes the derived registry / connection graph / CAE draft.
+Authoring stays inside the same v0 honesty contract: representation + validation
+only — no contact physics, no bolt preload, no solver.
+
 When per-part / package topology maps are available, the same call also **resolves interfaces
 and validates connection geometry** (geometry-validation only — still no contact/preload/solver):
 it resolves each interface's `topology_refs` to bbox/centroid/normal/area, applies the part

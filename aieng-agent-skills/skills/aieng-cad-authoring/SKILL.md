@@ -103,11 +103,21 @@ large `cad.execute_build123d` script is the highest-failure path. Instead:
    a part didn't connect (usually a coordinate typo); symmetry issues mean a
    left/right pair is off. Fix before adding the next part.
 
-Honesty: a `Compound(children=[...])` with `.label`ed parts is a *visual*
-assembly. The workbench does not yet verify mates/joints/clearances as
-constraints (that is the Assembly IR authoring path, separate from this skill) —
-so do not claim kinematic validity, fit, or interference-free assembly from CAD
-geometry alone.
+5. **Record the assembly structure (optional, when relationships matter).** A
+   `Compound(children=[...])` with `.label`ed parts is only a *visual* assembly.
+   To make the parts and their relationships first-class, author the Assembly IR:
+   `cad.define_part { geometry_ref: "<label>", role }` for each part (it links to
+   the named CAD solid and verifies the ref), then
+   `cad.define_mate { connection_type, part_a, part_b }` for each connection
+   (`rigid_tie` / `bonded` / `bolted_proxy` / `welded_proxy` / `contact_proxy` /
+   `spring_proxy`). A mate to an undefined part is refused; proxy connections
+   always carry honest limitations.
+
+Honesty: the Assembly IR records parts and **proxy** connections — it is
+representation + validation only. It models **no** contact mechanics, **no** bolt
+preload, and runs **no** solver, so do not claim kinematic validity, fit,
+interference-free assembly, or load capacity from the IR (or from CAD geometry)
+alone.
 
 ## Standard parts (bd_warehouse)
 

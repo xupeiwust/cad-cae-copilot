@@ -1131,6 +1131,79 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ),
     },
 
+    # ── Assembly authoring (write parts/mates into Assembly IR v0) ───────────
+    "cad.define_part": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "part_id": {"type": "string", "description": "Stable id for the part; defaults to geometry_ref, then name."},
+            "name": {"type": "string", "description": "Human-readable part name."},
+            "role": {
+                "type": "string",
+                "enum": ["design_part", "reference_part", "fixture", "load_source", "fastener", "external_context"],
+                "description": "Assembly role (default design_part).",
+            },
+            "geometry_ref": {
+                "type": "string",
+                "description": (
+                    "Named part label (.label in the CAD Compound) to link this assembly part to. "
+                    "Verified against the model topology when present; an unresolved ref is reported "
+                    "honestly (geometry_ref_known=false), never fabricated."
+                ),
+            },
+            "transform": {
+                "type": "object",
+                "additionalProperties": True,
+                "description": "Optional placement, e.g. {\"translation\": [x,y,z], \"rotation_euler_deg\": [rx,ry,rz]}.",
+            },
+            "material": {"description": "Material name or reference."},
+            "editable": {"type": "boolean", "description": "Whether this part is editable (defaults by role)."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "Author one part into the project's Assembly IR v0 (assembly/assembly_ir.json), "
+            "initialising the IR if absent and refreshing the derived registry / connection "
+            "graph / CAE setup draft. Link it to a named CAD part via geometry_ref. "
+            "Representation + validation only — no contact physics, no preload, no solver."
+        ),
+    },
+    "cad.define_mate": {
+        "type": "object",
+        "required": ["project_id", "connection_type", "part_a", "part_b"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "connection_type": {
+                "type": "string",
+                "enum": ["rigid_tie", "bonded", "bolted_proxy", "welded_proxy", "contact_proxy", "spring_proxy", "unknown"],
+                "description": (
+                    "Connection (mate) type. rigid_tie/bonded are exact ties; *_proxy types model "
+                    "SIMPLIFIED physics and automatically carry honest limitations."
+                ),
+            },
+            "part_a": {"type": "string", "description": "id of the first part — must already be defined via cad.define_part."},
+            "part_b": {"type": "string", "description": "id of the second part — must already be defined."},
+            "connection_id": {"type": "string", "description": "Stable id; derived from the parts + type if omitted."},
+            "interface_a": {"type": "string", "description": "Optional interface id on part_a."},
+            "interface_b": {"type": "string", "description": "Optional interface id on part_b."},
+            "behavior": {"description": "One value or a list from {load_transfer, positioning_only, preserve_interface}."},
+            "parameters": {"type": "object", "additionalProperties": True, "description": "Optional simplified parameters (e.g. stiffness)."},
+            "confidence": {"description": "high | medium | low or a number (default low)."},
+            "limitations": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "What the simplified proxy does NOT capture; auto-filled with an honest default for proxy types if omitted.",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Author one connection (mate) between two already-defined assembly parts in the "
+            "Assembly IR. Refuses dangling connections (both parts must exist — call cad.define_part "
+            "first) and never records a proxy connection without limitations. v0 proxy honesty: "
+            "positioning + simplified load transfer only; no contact mechanics, no bolt preload, no solver."
+        ),
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),

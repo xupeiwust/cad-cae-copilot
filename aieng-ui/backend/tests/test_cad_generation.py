@@ -1580,6 +1580,61 @@ def test_validate_subpart_requires_code() -> None:
     assert out["code"] == "missing_code"
 
 
+# ── assembly authoring (cad.define_part / cad.define_mate) end-to-end ─────────
+
+def test_assembly_authoring_end_to_end(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import (
+        define_assembly_mate,
+        define_assembly_part,
+        execute_build123d_code,
+    )
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "assembly-authoring")
+    code = (
+        "from build123d import *\n"
+        "a = Box(40, 40, 5); a.label = 'base_plate'\n"
+        "b = Cylinder(5, 30).moved(Location((0, 0, 5))); b.label = 'pillar'\n"
+        "result = Compound(children=[a, b])\n"
+    )
+    built = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert built["status"] == "ok"
+
+    p1 = define_assembly_part(settings, pid, {"geometry_ref": "base_plate", "role": "design_part"})
+    assert p1["status"] == "ok"
+    assert p1["geometry_ref_known"] is True  # links to the real named part
+    p2 = define_assembly_part(settings, pid, {"geometry_ref": "pillar", "role": "design_part"})
+    assert p2["geometry_ref_known"] is True
+
+    mate = define_assembly_mate(
+        settings, pid,
+        {"connection_type": "bolted_proxy", "part_a": "base_plate", "part_b": "pillar"},
+    )
+    assert mate["status"] == "ok"
+    assert mate["is_proxy"] is True
+    assert mate["connection"]["limitations"]  # proxy never recorded without honest limitations
+    assert mate["assembly_summary"]["part_count"] == 2
+    assert mate["assembly_summary"]["connection_count"] == 1
+
+    # a mate to an undefined part is refused, not silently created
+    bad = define_assembly_mate(
+        settings, pid,
+        {"connection_type": "rigid_tie", "part_a": "base_plate", "part_b": "ghost"},
+    )
+    assert bad["status"] == "error"
+    assert bad["code"] == "unknown_parts"
+
+
+def test_assembly_authoring_without_package_errors(tmp_path: Path) -> None:
+    from app.cad_generation import define_assembly_part
+
+    settings = _make_settings(tmp_path)
+    out = define_assembly_part(settings, "does-not-exist", {"part_id": "x"})
+    assert out["status"] == "error"
+    assert out["code"] in ("project_not_found", "package_not_found")
+
+
 # ── critique (engineering-diagnostics) regression diff ────────────────────────
 # Two solids far apart trip the deterministic `floating_component` high finding;
 # moving them apart introduces it, moving them together resolves it. This lets us

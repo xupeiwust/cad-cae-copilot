@@ -302,6 +302,53 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_define_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.define_assembly_part(active_settings, str(project_id), inp)
+
+    rt.register_tool(
+        "cad.define_part",
+        _tool_cad_define_part,
+        read_only=False,
+        destructive=False,
+        input_schema=_schema("cad.define_part"),
+        description=(
+            "Author one part into the project's Assembly IR v0 (assembly/assembly_ir.json), "
+            "initialising it if absent and refreshing the derived part registry / connection "
+            "graph / CAE setup draft. Link it to a named CAD part via geometry_ref (verified "
+            "against the model topology and reported honestly). Decompose a multi-part model "
+            "into assembly parts, then connect them with cad.define_mate. Representation + "
+            "validation only — no contact physics, no bolt preload, no solver is implied."
+        ),
+    )
+
+    def _tool_cad_define_mate(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.define_assembly_mate(active_settings, str(project_id), inp)
+
+    rt.register_tool(
+        "cad.define_mate",
+        _tool_cad_define_mate,
+        read_only=False,
+        destructive=False,
+        input_schema=_schema("cad.define_mate"),
+        description=(
+            "Author one connection (mate) between two already-defined assembly parts "
+            "(rigid_tie / bonded / bolted_proxy / welded_proxy / contact_proxy / spring_proxy). "
+            "Refuses dangling connections (both parts must exist — call cad.define_part first) and "
+            "never records a proxy connection without honest limitations. v0 proxy boundary: "
+            "positioning + simplified load transfer only; no contact mechanics, no bolt preload, no solver."
+        ),
+    )
+
     def _tool_cad_set_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

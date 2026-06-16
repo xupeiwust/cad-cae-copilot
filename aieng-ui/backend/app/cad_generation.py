@@ -3330,6 +3330,66 @@ def validate_subpart(settings: Any, inp: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_package_for_assembly(settings: Any, project_id: str) -> tuple[Any, dict[str, Any] | None]:
+    """Resolve a project's .aieng package path, or return an error dict."""
+    from .project_io import get_project, resolve_project_path
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception:
+        project = None
+    if not project:
+        return None, {"status": "error", "code": "project_not_found",
+                      "message": f"project {project_id} not found."}
+    pkg = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if not pkg or not Path(pkg).exists():
+        return None, {"status": "error", "code": "package_not_found",
+                      "message": (f"No .aieng package for project {project_id}. Build geometry first "
+                                  "with cad.execute_build123d before authoring an assembly.")}
+    return pkg, None
+
+
+def define_assembly_part(settings: Any, project_id: str, inp: dict[str, Any]) -> dict[str, Any]:
+    """Add/update one part in the project's assembly IR (authoring into Assembly IR v0)."""
+    from aieng.converters import assembly_ir as _air
+
+    pkg, err = _resolve_package_for_assembly(settings, project_id)
+    if err is not None:
+        return err
+    return _air.define_assembly_part(
+        pkg,
+        part_id=inp.get("part_id"),
+        name=inp.get("name"),
+        role=str(inp.get("role") or "design_part"),
+        geometry_ref=inp.get("geometry_ref"),
+        transform=inp.get("transform"),
+        material=inp.get("material"),
+        editable=inp.get("editable"),
+    )
+
+
+def define_assembly_mate(settings: Any, project_id: str, inp: dict[str, Any]) -> dict[str, Any]:
+    """Add/update one connection (mate) between two defined parts in the assembly IR."""
+    from aieng.converters import assembly_ir as _air
+
+    pkg, err = _resolve_package_for_assembly(settings, project_id)
+    if err is not None:
+        return err
+    return _air.define_assembly_mate(
+        pkg,
+        connection_type=str(inp.get("connection_type") or inp.get("type") or ""),
+        part_a=str(inp.get("part_a") or ""),
+        part_b=str(inp.get("part_b") or ""),
+        connection_id=inp.get("connection_id"),
+        interface_a=inp.get("interface_a"),
+        interface_b=inp.get("interface_b"),
+        behavior=inp.get("behavior"),
+        parameters=inp.get("parameters"),
+        confidence=inp.get("confidence", "low"),
+        limitations=inp.get("limitations"),
+    )
+
+
 def _execute_build123d_code_streaming(
     code: str,
     timeout: int = 60,

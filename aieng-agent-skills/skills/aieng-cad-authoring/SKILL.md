@@ -64,8 +64,10 @@ signals every `cad.execute_build123d` / `edit_parameter` / `replace_part` /
   `cad.edit_parameter` target (`featureId` / `parameterName` / range). Fix the
   highest-severity targets, then re-run the review. It mutates nothing — applying
   a fix still goes through the approval-gated edit path.
-- **Read the modeling-fidelity verdict** (`fidelity` block on `cad.critique` /
-  `cad.design_review`, also `summary.modeling_fidelity`). It is a SEPARATE axis
+- **Read the modeling-fidelity verdict** — every `cad.execute_build123d` /
+  `cad.edit_parameter` / `cad.replace_part` / `cad.remove_part` response carries a
+  compact `modeling_fidelity` ({level, score, findings}), and the full `fidelity`
+  block is on `cad.critique` / `cad.design_review`. It is a SEPARATE axis
   from manufacturability: a part can pass DfM yet score `crude` (`level` ∈
   `designed` / `basic` / `crude`, 0–100) because it is primitive-stacked or
   unfinished — no fillets/chamfers (sharp edges read as crude), bare boxes with no

@@ -31,7 +31,26 @@ from filelock import FileLock
 from .config import ensure_aieng_on_path
 
 ensure_aieng_on_path()
-from aieng.converters.critique_engine import critique_geometry, is_named_part_feature as _is_named_part_feature
+from aieng.converters.critique_engine import (
+    assess_modeling_fidelity as _assess_modeling_fidelity,
+    critique_geometry,
+    is_named_part_feature as _is_named_part_feature,
+)
+
+
+def _fidelity_brief(topology_map: dict[str, Any], feature_graph: dict[str, Any]) -> dict[str, Any] | None:
+    """Compact modeling-fidelity verdict for build/edit responses, so an agent sees
+    'crude' vs 'designed' immediately without a separate cad.design_review call.
+    Best-effort: never breaks a build."""
+    try:
+        fid = _assess_modeling_fidelity(topology_map, feature_graph)
+    except Exception:
+        return None
+    return {
+        "level": fid.get("level"),
+        "score": fid.get("score"),
+        "findings": [f.get("rule") for f in (fid.get("findings") or [])][:4],
+    }
 
 
 # ── AGENTS.md resolution (single source of truth for build123d capabilities) ──
@@ -1346,13 +1365,16 @@ def render_mesh_thumbnail(
 
         verts = np.asarray(triangles).reshape((-1, 3))
 
-        # Lambert shading so form reads clearly (not photorealism). When the
-        # caller supplied per-face colors, modulate them with the same intensity
-        # term; otherwise fall back to a default blue tint.
+        # Two-light (key + fill) shading with a strong ambient floor so the form
+        # reads CLEARLY and BRIGHTLY — an agent (and the user) must be able to see
+        # the model to judge it. A single light floored at 0.25 left faces facing
+        # away nearly black; key+fill+ambient keeps every face well-lit while still
+        # conveying 3D shape. Clarity over photorealism.
         normals_arr = np.asarray(normals, dtype=float)
-        light = np.array([0.3, 0.4, 0.85])
-        light = light / np.linalg.norm(light)
-        intensity = np.clip(normals_arr @ light, 0.25, 1.0)
+        key = np.array([0.4, 0.5, 0.8]); key = key / np.linalg.norm(key)
+        fill = np.array([-0.5, -0.3, 0.5]); fill = fill / np.linalg.norm(fill)
+        diffuse = 0.6 * np.clip(normals_arr @ key, 0.0, 1.0) + 0.25 * np.clip(normals_arr @ fill, 0.0, 1.0)
+        intensity = np.clip(0.5 + diffuse, 0.55, 1.0)
 
         if face_colors is not None:
             colors_arr = np.asarray(face_colors, dtype=float)
@@ -1438,10 +1460,11 @@ def render_mesh_thumbnail(
                 verticalalignment="top",
             )
 
+        fig.patch.set_facecolor("white")
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
 
         buf = io.BytesIO()
-        fig.savefig(buf, format="png")
+        fig.savefig(buf, format="png", facecolor="white")
         plt.close(fig)
         return base64.b64encode(buf.getvalue()).decode("ascii")
     except Exception:
@@ -2493,6 +2516,7 @@ def _finish_execute_build123d_response(
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
+        "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "written_artifacts": written,
         "write_files": write_files,
         "preview_url": f"/api/projects/{project_id}/cad-preview",
@@ -5446,6 +5470,7 @@ def execute_build123d_code(
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
+        "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "written_artifacts": written,
         "write_files": write_files,
         "preview_url": f"/api/projects/{project_id}/cad-preview",
@@ -7015,6 +7040,7 @@ def edit_build123d_parameter(
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
+        "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "regression_diff": regression_diff,
         "critique_diff": critique_diff,
         "written_artifacts": [
@@ -7185,6 +7211,7 @@ def _rebuild_after_part_edit(
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
+        "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "regression_diff": regression_diff,
         "critique_diff": critique_diff,
         "written_artifacts": [

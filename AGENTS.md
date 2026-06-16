@@ -584,7 +584,11 @@ their own image search can also find a URL and pass it to
 `mode` (`replace`/`append`), `used_base` (whether an append consumed a prior model),
 `geometry_report_summary` (always present in **both** `response_detail` modes — a one-line
 `part_count / size / proportions / floating=N / symmetry_issues=N`; non-zero `floating` or
-`symmetry_issues` is your cue to call `cad.design_review` and self-correct before reporting done).
+`symmetry_issues` is your cue to call `cad.design_review` and self-correct before reporting done),
+and `modeling_fidelity` ({`level`: designed/basic/crude, `score` 0-100, `findings`}) — the
+build's quality self-check; a `crude`/`basic` level means it reads as a primitive stack
+(no edge-breaking, bare boxes) — don't report it done, improve it (e.g. via the `housing()` /
+`rounded_box()` / `boss()` / `rib()` scaffolds) and re-build.
 
 **Quantitative geometry report (`geometry_report`).** Every `cad.execute_build123d`
 and `cad.edit_parameter` response carries a deterministic `geometry_report` —

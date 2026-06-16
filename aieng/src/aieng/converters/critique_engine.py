@@ -126,6 +126,132 @@ def _add_finding(
     return counter + 1
 
 
+_FINISHING_FEATURE_TYPES = ("fillet", "chamfer")
+_SHAPED_FEATURE_TYPES = ("loft", "revolve", "sweep")
+
+
+def _bbox_contains(outer: list[float], inner: list[float], tol: float = 1.0) -> bool:
+    """True if `outer` bbox fully contains `inner` (within tol)."""
+    if len(outer) < 6 or len(inner) < 6:
+        return False
+    return (
+        outer[0] - tol <= inner[0] and outer[1] - tol <= inner[1] and outer[2] - tol <= inner[2]
+        and outer[3] + tol >= inner[3] and outer[4] + tol >= inner[4] and outer[5] + tol >= inner[5]
+    )
+
+
+def assess_modeling_fidelity(
+    topology_map: dict[str, Any],
+    feature_graph: dict[str, Any],
+) -> dict[str, Any]:
+    """Deterministic 'does this read as designed, or as a crude primitive stack?' check.
+
+    A SEPARATE axis from the DfM critique: a model can be perfectly manufacturable
+    yet look unfinished. Uses signals already in the package — the advanced-feature
+    tags (fillet/chamfer/loft/sweep/revolve) the feature graph records, per-part
+    face counts, and bbox containment — so it is honest and reproducible. Findings
+    are advisory (a crude box is a *quality* note, never a correctness failure) and
+    each carries a concrete fix. Cylindrical parts (shafts/pins/bores) are NOT
+    flagged as 'featureless' — a cylinder is legitimately a cylinder.
+    """
+    entities = topology_map.get("entities", [])
+    bodies = {e["id"]: e for e in entities if e.get("type") == "solid"}
+    features = feature_graph.get("features", [])
+    named = [f for f in features if is_named_part_feature(f)]
+
+    ftypes = {f.get("type") for f in features}
+    has_finishing = any(t in ftypes for t in _FINISHING_FEATURE_TYPES)
+    has_shaped = any(t in ftypes for t in _SHAPED_FEATURE_TYPES)
+
+    findings: list[dict[str, Any]] = []
+    counter = 1
+    score = 100
+
+    if bodies and not has_finishing:
+        score -= 40
+        counter = _add_finding(
+            findings, counter, "medium", "modeling_fidelity", "no_edge_breaking",
+            "(model)", None,
+            "No fillets or chamfers detected anywhere — every edge is sharp, which reads "
+            "as unfinished/crude.",
+            "Break visible edges with fillet() / chamfer() applied LAST (after booleans): "
+            "~5–15mm on enclosures/housings, ~1–4mm on machined parts.",
+        )
+    if bodies and not has_shaped and len(bodies) >= 1:
+        score -= 20
+        counter = _add_finding(
+            findings, counter, "low", "modeling_fidelity", "primitive_stacking_only",
+            "(model)", None,
+            "The model is built entirely from primitive boxes/cylinders (no loft / sweep / "
+            "revolve). For mechanical massing that can be fine; for any body meant to read "
+            "as designed or organic it caps quality at 'blocky'.",
+            "Shape designed/visible bodies with loft() / sweep() / revolve() between profiles "
+            "instead of stacking primitives.",
+        )
+
+    # Per-part: a bare 6-face axis-aligned box with no features (cylinders excluded).
+    featureless = 0
+    for feat in named:
+        geo = feat.get("geometry_refs") or {}
+        fc = geo.get("face_count") if isinstance(geo, dict) else None
+        if fc == 6:
+            featureless += 1
+            if featureless <= 3:
+                score -= 10
+                counter = _add_finding(
+                    findings, counter, "low", "modeling_fidelity", "featureless_box",
+                    feat.get("name", "<unnamed>"), (geo or {}).get("body"),
+                    f"{feat.get('name', '<unnamed>')} is a bare 6-face box — no fillets, pockets, "
+                    "bosses, or other features.",
+                    "If this is a visible or structural body, break its edges and add the detail "
+                    "the part actually needs (seats, bosses, ribs); a raw box rarely is the part.",
+                )
+
+    # Per-part: a solid fully inside another solid's bbox is likely not externally visible.
+    hidden = 0
+    body_list = [(bid, b.get("bounding_box") or [], b.get("name", bid)) for bid, b in bodies.items()]
+    for bid, bb, name in body_list:
+        if len(bb) < 6:
+            continue
+        container = next(
+            (onm for oid, obb, onm in body_list if oid != bid and _bbox_contains(obb, bb)),
+            None,
+        )
+        if container is not None:
+            hidden += 1
+            if hidden <= 3:
+                score -= 5
+                counter = _add_finding(
+                    findings, counter, "low", "modeling_fidelity", "possibly_hidden_part",
+                    name, bid,
+                    f"{name} sits entirely inside {container}'s bounding box — it may not be "
+                    "visible externally (e.g. buried inside a housing).",
+                    "Confirm this is intended; if it should be seen, expose it (open/section the "
+                    "container, or move/resize the part). Heuristic: bbox containment, not a true "
+                    "occlusion test.",
+                )
+
+    score = max(0, min(100, score))
+    level = "designed" if score >= 75 else ("basic" if score >= 45 else "crude")
+    return {
+        "score": score,
+        "level": level,
+        "signals": {
+            "has_edge_breaking": has_finishing,
+            "has_shaped_bodies": has_shaped,
+            "featureless_box_parts": featureless,
+            "possibly_hidden_parts": hidden,
+            "part_count": len(bodies),
+        },
+        "findings": findings,
+        "note": (
+            "Advisory modeling-quality heuristic (separate from manufacturability). 'crude' means "
+            "primitive-stacked / unfinished, not non-manufacturable. Cylindrical parts are not "
+            "penalised. Score is deterministic, not an aesthetic judgement."
+        ),
+    }
+
+
 def critique_geometry(
     topology_map: dict[str, Any],
     feature_graph: dict[str, Any],
@@ -176,6 +302,10 @@ def critique_geometry(
             },
             "rule_source": "aieng/converters/critique_engine DfMRulePack",
             "assumptions": list(pack.notes),
+            "fidelity": {
+                "score": None, "level": "skipped", "findings": [],
+                "signals": {"part_count": 0}, "note": "No solids to assess.",
+            },
             "credibility": classify_credibility("critique"),
         }
 
@@ -360,5 +490,6 @@ def critique_geometry(
         },
         "rule_source": "aieng/converters/critique_engine DfMRulePack",
         "assumptions": list(pack.notes),
+        "fidelity": assess_modeling_fidelity(topology_map, feature_graph),
         "credibility": classify_credibility("critique"),
     }

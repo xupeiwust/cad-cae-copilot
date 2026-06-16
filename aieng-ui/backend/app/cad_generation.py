@@ -6538,6 +6538,12 @@ def design_review(
         f["feature"] for f in findings if f.get("rule") == "broken_symmetry"
     ]
 
+    # Modeling fidelity is a separate axis (crude vs designed) — kept out of the
+    # DfM verdict, but surfaced so the agent self-corrects crude output too.
+    fidelity = crit.get("fidelity") or {}
+    fidelity_level = fidelity.get("level")
+    fidelity_findings = fidelity.get("findings") or []
+
     if actions:
         recommendation = (
             f"{len(actions)} finding(s) map to a fast cad.edit_parameter fix; "
@@ -6551,7 +6557,17 @@ def design_review(
             "geometry edit (cad.execute_build123d / cad.replace_part) and re-review."
         )
     else:
-        recommendation = "No issues found. Geometry passes the deterministic review."
+        recommendation = "No issues found by the manufacturability/structural review."
+
+    if fidelity_level in ("crude", "basic"):
+        fixes = "; ".join(f.get("suggested_fix", "") for f in fidelity_findings if f.get("suggested_fix"))
+        recommendation += (
+            f" Modeling fidelity is '{fidelity_level}' (score {fidelity.get('score')}/100): the model "
+            "is structurally valid but reads as primitive/unfinished. Improve it with a geometry edit "
+            f"(cad.execute_build123d / cad.replace_part) — {fixes}"
+        )
+    elif fidelity_level == "designed":
+        recommendation += f" Modeling fidelity is 'designed' (score {fidelity.get('score')}/100)."
 
     result: dict[str, Any] = {
         "status": "ok",
@@ -6564,8 +6580,10 @@ def design_review(
             "actionable_count": len(actions),
             "floating_parts": floating_parts,
             "broken_symmetry": broken_symmetry,
+            "modeling_fidelity": {"level": fidelity_level, "score": fidelity.get("score")},
         },
         "actions": actions,
+        "fidelity": fidelity,
         "recommendation": recommendation,
         "message": (
             "Read-only review — nothing was changed. Apply any fix through the "

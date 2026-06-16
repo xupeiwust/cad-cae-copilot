@@ -64,6 +64,16 @@ signals every `cad.execute_build123d` / `edit_parameter` / `replace_part` /
   `cad.edit_parameter` target (`featureId` / `parameterName` / range). Fix the
   highest-severity targets, then re-run the review. It mutates nothing — applying
   a fix still goes through the approval-gated edit path.
+- **Read the modeling-fidelity verdict** (`fidelity` block on `cad.critique` /
+  `cad.design_review`, also `summary.modeling_fidelity`). It is a SEPARATE axis
+  from manufacturability: a part can pass DfM yet score `crude` (`level` ∈
+  `designed` / `basic` / `crude`, 0–100) because it is primitive-stacked or
+  unfinished — no fillets/chamfers (sharp edges read as crude), bare boxes with no
+  detail, or parts buried inside others. **Do not present a `crude`/`basic` result
+  as done** — apply the findings' fixes (break visible edges with `fillet()`/
+  `chamfer()` last, after booleans; shape designed bodies with loft/sweep/revolve;
+  expose hidden parts) via a geometry edit, then re-review. Cylindrical parts
+  (shafts/pins) are not penalised — a cylinder is legitimately a cylinder.
 - **Reference images.** When the user names a real product / character / vehicle
   but supplies no picture, call `cad.search_reference_image { project_id, query }`
   before iterating — it attaches a Wikimedia Commons match so every thumbnail is

@@ -1668,6 +1668,25 @@ def test_assembly_interface_binds_real_face(tmp_path: Path) -> None:
     assert out["resolution_status"] in {"resolved", "partially_resolved", "unresolved"}
 
 
+def test_design_review_surfaces_modeling_fidelity_for_crude_build(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import design_review, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "fidelity-crude")
+    # a bare box: 6 faces, no fillets, no shaped bodies → crude
+    code = "from build123d import *\nb = Box(80, 60, 10); b.label = 'block'\nresult = Compound(children=[b])\n"
+    assert execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})["status"] == "ok"
+
+    rev = design_review(settings, pid, {})
+    assert rev["status"] == "ok"
+    assert rev["summary"]["modeling_fidelity"]["level"] in {"crude", "basic"}
+    assert rev["fidelity"]["findings"]
+    assert "fidelity" in rev["recommendation"].lower()
+    # fidelity is a separate axis: a bare box still passes the DfM critique
+    assert rev["critique_verdict"] in {"passes", "passes_with_notes", "passes_with_warnings"}
+
+
 # ── critique (engineering-diagnostics) regression diff ────────────────────────
 # Two solids far apart trip the deterministic `floating_component` high finding;
 # moving them apart introduces it, moving them together resolves it. This lets us

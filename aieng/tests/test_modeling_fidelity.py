@@ -1,0 +1,82 @@
+"""Tests for the deterministic modeling-fidelity assessment (crude vs designed)."""
+from __future__ import annotations
+
+from aieng.converters.critique_engine import assess_modeling_fidelity, critique_geometry
+
+
+def _topo(solids: list[tuple[str, str, list[float]]]) -> dict:
+    return {"entities": [
+        {"id": sid, "type": "solid", "name": nm, "bounding_box": bb} for sid, nm, bb in solids
+    ]}
+
+
+def _fg(named: list[tuple[str, int, str]], adv: tuple[str, ...] = ()) -> dict:
+    feats: list[dict] = []
+    for name, face_count, body in named:
+        feats.append({
+            "id": f"feat_{name}", "type": "named_part", "name": name,
+            "geometry_refs": {"body": body, "face_count": face_count},
+        })
+    for t in adv:
+        feats.append({"id": f"feat_{t}", "type": t, "name": t, "parameters": {}})
+    return {"features": feats}
+
+
+def test_crude_gearbox_is_flagged_crude() -> None:
+    # housing box + two gears buried inside it, no fillet/loft anywhere
+    topo = _topo([
+        ("body_001", "housing", [0, 0, 0, 120, 80, 60]),
+        ("body_005", "gear_input", [55, 20, 25, 63, 35, 55]),
+        ("body_006", "gear_output", [55, -30, 5, 63, 20, 55]),
+    ])
+    fid = assess_modeling_fidelity(topo, _fg([
+        ("housing", 15, "body_001"), ("gear_input", 3, "body_005"), ("gear_output", 3, "body_006"),
+    ]))
+    assert fid["level"] == "crude"
+    rules = {f["rule"] for f in fid["findings"]}
+    assert "no_edge_breaking" in rules
+    assert "possibly_hidden_part" in rules
+    assert fid["signals"]["has_edge_breaking"] is False
+    assert all(f["category"] == "modeling_fidelity" and f["suggested_fix"] for f in fid["findings"])
+
+
+def test_filleted_shaped_model_is_designed() -> None:
+    topo = _topo([("body_001", "housing", [0, 0, 0, 120, 80, 60])])
+    fid = assess_modeling_fidelity(topo, _fg([("housing", 18, "body_001")], adv=("fillet", "loft")))
+    assert fid["signals"]["has_edge_breaking"] is True
+    assert fid["signals"]["has_shaped_bodies"] is True
+    assert fid["level"] == "designed"
+    assert not any(f["rule"] == "no_edge_breaking" for f in fid["findings"])
+
+
+def test_cylinder_part_is_not_flagged_featureless() -> None:
+    # a 3-face cylinder (shaft) is legitimately primitive — must NOT be a featureless_box
+    topo = _topo([("body_001", "shaft", [0, 0, 0, 140, 12, 12])])
+    fid = assess_modeling_fidelity(topo, _fg([("shaft", 3, "body_001")], adv=("fillet",)))
+    assert not any(f["rule"] == "featureless_box" for f in fid["findings"])
+
+
+def test_bare_box_part_is_flagged_featureless() -> None:
+    topo = _topo([("body_001", "plate", [0, 0, 0, 100, 60, 8])])
+    fid = assess_modeling_fidelity(topo, _fg([("plate", 6, "body_001")], adv=("fillet",)))
+    assert any(f["rule"] == "featureless_box" for f in fid["findings"])
+
+
+def test_hidden_part_detected_by_bbox_containment() -> None:
+    topo = _topo([("b1", "outer", [0, 0, 0, 100, 100, 100]), ("b2", "inner", [40, 40, 40, 60, 60, 60])])
+    fid = assess_modeling_fidelity(topo, _fg([("outer", 6, "b1"), ("inner", 3, "b2")]))
+    assert any(f["rule"] == "possibly_hidden_part" and "inner" in f["feature"] for f in fid["findings"])
+
+
+def test_critique_geometry_includes_fidelity_block() -> None:
+    topo = _topo([("body_001", "housing", [0, 0, 0, 120, 80, 60])])
+    out = critique_geometry(topo, _fg([("housing", 15, "body_001")]))
+    assert "fidelity" in out
+    assert out["fidelity"]["level"] in {"designed", "basic", "crude"}
+    # DfM verdict stays a separate axis from fidelity (a crude box still "passes" DfM)
+    assert out["verdict"] in {"passes", "passes_with_notes", "passes_with_warnings", "fails_audit"}
+
+
+def test_empty_model_fidelity_skipped() -> None:
+    out = critique_geometry({"entities": []}, {"features": []})
+    assert out["fidelity"]["level"] == "skipped"

@@ -10,3 +10,4 @@ export { useFieldColorOverlay } from "./useFieldColorOverlay";
 export { useCaeSetupOverlay } from "./useCaeSetupOverlay";
 export { useFieldRegionOverlay } from "./useFieldRegionOverlay";
 export { useMeshPreviewOverlay } from "./useMeshPreviewOverlay";
+export { useDeformedShape } from "./useDeformedShape";

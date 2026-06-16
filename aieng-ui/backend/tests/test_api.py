@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import shutil
 import time
@@ -223,6 +224,67 @@ def test_field_descriptor_returns_real_frd_data(tmp_path: Path) -> None:
     assert len(data["node_coords"]) == 8
     assert data["min_value"] == 10.0
     assert data["max_value"] == 220.0
+
+
+def test_field_descriptor_returns_displacement_vectors(tmp_path: Path) -> None:
+    """GET /fields/{name} returns per-node displacement vectors for DISP-sourced fields."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("frd-disp-vectors"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "disp-test.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    coords = {
+        1: (0.0, 0.0, 0.0),
+        2: (10.0, 0.0, 0.0),
+        3: (10.0, 1.0, 0.0),
+        4: (0.0, 1.0, 0.0),
+    }
+    disp = {
+        1: [0.1, 0.2, 0.3],
+        2: [0.4, 0.5, 0.6],
+        3: [0.7, 0.8, 0.9],
+        4: [1.0, 1.1, 1.2],
+    }
+    frd_text = _make_test_frd_with_coords(coords, disp_nodes=disp)
+
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "disp-test", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", frd_text)
+
+    project["aieng_file"] = "disp-test.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/fields/disp_magnitude")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["format"] == "vertex_json"
+    assert data["source"] == "frd"
+    assert data["unit"] == "mm"
+    assert len(data["values"]) == 4
+    # Displacement-sourced fields must carry per-node vectors for deformed-shape rendering.
+    assert "vectors" in data
+    assert len(data["vectors"]) == 4
+    assert data["vectors"][0] == [0.1, 0.2, 0.3]
+    # Magnitude matches the vector length.
+    assert data["values"][0] == pytest.approx(math.sqrt(0.1**2 + 0.2**2 + 0.3**2))
+
+    # Per-component fields also carry vectors.
+    ux = client.get(f"/api/projects/{project_id}/fields/ux").json()
+    assert "vectors" in ux
+    assert ux["vectors"][1] == [0.4, 0.5, 0.6]
+    assert ux["values"][1] == pytest.approx(0.4)
+
+    # Stress fields do not fabricate displacement vectors.
+    stress = client.get(f"/api/projects/{project_id}/fields/stress").json()
+    assert stress["format"] == "vertex_synthetic"
+    assert stress.get("vectors") is None
 
 
 def test_field_descriptor_serves_derived_fields_and_safety_factor(tmp_path: Path) -> None:

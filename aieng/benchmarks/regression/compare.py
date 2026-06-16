@@ -127,6 +127,21 @@ def build_diff(baseline_dir: Path, current_dir: Path) -> str:
             if d:
                 lines.append(f"| part_count | {int(d['baseline'])} | {int(d['current'])} | {int(d['delta']):+d} |")
 
+            # Resolved intent (text comparison)
+            b_intent = b_metrics.get("resolved_intent")
+            c_intent = c_metrics.get("resolved_intent")
+            if b_intent is not None or c_intent is not None:
+                lines.append(f"| resolved_intent | {b_intent or '-'} | {c_intent or '-'} | {'⚠️' if b_intent != c_intent else ''} |")
+
+            # Tool sequence (text comparison)
+            b_tools = b_metrics.get("tool_sequence")
+            c_tools = c_metrics.get("tool_sequence")
+            if b_tools is not None or c_tools is not None:
+                b_tools_str = ", ".join(str(t) for t in b_tools) if isinstance(b_tools, list) else str(b_tools)
+                c_tools_str = ", ".join(str(t) for t in c_tools) if isinstance(c_tools, list) else str(c_tools)
+                match_marker = "⚠️" if b_tools != c_tools else ""
+                lines.append(f"| tool_sequence | {b_tools_str or '-'} | {c_tools_str or '-'} | {match_marker} |")
+
         lines.append("")
 
     return "\n".join(lines)

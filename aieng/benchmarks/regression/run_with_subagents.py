@@ -24,10 +24,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
+
+class SubagentTask(BaseModel):
+    """Validated task payload for a single benchmark sub-agent."""
+
+    prompt_id: str = Field(..., min_length=1)
+    prompt_dir: str = Field(..., min_length=1)
+    metrics_path: str = Field(..., min_length=1)
+    tags: list[str] = Field(default_factory=list)
+    instructions: str = Field(..., min_length=1)
+
 
 REGRESSION_DIR = Path(__file__).resolve().parent
 INIT_RUN = REGRESSION_DIR / "init_run.py"
-COMPARE = REGRESSION_DIR / "compare.py"
 
 
 def init_run(tags: list[str], output: Path) -> Path:
@@ -50,8 +61,8 @@ def load_manifest(run_dir: Path) -> dict[str, Any]:
 
 def build_subagent_task(
     run_dir: Path, prompt_id: str, prompt_text: str, tags: list[str]
-) -> dict[str, Any]:
-    """Build the instruction payload for a single sub-agent."""
+) -> SubagentTask:
+    """Build the validated instruction payload for a single sub-agent."""
     prompt_dir = run_dir / prompt_id
     intent_only = "intent" in tags
     execution_guidance = (
@@ -86,19 +97,19 @@ Steps:
 
 If the prompt fails, still call record.py with --status failed and include an "error" field in metrics.json.
 """
-    return {
-        "prompt_id": prompt_id,
-        "prompt_dir": str(prompt_dir),
-        "metrics_path": str(prompt_dir / "metrics.json"),
-        "tags": tags,
-        "instructions": instructions,
-    }
+    return SubagentTask(
+        prompt_id=prompt_id,
+        prompt_dir=str(prompt_dir),
+        metrics_path=str(prompt_dir / "metrics.json"),
+        tags=tags,
+        instructions=instructions,
+    )
 
 
 def emit_tasks(run_dir: Path) -> Path:
-    """Write subagent_tasks.json with one task per prompt."""
+    """Write subagent_tasks.json with one validated task per prompt."""
     manifest = load_manifest(run_dir)
-    tasks: list[dict[str, Any]] = []
+    tasks: list[SubagentTask] = []
 
     for entry in sorted(manifest.get("prompts", []), key=lambda e: e["id"]):
         prompt_id = entry["id"]
@@ -112,12 +123,15 @@ def emit_tasks(run_dir: Path) -> Path:
         tasks.append(build_subagent_task(run_dir, prompt_id, prompt_text, tags))
 
     tasks_path = run_dir / "subagent_tasks.json"
-    tasks_path.write_text(json.dumps(tasks, indent=2), encoding="utf-8")
+    tasks_path.write_text(
+        json.dumps([task.model_dump() for task in tasks], indent=2),
+        encoding="utf-8",
+    )
     return tasks_path
 
 
 def print_task_summary(tasks_path: Path) -> None:
-    tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
+    tasks = [SubagentTask(**task) for task in json.loads(tasks_path.read_text(encoding="utf-8"))]
     print(f"Prepared {len(tasks)} sub-agent task(s) in: {tasks_path}")
     print()
     print("Next steps:")
@@ -128,7 +142,7 @@ def print_task_summary(tasks_path: Path) -> None:
     print()
     print("Example task IDs:")
     for task in tasks:
-        print(f"  - {task['prompt_id']}")
+        print(f"  - {task.prompt_id}")
 
 
 def main(argv: list[str] | None = None) -> int:

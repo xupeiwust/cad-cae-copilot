@@ -1831,6 +1831,27 @@ def test_cylinder_face_carries_axis_for_mate_predicates(tmp_path: Path) -> None:
     assert any(isinstance(c.get("radius"), (int, float)) for c in cyls)
 
 
+def test_topology_extracts_edges_resolvable_in_brep_graph(tmp_path: Path) -> None:
+    # #287: topology now carries B-Rep edges (deduped, with adjacent faces) so
+    # @edge: pointers resolve and explicit face-adjacency relations exist.
+    pytest.importorskip("build123d")
+    from app.brep_graph import build_brep_graph_from_topology
+    from app.cad_generation import _execute_build123d_code
+
+    _s, _st, _g, topo = _execute_build123d_code("from build123d import *\nresult = Box(10, 10, 10)\n")
+    raw_edges = [e for e in topo["entities"] if e.get("type") == "edge"]
+    assert len(raw_edges) == 12, "a box has 12 edges"  # deduped, not 24 (per-face)
+    assert all(len(e.get("adjacent_faces", [])) == 2 for e in raw_edges)  # each shared by 2 faces
+
+    out = build_brep_graph_from_topology(topo, feature_graph={})
+    edges = out["brep_graph"]["entities"]["edges"]
+    assert len(edges) == 12
+    assert all(e["pointer"].startswith("@edge:") for e in edges)
+    rels = out["brep_graph"]["relations"]
+    assert any(r["type"] == "face_has_edge" for r in rels)
+    assert any(r["type"] == "face_adjacent_face" and r.get("confidence") == "explicit" for r in rels)
+
+
 def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import design_review, execute_build123d_code

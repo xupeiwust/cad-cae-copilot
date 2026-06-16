@@ -892,6 +892,46 @@ def _face_entity(face, fid, body_id):
     return data
 
 
+def _edge_signature(edge):
+    \"\"\"Stable geometric key so an edge shared by two faces dedupes to one entity.\"\"\"
+    try:
+        p0, p1, pm = edge @ 0, edge @ 1, edge @ 0.5
+
+        def _r(v):
+            return (round(v.X, 3), round(v.Y, 3), round(v.Z, 3))
+
+        return (tuple(sorted((_r(p0), _r(p1)))), _r(pm), round(edge.length, 3))
+    except Exception:
+        return None
+
+
+def _edge_entity(edge, eid, body_id):
+    data = {"id": eid, "type": "edge", "body_id": body_id}
+    try:
+        data["bounding_box"] = _bbox_list(edge.bounding_box())
+    except Exception:
+        pass
+    try:
+        data["length"] = round(edge.length, 4)
+    except Exception:
+        pass
+    try:
+        p0, p1 = edge @ 0, edge @ 1
+        data["start"] = [round(p0.X, 4), round(p0.Y, 4), round(p0.Z, 4)]
+        data["end"] = [round(p1.X, 4), round(p1.Y, 4), round(p1.Z, 4)]
+    except Exception:
+        pass
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Curve
+        from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Line
+
+        ct = BRepAdaptor_Curve(edge.wrapped).GetType()
+        data["curve_type"] = "line" if ct == GeomAbs_Line else ("circle" if ct == GeomAbs_Circle else "curve")
+    except Exception:
+        data["curve_type"] = "curve"
+    return data
+
+
 def _has_labeled_descendant(node):
     for c in (getattr(node, "children", None) or []):
         if (getattr(c, "label", "") or "") or _has_labeled_descendant(c):
@@ -932,6 +972,7 @@ def _collect_parts(shape, include_assemblies=False):
 def _extract_topology(shape):
     entities = []
     face_counter = 0
+    edge_counter = 0
     for pi, (name, part, is_assembly) in enumerate(_collect_parts(shape, include_assemblies=True)):
         body_id = f"body_{pi + 1:03d}"
         body = {"id": body_id, "type": "solid", "bounding_box": _bbox_list(part.bounding_box())}
@@ -957,9 +998,36 @@ def _extract_topology(shape):
         entities.append(body)
         if is_assembly:
             continue
+        # Faces + edges. Edges are gathered per-face and deduped by geometry so a
+        # shared edge becomes ONE entity carrying both adjacent face ids — that is
+        # what lets @edge:* pointers resolve and drives face_has_edge /
+        # face_adjacent_face relations in the brep graph (#287).
+        edge_index = {}  # signature -> {"entity": {...}, "faces": [fid, ...]}
         for face in part.faces():
             face_counter += 1
-            entities.append(_face_entity(face, f"face_{face_counter:03d}", body_id))
+            fid = f"face_{face_counter:03d}"
+            entities.append(_face_entity(face, fid, body_id))
+            try:
+                face_edges = list(face.edges())
+            except Exception:
+                face_edges = []
+            for edge in face_edges:
+                sig = _edge_signature(edge)
+                if sig is None:
+                    continue
+                rec = edge_index.get(sig)
+                if rec is None:
+                    edge_counter += 1
+                    edge_index[sig] = {
+                        "entity": _edge_entity(edge, f"edge_{edge_counter:03d}", body_id),
+                        "faces": [fid],
+                    }
+                elif fid not in rec["faces"]:
+                    rec["faces"].append(fid)
+        for rec in edge_index.values():
+            ent = rec["entity"]
+            ent["adjacent_faces"] = rec["faces"]
+            entities.append(ent)
     return {"format_version": "0.1", "entities": entities}
 
 

@@ -1449,6 +1449,52 @@ def test_geometry_report_flags_asymmetry_and_floating() -> None:
 
 # ── geometry regression diff ──────────────────────────────────────────────────
 
+def test_geometry_report_flags_deep_overlap_and_containment() -> None:
+    from app.cad_generation import _compute_geometry_report, _geometry_report_summary
+
+    topo = {"entities": [
+        {"type": "solid", "id": "b1", "name": "base", "bounding_box": [0, 0, 0, 100, 80, 20]},
+        {"type": "solid", "id": "b2", "name": "motor", "bounding_box": [40, 30, 5, 70, 60, 25]},
+        {"type": "solid", "id": "b3", "name": "buried_insert", "bounding_box": [10, 10, 5, 20, 20, 15]},
+    ]}
+
+    report = _compute_geometry_report(topo)
+
+    spatial = report["spatial_summary"]
+    assert spatial["deep_overlaps"] >= 1
+    assert spatial["containments"] >= 1
+    summary = _geometry_report_summary(report)
+    assert "spatial_issues=" in summary
+    assert "spatial_issues=2" in summary
+
+
+def test_geometry_report_marks_hollow_containment_as_review_not_failure() -> None:
+    from app.cad_generation import _compute_geometry_report
+
+    topo = {"entities": [
+        {
+            "type": "solid",
+            "id": "b1",
+            "name": "housing",
+            "bounding_box": [0, 0, 0, 100, 80, 60],
+            "volume": 40000.0,
+        },
+        {
+            "type": "solid",
+            "id": "b2",
+            "name": "bearing",
+            "bounding_box": [40, 30, 20, 60, 50, 40],
+            "volume": 6000.0,
+        },
+    ]}
+
+    report = _compute_geometry_report(topo)
+
+    assert report["spatial_summary"]["contained_in_hollow"] == 1
+    assert report["spatial_summary"]["containments"] == 0
+    assert report["spatial_relationships"][0]["status"] == "contained_in_hollow"
+
+
 def _topo_from(parts: list[tuple[str, list[float]]]) -> dict:
     return {"entities": [
         {"type": "solid", "id": f"b{i}", "name": n, "bounding_box": bb}
@@ -2459,6 +2505,37 @@ def test_design_review_symmetry_findings_from_report() -> None:
     assert all(f["severity"] == "medium" and f["category"] == "structure" for f in findings)
     assert "arm_L / arm_R" in findings[0]["feature"]
     assert "ear_R" in findings[1]["observation"]
+
+
+def test_design_review_spatial_findings_from_report() -> None:
+    from app import cad_generation as cg
+
+    report = {
+        "spatial_relationships": [
+            {
+                "parts": ["shaft", "housing"],
+                "status": "deep_overlap",
+                "overlap_ratio_of_smaller": 0.8,
+            },
+            {
+                "parts": ["bearing", "housing"],
+                "status": "contained_in_hollow",
+                "relationship": "housing contains bearing",
+            },
+            {
+                "parts": ["insert", "block"],
+                "status": "contained",
+                "relationship": "block contains insert",
+            },
+        ]
+    }
+
+    findings = cg._spatial_findings(report)
+
+    rules = [f["rule"] for f in findings]
+    assert rules == ["bbox_interference", "contained_part"]
+    assert findings[0]["severity"] == "high"
+    assert findings[1]["severity"] == "medium"
 
 
 def _param_entry(cad_name: str, tokens: set[str], **kw) -> dict:

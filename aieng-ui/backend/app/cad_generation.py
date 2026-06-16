@@ -1884,6 +1884,75 @@ def _bbox_metrics(bb: list[float]) -> tuple[tuple[float, float, float], tuple[fl
     return center, size, max(size)
 
 
+def _bbox_volume(bb: list[float]) -> float:
+    if len(bb) < 6:
+        return 0.0
+    return max(0.0, bb[3] - bb[0]) * max(0.0, bb[4] - bb[1]) * max(0.0, bb[5] - bb[2])
+
+
+def _bbox_contains(outer: list[float], inner: list[float], tol: float = 1.0) -> bool:
+    if len(outer) < 6 or len(inner) < 6:
+        return False
+    return (
+        outer[0] - tol <= inner[0]
+        and outer[1] - tol <= inner[1]
+        and outer[2] - tol <= inner[2]
+        and outer[3] + tol >= inner[3]
+        and outer[4] + tol >= inner[4]
+        and outer[5] + tol >= inner[5]
+    )
+
+
+def _bbox_relationship(bb1: list[float], bb2: list[float], tol: float = 0.5) -> dict[str, Any]:
+    """Return conservative AABB spatial metrics for two solids."""
+    axis_gaps: list[float] = []
+    overlaps: list[float] = []
+    for ax in range(3):
+        lo1, hi1 = bb1[ax], bb1[ax + 3]
+        lo2, hi2 = bb2[ax], bb2[ax + 3]
+        if hi1 < lo2:
+            axis_gaps.append(lo2 - hi1)
+            overlaps.append(0.0)
+        elif hi2 < lo1:
+            axis_gaps.append(lo1 - hi2)
+            overlaps.append(0.0)
+        else:
+            axis_gaps.append(0.0)
+            overlaps.append(max(0.0, min(hi1, hi2) - max(lo1, lo2)))
+    gap = sum(g * g for g in axis_gaps) ** 0.5
+    overlap_volume = overlaps[0] * overlaps[1] * overlaps[2]
+    vol1 = _bbox_volume(bb1)
+    vol2 = _bbox_volume(bb2)
+    smaller = min(v for v in (vol1, vol2) if v > 0) if vol1 > 0 or vol2 > 0 else 0.0
+    ratio = overlap_volume / smaller if smaller > 0 else 0.0
+    return {
+        "gap_mm": gap,
+        "axis_gaps": axis_gaps,
+        "overlap_depths": overlaps,
+        "overlap_volume": overlap_volume,
+        "overlap_ratio_of_smaller": ratio,
+        "deep_overlap": overlap_volume > 0 and ratio >= 0.10 and min(overlaps) > tol,
+        "contains_1_in_2": _bbox_contains(bb2, bb1, tol=tol),
+        "contains_2_in_1": _bbox_contains(bb1, bb2, tol=tol),
+    }
+
+
+def _solid_fill_ratio(entity: dict[str, Any]) -> float | None:
+    bb = entity.get("bounding_box") if isinstance(entity, dict) else None
+    volume = entity.get("volume") if isinstance(entity, dict) else None
+    if not isinstance(bb, list) or not isinstance(volume, (int, float)):
+        return None
+    bvol = _bbox_volume(bb)
+    if bvol <= 0:
+        return None
+    return max(0.0, min(1.0, float(volume) / bvol))
+
+
+def _is_hollow_container(entity: dict[str, Any]) -> bool:
+    ratio = _solid_fill_ratio(entity)
+    return ratio is not None and ratio < 0.6
+
+
 def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) -> dict[str, Any]:
     """Produce a deterministic, agent-readable geometry report from topology.
 
@@ -1933,12 +2002,14 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
 
     # Per-part metrics
     part_recs: list[dict[str, Any]] = []
-    named: list[tuple[str, tuple[float, float, float], tuple[float, float, float], float]] = []
+    named: list[
+        tuple[str, str, list[float], tuple[float, float, float], tuple[float, float, float], float, dict[str, Any]]
+    ] = []
     largest_part_dim = max(_bbox_metrics(s["bounding_box"])[2] for s in solids) or 1.0
     for s in solids:
         name = s.get("name") or s.get("id")
         c, sz, mx = _bbox_metrics(s["bounding_box"])
-        named.append((name, c, sz, mx))
+        named.append((str(name), str(s.get("id") or name), s["bounding_box"], c, sz, mx, s))
         part_recs.append({
             "name": name,
             "size": {"x": _r(sz[0]), "y": _r(sz[1]), "z": _r(sz[2])},
@@ -1953,7 +2024,7 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
     name_to_idx = {n.lower(): i for i, (n, *_rest) in enumerate(named)}
     symmetry: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str]] = set()
-    for name, c, sz, _mx in named:
+    for name, _body_id, _bb, c, sz, _mx, _entity in named:
         partner = _mirror_partner_name(name)
         if not partner:
             continue
@@ -1970,7 +2041,7 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
         if key in seen_pairs:
             continue
         seen_pairs.add(key)
-        _pn, pc, psz, _pmx = named[pidx]
+        _pn, _pbody_id, _pbb, pc, psz, _pmx, _pentity = named[pidx]
         # Size residual — mirror parts should be the same size.
         size_res = max(abs(sz[0] - psz[0]), abs(sz[1] - psz[1]), abs(sz[2] - psz[2]))
         # Mirror axis = the axis along which the two centers are most separated
@@ -1998,19 +2069,55 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
     # overlapping/touching (good for an assembly); large positive ⇒ floating.
     if len(named) >= 2:
         gap_recs: list[dict[str, Any]] = []
-        mean_size = sum(m for *_x, m in named) / len(named)
+        spatial_recs: list[dict[str, Any]] = []
+        mean_size = sum(row[5] for row in named) / len(named)
         gap_threshold = max(mean_size, 50.0)
-        for i, (name, c1, _s1, m1) in enumerate(named):
+        for i, (name, _body_id, bb1, _c1, _s1, _m1, entity1) in enumerate(named):
             min_gap = float("inf")
             nearest = None
-            for j, (n2, c2, _s2, m2) in enumerate(named):
+            for j, (n2, _body_id2, bb2, _c2, _s2, _m2, entity2) in enumerate(named):
                 if i == j:
                     continue
-                dist = ((c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2 + (c1[2] - c2[2]) ** 2) ** 0.5
-                gap = dist - (m1 + m2) / 2.0
+                rel = _bbox_relationship(bb1, bb2)
+                gap = rel["gap_mm"]
                 if gap < min_gap:
                     min_gap = gap
                     nearest = n2
+                if i < j:
+                    container = None
+                    relationship = None
+                    if rel["contains_2_in_1"]:
+                        container = entity1
+                        relationship = f"{name} contains {n2}"
+                    elif rel["contains_1_in_2"]:
+                        container = entity2
+                        relationship = f"{n2} contains {name}"
+                    if relationship is not None and container is not None:
+                        fill_ratio = _solid_fill_ratio(container)
+                        hollow_known = _is_hollow_container(container)
+                        spatial_recs.append({
+                            "parts": [name, n2],
+                            "status": "contained_in_hollow" if hollow_known else "contained",
+                            "relationship": relationship,
+                            "overlap_ratio_of_smaller": _r(rel["overlap_ratio_of_smaller"], 3),
+                            "container_fill_ratio": _r(fill_ratio, 3) if fill_ratio is not None else None,
+                            "note": (
+                                "Contained inside a known hollow body; verify intentional internal packaging."
+                                if hollow_known
+                                else "One part is inside another solid's bounding box; likely buried or mispositioned."
+                            ),
+                        })
+                    elif rel["deep_overlap"]:
+                        spatial_recs.append({
+                            "parts": [name, n2],
+                            "status": "deep_overlap",
+                            "overlap_ratio_of_smaller": _r(rel["overlap_ratio_of_smaller"], 3),
+                            "overlap_depths_mm": [_r(v) for v in rel["overlap_depths"]],
+                            "note": (
+                                "Bounding boxes overlap in all axes; separate parts may be interpenetrating "
+                                "or should be intentionally boolean-unioned/mated."
+                            ),
+                        })
             status = "touching" if min_gap <= 0 else ("floating" if min_gap > gap_threshold else "near")
             gap_recs.append({
                 "part": name,
@@ -2033,6 +2140,16 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
         }
         if floating:
             report["floating_parts"] = floating
+        if spatial_recs:
+            report["spatial_relationships"] = spatial_recs[:max_parts]
+            if len(spatial_recs) > max_parts:
+                report["spatial_relationships_truncated"] = len(spatial_recs) - max_parts
+        report["spatial_summary"] = {
+            "deep_overlaps": sum(1 for r in spatial_recs if r["status"] == "deep_overlap"),
+            "containments": sum(1 for r in spatial_recs if r["status"] == "contained"),
+            "contained_in_hollow": sum(1 for r in spatial_recs if r["status"] == "contained_in_hollow"),
+            "total": len(spatial_recs),
+        }
 
     return report
 
@@ -2059,6 +2176,7 @@ def _geometry_report_summary(report: dict[str, Any]) -> str:
     size = report.get("overall_size") if isinstance(report.get("overall_size"), dict) else {}
     proportions = report.get("overall_proportions") if isinstance(report.get("overall_proportions"), dict) else {}
     gaps = report.get("gaps_summary") if isinstance(report.get("gaps_summary"), dict) else {}
+    spatial = report.get("spatial_summary") if isinstance(report.get("spatial_summary"), dict) else {}
     symmetry = report.get("symmetry") if isinstance(report.get("symmetry"), list) else []
     symmetry_issues = sum(
         1
@@ -2071,7 +2189,8 @@ def _geometry_report_summary(report: dict[str, Any]) -> str:
         f"size={size.get('x', '?')}x{size.get('y', '?')}x{size.get('z', '?')} mm, "
         f"proportions={proportions.get('x', '?')}/{proportions.get('y', '?')}/{proportions.get('z', '?')}, "
         f"floating={gaps.get('floating', 0)}, "
-        f"symmetry_issues={symmetry_issues}"
+        f"symmetry_issues={symmetry_issues}, "
+        f"spatial_issues={spatial.get('deep_overlaps', 0) + spatial.get('containments', 0)}"
     )
 
 
@@ -6556,6 +6675,61 @@ def _symmetry_findings(geometry_report: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _spatial_findings(geometry_report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Turn bbox overlap/containment signals into design-review findings."""
+    out: list[dict[str, Any]] = []
+    relationships = geometry_report.get("spatial_relationships") if isinstance(geometry_report, dict) else None
+    if not isinstance(relationships, list):
+        return out
+    counter = 0
+    for item in relationships:
+        if not isinstance(item, dict):
+            continue
+        status = item.get("status")
+        if status == "contained_in_hollow":
+            continue
+        parts = item.get("parts") if isinstance(item.get("parts"), list) else []
+        label = " / ".join(str(p) for p in parts) if parts else str(item.get("relationship") or "<parts>")
+        counter += 1
+        if status == "deep_overlap":
+            out.append({
+                "id": f"spatial_{counter:03d}",
+                "severity": "high",
+                "category": "structure",
+                "rule": "bbox_interference",
+                "feature": label,
+                "feature_id": None,
+                "observation": (
+                    f"{label}: bounding boxes deeply overlap "
+                    f"(overlap_ratio_of_smaller={item.get('overlap_ratio_of_smaller')}) - "
+                    "parts may be interpenetrating or incorrectly placed."
+                ),
+                "suggested_fix": (
+                    "Re-check the shared coordinate landmarks. If these are one physical body, "
+                    "boolean-union them; if they are separate parts, move them to touch/clear "
+                    "or define validated assembly interfaces/mates."
+                ),
+            })
+        elif status == "contained":
+            out.append({
+                "id": f"spatial_{counter:03d}",
+                "severity": "medium",
+                "category": "structure",
+                "rule": "contained_part",
+                "feature": label,
+                "feature_id": None,
+                "observation": (
+                    f"{item.get('relationship') or label}: one solid is inside another solid's "
+                    "bounding box and may be hidden, buried, or mispositioned."
+                ),
+                "suggested_fix": (
+                    "Confirm this is intentional internal packaging. If not, expose the part, "
+                    "open/section the container, or move/resize the child part."
+                ),
+            })
+    return out
+
+
 def _bind_finding_to_parameter(
     finding: dict[str, Any], index: list[dict[str, Any]] | None
 ) -> dict[str, Any] | None:
@@ -6645,7 +6819,11 @@ def design_review(
         # than fail the whole review on a structural-signal read error.
         geometry_report = {}
 
-    findings = list(crit.get("findings") or []) + _symmetry_findings(geometry_report)
+    findings = (
+        list(crit.get("findings") or [])
+        + _symmetry_findings(geometry_report)
+        + _spatial_findings(geometry_report)
+    )
 
     # Bind fix targets and build the prioritized, actionable subset.
     severity_rank = {"high": 0, "medium": 1, "low": 2}
@@ -6671,8 +6849,14 @@ def design_review(
     }
     verdict = _verdict_from_counts(severity_counts)
     floating_parts = geometry_report.get("floating_parts") or []
+    spatial_summary = geometry_report.get("spatial_summary") if isinstance(geometry_report, dict) else {}
+    if not isinstance(spatial_summary, dict):
+        spatial_summary = {}
     broken_symmetry = [
         f["feature"] for f in findings if f.get("rule") == "broken_symmetry"
+    ]
+    spatial_issues = [
+        f["feature"] for f in findings if f.get("rule") in {"bbox_interference", "contained_part"}
     ]
 
     # Modeling fidelity is a separate axis (crude vs designed) — kept out of the
@@ -6717,6 +6901,8 @@ def design_review(
             "actionable_count": len(actions),
             "floating_parts": floating_parts,
             "broken_symmetry": broken_symmetry,
+            "spatial_issues": spatial_issues,
+            "spatial_summary": spatial_summary,
             "modeling_fidelity": {"level": fidelity_level, "score": fidelity.get("score")},
         },
         "actions": actions,

@@ -48,9 +48,12 @@ signals every `cad.execute_build123d` / `edit_parameter` / `replace_part` /
 `remove_part` returns and self-correct first:
 
 - **`geometry_report_summary`** is always present (both `response_detail` modes):
-  a one-line `part_count / size / proportions / floating=N / symmetry_issues=N`.
+  a one-line `part_count / size / proportions / floating=N / symmetry_issues=N / spatial_issues=N`.
   Non-zero `floating` means a part is detached (usually a coordinate typo);
-  non-zero `symmetry_issues` means a left/right pair is mismatched or missing.
+  non-zero `symmetry_issues` means a left/right pair is mismatched or missing;
+  non-zero `spatial_issues` means bounding boxes show deep overlap or solid
+  containment, which is the common "parts are in the wrong place / interpenetrate"
+  failure mode.
 - **`critique_diff`** is returned by every `cad.edit_parameter` / `replace_part`
   / `remove_part`: it runs the engineering critique before and after the edit and
   reports whether manufacturability violations **increased**. A verdict of `fail`
@@ -58,8 +61,9 @@ signals every `cad.execute_build123d` / `edit_parameter` / `replace_part` /
   part *less* manufacturable even if topology looks fine — read its `introduced`
   list and fix or reconsider before presenting the result. `improved` / `clean`
   are safe; `skipped` means no solids to critique.
-- **When `floating` or `symmetry_issues` is non-zero, call `cad.design_review`**
-  (read-only). It folds the critique + those structural signals into one
+- **When `floating`, `symmetry_issues`, or `spatial_issues` is non-zero, call
+  `cad.design_review`** (read-only). It folds the critique + those structural
+  signals into one
   severity-ranked `actions` list and binds each fixable finding to a concrete
   `cad.edit_parameter` target (`featureId` / `parameterName` / range). Fix the
   highest-severity targets, then re-run the review. It mutates nothing — applying

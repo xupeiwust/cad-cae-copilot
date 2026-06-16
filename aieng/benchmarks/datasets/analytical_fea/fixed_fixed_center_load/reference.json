@@ -1,0 +1,12 @@
+{
+  "analysis_type": "static",
+  "case_id": "fixed_fixed_center_load",
+  "description": "Fixed-fixed beam with center point load on top face",
+  "metrics": {
+    "max_displacement": {
+      "tolerance_percent": 10.0,
+      "unit": "mm",
+      "value": 0.00037202380952380956
+    }
+  }
+}

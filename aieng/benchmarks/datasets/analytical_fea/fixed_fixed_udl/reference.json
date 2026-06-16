@@ -1,0 +1,17 @@
+{
+  "analysis_type": "static",
+  "case_id": "fixed_fixed_udl",
+  "description": "Fixed-fixed beam under uniformly distributed downward load",
+  "metrics": {
+    "max_displacement": {
+      "tolerance_percent": 10.0,
+      "unit": "mm",
+      "value": 0.00018601190476190478
+    },
+    "max_von_mises_stress": {
+      "tolerance_percent": 10.0,
+      "unit": "MPa",
+      "value": 1.25
+    }
+  }
+}

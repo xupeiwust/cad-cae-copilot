@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,90 @@ def _build_test_package(pkg_path: Path, *, include_step: bool = True) -> None:
         zf.writestr("simulation/cae_mapping.json", json.dumps(_CAE_MAPPING))
         if include_step:
             zf.writestr("geometry/generated.step", _FAKE_STEP)
+
+
+# ── mesh preview helpers ──────────────────────────────────────────────────────
+
+_TWO_TET_MESH_INP = """\
+*Node
+1, 0.0, 0.0, 0.0
+2, 10.0, 0.0, 0.0
+3, 5.0, 10.0, 0.0
+4, 5.0, 5.0, 10.0
+5, 15.0, 5.0, 10.0
+*Element, type=C3D4, ELSET=EALL
+1, 1, 2, 3, 4
+2, 2, 3, 4, 5
+"""
+
+
+def test_parse_inp_elements_c3d4() -> None:
+    from app.simulation_runner import _parse_inp_elements
+
+    with tempfile.TemporaryDirectory() as tmp:
+        inp = Path(tmp) / "mesh.inp"
+        inp.write_text(_MINIMAL_MESH_INP)
+        elements = _parse_inp_elements(inp)
+
+    assert len(elements) == 1
+    assert elements[0]["id"] == 1
+    assert elements[0]["type"] == "C3D4"
+    assert elements[0]["nodes"] == [1, 2, 3, 4]
+
+
+def test_extract_surface_wireframe_two_tets() -> None:
+    from app.simulation_runner import _parse_inp_nodes, _parse_inp_elements, _extract_surface_wireframe
+
+    with tempfile.TemporaryDirectory() as tmp:
+        inp = Path(tmp) / "mesh.inp"
+        inp.write_text(_TWO_TET_MESH_INP)
+        nodes = _parse_inp_nodes(inp)
+        elements = _parse_inp_elements(inp)
+
+    coords, edges = _extract_surface_wireframe(nodes, elements)
+    # Five nodes are all on the surface of this two-tet strip.
+    assert len(coords) == 5
+    # Each tet has 4 triangular faces; the shared face is internal.  Surface
+    # faces = 4 + 4 - 2 = 6 triangles → 6 * 3 / 2 (each edge shared by 2 tris)
+    # = 9 unique edges.
+    assert len(edges) == 9
+    # Coordinates are in model frame (mm).
+    assert [5.0, 5.0, 10.0] in coords
+
+
+def test_get_mesh_preview_unavailable() -> None:
+    from app.simulation_runner import get_mesh_preview
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg = Path(tmp) / "empty.aieng"
+        pkg.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(pkg, "w") as zf:
+            zf.writestr("manifest.json", "{}")
+        result = get_mesh_preview(pkg)
+
+    assert result["available"] is False
+
+
+def test_get_mesh_preview_available() -> None:
+    from app.simulation_runner import get_mesh_preview
+
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg = Path(tmp) / "mesh.aieng"
+        pkg.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("manifest.json", "{}")
+            zf.writestr("simulation/mesh.inp", _TWO_TET_MESH_INP)
+            zf.writestr("simulation/setup.yaml", yaml.dump(_SETUP_YAML))
+        result = get_mesh_preview(pkg)
+
+    assert result["available"] is True
+    assert result["node_count"] == 5
+    assert result["element_count"] == 2
+    assert result["element_type"] == "C3D4"
+    assert result["target_size_mm"] == 2.5
+    assert result["quality"]["coarse_flag"] is True
+    assert len(result["nodes"]) == 5
+    assert len(result["edges"]) == 9
 
 
 # ── check_simulation_tools ────────────────────────────────────────────────────
@@ -638,6 +723,57 @@ def test_get_simulation_tools_endpoint(tmp_path: Path) -> None:
     assert "calculix" in data
     assert "ready" in data
     assert "missing" in data
+
+
+# ── GET /api/projects/{project_id}/mesh-preview ───────────────────────────────
+
+def test_mesh_preview_endpoint_missing_package(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    from app.main import default_project, save_project
+    project = save_project(settings, default_project("mesh-preview-no-pkg"))
+    project_id = project["id"]
+
+    resp = client.get(f"/api/projects/{project_id}/mesh-preview")
+    assert resp.status_code == 404
+
+
+def test_mesh_preview_endpoint_no_mesh(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project_id, pkg_path = _make_project(settings, "mesh-preview-no-mesh", "no_mesh.aieng")
+    _build_test_package(pkg_path)
+
+    resp = client.get(f"/api/projects/{project_id}/mesh-preview")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is False
+
+
+def test_mesh_preview_endpoint_with_mesh(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project_id, pkg_path = _make_project(settings, "mesh-preview", "mesh_preview.aieng")
+    _build_test_package(pkg_path)
+    with zipfile.ZipFile(pkg_path, "a", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("simulation/mesh.inp", _TWO_TET_MESH_INP)
+
+    resp = client.get(f"/api/projects/{project_id}/mesh-preview")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is True
+    assert data["node_count"] == 5
+    assert data["element_count"] == 2
+    assert data["element_type"] == "C3D4"
+    assert data["target_size_mm"] == 2.5
+    assert len(data["nodes"]) == 5
+    assert len(data["edges"]) == 9
 
 
 # ── streaming endpoint (run_simulation_stream) ────────────────────────────────

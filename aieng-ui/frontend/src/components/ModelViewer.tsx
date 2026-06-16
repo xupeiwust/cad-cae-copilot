@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { assemblyAlertCounts } from "../app/geometryReport";
 import { useGeometryReport } from "../app/useGeometryReport";
 import { useFieldRegions } from "../app/useFieldRegions";
+import { useMeshPreview } from "../app/useMeshPreview";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
 import type { CaeSetupOverlayResponse, FieldOverlayConfig, FieldProbe, FieldRegionCluster, SolverFieldDescriptor } from "../types";
@@ -21,6 +22,7 @@ import {
   useFieldColorOverlay,
   useCaeSetupOverlay,
   useFieldRegionOverlay,
+  useMeshPreviewOverlay,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -79,6 +81,7 @@ export function ModelViewer({
       ((caeSetupOverlay.loads && caeSetupOverlay.loads.length > 0) ||
         (caeSetupOverlay.constraints && caeSetupOverlay.constraints.length > 0)),
   );
+  const [showMeshPreview, setShowMeshPreview] = useState(false);
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -96,13 +99,27 @@ export function ModelViewer({
     selectedId: projectId ?? null,
     geometryVersion: assetUrl ?? null,
   });
+  const { meshPreview } = useMeshPreview({
+    selectedId: projectId ?? null,
+    geometryVersion: assetUrl ?? null,
+  });
   const assemblyAlerts = assemblyAlertCounts(geometryReport);
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
   const fieldRegionsAvailable = Boolean(fieldRegions && fieldRegions.clusters.length > 0);
+  const meshPreviewAvailable = Boolean(meshPreview && meshPreview.element_count && meshPreview.element_count > 0);
 
   // 1. Three.js scene lifecycle
-  const { sceneRef, cameraRef, controlsRef, highlightGroupRef, assemblyGroupRef, markerGroupRef, caeSetupGroupRef, fieldRegionGroupRef } =
-    useThreeScene(hostRef);
+  const {
+    sceneRef,
+    cameraRef,
+    controlsRef,
+    highlightGroupRef,
+    assemblyGroupRef,
+    markerGroupRef,
+    caeSetupGroupRef,
+    fieldRegionGroupRef,
+    meshPreviewGroupRef,
+  } = useThreeScene(hostRef);
 
   // 2. Asset loading
   useAssetLoader(
@@ -193,7 +210,16 @@ export function ModelViewer({
     objectReadyKey,
   );
 
-  // 11. Field-region cluster markers
+  // 11. FE mesh preview overlay
+  useMeshPreviewOverlay(
+    meshPreviewGroupRef,
+    showMeshPreview && meshPreviewAvailable,
+    meshPreview,
+    displayTransformRef,
+    objectReadyKey,
+  );
+
+  // 12. Field-region cluster markers
   useFieldRegionOverlay(
     fieldRegionGroupRef,
     showFieldRegions && fieldRegionsAvailable,
@@ -203,7 +229,7 @@ export function ModelViewer({
     objectReadyKey,
   );
 
-  // 12. Cluster marker picking + framing
+  // 13. Cluster marker picking + framing
   useEffect(() => {
     const host = hostRef.current;
     const camera = cameraRef.current;
@@ -319,6 +345,61 @@ export function ModelViewer({
         >
           {showCaeSetup ? "Hide" : "Show"} CAE setup
         </button>
+      )}
+      {meshPreviewAvailable && (
+        <button
+          type="button"
+          className="viewer-mesh-preview-toggle"
+          onClick={() => setShowMeshPreview((value) => !value)}
+          title="Overlay the FE mesh surface wireframe and element count"
+          style={{
+            position: "absolute",
+            top: 44,
+            right: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: showMeshPreview ? "#0e7490" : "rgba(20,20,20,0.78)",
+            color: "#f5f5f5",
+            cursor: "pointer",
+          }}
+        >
+          {showMeshPreview ? "Hide" : "Show"} mesh
+        </button>
+      )}
+      {showMeshPreview && meshPreview && (
+        <div
+          className="viewer-mesh-preview-chip"
+          style={{
+            position: "absolute",
+            top: 80,
+            right: 8,
+            zIndex: 5,
+            padding: "4px 10px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #3a3a3a",
+            background: "rgba(20,20,20,0.85)",
+            color: "#f5f5f5",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+          }}
+        >
+          <span>
+            <strong>{meshPreview.element_count?.toLocaleString()}</strong> elements
+            {meshPreview.target_size_mm !== null && meshPreview.target_size_mm !== undefined
+              ? ` · ${meshPreview.target_size_mm} mm`
+              : null}
+          </span>
+          {meshPreview.quality?.coarse_flag ? (
+            <span style={{ color: "#facc15" }} title={meshPreview.quality.note ?? undefined}>
+              (coarse)
+            </span>
+          ) : null}
+        </div>
       )}
       {fieldRegionsAvailable && (
         <button

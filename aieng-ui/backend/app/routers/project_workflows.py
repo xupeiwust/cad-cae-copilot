@@ -1303,6 +1303,26 @@ def register_project_workflow_routes(
             },
         )
 
+    @app.get("/api/projects/{project_id}/mesh-preview")
+    def mesh_preview_endpoint(project_id: str) -> dict[str, Any]:
+        """Return surface wireframe + element stats for the project's FE mesh.
+
+        Reads ``simulation/mesh.inp`` from the .aieng package (written by the
+        solver runner). Returns ``{available: false}`` when no mesh exists so the
+        viewer can degrade cleanly.
+        """
+        from ..project_io import get_project, resolve_project_path
+        from .. import simulation_runner
+
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(
+            active_settings, project_id, project.get("aieng_file")
+        )
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+
+        return simulation_runner.get_mesh_preview(package_path)
+
     @app.post("/api/projects/{project_id}/chat-set-target")
     def chat_set_target_endpoint(
         project_id: str,

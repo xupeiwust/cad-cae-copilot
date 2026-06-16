@@ -872,6 +872,20 @@ export type FieldOverlayConfig = {
   thresholdMax?: number | null;
 };
 
+export type MeshPreviewResponse = {
+  available: boolean;
+  node_count?: number;
+  element_count?: number;
+  element_type?: string | null;
+  target_size_mm?: number | null;
+  nodes?: [number, number, number][];
+  edges?: [number, number][];
+  quality?: {
+    coarse_flag?: boolean;
+    note?: string | null;
+  };
+};
+
 export type RuntimeEventType =
   | "run_started"
   | "plan_created"

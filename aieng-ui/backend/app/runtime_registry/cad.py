@@ -280,6 +280,28 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_validate_subpart(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        return _cg.validate_subpart(active_settings, inp)
+
+    rt.register_tool(
+        "cad.validate_subpart",
+        _tool_cad_validate_subpart,
+        read_only=True,
+        input_schema=_schema("cad.validate_subpart"),
+        description=(
+            "Read-only: execute a build123d fragment in an isolated subprocess (no package "
+            "write, no project mutation) and report whether it builds into a usable solid — "
+            "build success or the exact error, a non-empty-solid check, solid/face counts, "
+            "per-part + total volume/area, and the union bounding box. Use it to verify a "
+            "sub-structure (a sketch->solid, a boolean, one sub-assembly) BEFORE committing it "
+            "via cad.execute_build123d or cad.replace_part, instead of one-shotting a whole "
+            "complex model. 'valid' means it builds into a non-empty solid — NOT a "
+            "manifold/watertight or manufacturability guarantee."
+        ),
+    )
+
     def _tool_cad_set_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

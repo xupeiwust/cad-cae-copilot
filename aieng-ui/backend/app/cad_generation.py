@@ -3197,6 +3197,139 @@ def _execute_build123d_code(
         return step_bytes, stl_bytes, glb_bytes, topo
 
 
+def validate_subpart(settings: Any, inp: dict[str, Any]) -> dict[str, Any]:
+    """Read-only: build a build123d fragment in isolation and report its validity.
+
+    Runs the fragment through the same sandboxed subprocess as
+    ``cad.execute_build123d`` but in a throwaway temp dir — **no project is
+    touched and no package artifact is written**. It answers "would this
+    sub-structure build into a usable solid?" so an agent can verify a sketch->
+    solid, a boolean, or one sub-assembly *before* committing it to a complex
+    model, instead of one-shotting the whole script and hoping.
+
+    Honesty boundary: ``valid`` means the fragment executed and produced at least
+    one solid with positive volume. It is NOT a manifold / watertight / self-
+    intersection guarantee (full BRep validity via BRepCheck is a follow-up).
+    """
+    code = str(inp.get("code") or "").strip()
+    if not code:
+        return {
+            "status": "error",
+            "code": "missing_code",
+            "message": "code is required (a build123d fragment that assigns `result`).",
+        }
+    timeout = inp.get("timeout", 60)
+    try:
+        timeout = int(timeout)
+    except (TypeError, ValueError):
+        timeout = 60
+    timeout = max(1, min(timeout, 600))
+
+    try:
+        _step, _stl, _glb, topo = _execute_build123d_code(code, timeout=timeout)
+    except DesignRuleViolation as exc:
+        return {
+            "status": "invalid",
+            "code": "design_rule_violation",
+            "valid": False,
+            "executed": True,
+            "checks": [{"name": "design_rules", "status": "fail", "detail": str(exc)}],
+            "message": f"A require()/assert design rule failed: {exc}",
+            "honesty": "Read-only build-sanity check on an isolated fragment. No project was modified.",
+        }
+    except RuntimeError as exc:
+        return {
+            "status": "invalid",
+            "code": "build_failed",
+            "valid": False,
+            "executed": False,
+            "checks": [{"name": "builds", "status": "fail", "detail": str(exc)[-1500:]}],
+            "message": "The fragment did not build. Fix the error before committing it.",
+            "honesty": "Read-only build-sanity check on an isolated fragment. No project was modified.",
+        }
+
+    ents = topo.get("entities", []) if isinstance(topo, dict) else []
+    solids = [e for e in ents if e.get("type") == "solid"]
+    faces = [e for e in ents if e.get("type") == "face"]
+
+    boxes = [
+        e["bounding_box"] for e in solids
+        if isinstance(e.get("bounding_box"), list) and len(e["bounding_box"]) == 6
+    ]
+    union_bbox = None
+    if boxes:
+        union_bbox = [min(b[i] for b in boxes) for i in range(3)] + [
+            max(b[i + 3] for b in boxes) for i in range(3)
+        ]
+    vols = [e.get("volume") for e in solids if isinstance(e.get("volume"), (int, float))]
+    areas = [e.get("area") for e in solids if isinstance(e.get("area"), (int, float))]
+    total_vol = round(sum(vols), 4) if vols else None
+    total_area = round(sum(areas), 4) if areas else None
+    non_empty = bool(total_vol and total_vol > 1e-9)
+
+    checks: list[dict[str, Any]] = [
+        {"name": "builds", "status": "pass", "detail": "Fragment executed and produced geometry."},
+        {
+            "name": "non_empty_solid",
+            "status": "pass" if non_empty else "fail",
+            "detail": (
+                f"total solid volume {total_vol} mm^3"
+                if non_empty
+                else "no solid with positive volume — the fragment produced an empty/degenerate shape."
+            ),
+        },
+        {
+            "name": "body_count",
+            "status": "pass" if len(solids) == 1 else ("warn" if len(solids) > 1 else "fail"),
+            "detail": (
+                f"{len(solids)} solid bod{'y' if len(solids) == 1 else 'ies'}. "
+                "Multiple bodies are expected for a sub-assembly; 0 means nothing solid was built."
+            ),
+        },
+        {
+            "name": "brep_validity",
+            "status": "unknown",
+            "detail": (
+                "Full BRep validity (self-intersection / watertightness via BRepCheck) is not "
+                "verified here — 'builds + non-empty solid' is a sanity proxy, not a manifold guarantee."
+            ),
+        },
+    ]
+
+    valid = non_empty and len(solids) >= 1
+    return {
+        "status": "ok",
+        "valid": valid,
+        "executed": True,
+        "solid_count": len(solids),
+        "face_count": len(faces),
+        "named_parts": [e.get("name") for e in solids if e.get("name")],
+        "total_volume_mm3": total_vol,
+        "total_area_mm2": total_area,
+        "bounding_box": union_bbox,
+        "parts": [
+            {
+                "name": e.get("name") or e.get("id"),
+                "volume_mm3": e.get("volume"),
+                "area_mm2": e.get("area"),
+                "bounding_box": e.get("bounding_box"),
+            }
+            for e in solids
+        ],
+        "checks": checks,
+        "honesty": (
+            "Read-only build-sanity check on an isolated fragment. No project was modified. "
+            "'valid' means it builds into a non-empty solid, NOT that it is manifold/watertight "
+            "or manufacturable."
+        ),
+        "next": (
+            "If valid, commit it via cad.execute_build123d (mode=append) or cad.replace_part "
+            "within your approved modeling plan. For a visual, pass the same code to "
+            "cad.execute_build123d with write_files=false."
+        ),
+    }
+
+
 def _execute_build123d_code_streaming(
     code: str,
     timeout: int = 60,

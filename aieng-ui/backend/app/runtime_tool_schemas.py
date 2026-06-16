@@ -1094,6 +1094,43 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ),
     },
 
+    "cad.validate_subpart": {
+        "type": "object",
+        "required": ["code"],
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": (
+                    "A build123d fragment to validate in isolation. Same contract as "
+                    "cad.execute_build123d: assign the final shape to `result`, no export "
+                    "calls; the high-level helpers (lofted_stack, capsule, ...) are available."
+                ),
+            },
+            "timeout": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 600,
+                "description": "Subprocess timeout in seconds (default 60).",
+            },
+            "project_id": {
+                "type": "string",
+                "description": "Optional / ignored — validation runs in isolation and never touches a project.",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Read-only: execute a build123d fragment in an isolated subprocess (no "
+            "package write, no project mutation) and report whether it builds into a "
+            "usable solid — build success or the exact error, a non-empty-solid check, "
+            "solid/face counts, per-part + total volume/area, and the union bounding "
+            "box. Use it to verify a sub-structure (a sketch->solid, a boolean, one "
+            "sub-assembly) BEFORE committing it via cad.execute_build123d or "
+            "cad.replace_part, instead of one-shotting a whole complex model. "
+            "'valid' means it builds into a non-empty solid — NOT a manifold/watertight "
+            "or manufacturability guarantee."
+        ),
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),

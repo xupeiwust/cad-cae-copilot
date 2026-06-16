@@ -1532,6 +1532,54 @@ def test_diff_topology_volume_jitter_below_threshold_is_identical() -> None:
     assert diff["internal_feature_parts"] == []
 
 
+# ── cad.validate_subpart (read-only isolated fragment validation) ─────────────
+
+def test_validate_subpart_accepts_valid_solid() -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import validate_subpart
+
+    out = validate_subpart(None, {"code": "from build123d import *\nresult = Box(10, 10, 10)\n"})
+    assert out["status"] == "ok"
+    assert out["valid"] is True
+    assert out["executed"] is True
+    assert out["solid_count"] == 1
+    assert out["total_volume_mm3"] == pytest.approx(1000.0, rel=0.02)
+    assert out["bounding_box"] is not None
+    # no project artifact is implied by a read-only validation
+    assert any(c["name"] == "non_empty_solid" and c["status"] == "pass" for c in out["checks"])
+
+
+def test_validate_subpart_reports_build_error_without_raising() -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import validate_subpart
+
+    # references an undefined name -> the subprocess raises -> reported, not thrown
+    out = validate_subpart(None, {"code": "from build123d import *\nresult = totally_undefined_symbol\n"})
+    assert out["status"] == "invalid"
+    assert out["valid"] is False
+    assert out["executed"] is False
+    assert any(c["name"] == "builds" and c["status"] == "fail" for c in out["checks"])
+
+
+def test_validate_subpart_surfaces_design_rule_violation() -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import validate_subpart
+
+    code = "from build123d import *\nrequire(False, 'wall too thin')\nresult = Box(1, 1, 1)\n"
+    out = validate_subpart(None, {"code": code})
+    assert out["status"] == "invalid"
+    assert out["code"] == "design_rule_violation"
+    assert out["valid"] is False
+
+
+def test_validate_subpart_requires_code() -> None:
+    from app.cad_generation import validate_subpart
+
+    out = validate_subpart(None, {})
+    assert out["status"] == "error"
+    assert out["code"] == "missing_code"
+
+
 # ── critique (engineering-diagnostics) regression diff ────────────────────────
 # Two solids far apart trip the deterministic `floating_component` high finding;
 # moving them apart introduces it, moving them together resolves it. This lets us

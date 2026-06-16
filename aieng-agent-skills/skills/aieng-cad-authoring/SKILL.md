@@ -77,6 +77,38 @@ signals every `cad.execute_build123d` / `edit_parameter` / `replace_part` /
   bushing, aircraft, vehicle, wheel), `cad.plan_build123d_skill` returns a
   parameterized starting point with editable constants — review it, then execute.
 
+## Complex models — decompose, validate, then commit
+
+Do not one-shot a whole complex model (multi-part assembly, gearbox, robot arm,
+multi-shell housing, anything with a kinematic chain or many mates). A single
+large `cad.execute_build123d` script is the highest-failure path. Instead:
+
+1. **Plan the parts list first.** Name every part and its role; identify the
+   inter-part relationships that must hold (shaft-in-bore, gear mesh center
+   distance, links connecting end-to-end). State landmark coordinates / lengths /
+   angles as `UPPER_SNAKE_CASE` constants once, up front.
+2. **Validate each sub-structure in isolation before committing it.** Use
+   `cad.validate_subpart { code }` (read-only, no package write) to check that a
+   sketch→solid, a boolean, or one sub-assembly builds into a non-empty solid and
+   read its error if not. This turns the all-or-nothing build loop into cheap,
+   debuggable steps. `valid` means it builds into a solid — NOT that it is
+   manifold/watertight or manufacturable.
+3. **Commit incrementally so the user watches it assemble.** First part with
+   `mode="replace"`, then `mode="append"` (building on `previous_result`) for each
+   subsequent part; fix or swap a single part with `cad.replace_part` /
+   `cad.remove_part` instead of rewriting the whole script. Read `regression_diff`
+   after each edit — `internal_feature_change` flags a bore/hole/pocket edit that
+   changed volume without moving the bounding box (it is a real change, not a no-op).
+4. **Self-correct from `geometry_report` between steps** — `floating_parts` means
+   a part didn't connect (usually a coordinate typo); symmetry issues mean a
+   left/right pair is off. Fix before adding the next part.
+
+Honesty: a `Compound(children=[...])` with `.label`ed parts is a *visual*
+assembly. The workbench does not yet verify mates/joints/clearances as
+constraints (that is the Assembly IR authoring path, separate from this skill) —
+so do not claim kinematic validity, fit, or interference-free assembly from CAD
+geometry alone.
+
 ## Standard parts (bd_warehouse)
 
 For standard mechanical parts — fasteners, nuts, washers, bearings, gears, threads,

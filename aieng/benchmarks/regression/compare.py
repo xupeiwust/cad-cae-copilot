@@ -127,6 +127,35 @@ def build_diff(baseline_dir: Path, current_dir: Path) -> str:
             if d:
                 lines.append(f"| part_count | {int(d['baseline'])} | {int(d['current'])} | {int(d['delta']):+d} |")
 
+            # Resolved intent (text comparison)
+            b_intent = b_metrics.get("resolved_intent")
+            c_intent = c_metrics.get("resolved_intent")
+            if b_intent is not None or c_intent is not None:
+                b_intent_str = b_intent if b_intent is not None else "-"
+                c_intent_str = c_intent if c_intent is not None else "-"
+                lines.append(
+                    f"| resolved_intent | {b_intent_str} | {c_intent_str} | {'⚠️' if b_intent != c_intent else ''} |"
+                )
+
+            # Tool sequence (text comparison)
+            b_tools = b_metrics.get("tool_sequence")
+            c_tools = c_metrics.get("tool_sequence")
+            if b_tools is not None or c_tools is not None:
+                if b_tools is None:
+                    b_tools_str = "-"
+                elif isinstance(b_tools, list):
+                    b_tools_str = ", ".join(str(t) for t in b_tools)
+                else:
+                    b_tools_str = str(b_tools)
+                if c_tools is None:
+                    c_tools_str = "-"
+                elif isinstance(c_tools, list):
+                    c_tools_str = ", ".join(str(t) for t in c_tools)
+                else:
+                    c_tools_str = str(c_tools)
+                match_marker = "⚠️" if b_tools != c_tools else ""
+                lines.append(f"| tool_sequence | {b_tools_str} | {c_tools_str} | {match_marker} |")
+
         lines.append("")
 
     return "\n".join(lines)

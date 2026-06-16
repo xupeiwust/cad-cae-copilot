@@ -17,6 +17,7 @@ Start here: [`AGENT_BENCHMARK_RUNBOOK.md`](AGENT_BENCHMARK_RUNBOOK.md)
 - `prompts/` — ~22 fixed Markdown prompts with YAML front-matter (`id`, `tags`, optional `seed_package`).
 - `AGENT_BENCHMARK_RUNBOOK.md` — step-by-step guide for an AI agent.
 - `init_run.py` — creates a run directory with one subdirectory per prompt.
+- `run_with_subagents.py` — initializes a run and emits one isolated task per prompt for sub-agent execution.
 - `record.py` — records the result of a single prompt after the agent executes it.
 - `compare.py` — diffs two runs and emits a Markdown report.
 - `tests/test_regression.py` — smoke tests for the kit plumbing.
@@ -29,7 +30,7 @@ Start here: [`AGENT_BENCHMARK_RUNBOOK.md`](AGENT_BENCHMARK_RUNBOOK.md)
    python init_run.py --tags core --output runs/run_$(date -u +%Y%m%dT%H%M%SZ)
    ```
 
-2. The agent reads `AGENT_BENCHMARK_RUNBOOK.md` and executes each prompt through MCP.
+2. The agent reads `AGENT_BENCHMARK_RUNBOOK.md` and executes each prompt through MCP. Preferably, each prompt is run by an isolated sub-agent so that the executor sees only a single user request.
 
 3. After each prompt, the agent records the result:
    ```bash

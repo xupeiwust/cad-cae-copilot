@@ -1622,6 +1622,11 @@ _ORGANIC_HELPER_HINTS: tuple[str, ...] = (
     "naca_airfoil(", "fuselage_profile(", "wheel(",
 )
 
+# Cylindrical features at or below this radius are treated as bolt/screw holes
+# (mounting candidates); larger ones are bores (bearing seats / pilot / register /
+# clearance bores), not mounting holes (#289). ~8mm radius ≈ an M16 clearance hole.
+_MOUNTING_HOLE_MAX_RADIUS_MM = 8.0
+
 
 def _infer_model_kind(named_solids: list[dict[str, Any]], source_code: str | None) -> str:
     """Decide whether a model is 'organic' or 'mechanical' for heuristic gating.
@@ -1862,8 +1867,10 @@ def _topology_to_feature_graph(
                 radius_groups[matched].append(face["id"])
 
         for radius, face_ids in radius_groups.items():
-            if len(face_ids) >= 2:
-                feat_counter += 1
+            if len(face_ids) < 2:
+                continue
+            feat_counter += 1
+            if radius <= _MOUNTING_HOLE_MAX_RADIUS_MM:
                 ftype = "mounting_hole_pattern" if len(face_ids) >= 4 else "mounting_hole"
                 features.append({
                     "id": f"feat_{feat_counter:03d}",
@@ -1872,6 +1879,19 @@ def _topology_to_feature_graph(
                     "geometry_refs": {"faces": face_ids},
                     "parameters": {"hole_diameter_mm": round(radius * 2, 2), "count": len(face_ids)},
                     "intent": {"role": "mounting_candidate"},
+                })
+            else:
+                # Large cylindrical features are BORES — bearing seats, pilot/register
+                # bores, clearance bores — not bolt holes. Labelling them
+                # mounting_hole(_pattern) mis-advised CAE/BOM and tripped the
+                # standard-drill DfM check (#289). Tag them as bores instead.
+                features.append({
+                    "id": f"feat_{feat_counter:03d}",
+                    "type": "bore",
+                    "name": f"Bore r={radius:.1f}mm ({len(face_ids)})",
+                    "geometry_refs": {"faces": face_ids},
+                    "parameters": {"bore_diameter_mm": round(radius * 2, 2), "count": len(face_ids)},
+                    "intent": {"role": "feature_reference"},
                 })
 
         # base plate — largest planar face in the bottom 20% of Z range.

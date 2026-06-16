@@ -23,6 +23,10 @@ from fastapi import HTTPException
 
 SCHEMA_VERSION = "0.1"
 
+# Cylinders at/below this radius are bolt/screw holes (mounting candidates); larger
+# ones are bores (bearing seats / pilot / clearance bores), not mounting holes (#289).
+_MOUNTING_HOLE_MAX_RADIUS_MM = 8.0
+
 BREP_GRAPH_MEMBER = "graph/brep_graph.json"
 ENTITY_INDEX_MEMBER = "graph/entity_index.json"
 BREP_DIGEST_MEMBER = "ai/brep_digest.md"
@@ -577,7 +581,13 @@ def _roles_for_face(
     if standard_part:
         return sorted(set(roles))
     if surface == "cylinder":
-        roles.append("mounting_candidate")
+        # Small cylinders are bolt/screw holes (mounting candidates); larger ones
+        # are bores — bearing seats / pilot / clearance bores — not mounting holes (#289).
+        r = raw.get("radius")
+        if not isinstance(r, (int, float)):
+            r = raw.get("radius_mm")
+        roles.append("bore" if isinstance(r, (int, float)) and r > _MOUNTING_HOLE_MAX_RADIUS_MM
+                     else "mounting_candidate")
     if len(model_bbox) == 6 and normal and center:
         zmin, zmax = model_bbox[2], model_bbox[5]
         span = max(zmax - zmin, 1e-9)

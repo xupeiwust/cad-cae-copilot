@@ -1981,6 +1981,40 @@ def test_diagnose_ready_vs_needs_repair(tmp_path: Path) -> None:
     assert bad["repair_actions"] is not None
 
 
+def test_large_bores_are_bores_not_mounting_holes(tmp_path: Path) -> None:
+    # #289: small cylinders are bolt holes (mounting_candidate); large ones are bores.
+    pytest.importorskip("build123d")
+    from app.brep_graph import build_brep_graph_from_topology
+    from app.cad_generation import _execute_build123d_code, _topology_to_feature_graph
+
+    code = (
+        "from build123d import *\n"
+        "with BuildPart() as bp:\n"
+        "    Box(100, 80, 10, align=(Align.CENTER, Align.CENTER, Align.MIN))\n"
+        "    with Locations((40, 30, 0), (-40, 30, 0), (40, -30, 0), (-40, -30, 0)):\n"
+        "        Cylinder(2.5, 30, mode=Mode.SUBTRACT)\n"   # 4 bolt holes (r=2.5)
+        "    with Locations((20, 0, 0), (-20, 0, 0)):\n"
+        "        Cylinder(11, 30, mode=Mode.SUBTRACT)\n"     # 2 bearing bores (r=11)
+        "result = bp.part\n"
+    )
+    _s, _st, _g, topo = _execute_build123d_code(code)
+    fg = _topology_to_feature_graph(topo, source_code=code, model_kind="mechanical")
+    types = [f["type"] for f in fg["features"]]
+    assert "mounting_hole_pattern" in types          # the 4 small holes
+    assert "bore" in types                            # the 2 large bores (was mounting_hole)
+    bore = next(f for f in fg["features"] if f["type"] == "bore")
+    assert bore["intent"]["role"] == "feature_reference"
+    assert not any(f["type"] in ("mounting_hole", "mounting_hole_pattern")
+                   and f["parameters"].get("hole_diameter_mm", 0) > 16 for f in fg["features"])
+
+    g = build_brep_graph_from_topology(topo, feature_graph=fg)
+    cyl = [f for f in g["brep_graph"]["entities"]["faces"] if f.get("surface_type") == "cylinder"]
+    big = [f for f in cyl if (f.get("radius_mm") or 0) > 8]
+    small = [f for f in cyl if 0 < (f.get("radius_mm") or 0) <= 8]
+    assert big and all("bore" in f["roles"] and "mounting_candidate" not in f["roles"] for f in big)
+    assert small and all("mounting_candidate" in f["roles"] for f in small)
+
+
 def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import design_review, execute_build123d_code

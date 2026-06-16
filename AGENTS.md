@@ -749,6 +749,9 @@ failed builds. Each takes `label=` / `color=` and returns a `Part`:
 | `chamfered_box(length, width, height, chamfer_size, edges=)` | machined enclosures/housings with broken edges | angular counterpart to `rounded_box`; `edges="all"` or `"vertical"` |
 | `l_bracket(length, width, height, thickness, fillet_radius=)` | L-shaped mounting brackets/angles | base plate (+X) + vertical wall (+Z) joined at X=0; optional rounded interior corner; bottom at Z=0 |
 | `housing(length, width, height, wall=, fillet_radius=, open_top=, floor=)` | gearbox/pump bodies, electronics enclosures, valve bodies | designed shell (vs raw `Box−Box`): `wall`-thick walls + **broken (filleted) outer edges**, optional open top (cover mates there) + solid floor; bottom at Z=0 |
+| `boss(diameter, height, hole_dia=, axis=)` | bearing seats, screw/insert bosses, standoffs | cylinder + optional concentric bore; base at origin along `axis`. Union onto a wall for a bearing seat (bore = bearing OD) |
+| `rib(length, height, thickness, fillet_radius=)` | stiffening gussets where a wall meets a plate | right-triangle gusset in X-Z (thickness on Y, centred); right angle at origin, legs +X / +Z |
+| `mounting_tab(length, width, thickness, hole_dia, fillet_radius=)` | mounting feet/lugs on a housing | flat plate, rounded outer corners + central bolt hole; bottom at Z=0 |
 
 ```python
 # A humanoid torso + symmetric arms + blended head — no BuildSketch boilerplate:

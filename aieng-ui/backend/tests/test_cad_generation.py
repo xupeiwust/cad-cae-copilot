@@ -1711,6 +1711,32 @@ def test_housing_helper_builds_and_reads_designed(tmp_path: Path) -> None:
     assert not any(f["rule"] == "no_edge_breaking" for f in rev["fidelity"]["findings"])
 
 
+def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import design_review, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "detailed-housing")
+    # housing + bearing-seat boss + stiffening rib + mounting foot — the detail a
+    # raw Box-Box gearbox was missing
+    code = (
+        "from build123d import *\n"
+        "body = housing(120, 80, 60, wall=5, label='housing')\n"
+        "seat = boss(26, 8, hole_dia=12).moved(Location((40, 0, 30))); seat.label = 'bearing_seat'\n"
+        "stiff = rib(20, 30, 5).moved(Location((-55, 0, 5))); stiff.label = 'rib_main'\n"
+        "foot = mounting_tab(24, 20, 6, 5).moved(Location((70, 0, 0))); foot.label = 'foot_R'\n"
+        "result = Compound(children=[body, seat, stiff, foot])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    for part in ("housing", "bearing_seat", "rib_main", "foot_R"):
+        assert part in out["named_parts"], out["named_parts"]
+
+    rev = design_review(settings, pid, {})
+    assert rev["fidelity"]["signals"]["has_edge_breaking"] is True
+    assert rev["summary"]["modeling_fidelity"]["level"] in {"designed", "basic"}
+
+
 # ── critique (engineering-diagnostics) regression diff ────────────────────────
 # Two solids far apart trip the deterministic `floating_component` high finding;
 # moving them apart introduces it, moving them together resolves it. This lets us

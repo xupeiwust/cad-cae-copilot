@@ -655,6 +655,75 @@ def housing(length, width, height, wall=3.0, fillet_radius=None, open_top=True,
     return _aieng_finish(_bp.part, label, color)
 
 
+def boss(diameter, height, hole_dia=0.0, axis="Z", label=None, color=None):
+    \"\"\"A cylindrical boss with an optional concentric bore -- the engineering
+    detail a raw box/housing is usually missing. Use it as a BEARING SEAT (place
+    on a housing wall, bore = shaft/bearing OD), a screw/insert boss (bore = tap
+    drill), or a standoff. Base sits at the origin along ``axis`` ("X"/"Y"/"Z").
+    Union it onto a wall (or `organic_blend` it) so it reads as integral.\"\"\"
+    d = float(diameter); h = float(height); hd = float(hole_dia)
+    if d <= 0 or h <= 0:
+        raise ValueError("boss needs diameter > 0 and height > 0")
+    if hd >= d:
+        raise ValueError("boss hole_dia must be < diameter")
+    with BuildPart() as _bp:
+        Cylinder(d / 2.0, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        if hd > 0:
+            Cylinder(hd / 2.0, h * 3, align=(Align.CENTER, Align.CENTER, Align.CENTER), mode=Mode.SUBTRACT)
+    part = _bp.part
+    a = str(axis).upper()
+    if a == "X":
+        part = part.rotate(Axis.Y, 90)
+    elif a == "Y":
+        part = part.rotate(Axis.X, 90)
+    return _aieng_finish(part, label, color)
+
+
+def rib(length, height, thickness, fillet_radius=0.0, label=None, color=None):
+    \"\"\"A triangular stiffening rib / gusset in the X-Z plane (thickness along Y,
+    centred on Y): right angle at the origin, one leg ``length`` along +X, the
+    other ``height`` along +Z. Place it where a wall meets a plate to stiffen the
+    join. Optional ``fillet_radius`` breaks the through-thickness edges.\"\"\"
+    L = float(length); H = float(height); t = float(thickness)
+    if L <= 0 or H <= 0 or t <= 0:
+        raise ValueError("rib needs length, height, thickness all > 0")
+    with BuildPart() as _bp:
+        with BuildSketch(Plane.XZ):
+            with BuildLine():
+                Polyline((0, 0), (L, 0), (0, H), close=True)
+            make_face()
+        extrude(amount=t / 2.0, both=True)
+        r = float(fillet_radius)
+        if r > 0:
+            try:
+                fillet(_bp.edges().filter_by(Axis.Y), radius=min(r, t / 2.0 - 0.01))
+            except Exception:
+                pass
+    return _aieng_finish(_bp.part, label, color)
+
+
+def mounting_tab(length, width, thickness, hole_dia, fillet_radius=None, label=None, color=None):
+    \"\"\"A flat mounting foot/tab: a plate (``length`` x ``width`` x ``thickness``,
+    bottom at Z=0) with rounded outer corners and a central bolt hole
+    (``hole_dia``). Place several around a housing base as mounting feet.
+    ``fillet_radius`` defaults to ~25% of the smaller plan dimension.\"\"\"
+    L = float(length); W = float(width); t = float(thickness); hd = float(hole_dia)
+    if L <= 0 or W <= 0 or t <= 0:
+        raise ValueError("mounting_tab needs length, width, thickness all > 0")
+    fr = min(L, W) * 0.25 if fillet_radius is None else float(fillet_radius)
+    fr = max(0.0, min(fr, min(L, W) / 2.0 - 0.01))
+    with BuildPart() as _bp:
+        Box(L, W, t, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        if fr > 0:
+            try:
+                fillet(_bp.edges().filter_by(Axis.Z), radius=fr)
+            except Exception:
+                pass
+        if 0 < hd < min(L, W):
+            Cylinder(hd / 2.0, t * 3, align=(Align.CENTER, Align.CENTER, Align.CENTER), mode=Mode.SUBTRACT)
+    return _aieng_finish(_bp.part, label, color)
+
+
 # ── design-rule assertions ───────────────────────────────────────────────────
 # Let authored code embed design constraints that deterministically FAIL the
 # build (verified by construction) instead of being hoped for. A failed
@@ -2883,7 +2952,7 @@ def _detect_advanced_features(features: list[dict[str, Any]], source_code: str) 
     # Quality helpers imply finishing / shaped bodies even when the user's source
     # never literally calls fillet()/loft() — the operation lives inside the helper.
     # Credit them so the modeling-fidelity check reflects the actual intent.
-    _finish_helpers = ("rounded_box(", "chamfered_box(", "housing(")
+    _finish_helpers = ("rounded_box(", "chamfered_box(", "housing(", "mounting_tab(")
     _shaped_helpers = (
         "lofted_stack(", "capsule(", "tapered_cylinder(", "revolved_profile(",
         "swept_tube(", "organic_blend(", "fuselage_profile(", "naca_airfoil(",

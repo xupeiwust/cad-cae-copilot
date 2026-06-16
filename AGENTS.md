@@ -756,6 +756,10 @@ failed builds. Each takes `label=` / `color=` and returns a `Part`:
 | `boss(diameter, height, hole_dia=, axis=)` | bearing seats, screw/insert bosses, standoffs | cylinder + optional concentric bore; base at origin along `axis`. Union onto a wall for a bearing seat (bore = bearing OD) |
 | `rib(length, height, thickness, fillet_radius=)` | stiffening gussets where a wall meets a plate | right-triangle gusset in X-Z (thickness on Y, centred); right angle at origin, legs +X / +Z |
 | `mounting_tab(length, width, thickness, hole_dia, fillet_radius=)` | mounting feet/lugs on a housing | flat plate, rounded outer corners + central bolt hole; bottom at Z=0 |
+| `centered_on(part, ref, axes=)` | position a part relative to another (vs guessing `Location`) | moves `part`'s bbox center onto `ref`'s, on the chosen `axes` ("xyz" subset) |
+| `offset_from(part, ref, dx=, dy=, dz=)` | place a part at a known offset | part center at `ref` center + (dx,dy,dz) |
+| `coaxial(part, ref, axis=)` | shaft-in-bore / boss-on-hole alignment | matches the two cross-axis center coords to `ref` (keeps position along `axis`); validate with a `concentric` mate |
+| `stack_on(part, ref, gap=, center=)` | cover on a housing, part on a face | part's bottom sits on `ref`'s top (+Z) + `gap`, XY-centered; validate with a `coincident` mate |
 
 ```python
 # A humanoid torso + symmetric arms + blended head — no BuildSketch boilerplate:

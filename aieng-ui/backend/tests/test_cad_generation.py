@@ -1914,6 +1914,34 @@ def test_cad_brief_feeds_validate_targets_end_to_end(tmp_path: Path) -> None:
     assert all(t["status"] == "pass" for t in out["targets"])
 
 
+def test_positioning_helpers_place_parts_relative(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import _execute_build123d_code
+
+    code = (
+        "from build123d import *\n"
+        "plate = Box(80, 60, 10); plate.label = 'plate'\n"
+        "pin = stack_on(Cylinder(5, 20), plate, label='pin')\n"          # bottom on plate top, XY-centered
+        "ref = Box(20, 20, 40).moved(Location((10, 20, 0)))\n"
+        "shaft = coaxial(Cylinder(3, 60), ref, axis='Z', label='shaft')\n"  # X,Y → ref center (10,20)
+        "result = Compound(children=[plate, pin, shaft])\n"
+    )
+    _s, _st, _g, topo = _execute_build123d_code(code)
+    bb = {e["name"]: e["bounding_box"] for e in topo["entities"] if e.get("type") == "solid"}
+
+    def cx(b):
+        return (b[0] + b[3]) / 2
+
+    def cy(b):
+        return (b[1] + b[4]) / 2
+
+    # stack_on: pin's bottom sits at the plate's top, centered in XY
+    assert abs(bb["pin"][2] - bb["plate"][5]) < 0.05
+    assert abs(cx(bb["pin"]) - cx(bb["plate"])) < 0.05 and abs(cy(bb["pin"]) - cy(bb["plate"])) < 0.05
+    # coaxial(Z): shaft's cross-axis center matches the ref's center (10, 20)
+    assert abs(cx(bb["shaft"]) - 10) < 0.05 and abs(cy(bb["shaft"]) - 20) < 0.05
+
+
 def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import design_review, execute_build123d_code

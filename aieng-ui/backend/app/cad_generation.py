@@ -743,6 +743,61 @@ def mounting_tab(length, width, thickness, hole_dia, fillet_radius=None, label=N
     return _aieng_finish(_bp.part, label, color)
 
 
+# ── source-level positioning helpers ─────────────────────────────────────────
+# Place a part RELATIVE to another instead of guessing raw Location(x, y, z) —
+# the #1 cause of parts that look close but aren't actually mated. All are
+# bounding-box based (robust, no face selection) and return the moved part; pair
+# them with the cad.define_mate predicates (these ACHIEVE the relationship, the
+# predicates VALIDATE it). Then re-`.label`/`.color` the result as usual.
+
+def _aieng_center_of(obj):
+    bb = obj.bounding_box()
+    return ((bb.min.X + bb.max.X) / 2.0, (bb.min.Y + bb.max.Y) / 2.0, (bb.min.Z + bb.max.Z) / 2.0)
+
+
+def centered_on(part, ref, axes="xyz", label=None, color=None):
+    \"\"\"Move ``part`` so its bbox center coincides with ``ref``'s, on the chosen
+    ``axes`` (subset of "xyz"). Default centers on all three.\"\"\"
+    pc, rc = _aieng_center_of(part), _aieng_center_of(ref)
+    ax = str(axes).lower()
+    d = (rc[0] - pc[0] if "x" in ax else 0.0,
+         rc[1] - pc[1] if "y" in ax else 0.0,
+         rc[2] - pc[2] if "z" in ax else 0.0)
+    return _aieng_finish(part.moved(Location(d)), label, color)
+
+
+def offset_from(part, ref, dx=0.0, dy=0.0, dz=0.0, label=None, color=None):
+    \"\"\"Place ``part``'s center at ``ref``'s center + (dx, dy, dz).\"\"\"
+    pc, rc = _aieng_center_of(part), _aieng_center_of(ref)
+    d = (rc[0] + float(dx) - pc[0], rc[1] + float(dy) - pc[1], rc[2] + float(dz) - pc[2])
+    return _aieng_finish(part.moved(Location(d)), label, color)
+
+
+def coaxial(part, ref, axis="Z", label=None, color=None):
+    \"\"\"Align ``part`` coaxially with ``ref`` about ``axis`` ("X"/"Y"/"Z"): match the
+    two CROSS-axis center coordinates to ref (keeps part's position along ``axis``).
+    Use for shaft-in-bore / boss-on-hole; validate with a `concentric` mate.\"\"\"
+    a = str(axis).upper()
+    pc, rc = _aieng_center_of(part), _aieng_center_of(ref)
+    d = (0.0 if a == "X" else rc[0] - pc[0],
+         0.0 if a == "Y" else rc[1] - pc[1],
+         0.0 if a == "Z" else rc[2] - pc[2])
+    return _aieng_finish(part.moved(Location(d)), label, color)
+
+
+def stack_on(part, ref, gap=0.0, center=True, label=None, color=None):
+    \"\"\"Sit ``part`` on top of ``ref`` (+Z): part's bottom at ref's top + ``gap``.
+    Centers in X/Y by default. Use for a cover on a housing; validate with a
+    `coincident` mate.\"\"\"
+    pbb, rbb = part.bounding_box(), ref.bounding_box()
+    dz = (rbb.max.Z + float(gap)) - pbb.min.Z
+    dx = dy = 0.0
+    if center:
+        pc, rc = _aieng_center_of(part), _aieng_center_of(ref)
+        dx, dy = rc[0] - pc[0], rc[1] - pc[1]
+    return _aieng_finish(part.moved(Location((dx, dy, dz))), label, color)
+
+
 # ── design-rule assertions ───────────────────────────────────────────────────
 # Let authored code embed design constraints that deterministically FAIL the
 # build (verified by construction) instead of being hoped for. A failed

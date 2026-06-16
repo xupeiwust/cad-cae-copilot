@@ -114,17 +114,23 @@ large `cad.execute_build123d` script is the highest-failure path. Instead:
    read its error if not. This turns the all-or-nothing build loop into cheap,
    debuggable steps. `valid` means it builds into a solid — NOT that it is
    manifold/watertight or manufacturable.
-3. **Commit incrementally so the user watches it assemble.** First part with
+3. **Position parts relative to each other, not by guessed coordinates.** Raw
+   `Location(x, y, z)` guesses are the top cause of parts that look close but
+   aren't mated. Use the positioning helpers — `centered_on`, `offset_from`,
+   `coaxial(part, ref, axis=)` (shaft-in-bore), `stack_on(part, ref, gap=)` (cover
+   on housing) — so parts mate by construction, then verify with the matching
+   `cad.define_mate` predicate (`concentric` / `coincident`).
+4. **Commit incrementally so the user watches it assemble.** First part with
    `mode="replace"`, then `mode="append"` (building on `previous_result`) for each
    subsequent part; fix or swap a single part with `cad.replace_part` /
    `cad.remove_part` instead of rewriting the whole script. Read `regression_diff`
    after each edit — `internal_feature_change` flags a bore/hole/pocket edit that
    changed volume without moving the bounding box (it is a real change, not a no-op).
-4. **Self-correct from `geometry_report` between steps** — `floating_parts` means
+5. **Self-correct from `geometry_report` between steps** — `floating_parts` means
    a part didn't connect (usually a coordinate typo); symmetry issues mean a
    left/right pair is off. Fix before adding the next part.
 
-5. **Record the assembly structure (optional, when relationships matter).** A
+6. **Record the assembly structure (optional, when relationships matter).** A
    `Compound(children=[...])` with `.label`ed parts is only a *visual* assembly.
    To make the parts and their relationships first-class, author the Assembly IR:
    - `cad.define_part { geometry_ref: "<label>", role }` for each part (links to

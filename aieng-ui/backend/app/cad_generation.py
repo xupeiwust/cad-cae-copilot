@@ -1890,6 +1890,25 @@ def _bbox_volume(bb: list[float]) -> float:
     return max(0.0, bb[3] - bb[0]) * max(0.0, bb[4] - bb[1]) * max(0.0, bb[5] - bb[2])
 
 
+def _union_solid_bbox(topology_map: dict[str, Any]) -> list[float] | None:
+    """Union AABB over ALL solids — the whole-model bounding box (#285).
+
+    `topology_summary.bounding_box` previously used only the first solid, which
+    under-reported any multi-body model (e.g. an L-bracket whose tall part is a
+    later body). This returns the union so the summary reflects the entire model.
+    """
+    boxes = [
+        e["bounding_box"]
+        for e in (topology_map or {}).get("entities", [])
+        if e.get("type") == "solid"
+        and isinstance(e.get("bounding_box"), list)
+        and len(e["bounding_box"]) == 6
+    ]
+    if not boxes:
+        return None
+    return [min(b[i] for b in boxes) for i in range(3)] + [max(b[i + 3] for b in boxes) for i in range(3)]
+
+
 def _bbox_contains(outer: list[float], inner: list[float], tol: float = 1.0) -> bool:
     if len(outer) < 6 or len(inner) < 6:
         return False
@@ -2640,7 +2659,7 @@ def _finish_execute_build123d_response(
         "topology_summary": {
             "face_count": face_count,
             "feature_count": feature_count,
-            "bounding_box": solid.get("bounding_box") if solid else None,
+            "bounding_box": _union_solid_bbox(topo),
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
@@ -5237,7 +5256,7 @@ def run_cad_generation(
         "topology_summary": {
             "face_count": result.metadata.get("face_count", 0),
             "feature_count": result.metadata.get("feature_count", 0),
-            "bounding_box": solid.get("bounding_box") if solid else None,
+            "bounding_box": _union_solid_bbox(result.topology_map),
         },
         "feature_graph": result.feature_graph,
         "written_artifacts": written,
@@ -5604,7 +5623,7 @@ def execute_build123d_code(
         "topology_summary": {
             "face_count": face_count,
             "feature_count": feature_count,
-            "bounding_box": solid.get("bounding_box") if solid else None,
+            "bounding_box": _union_solid_bbox(topo),
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
@@ -5876,7 +5895,7 @@ def run_cad_generation_stream(
             "topology_summary": {
                 "face_count": face_count,
                 "feature_count": len(feature_graph.get("features", [])),
-                "bounding_box": solid.get("bounding_box") if solid else None,
+                "bounding_box": _union_solid_bbox(topo),
             },
             "feature_graph": _slim_feature_graph_for_response(feature_graph),
             "geometry_report": _compute_geometry_report(topo),
@@ -6032,7 +6051,7 @@ def refine_cad_generation(
         "topology_summary": {
             "face_count": face_count,
             "feature_count": len(feature_graph.get("features", [])),
-            "bounding_box": solid.get("bounding_box") if solid else None,
+            "bounding_box": _union_solid_bbox(topo),
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "written_artifacts": written,
@@ -7241,7 +7260,7 @@ def edit_build123d_parameter(
                 1 for e in topo.get("entities", []) if e.get("type") == "face"
             ),
             "feature_count": len(feature_graph.get("features", [])),
-            "bounding_box": solid.get("bounding_box") if solid else None,
+            "bounding_box": _union_solid_bbox(topo),
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
@@ -7412,7 +7431,7 @@ def _rebuild_after_part_edit(
         "topology_summary": {
             "face_count": sum(1 for e in topo.get("entities", []) if e.get("type") == "face"),
             "feature_count": len(feature_graph.get("features", [])),
-            "bounding_box": solid.get("bounding_box") if solid else None,
+            "bounding_box": _union_solid_bbox(topo),
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),

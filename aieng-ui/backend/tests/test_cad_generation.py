@@ -1101,7 +1101,9 @@ def test_cad_refine_tool_uses_server_env_key_and_mocked_refinement(
     assert out["mode"] == "refine"
     assert out["named_parts"] == ["torso", "thigh_L"]
     assert out["parts_added"] == ["thigh_L"]
-    assert out["topology_summary"]["bounding_box"] == [0, 0, 0, 10, 10, 10]
+    # #285: topology_summary.bounding_box is the union over ALL solids (whole model),
+    # not just the first — here torso (z 0..10) ∪ thigh_L (z -20..0) → z -20..10.
+    assert out["topology_summary"]["bounding_box"] == [0, 0, -20, 10, 10, 10]
     refine_mock.assert_called_once()
     assert refine_mock.call_args.kwargs["api_key"] is None
 
@@ -1576,6 +1578,18 @@ def test_diff_topology_volume_jitter_below_threshold_is_identical() -> None:
     diff = _diff_topology(before, after, expected_parts={"p"})
     assert diff["verdict"] == "identical"
     assert diff["internal_feature_parts"] == []
+
+
+def test_union_solid_bbox_spans_all_solids() -> None:
+    from app.cad_generation import _union_solid_bbox
+
+    topo = {"entities": [
+        {"type": "solid", "bounding_box": [0, 0, 0, 10, 10, 10]},
+        {"type": "solid", "bounding_box": [0, 0, -20, 10, 10, 0]},
+        {"type": "face", "bounding_box": [0, 0, 0, 5, 5, 5]},  # faces ignored
+    ]}
+    assert _union_solid_bbox(topo) == [0, 0, -20, 10, 10, 10]
+    assert _union_solid_bbox({"entities": []}) is None
 
 
 # ── cad.validate_subpart (read-only isolated fragment validation) ─────────────

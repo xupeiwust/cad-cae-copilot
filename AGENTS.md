@@ -1507,16 +1507,27 @@ contact physics. When present, the backend best-effort writes
 `aieng/schemas/assembly_ir.schema.json`. Single-part packages are unaffected.
 
 **Authoring the IR (no approval).** An agent builds the IR incrementally from a
-package's named CAD parts with two tools (they mutate only assembly metadata, no
-geometry, no approval): `cad.define_part { project_id, geometry_ref, role }` adds
-a part and links it to a named solid (verifying the ref against the topology and
-reporting `geometry_ref_known` true/false/null — never fabricated); then
-`cad.define_mate { project_id, connection_type, part_a, part_b }` adds a
-connection between two **already-defined** parts (a mate to an undefined part is
-refused, and proxy connections always carry honest `limitations`). Each call
-re-validates and refreshes the derived registry / connection graph / CAE draft.
-Authoring stays inside the same v0 honesty contract: representation + validation
-only — no contact physics, no bolt preload, no solver.
+package's named CAD parts (these tools mutate only assembly metadata, no
+geometry, no approval):
+- `cad.define_part { project_id, geometry_ref, role }` — adds a part and links it
+  to a named solid (verifying the ref against the topology and reporting
+  `geometry_ref_known` true/false/null — never fabricated).
+- `cad.define_interface { project_id, part_id, semantic_role, face_ids }` —
+  binds a part to specific B-Rep faces (`@face:*` from the brep graph /
+  `agent_context`), verified against the model topology (`face_ids_known`). This
+  is what makes a mate *geometric*.
+- `cad.define_mate { project_id, connection_type, part_a, part_b, interface_a,
+  interface_b }` — adds a connection between two **already-defined** parts (a mate
+  to an undefined part is refused; proxy connections always carry honest
+  `limitations`). When it references interfaces, the response includes the
+  resolved `connection_geometry` verdict (`plausible` / `warning` / `invalid` /
+  `insufficient_data`).
+
+Each call re-validates and refreshes the derived registry / connection graph /
+CAE draft; with interfaces present it also resolves interface geometry and
+validates connection geometry (the same two-step as `POST /assembly/process`).
+Authoring stays inside the v0 honesty contract: representation + validation only
+— no contact physics, no bolt preload, no solver.
 
 When per-part / package topology maps are available, the same call also **resolves interfaces
 and validates connection geometry** (geometry-validation only — still no contact/preload/solver):

@@ -349,6 +349,30 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_define_interface(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.define_assembly_interface(active_settings, str(project_id), inp)
+
+    rt.register_tool(
+        "cad.define_interface",
+        _tool_cad_define_interface,
+        read_only=False,
+        destructive=False,
+        input_schema=_schema("cad.define_interface"),
+        description=(
+            "Author one interface binding an assembly part to specific B-Rep entities (@face:* from "
+            "the brep graph / agent_context). This makes a mate geometric: once both parts carry "
+            "interfaces, a cad.define_mate referencing interface_a/interface_b is resolved to world "
+            "coordinates and gets a geometry_status (plausible / warning / invalid). Face refs are "
+            "verified against the model topology and reported honestly (face_ids_known), never "
+            "fabricated. Geometry validation only — no contact physics, no preload, no solver."
+        ),
+    )
+
     def _tool_cad_set_reference_image(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

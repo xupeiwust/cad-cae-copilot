@@ -106,12 +106,18 @@ large `cad.execute_build123d` script is the highest-failure path. Instead:
 5. **Record the assembly structure (optional, when relationships matter).** A
    `Compound(children=[...])` with `.label`ed parts is only a *visual* assembly.
    To make the parts and their relationships first-class, author the Assembly IR:
-   `cad.define_part { geometry_ref: "<label>", role }` for each part (it links to
-   the named CAD solid and verifies the ref), then
-   `cad.define_mate { connection_type, part_a, part_b }` for each connection
-   (`rigid_tie` / `bonded` / `bolted_proxy` / `welded_proxy` / `contact_proxy` /
-   `spring_proxy`). A mate to an undefined part is refused; proxy connections
-   always carry honest limitations.
+   - `cad.define_part { geometry_ref: "<label>", role }` for each part (links to
+     the named CAD solid and verifies the ref).
+   - `cad.define_interface { part_id, semantic_role, face_ids }` to bind a part to
+     specific B-Rep faces (`@face:*` from `agent_context` / the brep graph) — this
+     is what makes a mate *geometric*.
+   - `cad.define_mate { connection_type, part_a, part_b, interface_a, interface_b }`
+     for each connection (`rigid_tie` / `bonded` / `bolted_proxy` / `welded_proxy`
+     / `contact_proxy` / `spring_proxy`). A mate to an undefined part is refused;
+     proxy connections always carry honest limitations. When it references
+     interfaces, the response carries a resolved `connection_geometry` verdict
+     (`plausible` / `warning` / `invalid`) — read it to catch parts that don't
+     actually touch where you mated them.
 
 Honesty: the Assembly IR records parts and **proxy** connections — it is
 representation + validation only. It models **no** contact mechanics, **no** bolt

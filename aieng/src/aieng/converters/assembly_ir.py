@@ -627,11 +627,66 @@ def _assembly_summary(assembly: dict[str, Any], validation: dict[str, Any]) -> d
     }
 
 
+def _face_ids_in_package(package_path: Path) -> set[str]:
+    """Face entity ids in the package's CAD topology (for interface ref verification)."""
+    topo = _read_member(package_path, GEOMETRY_TOPOLOGY_PATH)
+    ids: set[str] = set()
+    if isinstance(topo, dict):
+        for e in topo.get("entities", []):
+            if isinstance(e, dict) and e.get("type") == "face" and e.get("id"):
+                ids.add(str(e["id"]))
+    return ids
+
+
+def _interface_resolution_status(package_path: Path, interface_id: str) -> str | None:
+    """Per-interface resolution_status from the last geometry refresh, if present."""
+    doc = _read_member(package_path, "assembly/interface_resolution.json")
+    if isinstance(doc, dict):
+        rec = (doc.get("interfaces") or {}).get(interface_id)
+        if isinstance(rec, dict):
+            return rec.get("resolution_status")
+    return None
+
+
+def _connection_geometry_status(package_path: Path, connection_id: str) -> dict[str, Any] | None:
+    """Per-connection geometry_status (plausible/warning/invalid/insufficient_data)."""
+    doc = _read_member(package_path, "diagnostics/assembly_connection_geometry.json")
+    if isinstance(doc, dict):
+        for c in doc.get("connections", []):
+            if isinstance(c, dict) and c.get("connection_id") == connection_id:
+                return {
+                    "geometry_status": c.get("geometry_status"),
+                    "reasons": c.get("reasons"),
+                    "metrics": c.get("metrics"),
+                }
+    return None
+
+
 def _save_and_process(package_path: Path, assembly: dict[str, Any], process: bool) -> dict[str, Any]:
     _rewrite_package_members(package_path, {ASSEMBLY_IR_PATH: _dumps(assembly)})
-    if process:
-        return process_assembly_package(package_path)
-    return {"assembly_present": True, "processed": False}
+    if not process:
+        return {"assembly_present": True, "processed": False}
+    result = process_assembly_package(package_path)
+    # When the IR carries interfaces, also resolve their geometry and validate
+    # connection geometry — the same two-step the backend /assembly/process runs,
+    # so authored @face bindings get an actual geometry_status (plausible /
+    # warning / invalid) instead of staying unevaluated.
+    if assembly.get("interfaces"):
+        try:
+            from .assembly_interface_resolution import resolve_and_validate_assembly_geometry
+            geo = resolve_and_validate_assembly_geometry(package_path)
+            if isinstance(geo, dict) and geo.get("assembly_present"):
+                result = {
+                    **result,
+                    "geometry": {
+                        "resolution_summary": geo.get("resolution_summary"),
+                        "geometry_summary": geo.get("geometry_summary"),
+                        "cae_draft_status": geo.get("cae_draft_status"),
+                    },
+                }
+        except Exception as exc:  # noqa: BLE001 - geometry resolution is best-effort
+            result = {**result, "geometry_error": f"{type(exc).__name__}: {exc}"}
+    return result
 
 
 def define_assembly_part(
@@ -714,6 +769,110 @@ def define_assembly_part(
     }
 
 
+def define_assembly_interface(
+    package_path: str | Path,
+    *,
+    part_id: str,
+    semantic_role: str,
+    interface_id: str | None = None,
+    face_ids: list[str] | None = None,
+    edge_ids: list[str] | None = None,
+    vertex_ids: list[str] | None = None,
+    process: bool = True,
+) -> dict[str, Any]:
+    """Author one interface binding a part to specific B-Rep entities (`@face:*`).
+
+    This is what makes a mate geometric: once both parts carry interfaces, a
+    connection that references ``interface_a`` / ``interface_b`` gets resolved to
+    world coordinates and a ``geometry_status`` (plausible / warning / invalid).
+    Face refs are verified against the package topology and reported honestly via
+    ``face_ids_known`` (true / false / null) — never fabricated.
+    """
+    package_path = Path(package_path)
+    if not package_path.exists():
+        return {"status": "error", "code": "package_not_found", "message": f"package not found: {package_path}"}
+    role = str(semantic_role or "").strip()
+    if role not in INTERFACE_ROLES:
+        return {"status": "error", "code": "bad_role",
+                "message": f"semantic_role must be one of {sorted(INTERFACE_ROLES)}", "got": role}
+    pid = str(part_id or "").strip()
+    if not pid:
+        return {"status": "error", "code": "missing_part", "message": "part_id is required."}
+
+    assembly = load_assembly_ir(package_path)
+    part_ids = {p.get("id") for p in assembly.get("parts", []) if p.get("id")}
+    if pid not in part_ids:
+        return {"status": "error", "code": "unknown_part",
+                "message": f"part '{pid}' is not defined in the assembly — call cad.define_part first.",
+                "available_parts": sorted(part_ids)}
+
+    fids = [str(x) for x in (face_ids or [])]
+    eids = [str(x) for x in (edge_ids or [])]
+    vids = [str(x) for x in (vertex_ids or [])]
+    if not (fids or eids or vids):
+        return {"status": "error", "code": "missing_refs",
+                "message": "Provide at least one of face_ids / edge_ids / vertex_ids (e.g. face_ids from the brep graph)."}
+
+    pkg_faces = _face_ids_in_package(package_path)
+    if fids and pkg_faces:
+        unknown_face_ids = [f for f in fids if f not in pkg_faces]
+        face_ids_known: bool | None = len(unknown_face_ids) == 0
+    else:
+        unknown_face_ids = []
+        face_ids_known = None  # no face index, or no face refs — unverified, never a false negative
+
+    interfaces = assembly.setdefault("interfaces", [])
+    iid = str(interface_id or "").strip()
+    if not iid:
+        base = f"iface_{pid}_{role}"
+        iid = base
+        existing_ids = {i.get("id") for i in interfaces}
+        k = 2
+        while iid in existing_ids:
+            iid = f"{base}_{k}"
+            k += 1
+
+    refs: dict[str, Any] = {}
+    if fids:
+        refs["face_ids"] = fids
+    if eids:
+        refs["edge_ids"] = eids
+    if vids:
+        refs["vertex_ids"] = vids
+    iface = {"id": iid, "part_id": pid, "semantic_role": role, "topology_refs": refs}
+
+    idx = next((i for i, x in enumerate(interfaces) if x.get("id") == iid), None)
+    action = "updated" if idx is not None else "added"
+    if idx is not None:
+        interfaces[idx] = iface
+    else:
+        interfaces.append(iface)
+
+    processed = _save_and_process(package_path, assembly, process)
+    validation = validate_assembly_ir(assembly)
+    resolution_status = _interface_resolution_status(package_path, iid)
+    if face_ids_known is True:
+        ref_note = "all face refs match B-Rep faces in the model topology."
+    elif face_ids_known is False:
+        ref_note = (f"face refs {unknown_face_ids} do NOT match any B-Rep face in the model — the "
+                    "interface is recorded but those refs will not resolve. Re-pick from the brep graph.")
+    else:
+        ref_note = "No face index in the package to verify refs against (unverified, not a failure)."
+    return {
+        "status": "ok",
+        "action": action,
+        "interface": iface,
+        "face_ids_known": face_ids_known,
+        "unknown_face_ids": unknown_face_ids,
+        "face_ids_note": ref_note,
+        "resolution_status": resolution_status,
+        "assembly_summary": _assembly_summary(assembly, validation),
+        "processed": processed,
+        "honesty": ("Interface binds the part to B-Rep entities for geometry validation only. "
+                    "It models no contact, no preload, and runs no solver."),
+    }
+
+
 def define_assembly_mate(
     package_path: str | Path,
     *,
@@ -784,11 +943,17 @@ def define_assembly_mate(
 
     processed = _save_and_process(package_path, assembly, process)
     validation = validate_assembly_ir(assembly)
+    # When the mate references interfaces, surface the resolved connection
+    # geometry verdict (plausible / warning / invalid / insufficient_data).
+    connection_geometry = None
+    if interface_a or interface_b:
+        connection_geometry = _connection_geometry_status(package_path, cid)
     return {
         "status": "ok",
         "action": action,
         "connection": conn,
         "is_proxy": ctype in PROXY_CONNECTION_TYPES,
+        "connection_geometry": connection_geometry,
         "assembly_summary": _assembly_summary(assembly, validation),
         "processed": processed,
         "honesty": ("Connection is a v0 proxy: positioning + simplified load transfer only. No "

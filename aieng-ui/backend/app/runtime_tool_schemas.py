@@ -1204,6 +1204,37 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ),
     },
 
+    "cad.define_interface": {
+        "type": "object",
+        "required": ["project_id", "part_id", "semantic_role"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "part_id": {"type": "string", "description": "id of the part (must be defined via cad.define_part) the interface belongs to."},
+            "semantic_role": {
+                "type": "string",
+                "enum": ["mounting_face", "bolt_hole", "contact_face", "weld_face", "load_face", "support_face"],
+                "description": "What the interface region is for.",
+            },
+            "interface_id": {"type": "string", "description": "Stable id; auto-generated from part + role if omitted."},
+            "face_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "B-Rep face ids (e.g. face_013 from the brep graph / agent_context) this interface binds to. Verified against the model topology.",
+            },
+            "edge_ids": {"type": "array", "items": {"type": "string"}, "description": "Optional B-Rep edge ids."},
+            "vertex_ids": {"type": "array", "items": {"type": "string"}, "description": "Optional B-Rep vertex ids."},
+        },
+        "additionalProperties": False,
+        "description": (
+            "Author one interface that binds an assembly part to specific B-Rep entities "
+            "(@face:*). This is what makes a mate geometric: once both parts carry interfaces, a "
+            "cad.define_mate that references interface_a/interface_b is resolved to world "
+            "coordinates and gets a geometry_status (plausible / warning / invalid). Face refs are "
+            "verified against the model topology and reported honestly (face_ids_known true/false/"
+            "null), never fabricated. Geometry validation only — no contact, no preload, no solver."
+        ),
+    },
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),

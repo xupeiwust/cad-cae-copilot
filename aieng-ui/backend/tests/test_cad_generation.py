@@ -1635,6 +1635,39 @@ def test_assembly_authoring_without_package_errors(tmp_path: Path) -> None:
     assert out["code"] in ("project_not_found", "package_not_found")
 
 
+def test_assembly_interface_binds_real_face(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import (
+        define_assembly_interface,
+        define_assembly_part,
+        execute_build123d_code,
+    )
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "assembly-interface")
+    code = (
+        "from build123d import *\n"
+        "a = Box(40, 40, 5); a.label = 'base_plate'\n"
+        "result = Compound(children=[a])\n"
+    )
+    assert execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})["status"] == "ok"
+
+    # pull a real B-Rep face id from the built model's topology
+    topo = _load_topology_map(settings, pid)
+    face_ids = [e["id"] for e in topo["entities"] if e.get("type") == "face"]
+    assert face_ids, "expected the built box to have faces"
+
+    define_assembly_part(settings, pid, {"geometry_ref": "base_plate", "role": "design_part"})
+    out = define_assembly_interface(settings, pid, {
+        "part_id": "base_plate",
+        "semantic_role": "mounting_face",
+        "face_ids": face_ids[:1],
+    })
+    assert out["status"] == "ok"
+    assert out["face_ids_known"] is True  # a real built face id resolves
+    assert out["resolution_status"] in {"resolved", "partially_resolved", "unresolved"}
+
+
 # ── critique (engineering-diagnostics) regression diff ────────────────────────
 # Two solids far apart trip the deterministic `floating_component` high finding;
 # moving them apart introduces it, moving them together resolves it. This lets us

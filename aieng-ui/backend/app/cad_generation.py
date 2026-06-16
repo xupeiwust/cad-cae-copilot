@@ -3390,6 +3390,24 @@ def define_assembly_mate(settings: Any, project_id: str, inp: dict[str, Any]) ->
     )
 
 
+def define_assembly_interface(settings: Any, project_id: str, inp: dict[str, Any]) -> dict[str, Any]:
+    """Add/update one interface (part ↔ @face binding) in the assembly IR."""
+    from aieng.converters import assembly_ir as _air
+
+    pkg, err = _resolve_package_for_assembly(settings, project_id)
+    if err is not None:
+        return err
+    return _air.define_assembly_interface(
+        pkg,
+        part_id=str(inp.get("part_id") or ""),
+        semantic_role=str(inp.get("semantic_role") or inp.get("role") or ""),
+        interface_id=inp.get("interface_id"),
+        face_ids=inp.get("face_ids"),
+        edge_ids=inp.get("edge_ids"),
+        vertex_ids=inp.get("vertex_ids"),
+    )
+
+
 def _execute_build123d_code_streaming(
     code: str,
     timeout: int = 60,

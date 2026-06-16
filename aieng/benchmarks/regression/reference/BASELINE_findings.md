@@ -56,3 +56,33 @@ time, and the in-session MCP server predated the new tools).
 
 These are the evidence-backed candidates for the slice *after* templates — more
 valuable than templates (d), which remain the lowest-leverage item.
+
+## Agent-path run (live MCP, gearbox 023, project 902fd6d7104f)
+
+Ran the gearbox through the live MCP loop (`cad.execute_build123d` →
+`cad.design_review` → `cad.edit_parameter`) after the backend restart. Results:
+
+- **Build**: 6/6 named parts, `floating=0`, `viewer_ready_glb`, reads as a
+  gearbox in all 4 views. `design_review`: **passes** (0 findings).
+- **`regression_diff` fix validated live**: widening `BORE_DIA` 22→26 (an internal
+  bearing bore) returned `verdict: clean` + `internal_feature_change: true`
+  (`housing` volume +6.38%, bbox Δ 0). Before this turn's fix that read
+  "identical / parameter had no effect" — the trust-layer false-negative is gone.
+- **`critique_diff`** honestly flagged the 26mm bore as a non-standard drill
+  (closest 27mm) — useful DfM feedback on the edit.
+
+Gaps **confirmed on a real complex model** (worse than on the NEMA part):
+- *Over-labeling (#289)*: bearing bores → `mounting_hole`, bolt holes →
+  `mounting_hole_pattern`, and the housing bottom → `base_plate` (thickness 60mm =
+  the whole housing). The mechanical heuristic mis-reads a gearbox housing.
+- *Parameter cross-binding (#288)*: `gear_input` AND `gear_output` features each
+  carry BOTH `gear_in_pitch_dia` and `gear_out_pitch_dia` (both constants matched
+  the "gear" token). Editing "gear_input pitch" is ambiguous — name-only binding
+  cross-pollutes.
+- *No mate/clearance awareness*: `design_review` passes despite the gears being
+  10mm from meshing — confirming **domain-aware mate predicates** as the right
+  next slice.
+
+Not yet exercised live: `cad.validate_subpart` / `cad.define_*` — they are on the
+backend (84 tools) but this Claude Code session's MCP tool list predates them;
+calling them needs an MCP reconnect (not a `dev.py` restart). Already test-validated.

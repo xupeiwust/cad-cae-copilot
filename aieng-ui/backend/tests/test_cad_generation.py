@@ -1592,6 +1592,38 @@ def test_union_solid_bbox_spans_all_solids() -> None:
     assert _union_solid_bbox({"entities": []}) is None
 
 
+def test_param_binding_uses_source_usage_not_name_token() -> None:
+    # #288: both gearbox gears used to carry BOTH gear-diameter constants because
+    # "gear" name-tokens matched both. Source-usage binding fixes that.
+    from app.cad_generation import _enrich_feature_graph_with_source_params
+
+    source = (
+        "GEAR_IN_PITCH_DIA = 30.0\n"
+        "GEAR_OUT_PITCH_DIA = 50.0\n"
+        "GEAR_WIDTH = 8.0\n"
+        "gi = Cylinder(GEAR_IN_PITCH_DIA / 2, GEAR_WIDTH)\n"
+        "gi.label = 'gear_input'\n"
+        "go = Cylinder(GEAR_OUT_PITCH_DIA / 2, GEAR_WIDTH)\n"
+        "go.label = 'gear_output'\n"
+    )
+    fg = {"features": [
+        {"id": "f1", "type": "named_part", "name": "gear_input", "geometry_refs": {"body": "b1"}},
+        {"id": "f2", "type": "named_part", "name": "gear_output", "geometry_refs": {"body": "b2"}},
+    ]}
+    out = _enrich_feature_graph_with_source_params(source, fg)
+    feats = {f["name"]: f for f in out["features"]}
+
+    def _consts(feat):
+        return {p["cad_parameter_name"] for p in (feat.get("parameters") or {}).values()}
+
+    gi, go = _consts(feats["gear_input"]), _consts(feats["gear_output"])
+    assert "GEAR_IN_PITCH_DIA" in gi and "GEAR_OUT_PITCH_DIA" not in gi   # no cross-pollution
+    assert "GEAR_OUT_PITCH_DIA" in go and "GEAR_IN_PITCH_DIA" not in go
+    assert "GEAR_WIDTH" not in gi and "GEAR_WIDTH" not in go              # shared → not per-gear
+    gp = next((f for f in out["features"] if f.get("type") == "global_params"), None)
+    assert gp is not None and any(p["cad_parameter_name"] == "GEAR_WIDTH" for p in gp["parameters"].values())
+
+
 # ── cad.validate_subpart (read-only isolated fragment validation) ─────────────
 
 def test_validate_subpart_accepts_valid_solid() -> None:

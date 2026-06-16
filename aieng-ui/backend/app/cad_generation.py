@@ -3076,6 +3076,38 @@ def _match_constant_to_feature(const_name: str, feature_name: str) -> bool:
     return False
 
 
+def _constants_to_part_labels(source_code: str, constant_names: Any) -> dict[str, set[str]]:
+    """Map each constant to the named-part label(s) whose source assignment USES it (#288).
+
+    Resolves the ``<var> = ...CONST...`` / ``<var>.label = "<part>"`` chain so a
+    constant binds to the part it actually builds, instead of name-token overlap
+    (which gave both gearbox gears *both* gear-diameter constants). A constant used
+    by exactly one labelled part binds there precisely; one used by several is
+    shared. Same-line use only — multi-line/contextual builds fall back to tokens.
+    """
+    names = {str(n) for n in (constant_names or [])}
+    if not names:
+        return {}
+    var_to_label: dict[str, str] = {}
+    for m in re.finditer(r'(\w+)\s*\.\s*label\s*=\s*["\']([^"\']+)["\']', source_code):
+        var_to_label[m.group(1)] = m.group(2)
+    if not var_to_label:
+        return {}
+    word_re = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+    const_to_labels: dict[str, set[str]] = {}
+    for line in source_code.splitlines():
+        am = re.match(r'\s*(\w+)\s*=(?!=)', line)  # an assignment LHS (not ==, not .label)
+        if not am:
+            continue
+        label = var_to_label.get(am.group(1))
+        if not label:
+            continue
+        for w in word_re.findall(line):
+            if w in names:
+                const_to_labels.setdefault(w, set()).add(label)
+    return const_to_labels
+
+
 def _detect_advanced_features(features: list[dict[str, Any]], source_code: str) -> None:
     """Tag advanced modelling operations (loft / revolve / sweep / fillet / mirror)
     and quality-helper usage onto ``features`` from source-code patterns, so the
@@ -3196,23 +3228,40 @@ def _enrich_feature_graph_with_source_params(
             for k, v in params.items():
                 existing.append({"name": k, **v})
 
+    # Source-usage binding (#288): which part(s) actually use each constant.
+    const_to_labels = _constants_to_part_labels(source_code, constants.keys())
+    # A constant used by 2+ labelled parts is shared — treat it like a global so it
+    # lands in Global Parameters (shared_dimensions) instead of being mis-attributed
+    # to one part (this is what split the gearbox's GEAR_WIDTH from per-gear dims).
+    shared_by_usage = {c for c, labels in const_to_labels.items() if len(labels) > 1}
+
     # Global / shared constants get their own feature regardless of part matching.
     global_consts = {
         k: v
         for k, v in constants.items()
         if k.split("_")[0].lower() in ("global", "default", "fillet", "chamfer", "wall")
+        or k in shared_by_usage
     }
 
     attached: set[str] = set(global_consts)
 
     # 2. Attach matched constants to the feature whose name they relate to.
+    #    Source-usage binding wins (precise: the part whose code uses the constant);
+    #    name-token matching is the fallback only when no usage was resolved.
     for feature in features:
         fname = feature.get("name", "")
         if not fname:
             continue
         matched: dict[str, Any] = {}
         for cname, cval in constants.items():
-            if cname in global_consts or not _match_constant_to_feature(cname, fname):
+            if cname in global_consts:
+                continue
+            usage = const_to_labels.get(cname)
+            if usage:
+                # bound to exactly one part by usage → attach only to that part
+                if fname not in usage:
+                    continue
+            elif not _match_constant_to_feature(cname, fname):
                 continue
             pname = _infer_param_name(cname)
             if pname in matched:

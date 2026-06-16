@@ -844,6 +844,8 @@ export type SolverFieldDescriptor = {
   source?: string | null;
   values?: number[] | null;
   node_coords?: [number, number, number][] | null;
+  /** Per-node displacement vectors [ux, uy, uz] in model units. Present for displacement-sourced fields. */
+  vectors?: [number, number, number][] | null;
   warnings?: string[] | null;
   bbox_status?: "aligned" | "suspicious" | null;
 };

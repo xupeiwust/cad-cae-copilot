@@ -10,6 +10,7 @@ import { resolveAssetFormat } from "../appUtils";
 import type { CaeSetupOverlayResponse, FieldOverlayConfig, FieldProbe, FieldRegionCluster, SolverFieldDescriptor } from "../types";
 import { modelToDisplayVec } from "./viewer/coordinateFrames";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
+import { DeformationControls } from "./viewer/DeformationControls";
 import {
   useThreeScene,
   useAssetLoader,
@@ -23,6 +24,8 @@ import {
   useCaeSetupOverlay,
   useFieldRegionOverlay,
   useMeshPreviewOverlay,
+  useDeformedShape,
+  useDeformationOrchestration,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -119,6 +122,7 @@ export function ModelViewer({
     caeSetupGroupRef,
     fieldRegionGroupRef,
     meshPreviewGroupRef,
+    deformedGroupRef,
   } = useThreeScene(hostRef);
 
   // 2. Asset loading
@@ -217,6 +221,26 @@ export function ModelViewer({
     meshPreview,
     displayTransformRef,
     objectReadyKey,
+  );
+
+  // 11b. Deformed-shape overlay state (availability, toggle, auto scale).
+  const {
+    deformationAvailable,
+    showDeformedShape,
+    setShowDeformedShape,
+    deformationScale,
+    setDeformationScale,
+  } = useDeformationOrchestration(fieldDescriptor, objectRef, objectReadyKey);
+
+  // 11c. Displacement-warped deformed shape overlay
+  useDeformedShape(
+    objectRef,
+    deformedGroupRef,
+    fieldDescriptor,
+    showDeformedShape,
+    deformationScale,
+    objectReadyKey,
+    fieldOverlayConfig,
   );
 
   // 12. Field-region cluster markers
@@ -468,6 +492,15 @@ export function ModelViewer({
             ×
           </button>
         </div>
+      )}
+      {deformationAvailable && (
+        <DeformationControls
+          descriptor={fieldDescriptor}
+          enabled={showDeformedShape}
+          onEnabledChange={setShowDeformedShape}
+          scale={deformationScale}
+          onScaleChange={setDeformationScale}
+        />
       )}
       <ViewerOverlays
         viewerState={viewerState}

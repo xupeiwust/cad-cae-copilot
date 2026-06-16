@@ -1065,12 +1065,18 @@ def _extract_frd_field_data(
                     return float(vals[i])
                 return None
 
+            vectors: dict[int, tuple[float, float, float]] = {}
             for nid, vals in disp["node_data"].items():
                 if nid not in coords:
                     continue
-                v = derive_displacement_value(name, _comp(vals, "D1"), _comp(vals, "D2"), _comp(vals, "D3"))
+                d1 = _comp(vals, "D1")
+                d2 = _comp(vals, "D2")
+                d3 = _comp(vals, "D3")
+                v = derive_displacement_value(name, d1, d2, d3)
                 if v is not None:
                     values[nid] = v
+                if d1 is not None and d2 is not None and d3 is not None:
+                    vectors[nid] = (d1, d2, d3)
 
         if not values:
             warnings.append(f"No valid '{field_name}' values could be extracted from FRD.")
@@ -1083,7 +1089,7 @@ def _extract_frd_field_data(
         min_val = min(value_list)
         max_val = max(value_list)
 
-        return {
+        result: dict[str, Any] = {
             "values": value_list,
             "node_coords": coord_list,
             "min_value": min_val,
@@ -1091,6 +1097,12 @@ def _extract_frd_field_data(
             "unit": unit,
             "warnings": warnings,
         }
+        if meta["source"] == "displacement":
+            vector_list = [
+                list(vectors.get(nid, (0.0, 0.0, 0.0))) for nid in sorted_ids
+            ]
+            result["vectors"] = vector_list
+        return result
     except Exception:
         return None
     finally:

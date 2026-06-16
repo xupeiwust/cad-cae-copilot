@@ -123,6 +123,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
                 "source": "frd",
                 "values": frd_data["values"],
                 "node_coords": frd_data["node_coords"],
+                "vectors": frd_data.get("vectors"),
                 "warnings": frd_data["warnings"],
                 "credibility": _field_credibility("frd", active_settings.aieng_root),
             }

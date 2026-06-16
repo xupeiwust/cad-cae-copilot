@@ -28,6 +28,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
   const caeSetupGroupRef = useRef<THREE.Group | null>(null);
   const fieldRegionGroupRef = useRef<THREE.Group | null>(null);
   const meshPreviewGroupRef = useRef<THREE.Group | null>(null);
+  const deformedGroupRef = useRef<THREE.Group | null>(null);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -73,6 +74,11 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     meshPreviewGroup.name = "mesh-preview-group";
     scene.add(meshPreviewGroup);
     meshPreviewGroupRef.current = meshPreviewGroup;
+
+    const deformedGroup = new THREE.Group();
+    deformedGroup.name = "deformed-shape-group";
+    scene.add(deformedGroup);
+    deformedGroupRef.current = deformedGroup;
 
     // ── Camera ──
     const initialSize = getHostSize();
@@ -140,6 +146,7 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
       caeSetupGroupRef.current = null;
       fieldRegionGroupRef.current = null;
       meshPreviewGroupRef.current = null;
+      deformedGroupRef.current = null;
       cameraRef.current = null;
       rendererRef.current = null;
       controlsRef.current = null;
@@ -157,5 +164,6 @@ export function useThreeScene(hostRef: React.RefObject<HTMLDivElement | null>) {
     caeSetupGroupRef,
     fieldRegionGroupRef,
     meshPreviewGroupRef,
+    deformedGroupRef,
   };
 }

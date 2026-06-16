@@ -10,6 +10,8 @@ import { resolveAssetFormat } from "../appUtils";
 import type { CaeSetupOverlayResponse, FieldOverlayConfig, FieldProbe, FieldRegionCluster, SolverFieldDescriptor } from "../types";
 import { modelToDisplayVec } from "./viewer/coordinateFrames";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
+import { ClippingPlaneControls } from "./viewer/ClippingPlaneControls";
+import type { ClipAxis } from "./viewer/clippingPlane";
 import {
   useThreeScene,
   useAssetLoader,
@@ -23,6 +25,7 @@ import {
   useCaeSetupOverlay,
   useFieldRegionOverlay,
   useMeshPreviewOverlay,
+  useClippingPlane,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -82,6 +85,10 @@ export function ModelViewer({
         (caeSetupOverlay.constraints && caeSetupOverlay.constraints.length > 0)),
   );
   const [showMeshPreview, setShowMeshPreview] = useState(false);
+  const [clipEnabled, setClipEnabled] = useState(false);
+  const [clipAxis, setClipAxis] = useState<ClipAxis>("x");
+  const [clipPosition, setClipPosition] = useState(0.5);
+  const [clipFlip, setClipFlip] = useState(false);
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -112,6 +119,7 @@ export function ModelViewer({
   const {
     sceneRef,
     cameraRef,
+    rendererRef,
     controlsRef,
     highlightGroupRef,
     assemblyGroupRef,
@@ -137,6 +145,20 @@ export function ModelViewer({
 
   // 8. Re-apply field colormap when legend controls change.
   useFieldColorOverlay(objectRef, fieldDescriptor, fieldOverlayConfig, objectReadyKey);
+
+  // 8b. Axis-aligned clipping plane for internal field inspection.
+  useClippingPlane(
+    rendererRef,
+    sceneRef,
+    objectRef,
+    fieldDescriptor,
+    fieldOverlayConfig,
+    clipEnabled,
+    clipAxis,
+    clipPosition,
+    clipFlip,
+    objectReadyKey,
+  );
 
   // 3. Face identity maps (viewer↔model transform + primitive↔face)
   const { displayTransformRef, primitiveFaceRef, faceMeshesRef } = useFaceIdentityMaps(
@@ -469,6 +491,17 @@ export function ModelViewer({
           </button>
         </div>
       )}
+      <ClippingPlaneControls
+        available={objectReadyKey > 0}
+        enabled={clipEnabled}
+        onEnabledChange={setClipEnabled}
+        axis={clipAxis}
+        onAxisChange={setClipAxis}
+        position={clipPosition}
+        onPositionChange={setClipPosition}
+        flip={clipFlip}
+        onFlipChange={setClipFlip}
+      />
       <ViewerOverlays
         viewerState={viewerState}
         tooltipFace={tooltipFace}

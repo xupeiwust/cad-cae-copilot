@@ -803,6 +803,17 @@ def _extract_topology(shape):
     for pi, (name, part, is_assembly) in enumerate(_collect_parts(shape, include_assemblies=True)):
         body_id = f"body_{pi + 1:03d}"
         body = {"id": body_id, "type": "solid", "bounding_box": _bbox_list(part.bounding_box())}
+        # Volume + surface area let the regression diff catch internal-feature
+        # edits (e.g. a bore/hole radius change) that leave the part bounding
+        # box unchanged. Best-effort: not every shape exposes these cleanly.
+        try:
+            body["volume"] = round(float(part.volume), 4)
+        except Exception:
+            pass
+        try:
+            body["area"] = round(float(part.area), 4)
+        except Exception:
+            pass
         if name:
             body["name"] = name
         standard_part = _aieng_standard_part_metadata(part, name)
@@ -2403,10 +2414,16 @@ def _finish_execute_build123d_response(
 # Geometry regression diff: a parametric edit or rebuild is supposed to change
 # one thing. Compare before/after topology by named part so collateral changes
 # are visible instead of silently shipping.
-def _solids_by_name(topology_map: dict[str, Any]) -> dict[str, list[float]]:
-    """Map each named solid to its bounding box. Unnamed solids fall back to id
-    so they still participate in the diff."""
-    out: dict[str, list[float]] = {}
+def _solids_by_name(topology_map: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map each named solid to its geometric signals (bbox + optional volume /
+    area). Unnamed solids fall back to id so they still participate in the diff.
+
+    Returns ``{name: {"bbox": [...6], "volume": float|None, "area": float|None}}``.
+    Volume/area are present only when the topology builder recorded them (real
+    build123d geometry); older/bbox-only maps leave them ``None`` and the diff
+    falls back to bounding-box comparison alone. Callers that only need the part
+    names still work — dict iteration / ``in`` / ``sorted`` operate on the keys."""
+    out: dict[str, dict[str, Any]] = {}
     for e in (topology_map or {}).get("entities", []):
         if e.get("type") != "solid":
             continue
@@ -2415,7 +2432,13 @@ def _solids_by_name(topology_map: dict[str, Any]) -> dict[str, list[float]]:
             continue
         key = e.get("name") or e.get("id")
         if key:
-            out[str(key)] = bb
+            vol = e.get("volume")
+            area = e.get("area")
+            out[str(key)] = {
+                "bbox": bb,
+                "volume": float(vol) if isinstance(vol, (int, float)) else None,
+                "area": float(area) if isinstance(area, (int, float)) else None,
+            }
     return out
 
 
@@ -2424,12 +2447,20 @@ def _diff_topology(
     after: dict[str, Any],
     expected_parts: set[str] | None = None,
     eps_mm: float = 0.05,
+    rel_eps_pct: float = 0.5,
 ) -> dict[str, Any]:
     """Diff two topology maps by named part.
 
-    Reports, per named part: bbox size delta (per axis), center shift, and
-    whether it changed beyond ``eps_mm``. Parts present only before/after are
-    listed as removed/added.
+    Reports, per named part: bbox size delta (per axis), center shift, volume /
+    surface-area relative deltas, and whether it changed. Parts present only
+    before/after are listed as removed/added.
+
+    Two change signals are combined: a **bounding-box** signal (size/center
+    moved beyond ``eps_mm``) and an **internal-feature** signal (volume or
+    surface area moved beyond ``rel_eps_pct`` percent while the bbox did not —
+    e.g. a bore/hole radius or a pocket depth change). The internal signal is
+    only available when the topology map carries per-solid ``volume`` / ``area``
+    (real build123d geometry); bbox-only maps fall back to the bbox signal alone.
 
     ``expected_parts`` is the set of part names the caller intended to affect
     (e.g. the edited feature's part, or all parts for a global constant). Any
@@ -2442,31 +2473,57 @@ def _diff_topology(
     def _r(x: float) -> float:
         return round(float(x), 2)
 
+    def _rel_pct(va: float | None, vb: float | None) -> float | None:
+        """Absolute percent change of vb vs va, or None if either is missing."""
+        if va is None or vb is None:
+            return None
+        return abs(vb - va) / max(abs(va), 1e-9) * 100.0
+
     added = sorted(set(b) - set(a))
     removed = sorted(set(a) - set(b))
 
     changed: list[dict[str, Any]] = []
     unchanged: list[str] = []
+    internal_only: list[str] = []
     for name in sorted(set(a) & set(b)):
-        ba, bb = a[name], b[name]
-        _ca, sa, _ma = _bbox_metrics(ba)
-        _cb, sb, _mb = _bbox_metrics(bb)
+        rec_a, rec_b = a[name], b[name]
+        box_a, box_b = rec_a["bbox"], rec_b["bbox"]
+        _ca, sa, _ma = _bbox_metrics(box_a)
+        _cb, sb, _mb = _bbox_metrics(box_b)
         size_delta = (sb[0] - sa[0], sb[1] - sa[1], sb[2] - sa[2])
         center_shift = (
-            (bb[0] + bb[3]) / 2 - (ba[0] + ba[3]) / 2,
-            (bb[1] + bb[4]) / 2 - (ba[1] + ba[4]) / 2,
-            (bb[2] + bb[5]) / 2 - (ba[2] + ba[5]) / 2,
+            (box_b[0] + box_b[3]) / 2 - (box_a[0] + box_a[3]) / 2,
+            (box_b[1] + box_b[4]) / 2 - (box_a[1] + box_a[4]) / 2,
+            (box_b[2] + box_b[5]) / 2 - (box_a[2] + box_a[5]) / 2,
         )
-        max_change = max(abs(v) for v in (*size_delta, *center_shift))
-        if max_change <= eps_mm:
+        bbox_change = max(abs(v) for v in (*size_delta, *center_shift))
+
+        vol_delta_pct = _rel_pct(rec_a.get("volume"), rec_b.get("volume"))
+        area_delta_pct = _rel_pct(rec_a.get("area"), rec_b.get("area"))
+        internal_change = bool(
+            (vol_delta_pct is not None and vol_delta_pct > rel_eps_pct)
+            or (area_delta_pct is not None and area_delta_pct > rel_eps_pct)
+        )
+
+        if bbox_change <= eps_mm and not internal_change:
             unchanged.append(name)
             continue
         rec: dict[str, Any] = {
             "part": name,
             "size_delta_mm": {"x": _r(size_delta[0]), "y": _r(size_delta[1]), "z": _r(size_delta[2])},
             "center_shift_mm": {"x": _r(center_shift[0]), "y": _r(center_shift[1]), "z": _r(center_shift[2])},
-            "max_change_mm": _r(max_change),
+            "max_change_mm": _r(bbox_change),
         }
+        if vol_delta_pct is not None:
+            rec["volume_delta_pct"] = _r(vol_delta_pct)
+        if area_delta_pct is not None:
+            rec["area_delta_pct"] = _r(area_delta_pct)
+        # An edit that changed the solid's volume/area without moving its
+        # bounding box is an internal feature (bore/hole/pocket) — flag it so a
+        # bbox-only reader doesn't mistake it for "no change".
+        if bbox_change <= eps_mm and internal_change:
+            rec["internal_feature_change"] = True
+            internal_only.append(name)
         if expected_parts is not None:
             rec["expected"] = name in expected_parts
         changed.append(rec)
@@ -2479,7 +2536,12 @@ def _diff_topology(
     summary: dict[str, Any]
     if not changed and not added and not removed:
         verdict = "identical"
-        headline = "No geometry changed (parameter had no effect — wrong constant or no-op value?)."
+        headline = (
+            "No change detected in any part's bounding box, position, volume, or "
+            "surface area. If you intended an edit, re-check the constant name and "
+            "value (a no-op value, or a change to a constant the geometry doesn't "
+            "use, reads as identical)."
+        )
     elif collateral:
         verdict = "collateral_change"
         headline = (
@@ -2499,6 +2561,12 @@ def _diff_topology(
             f"{len(changed)} part(s) changed as expected; "
             f"{len(unchanged)} unchanged."
         )
+        if internal_only:
+            headline += (
+                f" {len(internal_only)} via an internal feature "
+                f"(volume/area changed, bounding box did not): "
+                f"{', '.join(internal_only)}."
+            )
 
     return {
         "verdict": verdict,
@@ -2507,6 +2575,7 @@ def _diff_topology(
         "added": added,
         "removed": removed,
         "unchanged_count": len(unchanged),
+        "internal_feature_parts": internal_only,
         "collateral_parts": collateral,
     }
 

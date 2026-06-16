@@ -1498,6 +1498,40 @@ def test_diff_topology_global_param_no_collateral_judgment() -> None:
     assert len(diff["changed"]) == 2
 
 
+def _solid(name: str, bbox: list[float], volume: float, area: float) -> dict:
+    return {"type": "solid", "id": name, "name": name,
+            "bounding_box": bbox, "volume": volume, "area": area}
+
+
+def test_diff_topology_detects_internal_feature_change() -> None:
+    """An edit that changes volume/area but NOT the bounding box (e.g. widening
+    a bore) must be reported as a change, not 'identical'."""
+    from app.cad_generation import _diff_topology
+
+    box = [0, 0, 0, 70, 6, 70]  # identical bbox before/after
+    before = {"entities": [_solid("motor_face", box, 28000.0, 12000.0)]}
+    after = {"entities": [_solid("motor_face", box, 26500.0, 12600.0)]}  # bore widened
+    diff = _diff_topology(before, after, expected_parts={"motor_face"})
+    assert diff["verdict"] == "clean"
+    assert diff["changed"][0]["part"] == "motor_face"
+    assert diff["changed"][0]["internal_feature_change"] is True
+    assert diff["changed"][0]["volume_delta_pct"] > 0.5
+    assert diff["internal_feature_parts"] == ["motor_face"]
+
+
+def test_diff_topology_volume_jitter_below_threshold_is_identical() -> None:
+    """Sub-threshold volume/area jitter with an unchanged bbox stays 'identical'
+    so floating-point noise doesn't read as a real edit."""
+    from app.cad_generation import _diff_topology
+
+    box = [0, 0, 0, 10, 10, 10]
+    before = {"entities": [_solid("p", box, 1000.0, 600.0)]}
+    after = {"entities": [_solid("p", box, 1001.0, 600.2)]}  # ~0.1% < 0.5% eps
+    diff = _diff_topology(before, after, expected_parts={"p"})
+    assert diff["verdict"] == "identical"
+    assert diff["internal_feature_parts"] == []
+
+
 # ── critique (engineering-diagnostics) regression diff ────────────────────────
 # Two solids far apart trip the deterministic `floating_component` high finding;
 # moving them apart introduces it, moving them together resolves it. This lets us

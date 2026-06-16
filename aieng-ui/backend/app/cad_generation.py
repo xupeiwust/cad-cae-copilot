@@ -621,6 +621,40 @@ def l_bracket(length, width, height, thickness, fillet_radius=0, label=None, col
     return _aieng_finish(_bp.part, label, color)
 
 
+def housing(length, width, height, wall=3.0, fillet_radius=None, open_top=True,
+            floor=True, label=None, color=None):
+    \"\"\"A designed enclosure shell -- the counterpart to a raw ``Box - Box``.
+
+    Outer box hollowed to ``wall``-thick walls with BROKEN (filleted) outer
+    vertical edges, so it reads as a designed housing instead of a crude box.
+    ``open_top`` leaves the top open (a removable cover mates there); ``floor``
+    keeps a solid bottom. ``fillet_radius`` rounds the outer vertical edges
+    (default ~min(2*wall, 12% of the smaller plan dimension)). Bottom sits at Z=0.
+    Use this for gearbox/pump bodies, electronics enclosures, valve bodies.\"\"\"
+    L, W, H = float(length), float(width), float(height)
+    t = float(wall)
+    if t <= 0 or 2 * t >= min(L, W) or t >= H:
+        raise ValueError("housing needs 0 < wall, 2*wall < length & width, and wall < height")
+    fr = min(2.0 * t, min(L, W) * 0.12) if fillet_radius is None else float(fillet_radius)
+    fr = max(0.0, min(fr, min(L, W) / 2.0 - t - 0.01))
+    cz = t if floor else -1.0
+    top = (H + 1.0) if open_top else (H - t)
+    cavity_h = top - cz
+    if cavity_h <= 0:
+        raise ValueError("housing cavity has no height; reduce wall or increase height")
+    with BuildPart() as _bp:
+        Box(L, W, H, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        if fr > 0:
+            try:
+                fillet(_bp.edges().filter_by(Axis.Z), radius=fr)
+            except Exception:
+                pass
+        with Locations((0, 0, cz)):
+            Box(L - 2 * t, W - 2 * t, cavity_h,
+                align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
+    return _aieng_finish(_bp.part, label, color)
+
+
 # ── design-rule assertions ───────────────────────────────────────────────────
 # Let authored code embed design constraints that deterministically FAIL the
 # build (verified by construction) instead of being hoped for. A failed
@@ -2801,6 +2835,65 @@ def _match_constant_to_feature(const_name: str, feature_name: str) -> bool:
     return False
 
 
+def _detect_advanced_features(features: list[dict[str, Any]], source_code: str) -> None:
+    """Tag advanced modelling operations (loft / revolve / sweep / fillet / mirror)
+    and quality-helper usage onto ``features`` from source-code patterns, so the
+    feature graph reflects industrial-design intent (and the modeling-fidelity
+    check credits it). Independent of declared constants; mutates ``features`` in place.
+    """
+    src = source_code.lower()
+    counter = {"n": 0}
+
+    def _add(ftype: str, name: str, params: dict[str, Any], role: str) -> None:
+        counter["n"] += 1
+        features.append({
+            "id": f"feat_{ftype}_{counter['n']:03d}",
+            "type": ftype, "name": name, "parameters": params, "intent": {"role": role},
+        })
+
+    loft_count = src.count("loft(")
+    if loft_count > 0:
+        _add("loft", f"Loft ({loft_count} operation{'s' if loft_count > 1 else ''})", {}, "tapered_body")
+    revolve_count = src.count("revolve(")
+    if revolve_count > 0:
+        _add("revolve", f"Revolve ({revolve_count} operation{'s' if revolve_count > 1 else ''})", {}, "axisymmetric_body")
+    sweep_count = src.count("sweep(")
+    if sweep_count > 0:
+        _add("sweep", f"Sweep ({sweep_count} operation{'s' if sweep_count > 1 else ''})", {}, "path_extrusion")
+
+    _fillet_radii: list[float] = []
+    for _fm in re.finditer(r'fillet\s*\([^)]*radius\s*=\s*([0-9]+\.?[0-9]*)', source_code, re.IGNORECASE):
+        try:
+            _fillet_radii.append(float(_fm.group(1)))
+        except ValueError:
+            pass
+    if _fillet_radii:
+        _add(
+            "fillet",
+            f"Fillet ({len(_fillet_radii)} operation{'s' if len(_fillet_radii) > 1 else ''}, "
+            f"r={min(_fillet_radii):.1f}–{max(_fillet_radii):.1f}mm)",
+            {"fillet_radius_mm": round(sum(_fillet_radii) / len(_fillet_radii), 2)},
+            "edge_rounding",
+        )
+
+    mirror_count = src.count("mirror(")
+    if mirror_count > 0:
+        _add("mirror", f"Mirror symmetry ({mirror_count} operation{'s' if mirror_count > 1 else ''})", {}, "symmetric_copy")
+
+    # Quality helpers imply finishing / shaped bodies even when the user's source
+    # never literally calls fillet()/loft() — the operation lives inside the helper.
+    # Credit them so the modeling-fidelity check reflects the actual intent.
+    _finish_helpers = ("rounded_box(", "chamfered_box(", "housing(")
+    _shaped_helpers = (
+        "lofted_stack(", "capsule(", "tapered_cylinder(", "revolved_profile(",
+        "swept_tube(", "organic_blend(", "fuselage_profile(", "naca_airfoil(",
+    )
+    if not _fillet_radii and any(h in src for h in _finish_helpers):
+        _add("fillet", "Edge-breaking via high-level helper", {}, "edge_rounding")
+    if loft_count == 0 and revolve_count == 0 and sweep_count == 0 and any(h in src for h in _shaped_helpers):
+        _add("loft", "Shaped body via high-level helper", {}, "tapered_body")
+
+
 def _enrich_feature_graph_with_source_params(
     source_code: str,
     feature_graph: dict[str, Any],
@@ -2825,10 +2918,15 @@ def _enrich_feature_graph_with_source_params(
             except ValueError:
                 pass
 
+    features = feature_graph.get("features", [])
+    # Advanced-feature + quality-helper detection is independent of declared
+    # constants — run it BEFORE the no-constants early return so a model built
+    # purely from helpers (housing(), rounded_box(), lofted_stack(), ...) is still
+    # credited for edge-breaking / shaped bodies by the modeling-fidelity check.
+    _detect_advanced_features(features, source_code)
+
     if not constants:
         return feature_graph
-
-    features = feature_graph.get("features", [])
 
     def _param_entry(cval: float, cname: str) -> dict[str, Any]:
         return {
@@ -2920,83 +3018,8 @@ def _enrich_feature_graph_with_source_params(
                 "intent": {"role": "unscoped_dimensions"},
             })
 
-    # 4. Detect advanced modelling features from source code patterns
-    #    (loft, revolve, sweep, fillet, mirror) so the feature graph reflects
-    #    industrial-design intent, not just primitive counts.
-    _source_lower = source_code.lower()
-    _adv_counter = 0
-
-    def _add_adv_feature(ftype: str, name: str, params: dict[str, Any], intent_role: str) -> None:
-        nonlocal _adv_counter
-        _adv_counter += 1
-        features.append({
-            "id": f"feat_{ftype}_{_adv_counter:03d}",
-            "type": ftype,
-            "name": name,
-            "parameters": params,
-            "intent": {"role": intent_role},
-        })
-
-    # Loft — count BuildSketch pairs with loft() between them
-    loft_count = _source_lower.count("loft(")
-    if loft_count > 0:
-        _add_adv_feature(
-            "loft",
-            f"Loft ({loft_count} operation{'s' if loft_count > 1 else ''})",
-            {},
-            "tapered_body",
-        )
-
-    # Revolve
-    revolve_count = _source_lower.count("revolve(")
-    if revolve_count > 0:
-        _add_adv_feature(
-            "revolve",
-            f"Revolve ({revolve_count} operation{'s' if revolve_count > 1 else ''})",
-            {},
-            "axisymmetric_body",
-        )
-
-    # Sweep
-    sweep_count = _source_lower.count("sweep(")
-    if sweep_count > 0:
-        _add_adv_feature(
-            "sweep",
-            f"Sweep ({sweep_count} operation{'s' if sweep_count > 1 else ''})",
-            {},
-            "path_extrusion",
-        )
-
-    # Fillet — extract radii so they become editable if declared as constants
-    _fillet_radii: list[float] = []
-    for _fm in re.finditer(
-        r'fillet\s*\([^)]*radius\s*=\s*([0-9]+\.?[0-9]*)',
-        source_code,
-        re.IGNORECASE,
-    ):
-        try:
-            _fillet_radii.append(float(_fm.group(1)))
-        except ValueError:
-            pass
-    if _fillet_radii:
-        _add_adv_feature(
-            "fillet",
-            f"Fillet ({len(_fillet_radii)} operation{'s' if len(_fillet_radii) > 1 else ''}, "
-            f"r={min(_fillet_radii):.1f}–{max(_fillet_radii):.1f}mm)",
-            {"fillet_radius_mm": round(sum(_fillet_radii) / len(_fillet_radii), 2)},
-            "edge_rounding",
-        )
-
-    # Mirror
-    mirror_count = _source_lower.count("mirror(")
-    if mirror_count > 0:
-        _add_adv_feature(
-            "mirror",
-            f"Mirror symmetry ({mirror_count} operation{'s' if mirror_count > 1 else ''})",
-            {},
-            "symmetric_copy",
-        )
-
+    # (Advanced-feature / quality-helper detection now runs at the top via
+    # _detect_advanced_features, so it is not skipped when there are no constants.)
     return feature_graph
 
 

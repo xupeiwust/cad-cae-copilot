@@ -1687,6 +1687,30 @@ def test_design_review_surfaces_modeling_fidelity_for_crude_build(tmp_path: Path
     assert rev["critique_verdict"] in {"passes", "passes_with_notes", "passes_with_warnings"}
 
 
+def test_housing_helper_builds_and_reads_designed(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import design_review, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "housing-helper")
+    # the scaffold: one call replaces a crude Box-Box with a filleted shell
+    code = (
+        "from build123d import *\n"
+        "h = housing(120, 80, 60, wall=5, label='gearbox_housing')\n"
+        "result = Compound(children=[h])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    assert "gearbox_housing" in out["named_parts"]
+
+    rev = design_review(settings, pid, {})
+    # the helper's filleted edges are credited even though the user source never
+    # literally calls fillet() — so it is NOT flagged for crude sharp edges
+    assert rev["fidelity"]["signals"]["has_edge_breaking"] is True
+    assert rev["summary"]["modeling_fidelity"]["level"] in {"designed", "basic"}
+    assert not any(f["rule"] == "no_edge_breaking" for f in rev["fidelity"]["findings"])
+
+
 # ── critique (engineering-diagnostics) regression diff ────────────────────────
 # Two solids far apart trip the deterministic `floating_component` high finding;
 # moving them apart introduces it, moving them together resolves it. This lets us

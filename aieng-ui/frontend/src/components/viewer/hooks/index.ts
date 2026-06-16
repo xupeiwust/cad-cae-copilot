@@ -8,3 +8,4 @@ export { useFieldMarkerOverlay } from "./useFieldMarkerOverlay";
 export { useFieldProbe } from "./useFieldProbe";
 export { useFieldColorOverlay } from "./useFieldColorOverlay";
 export { useCaeSetupOverlay } from "./useCaeSetupOverlay";
+export { useFieldRegionOverlay } from "./useFieldRegionOverlay";

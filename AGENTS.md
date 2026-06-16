@@ -390,6 +390,15 @@ single-part edit.
   constrained (blue) faces from `simulation/setup.yaml` + `cae_mapping.json`.
   Stale/unresolved face refs are flagged with an amber marker instead of being
   silently dropped. Read-only; the toggle only appears when a CAE setup exists.
+- **Field-region cluster markers (in-3D affordance, #249).** The model viewer has a
+  "Show field regions" toggle ([`ModelViewer.tsx`](aieng-ui/frontend/src/components/ModelViewer.tsx),
+  fed by `useFieldRegions` reading `analysis/field_regions.json`, drawn by
+  [`fieldRegionMarkers.ts`](aieng-ui/frontend/src/components/viewer/fieldRegionMarkers.ts)).
+  It places a 3D marker at each high-stress / high-displacement cluster centroid,
+  colored by field type (stress = red, displacement = blue) and sized by relative
+  magnitude. Clicking a marker frames the camera on the cluster and surfaces its
+  metric value plus any associated `@face:` pointer. Read-only; the toggle only
+  appears when `cae.extract_field_regions` has produced clusters.
 **Follow-up / reply normalization.** Follow-up and reply messages are re-resolved
 so their intent is recorded explicitly rather than left implicit
 (`_normalize_followup_intent` in

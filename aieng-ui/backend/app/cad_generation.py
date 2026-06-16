@@ -3956,6 +3956,127 @@ def get_brief(settings: Any, project_id: str, _inp: dict[str, Any] | None = None
     return {"status": "ok", "project_id": project_id, **brief}
 
 
+def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Read-only diagnostic snapshot + repair verdict for a build (#293).
+
+    Composes the verification signals (design_review = critique + symmetry +
+    fidelity + fix targets; structural geometry checks; the CAD brief's
+    validation_targets) into ONE snapshot, classifies the build's risk triggers,
+    and returns a ``ready`` / ``needs_repair`` verdict + prioritized repair
+    actions. The repair-loop contract: for a high-risk build, fix every blocking
+    issue and re-diagnose until ``ready`` before presenting. Mutates nothing.
+    """
+    from aieng.converters.geometry_targets import validate_geometry_targets
+
+    inp = inp or {}
+    dr = design_review(settings, project_id, {"response_detail": "full"})
+    if dr.get("status") != "ok":
+        return dr
+
+    pkg, err = _resolve_package_for_assembly(settings, project_id)
+    if err is not None:
+        return err
+    topo: dict[str, Any] = {}
+    fg: dict[str, Any] = {}
+    members: set[str] = set()
+    try:
+        with zipfile.ZipFile(pkg, "r") as zf:
+            members = set(zf.namelist())
+            if "geometry/topology_map.json" in members:
+                topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+            if "graph/feature_graph.json" in members:
+                fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "code": "package_read_error", "message": f"{type(exc).__name__}: {exc}"}
+
+    solids = [e for e in topo.get("entities", []) if isinstance(e, dict) and e.get("type") == "solid"]
+    part_count = len(solids)
+    struct = validate_geometry_targets(topo, fg, [{"kind": "no_floating_parts"}, {"kind": "no_deep_overlap"}])
+    overlap_fail = any(t["kind"] == "no_deep_overlap" and t["status"] == "fail" for t in struct["targets"])
+
+    brief = load_cad_brief(settings, project_id)
+    tv = None
+    if brief and isinstance(brief.get("validation_targets"), list) and brief["validation_targets"]:
+        tv = validate_targets(settings, project_id, {})
+    target_fail = [t for t in (tv.get("targets") if isinstance(tv, dict) else []) if t.get("status") == "fail"]
+
+    fidelity = dr.get("fidelity") or {}
+    fid_level = fidelity.get("level")
+    floating = dr["summary"].get("floating_parts") or []
+    broken_sym = dr["summary"].get("broken_symmetry") or []
+    has_ref = "geometry/reference.png" in members
+    accurate_requested = bool(inp.get("request_is_real_target"))
+
+    triggers: list[str] = []
+    if part_count >= 2:
+        triggers.append("multi_part")
+    if floating:
+        triggers.append("floating_parts")
+    if overlap_fail:
+        triggers.append("spatial_overlap")
+    if broken_sym:
+        triggers.append("broken_symmetry")
+    if fid_level in ("crude", "basic"):
+        triggers.append(f"fidelity_{fid_level}")
+    if target_fail:
+        triggers.append("brief_targets_failing")
+    if has_ref:
+        triggers.append("reference_image")
+    if accurate_requested:
+        triggers.append("accurate_representation_requested")
+    high_risk = bool(triggers)
+
+    blocking: list[str] = []
+    if floating:
+        blocking.append(f"{len(floating)} floating part(s): {floating}")
+    if broken_sym:
+        blocking.append(f"broken symmetry: {broken_sym}")
+    if target_fail:
+        blocking.append(f"{len(target_fail)} brief target(s) failing: {[t.get('detail') for t in target_fail][:3]}")
+    if dr.get("critique_verdict") == "fails_audit":
+        blocking.append("manufacturability audit fails (high-severity findings)")
+    if part_count >= 2 and fid_level == "crude":
+        blocking.append("modeling fidelity is 'crude' on a multi-part model")
+
+    verdict = "needs_repair" if blocking else "ready"
+
+    repair_actions: list[dict[str, Any]] = list(dr.get("actions") or [])
+    for t in target_fail:
+        repair_actions.append({
+            "source": "validate_targets", "issue": t.get("detail"),
+            "fix": "adjust geometry (cad.execute_build123d / cad.edit_parameter / positioning helpers) to meet the target, then re-diagnose",
+        })
+    if part_count >= 2 and fid_level in ("crude", "basic"):
+        for f in (fidelity.get("findings") or []):
+            repair_actions.append({"source": "fidelity", "issue": f.get("rule"), "fix": f.get("suggested_fix")})
+
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "high_risk": high_risk,
+        "triggers": triggers,
+        "verdict": verdict,
+        "blocking_issues": blocking,
+        "repair_actions": repair_actions,
+        "snapshot": {
+            "part_count": part_count,
+            "critique_verdict": dr.get("critique_verdict"),
+            "modeling_fidelity": dr["summary"].get("modeling_fidelity"),
+            "floating_parts": floating,
+            "broken_symmetry": broken_sym,
+            "structural": struct["summary"],
+            "brief_targets": (tv.get("summary") if isinstance(tv, dict) else None),
+            "reference_image": has_ref,
+        },
+        "contract": (
+            "Repair-loop contract: for a high-risk build, fix every blocking issue and re-run "
+            "cad.diagnose until verdict='ready' before presenting the result as done. Fixes go "
+            "through the approval-gated edit path; cad.diagnose itself mutates nothing."
+        ),
+        "honesty": "Read-only deterministic composition. Bbox-level structural checks, not GD&T or a solver.",
+    }
+
+
 def _execute_build123d_code_streaming(
     code: str,
     timeout: int = 60,

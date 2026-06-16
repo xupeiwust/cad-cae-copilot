@@ -1344,6 +1344,26 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ),
     },
     "cad.get_brief": _project_id_schema(),
+    "cad.diagnose": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "request_is_real_target": {
+                "type": "boolean",
+                "description": "Set true when the user asked for an accurate representation of a real product/character/vehicle (adds a risk trigger).",
+            },
+        },
+        "additionalProperties": False,
+        "description": (
+            "Read-only diagnostic snapshot + repair verdict (#293): composes design_review "
+            "(critique + symmetry + modeling fidelity + fix targets), structural geometry "
+            "checks (no floating / no deep overlap), and the CAD brief's validation_targets "
+            "into ONE snapshot with risk triggers, a ready / needs_repair verdict, and a "
+            "prioritized repair_actions list. Repair-loop contract: for a high-risk build, fix "
+            "every blocking issue and re-diagnose until 'ready' before presenting. Mutates nothing."
+        ),
+    },
 
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),

@@ -208,6 +208,13 @@ fine — but it will not carry `standard_part` ISO designation in the feature gr
 
 ## Hard rules
 
+- **Repair-loop contract for high-risk builds.** Before presenting a high-risk
+  build as done — a multi-part / assembly / product model, any nonzero
+  floating/spatial/symmetry issue, a `crude` fidelity level, a build with a
+  reference image, or an explicit "accurate representation of a real X" request —
+  run `cad.diagnose` and repair every `blocking_issue` (via the approval-gated
+  edit path) until `verdict == "ready"`. Do not report such a build complete while
+  `cad.diagnose` returns `needs_repair`.
 - Respect `[APPROVAL REQUIRED]` tools; never bypass or hide approval boundaries.
 - If `AIENG_MCP_BLOCK_APPROVAL_TOOLS=1` is active, gated CAD tools will be refused by the MCP server; report that and stop.
 - Do not claim strength, safety factor, manufacturability, meshability, or simulation correctness from CAD generation alone.

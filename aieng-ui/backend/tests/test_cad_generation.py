@@ -1942,6 +1942,45 @@ def test_positioning_helpers_place_parts_relative(tmp_path: Path) -> None:
     assert abs(cx(bb["shaft"]) - 10) < 0.05 and abs(cy(bb["shaft"]) - 20) < 0.05
 
 
+def test_diagnose_ready_vs_needs_repair(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import diagnose, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+
+    # clean single filleted part → no blocking issues → ready
+    pid = _make_project(settings, "diag-ready")
+    ok_code = (
+        "from build123d import *\n"
+        "with BuildPart() as bp:\n"
+        "    Box(40, 40, 10)\n"
+        "    fillet(bp.edges().filter_by(Axis.Z), radius=3)\n"
+        "p = bp.part; p.label = 'plate'\n"
+        "result = Compound(children=[p])\n"
+    )
+    assert execute_build123d_code(settings, pid, {"code": ok_code, "thumbnail": False})["status"] == "ok"
+    ready = diagnose(settings, pid, {})
+    assert ready["status"] == "ok"
+    assert ready["verdict"] == "ready"
+    assert ready["blocking_issues"] == []
+
+    # a floating part → high risk + blocking → needs_repair
+    pid2 = _make_project(settings, "diag-float")
+    bad_code = (
+        "from build123d import *\n"
+        "a = Box(10, 10, 10); a.label = 'a'\n"
+        "b = Box(10, 10, 10).moved(Location((500, 0, 0))); b.label = 'b'\n"  # 500mm away → floating
+        "result = Compound(children=[a, b])\n"
+    )
+    assert execute_build123d_code(settings, pid2, {"code": bad_code, "thumbnail": False})["status"] == "ok"
+    bad = diagnose(settings, pid2, {})
+    assert bad["verdict"] == "needs_repair"
+    assert bad["high_risk"] is True
+    assert "floating_parts" in bad["triggers"]
+    assert bad["blocking_issues"]
+    assert bad["repair_actions"] is not None
+
+
 def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import design_review, execute_build123d_code

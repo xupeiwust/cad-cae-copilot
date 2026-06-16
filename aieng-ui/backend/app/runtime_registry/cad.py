@@ -363,6 +363,29 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         description="Read-only: return the project's authored CAD brief (units, parts, validation_targets), or not_found.",
     )
 
+    def _tool_cad_diagnose(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.diagnose(active_settings, str(project_id), inp)
+
+    rt.register_tool(
+        "cad.diagnose",
+        _tool_cad_diagnose,
+        read_only=True,
+        input_schema=_schema("cad.diagnose"),
+        description=(
+            "Read-only diagnostic snapshot + repair verdict: composes design_review (critique + "
+            "symmetry + modeling fidelity + fix targets), structural geometry checks, and the CAD "
+            "brief's validation_targets into one snapshot with risk triggers, a ready / "
+            "needs_repair verdict, and prioritized repair_actions. Repair-loop contract: for a "
+            "high-risk build, fix every blocking issue and re-diagnose until 'ready' before "
+            "presenting the result. Mutates nothing."
+        ),
+    )
+
     def _tool_cad_define_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

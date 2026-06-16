@@ -135,6 +135,7 @@ export function ClippingPlaneControls({
             disabled={disabled}
             onChange={(e) => onPositionChange(parseFloat(e.target.value))}
             style={SLIDER}
+            aria-label="Clipping plane position"
           />
           <span style={{ minWidth: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
             {(position * 100).toFixed(0)}%

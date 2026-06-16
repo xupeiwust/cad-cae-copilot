@@ -22,12 +22,17 @@ export function clipNormal(axis: ClipAxis, flip: boolean): THREE.Vector3 {
  * Map a normalized clip position [0, 1] along `axis` to a world-coordinate
  * value based on the object's bounding box.
  */
-export function clipCoordinate(object: THREE.Object3D, axis: ClipAxis, position: number): number {
-  const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) return 0;
+export function clipCoordinate(
+  object: THREE.Object3D,
+  axis: ClipAxis,
+  position: number,
+  box?: THREE.Box3,
+): number {
+  const b = box ?? new THREE.Box3().setFromObject(object);
+  if (b.isEmpty()) return 0;
   const idx = AXIS_INDEX[axis];
-  const min = box.min.getComponent(idx);
-  const max = box.max.getComponent(idx);
+  const min = b.min.getComponent(idx);
+  const max = b.max.getComponent(idx);
   const t = Math.max(0, Math.min(1, position));
   return min + (max - min) * t;
 }
@@ -96,7 +101,7 @@ export function buildClipCapMesh(
   const size = new THREE.Vector3();
   box.getSize(size);
 
-  const coord = clipCoordinate(object, axis, position);
+  const coord = clipCoordinate(object, axis, position, box);
 
   // Dimensions of the plane in the two axes orthogonal to the clip axis.
   const dims = [size.x, size.y, size.z];

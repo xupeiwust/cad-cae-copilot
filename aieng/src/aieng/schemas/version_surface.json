@@ -24,12 +24,12 @@
     },
     "mcp_tool_surface": {
       "policy": "unstable",
-      "sha256": "e1ab17c1b39ac6cf138d6b6d41c37979d05f7c7feb9190557a07e5ea75361ce9",
+      "sha256": "199a6926fdda69ad5b34d88bc25b250def4361f814686c4dbfd9df5eece3ebe8",
       "version": "0.1.0-alpha.1"
     },
     "skill_prompts": {
       "policy": "unstable",
-      "sha256": "ed89386e5ead8eaf2b829c242d7e2b9f5c3eb46e700241564894b5f07186f4a2",
+      "sha256": "c3a3525b84055af612a68402b5712865e42e32b776458f196519f1f53583124c",
       "version": "0.1.0-alpha.2"
     }
   },

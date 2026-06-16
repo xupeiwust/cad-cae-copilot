@@ -1881,6 +1881,39 @@ def test_validate_targets_end_to_end(tmp_path: Path) -> None:
     assert validate_targets(settings, pid, {})["code"] == "missing_targets"
 
 
+def test_cad_brief_feeds_validate_targets_end_to_end(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import author_brief, execute_build123d_code, get_brief, validate_targets
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "brief-loop")
+
+    # 1) author the brief BEFORE any geometry exists
+    ab = author_brief(settings, pid, {
+        "request": "base plate + pin", "model_type": "assembly",
+        "parts": [{"name": "base", "size_mm": [80, 60, 10]}, {"name": "pin"}],
+    })
+    assert ab["status"] == "ok"
+    assert any(t["kind"] == "named_part_present" and t.get("part") == "base" for t in ab["validation_targets"])
+    assert get_brief(settings, pid)["status"] == "ok"
+
+    # 2) build a model matching the brief
+    code = (
+        "from build123d import *\n"
+        "a = Box(80, 60, 10); a.label = 'base'\n"
+        "b = Cylinder(5, 30).moved(Location((0, 0, 10))); b.label = 'pin'\n"
+        "result = Compound(children=[a, b])\n"
+    )
+    assert execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})["status"] == "ok"
+
+    # 3) validate with NO explicit targets → auto-loads the brief's targets
+    out = validate_targets(settings, pid, {})
+    assert out["status"] == "ok"
+    assert out["targets_source"] == "cad_brief"
+    assert out["verdict"] == "pass"
+    assert all(t["status"] == "pass" for t in out["targets"])
+
+
 def test_engineering_detail_helpers_build_and_compose(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import design_review, execute_build123d_code

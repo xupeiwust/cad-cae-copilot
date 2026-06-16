@@ -325,6 +325,44 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_author_brief(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.author_brief(active_settings, str(project_id), inp)
+
+    rt.register_tool(
+        "cad.author_brief",
+        _tool_cad_author_brief,
+        read_only=False,
+        destructive=False,
+        input_schema=_schema("cad.author_brief"),
+        description=(
+            "Author the pre-code CAD brief + validation-target list: declare units, model type, "
+            "parts, and key dimensions BEFORE building. Stored as a project sidecar; auto-derives "
+            "validation_targets that cad.validate_targets checks the built model against — the "
+            "plan→build→verify loop. Planning artifact only; no geometry, no guarantee."
+        ),
+    )
+
+    def _tool_cad_get_brief(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.get_brief(active_settings, str(project_id), inp)
+
+    rt.register_tool(
+        "cad.get_brief",
+        _tool_cad_get_brief,
+        read_only=True,
+        input_schema=_schema("cad.get_brief"),
+        description="Read-only: return the project's authored CAD brief (units, parts, validation_targets), or not_found.",
+    )
+
     def _tool_cad_define_part(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

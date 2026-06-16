@@ -1295,6 +1295,56 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ),
     },
 
+    "cad.author_brief": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "request": {"type": "string", "description": "The user's modeling request (recorded verbatim)."},
+            "units": {"type": "string", "description": "mm (default) / cm / inch / m."},
+            "coordinate_convention": {"type": "string", "description": "e.g. z_up (default)."},
+            "model_type": {
+                "type": "string",
+                "enum": ["single_part", "assembly", "product", "organic", "fixture"],
+                "description": "Inferred from part count if omitted.",
+            },
+            "parts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "role": {"type": "string"},
+                        "size_mm": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+                        "key_dimensions": {"type": "object", "additionalProperties": True},
+                    },
+                    "additionalProperties": True,
+                },
+                "description": "Planned named parts; each yields a named_part_present (and part_size if size_mm) target.",
+            },
+            "overall_size_mm": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "key_dimensions": {"type": "object", "additionalProperties": True},
+            "tolerance_mm": {"type": "number", "description": "Default tolerance for derived size targets (1mm)."},
+            "validation_targets": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+                "description": "Optional explicit targets (cad.validate_targets kinds), merged with the derived ones.",
+            },
+            "assumptions": {"type": "array", "items": {"type": "string"}},
+        },
+        "additionalProperties": False,
+        "description": (
+            "Author the pre-code CAD brief + validation-target list (#290): declare units, "
+            "model type, parts, and key dimensions BEFORE cad.execute_build123d. Stored as a "
+            "project sidecar; auto-derives validation_targets (named_part_present, part_count, "
+            "overall_size, part_size, no_floating_parts) that cad.validate_targets then checks "
+            "the built model against — closing the plan→build→verify loop. A brief is a plan, "
+            "not a guarantee."
+        ),
+    },
+    "cad.get_brief": _project_id_schema(),
+
     # ── CAD source readback (read-only) ──────────────────────────────────────
     "cad.get_source": _project_id_schema(),
     "cad.list_editable_parameters": _project_id_schema(),

@@ -3809,9 +3809,17 @@ def validate_targets(settings: Any, project_id: str, inp: dict[str, Any]) -> dic
     from aieng.converters.geometry_targets import validate_geometry_targets
 
     targets = inp.get("targets")
+    targets_source = "explicit"
     if not isinstance(targets, list) or not targets:
-        return {"status": "error", "code": "missing_targets",
-                "message": "targets must be a non-empty list of target objects (e.g. {kind: 'named_part_present', part: 'housing'})."}
+        # fall back to the CAD brief's targets (#290) — closes the plan→verify loop
+        brief = load_cad_brief(settings, project_id)
+        if brief and isinstance(brief.get("validation_targets"), list) and brief["validation_targets"]:
+            targets = brief["validation_targets"]
+            targets_source = "cad_brief"
+        else:
+            return {"status": "error", "code": "missing_targets",
+                    "message": "Pass a non-empty targets list, or author a CAD brief first "
+                               "(cad.author_brief) so its validation_targets are used."}
     pkg, err = _resolve_package_for_assembly(settings, project_id)
     if err is not None:
         return err
@@ -3830,7 +3838,67 @@ def validate_targets(settings: Any, project_id: str, inp: dict[str, Any]) -> dic
         return {"status": "error", "code": "no_geometry",
                 "message": "No geometry to validate — build the model with cad.execute_build123d first."}
     report = validate_geometry_targets(topo, fg, targets)
-    return {"status": "ok", "project_id": project_id, **report}
+    return {"status": "ok", "project_id": project_id, "targets_source": targets_source, **report}
+
+
+def _cad_brief_path(settings: Any, project_id: str) -> Path | None:
+    from .main import project_dir
+
+    try:
+        return project_dir(settings, project_id) / "cad_brief.json"
+    except Exception:
+        return None
+
+
+def load_cad_brief(settings: Any, project_id: str) -> dict[str, Any] | None:
+    """Read a project's CAD brief sidecar (project dir, not the .aieng package, so
+    it persists across rebuilds and is authorable before geometry exists)."""
+    p = _cad_brief_path(settings, project_id)
+    if p and p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def author_brief(settings: Any, project_id: str, inp: dict[str, Any]) -> dict[str, Any]:
+    """Author/normalize a CAD brief + validation targets BEFORE building (#290).
+
+    Stores it as a project-dir sidecar (cad_brief.json). The derived
+    validation_targets are auto-used by cad.validate_targets after the build,
+    closing the plan→build→verify loop. Pure planning artifact — no geometry, no
+    guarantee the built model meets it.
+    """
+    from aieng.converters.cad_brief import normalize_cad_brief
+    from .project_io import get_project
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception:
+        project = None
+    if not project:
+        return {"status": "error", "code": "project_not_found", "message": f"project {project_id} not found."}
+
+    brief = normalize_cad_brief(inp)
+    path = _cad_brief_path(settings, project_id)
+    if path is None:
+        return {"status": "error", "code": "project_dir_error", "message": "could not resolve project directory."}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(brief, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "code": "brief_write_error", "message": f"{type(exc).__name__}: {exc}"}
+    return {"status": "ok", "project_id": project_id, "stored_at": "cad_brief.json", **brief}
+
+
+def get_brief(settings: Any, project_id: str, _inp: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Read-only: return the project's CAD brief (or a not-found status)."""
+    brief = load_cad_brief(settings, project_id)
+    if brief is None:
+        return {"status": "not_found", "project_id": project_id,
+                "message": "No CAD brief authored yet — call cad.author_brief first."}
+    return {"status": "ok", "project_id": project_id, **brief}
 
 
 def _execute_build123d_code_streaming(

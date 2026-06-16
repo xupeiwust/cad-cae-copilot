@@ -2978,6 +2978,13 @@ def _detect_advanced_features(features: list[dict[str, Any]], source_code: str) 
             {"fillet_radius_mm": round(sum(_fillet_radii) / len(_fillet_radii), 2)},
             "edge_rounding",
         )
+    elif "fillet(" in src:
+        # The radius regex misses the common nested-paren form
+        # `fillet(bp.edges().filter_by(Axis.Z), radius=N)`; still credit the
+        # edge-breaking by presence so a filleted model isn't mislabelled crude.
+        _add("fillet", "Fillet (edge-breaking)", {}, "edge_rounding")
+    if "chamfer(" in src:
+        _add("chamfer", "Chamfer (edge-breaking)", {}, "edge_rounding")
 
     mirror_count = src.count("mirror(")
     if mirror_count > 0:

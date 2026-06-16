@@ -1711,6 +1711,22 @@ def test_housing_helper_builds_and_reads_designed(tmp_path: Path) -> None:
     assert not any(f["rule"] == "no_edge_breaking" for f in rev["fidelity"]["findings"])
 
 
+def test_nested_paren_fillet_is_credited_as_edge_breaking() -> None:
+    # the common build123d form fillet(bp.edges().filter_by(Axis.Z), radius=N) has a
+    # nested paren the radius regex misses — credit edge-breaking by presence so a
+    # filleted model is not mislabelled 'crude'.
+    from app.cad_generation import _detect_advanced_features
+
+    feats: list[dict] = []
+    src = (
+        "with BuildPart() as bp:\n"
+        "    Box(10, 10, 10)\n"
+        "    fillet(bp.edges().filter_by(Axis.Z), radius=2)\n"
+    )
+    _detect_advanced_features(feats, src)
+    assert any(f["type"] == "fillet" for f in feats)
+
+
 def test_cylinder_face_carries_axis_for_mate_predicates(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import _execute_build123d_code

@@ -66,6 +66,46 @@ def test_mcp_tool_names_use_underscores_and_include_canonical() -> None:
     assert not missing, f"canonical MCP tool names missing: {missing}"
 
 
+def test_agent_context_recommendations_resolve_to_registered_tools() -> None:
+    """#286: every tool_hint / reference agent_context emits must be a real MCP tool."""
+    from app import runtime
+    from app.agent_context import _available_actions
+    from app.cad_observation import cad_specific_recommendations
+
+    create_app()
+    registered = {t["name"] for t in runtime.list_tools_for_mcp()}
+
+    refs: set[str] = set()
+    # cad_observation recommendation branches (these feed agent_context).
+    for obs in (
+        {"status": "missing", "geometry_evidence_level": "none"},
+        {"status": "ready", "geometry_evidence_level": "exported_geometry",
+         "cae_readiness_hints": {"present_paths": []}},
+        {"status": "ready", "geometry_evidence_level": "exported_geometry",
+         "floating_parts": ["x"], "cae_readiness_hints": {"present_paths": []}},
+    ):
+        for rec in cad_specific_recommendations(obs):
+            if rec.get("reference"):
+                refs.add(rec["reference"])
+    # agent_context's own action surface (passes references through as tool_hint).
+    actions = _available_actions(
+        {"next_recommended_actions": [
+            {"kind": "inspect_geometry_readiness", "reference": "aieng.inspect_package",
+             "label": "Inspect", "rationale": "r"}]},
+        computed_metrics={}, comparison={},
+    )
+    for a in actions:
+        if a.get("tool_hint"):
+            refs.add(a["tool_hint"])
+
+    assert refs, "expected recommendations to fire"
+    unresolved = sorted(r for r in refs if r not in registered)
+    assert not unresolved, f"agent_context emits non-existent tools: {unresolved}"
+    # the two previously-dangling names must be gone (regression)
+    assert "cad.inspect_geometry" not in refs
+    assert "compare_targets" not in refs
+
+
 def test_inproc_mcp_handshake_lists_tools_and_reads_readme() -> None:
     """A real MCP client session against the FastMCP server completes the
     handshake, lists the canonical tools, and a read-only call returns content."""

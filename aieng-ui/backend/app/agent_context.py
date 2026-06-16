@@ -387,8 +387,9 @@ def _available_actions(
         actions.append({
             "id": "compare_targets",
             "label": "Compare design targets once metrics are available.",
-            "tool_hint": "compare_targets",
-            "rationale": "The agent needs pass/fail/unknown target status to pick the next engineering move.",
+            "tool_hint": "aieng.inspect_package",
+            "rationale": "Re-inspect the package to read pass/fail/unknown target status once "
+                         "computed metrics exist; that status guides the next engineering move.",
             "requires_approval": False,
         })
     return _dedupe_actions(actions)

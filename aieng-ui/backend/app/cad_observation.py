@@ -368,7 +368,7 @@ def cad_specific_recommendations(observation: dict[str, Any]) -> list[dict[str, 
                 "Confirm topology, units, and watertightness before approving "
                 "downstream tools."
             ),
-            reference="cad.inspect_geometry",
+            reference="aieng.inspect_package",
         ))
 
     if not out:

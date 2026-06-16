@@ -11,7 +11,6 @@ import type { CaeSetupOverlayResponse, FieldOverlayConfig, FieldProbe, FieldRegi
 import { modelToDisplayVec } from "./viewer/coordinateFrames";
 import { ViewerOverlays } from "./viewer/ViewerOverlays";
 import { DeformationControls } from "./viewer/DeformationControls";
-import { computeDeformationScale } from "./viewer/deformedShape";
 import {
   useThreeScene,
   useAssetLoader,
@@ -26,6 +25,7 @@ import {
   useFieldRegionOverlay,
   useMeshPreviewOverlay,
   useDeformedShape,
+  useDeformationOrchestration,
 } from "./viewer/hooks";
 
 export function ModelViewer({
@@ -85,8 +85,6 @@ export function ModelViewer({
         (caeSetupOverlay.constraints && caeSetupOverlay.constraints.length > 0)),
   );
   const [showMeshPreview, setShowMeshPreview] = useState(false);
-  const [showDeformedShape, setShowDeformedShape] = useState(false);
-  const [deformationScale, setDeformationScale] = useState(1);
 
   // Peak/min markers only make sense for a real solver field with per-node data.
   const fieldMarkersAvailable = Boolean(
@@ -94,15 +92,6 @@ export function ModelViewer({
       fieldDescriptor.source === "frd" &&
       Array.isArray(fieldDescriptor.values) &&
       fieldDescriptor.values.length > 0,
-  );
-
-  // Deformed shape is only meaningful when the active field carries per-node
-  // displacement vectors.
-  const deformationAvailable = Boolean(
-    fieldDescriptor &&
-      fieldDescriptor.source === "frd" &&
-      Array.isArray(fieldDescriptor.vectors) &&
-      fieldDescriptor.vectors.length > 0,
   );
 
   const { geometryReport } = useGeometryReport({
@@ -234,17 +223,14 @@ export function ModelViewer({
     objectReadyKey,
   );
 
-  // 11b. Deformed-shape exaggeration scale: auto-init when a displacement field
-  // becomes active and the geometry is loaded.
-  useEffect(() => {
-    const object = objectRef.current;
-    if (!object || !fieldDescriptor?.vectors || fieldDescriptor.vectors.length === 0) {
-      setShowDeformedShape(false);
-      return;
-    }
-    const auto = computeDeformationScale(fieldDescriptor.vectors, object, 0.05);
-    setDeformationScale(Number.isFinite(auto) && auto > 0 ? auto : 1);
-  }, [fieldDescriptor?.field_name, fieldDescriptor?.project_id, fieldDescriptor?.vectors, objectReadyKey]);
+  // 11b. Deformed-shape overlay state (availability, toggle, auto scale).
+  const {
+    deformationAvailable,
+    showDeformedShape,
+    setShowDeformedShape,
+    deformationScale,
+    setDeformationScale,
+  } = useDeformationOrchestration(fieldDescriptor, objectRef, objectReadyKey);
 
   // 11c. Displacement-warped deformed shape overlay
   useDeformedShape(

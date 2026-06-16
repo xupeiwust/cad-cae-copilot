@@ -118,7 +118,7 @@ export function DeformationControls({
             type="range"
             min={minScale}
             max={maxScale}
-            step={Math.max(0.01, maxScale / 200)}
+            step={Math.max(0.01, maxScale / 20000)}
             value={scale}
             disabled={disabled}
             onChange={(e) => onScaleChange(parseFloat(e.target.value))}

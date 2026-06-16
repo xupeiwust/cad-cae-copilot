@@ -97,6 +97,7 @@ export function useClippingPlane(
     fieldDescriptor?.node_coords,
     fieldDescriptor?.min_value,
     fieldDescriptor?.max_value,
+    fieldDescriptor?.colormap,
     config?.colormap,
     config?.clampMin,
     config?.clampMax,

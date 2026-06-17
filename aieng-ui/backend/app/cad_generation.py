@@ -8,9 +8,11 @@ into the project's .aieng package.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.metadata as importlib_metadata
 import json
+import math
 import os
 import re
 import shutil
@@ -1956,8 +1958,6 @@ def _standard_part_metadata_for_body(
     source_lower = source_text.lower()
     source_known = any(hint in source_lower for hint in _STANDARD_PART_SOURCE_HINTS)
     canonical = _canonical_standard_type_from_text(name)
-    if canonical is None and source_known:
-        canonical = _canonical_standard_type_from_text(source_text) or "unknown_standard_part"
     if canonical is None:
         return None
     metadata = {
@@ -3274,6 +3274,46 @@ def _diff_topology(
     }
 
 
+def _topology_change_summary(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    def _ids(topo: dict[str, Any], entity_type: str) -> set[str]:
+        return {
+            str(e.get("id"))
+            for e in topo.get("entities", [])
+            if isinstance(e, dict) and e.get("type") == entity_type and e.get("id")
+        }
+
+    entity_id_changes: dict[str, Any] = {}
+    changed = False
+    for entity_type in ("solid", "face", "edge"):
+        before_ids = _ids(before, entity_type)
+        after_ids = _ids(after, entity_type)
+        added = sorted(after_ids - before_ids)
+        removed = sorted(before_ids - after_ids)
+        survived = before_ids & after_ids
+        type_changed = bool(added or removed)
+        changed = changed or type_changed
+        entity_id_changes[entity_type] = {
+            "before_count": len(before_ids),
+            "after_count": len(after_ids),
+            "survived_count": len(survived),
+            "added_count": len(added),
+            "removed_count": len(removed),
+            "sample_added": added[:8],
+            "sample_removed": removed[:8],
+        }
+
+    return {
+        "topology_changed": changed,
+        "entity_id_changes": entity_id_changes,
+        "stale_reference_risk": changed,
+        "message": (
+            "Topology entity IDs changed; face/edge-scoped CAE or assembly references may be stale."
+            if changed else
+            "Topology entity IDs were preserved for solids, faces, and edges."
+        ),
+    }
+
+
 def _diff_critique(
     before_topo: dict[str, Any],
     before_fg: dict[str, Any],
@@ -3413,7 +3453,203 @@ def _append_mode_critique_diff(
 
 # ── parametric editing: extract editable parameters from source.py ─────────────
 
-_PARAM_CONSTANT_RE = re.compile(r"^([ \t]*)([A-Z][A-Z0-9_]*)[ \t]*=[ \t]*([0-9]+\.?[0-9]*)([ \t]*(?:#.*)?)$")
+_PARAM_ASSIGNMENT_RE = re.compile(r"^([ \t]*)([A-Z][A-Z0-9_]*)([ \t]*=[ \t]*)(.+)$")
+_SAFE_MATH_FUNCS: dict[str, Callable[..., float]] = {
+    name: value
+    for name, value in vars(math).items()
+    if not name.startswith("_") and callable(value)
+}
+_SAFE_MATH_CONSTS: dict[str, float] = {
+    name: float(value)
+    for name, value in vars(math).items()
+    if not name.startswith("_") and isinstance(value, (int, float)) and not callable(value)
+}
+
+
+def _split_rhs_comment(rhs: str) -> tuple[str, str, str]:
+    """Split ``expr  # comment`` while ignoring ``#`` inside string literals."""
+    quote: str | None = None
+    escaped = False
+    for idx, ch in enumerate(rhs):
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            continue
+        if ch == "#":
+            expr_with_spacing = rhs[:idx]
+            expr = expr_with_spacing.rstrip()
+            spacing = expr_with_spacing[len(expr):]
+            return expr, spacing, rhs[idx:]
+    return rhs.strip(), "", ""
+
+
+def _safe_eval_param_expression(expr: str, constants: dict[str, float] | None = None) -> float | None:
+    """Evaluate simple numeric CAD parameter expressions without executing code."""
+    constants = constants or {}
+    try:
+        tree = ast.parse(expr.strip(), mode="eval")
+    except SyntaxError:
+        return None
+
+    def _eval(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise ValueError("non-numeric constant")
+            return float(node.value)
+        if isinstance(node, ast.Name):
+            if node.id in constants:
+                return float(constants[node.id])
+            if node.id in _SAFE_MATH_CONSTS:
+                return float(_SAFE_MATH_CONSTS[node.id])
+            raise ValueError(f"unknown name {node.id}")
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = _eval(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.BinOp):
+            left = _eval(node.left)
+            right = _eval(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                return left ** right
+            raise ValueError("unsupported operator")
+        if isinstance(node, ast.Call) and not node.keywords:
+            func: Callable[..., float] | None = None
+            if isinstance(node.func, ast.Name):
+                func = _SAFE_MATH_FUNCS.get(node.func.id)
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "math"
+            ):
+                func = _SAFE_MATH_FUNCS.get(node.func.attr)
+            if func is None:
+                raise ValueError("unsupported call")
+            return float(func(*[_eval(arg) for arg in node.args]))
+        raise ValueError("unsupported expression")
+
+    try:
+        return _eval(tree)
+    except Exception:
+        return None
+
+
+def _validate_cad_parameter_rhs(expr: str) -> None:
+    """Validate a replacement RHS as a restricted numeric/arithmetic expression."""
+    if _safe_eval_param_expression(expr, {}) is not None:
+        return
+    try:
+        tree = ast.parse(expr.strip(), mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"invalid Python expression: {exc.msg}") from exc
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id in _SAFE_MATH_CONSTS or node.id in _SAFE_MATH_FUNCS:
+                continue
+            if re.fullmatch(r"[A-Z][A-Z0-9_]*", node.id):
+                continue
+            raise ValueError(f"unsupported name in expression: {node.id}")
+        if isinstance(node, ast.Attribute):
+            if not (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "math"
+                and (node.attr in _SAFE_MATH_FUNCS or node.attr in _SAFE_MATH_CONSTS)
+            ):
+                raise ValueError("only math.<function/constant> attributes are supported")
+        if isinstance(node, ast.Call):
+            if node.keywords:
+                raise ValueError("keyword arguments are not supported in parameter expressions")
+            if isinstance(node.func, ast.Name) and node.func.id in _SAFE_MATH_FUNCS:
+                continue
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "math"
+                and node.func.attr in _SAFE_MATH_FUNCS
+            ):
+                continue
+            raise ValueError("only safe math function calls are supported")
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise ValueError("parameter expressions must be numeric")
+        if not isinstance(
+            node,
+            (
+                ast.Expression,
+                ast.BinOp,
+                ast.UnaryOp,
+                ast.Constant,
+                ast.Name,
+                ast.Load,
+                ast.Call,
+                ast.Attribute,
+                ast.Add,
+                ast.Sub,
+                ast.Mult,
+                ast.Div,
+                ast.FloorDiv,
+                ast.Mod,
+                ast.Pow,
+                ast.UAdd,
+                ast.USub,
+            ),
+        ):
+            raise ValueError(f"unsupported expression syntax: {type(node).__name__}")
+
+
+def _cad_parameter_rhs_source(new_value: Any) -> str:
+    if isinstance(new_value, bool):
+        raise ValueError("boolean values are not valid CAD parameter expressions")
+    if isinstance(new_value, int):
+        return str(new_value)
+    if isinstance(new_value, float):
+        return repr(new_value)
+    if isinstance(new_value, str):
+        expr = new_value.strip()
+        if not expr:
+            raise ValueError("parameter expression cannot be empty")
+        _validate_cad_parameter_rhs(expr)
+        return expr
+    raise ValueError(f"unsupported CAD parameter value type: {type(new_value).__name__}")
+
+
+def _replace_cad_parameter_assignment(source_code: str, cad_parameter_name: str, rhs_source: str) -> tuple[str, bool]:
+    pattern = rf'^([ \t]*)({re.escape(cad_parameter_name)})([ \t]*=[ \t]*)(.*)$'
+    modified_lines: list[str] = []
+    found = False
+    for line in source_code.splitlines():
+        m = re.match(pattern, line)
+        if not m:
+            modified_lines.append(line)
+            continue
+        expr, spacing, comment = _split_rhs_comment(m.group(4))
+        if not expr:
+            modified_lines.append(line)
+            continue
+        modified_lines.append(f"{m.group(1)}{m.group(2)}{m.group(3)}{rhs_source}{spacing}{comment}")
+        found = True
+    return "\n".join(modified_lines), found
 
 
 def _infer_param_name(const_name: str) -> str:
@@ -3463,6 +3699,8 @@ def _infer_param_name(const_name: str) -> str:
         return "offset_mm"
     if "angle" in lower:
         return "angle_deg"
+    if lower.endswith("_count") or lower == "count" or "count" in lower:
+        return "count"
     return lower + "_mm"
 
 
@@ -3691,17 +3929,18 @@ def _enrich_feature_graph_with_source_params(
     constant in source.py, so editing can be a deterministic text replacement
     instead of an LLM round-trip.
     """
-    # 1. Extract all named constants (UPPER_SNAKE_CASE = number).
+    # 1. Extract named constants. Numeric literals and safe arithmetic expressions
+    # are evaluated to expose current_value, while the stored source expression is
+    # preserved for cad.edit_parameter replacement.
     constants: dict[str, float] = {}
     for line in source_code.splitlines():
-        m = _PARAM_CONSTANT_RE.match(line)
+        m = _PARAM_ASSIGNMENT_RE.match(line)
         if m:
             name = m.group(2)
-            try:
-                val = float(m.group(3))
+            expr, _, _ = _split_rhs_comment(m.group(4))
+            val = _safe_eval_param_expression(expr, constants)
+            if val is not None:
                 constants[name] = val
-            except ValueError:
-                pass
 
     features = feature_graph.get("features", [])
     # Advanced-feature + quality-helper detection is independent of declared
@@ -8022,23 +8261,24 @@ def edit_build123d_parameter(
             "message": f"Failed to read source.py from package: {exc}",
         }
 
-    # 4. Text replacement: find `CONSTANT_NAME = value` and swap the numeric part.
-    #    We preserve indentation and any inline comment.
-    pattern = rf'^([ \t]*)({re.escape(cad_parameter_name)})([ \t]*=[ \t]*)([0-9]+\.?[0-9]*)(.*)$'
-    modified_lines: list[str] = []
-    found = False
+    # 4. Text replacement: find `CONSTANT_NAME = <expression>` and replace only
+    #    the RHS. Preserve indentation and inline comments, then parse the full
+    #    source before executing so syntax failures never corrupt the package.
+    try:
+        rhs_source = _cad_parameter_rhs_source(new_value)
+    except ValueError as exc:
+        return {
+            "status": "error",
+            "code": "invalid_parameter_expression",
+            "message": str(exc),
+            "previous_value": previous_value,
+            "new_value": new_value,
+            "cad_parameter_name": cad_parameter_name,
+        }
 
-    for line in source_code.splitlines():
-        m = re.match(pattern, line)
-        if m:
-            indent = m.group(1)
-            name = m.group(2)
-            eq = m.group(3)
-            tail = m.group(5)
-            modified_lines.append(f"{indent}{name}{eq}{new_value}{tail}")
-            found = True
-        else:
-            modified_lines.append(line)
+    modified_source, found = _replace_cad_parameter_assignment(
+        source_code, cad_parameter_name, rhs_source
+    )
 
     if not found:
         return {
@@ -8052,7 +8292,17 @@ def edit_build123d_parameter(
             "previous_value": previous_value,
         }
 
-    modified_source = "\n".join(modified_lines)
+    try:
+        ast.parse(modified_source)
+    except SyntaxError as exc:
+        return {
+            "status": "error",
+            "code": "invalid_modified_source",
+            "message": f"Parameter edit produced invalid Python syntax: {exc.msg}",
+            "previous_value": previous_value,
+            "new_value": new_value,
+            "cad_parameter_name": cad_parameter_name,
+        }
 
     # 5. Re-execute build123d with the modified source
     backend = Build123dBackend(settings)
@@ -8120,6 +8370,7 @@ def edit_build123d_parameter(
     else:
         expected_parts = None
     regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
+    topology_change = _topology_change_summary(before_topo, topo)
     # 6c. Engineering-diagnostics diff — flag if the edit worsened manufacturability.
     critique_diff = _diff_critique(before_topo, before_fg, topo, feature_graph)
 
@@ -8186,6 +8437,8 @@ def edit_build123d_parameter(
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
         "modeling_fidelity": _fidelity_brief(topo, feature_graph),
+        "topology_changed": topology_change["topology_changed"],
+        "topology_change": topology_change,
         "regression_diff": regression_diff,
         "critique_diff": critique_diff,
         "written_artifacts": [

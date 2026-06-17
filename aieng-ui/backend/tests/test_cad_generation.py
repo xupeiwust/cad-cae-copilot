@@ -2394,6 +2394,126 @@ def test_edit_build123d_parameter_end_to_end(tmp_path: Path) -> None:
     assert persisted["regression_diff"]["verdict"] == diff["verdict"]
 
 
+def test_replace_cad_parameter_assignment_preserves_expression_comments() -> None:
+    from app.cad_generation import _replace_cad_parameter_assignment
+
+    source = (
+        "WALL = 3 * 2  # editable wall\n"
+        "// WALL = 5\n"
+        "body = Box(WALL, 10, 10)\n"
+    )
+
+    modified, found = _replace_cad_parameter_assignment(source, "WALL", "5 * 2")
+
+    assert found is True
+    assert "WALL = 5 * 2  # editable wall" in modified
+    assert "// WALL = 5" in modified
+
+
+def test_edit_build123d_parameter_expression_rhs_end_to_end(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import edit_build123d_parameter, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "param-edit-expression")
+    code = (
+        "from build123d import *\n"
+        "BODY_LENGTH = 60 * 2  # expression stays editable\n"
+        "BODY_WIDTH = 80\n"
+        "BODY_HEIGHT = 8\n"
+        "body = Box(BODY_LENGTH, BODY_WIDTH, BODY_HEIGHT); body.label = 'base_plate'\n"
+        "result = Compound(children=[body])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    feat = next(
+        f for f in out["feature_graph"]["features"]
+        if f.get("name") == "base_plate" and (f.get("parameters") or {})
+    )
+    assert feat["parameters"]["length_mm"]["current_value"] == 120
+
+    edited = edit_build123d_parameter(
+        settings, pid,
+        feature_id=feat["id"], parameter_name="length_mm", new_value="100 * 2",
+        thumbnail=False,
+    )
+
+    assert edited["status"] == "ok", edited
+    assert edited["previous_value"] == 120
+    assert edited["new_value"] == "100 * 2"
+    bbox = edited["topology_summary"]["bounding_box"]
+    assert abs((bbox[3] - bbox[0]) - 200) < 1.0
+    assert edited["topology_changed"] is False
+
+    from app.project_io import get_project, resolve_project_path
+    pkg = resolve_project_path(settings, pid, get_project(settings, pid).get("aieng_file"))
+    with zipfile.ZipFile(pkg, "r") as z:
+        source_after = z.read("geometry/source.py").decode("utf-8")
+    assert "BODY_LENGTH = 100 * 2  # expression stays editable" in source_after
+
+    rejected = edit_build123d_parameter(
+        settings, pid,
+        feature_id=feat["id"], parameter_name="length_mm",
+        new_value="__import__('os').system('echo unsafe')",
+        thumbnail=False,
+    )
+    assert rejected["status"] == "error"
+    assert rejected["code"] == "invalid_parameter_expression"
+    with zipfile.ZipFile(pkg, "r") as z:
+        source_after_rejected = z.read("geometry/source.py").decode("utf-8")
+    assert source_after_rejected == source_after
+
+
+def test_edit_build123d_integer_count_reports_topology_change(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import edit_build123d_parameter, execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "param-edit-hole-count")
+    code = (
+        "from build123d import *\n"
+        "import math\n"
+        "PLATE_LENGTH = 90\n"
+        "PLATE_WIDTH = 70\n"
+        "PLATE_THICKNESS = 8\n"
+        "HOLE_COUNT = 4\n"
+        "HOLE_RADIUS = 3\n"
+        "PATTERN_RADIUS = 25\n"
+        "with BuildPart() as bp:\n"
+        "    Box(PLATE_LENGTH, PLATE_WIDTH, PLATE_THICKNESS)\n"
+        "    for i in range(HOLE_COUNT):\n"
+        "        angle = 2 * math.pi * i / HOLE_COUNT\n"
+        "        with Locations((PATTERN_RADIUS * math.cos(angle), PATTERN_RADIUS * math.sin(angle), 0)):\n"
+        "            Cylinder(HOLE_RADIUS, PLATE_THICKNESS + 2, mode=Mode.SUBTRACT)\n"
+        "body = bp.part\n"
+        "body.label = 'bolt_plate'\n"
+        "result = Compound(children=[body])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    feat = next(
+        f for f in out["feature_graph"]["features"]
+        if f.get("name") == "bolt_plate" and (f.get("parameters") or {})
+    )
+    assert any(
+        p.get("cad_parameter_name") == "HOLE_COUNT"
+        for p in feat["parameters"].values()
+        if isinstance(p, dict)
+    )
+
+    edited = edit_build123d_parameter(
+        settings, pid,
+        feature_id=feat["id"], parameter_name="HOLE_COUNT", new_value=6,
+        thumbnail=False,
+    )
+
+    assert edited["status"] == "ok", edited
+    assert edited["topology_changed"] is True
+    assert edited["topology_change"]["stale_reference_risk"] is True
+    face_change = edited["topology_change"]["entity_id_changes"]["face"]
+    assert face_change["before_count"] != face_change["after_count"]
+
+
 def test_edit_build123d_parameter_invalid_value_preserves_geometry(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import edit_build123d_parameter, execute_build123d_code

@@ -85,3 +85,56 @@ def test_all_pass_verdict() -> None:
     )
     assert r["verdict"] == "pass"
     assert r["summary"] == {"total": 2, "pass": 2, "fail": 0, "unknown": 0}
+
+
+def test_brep_targets_unknown_without_brep_results() -> None:
+    r = validate_geometry_targets(
+        _topo([("shaft", [0, 0, 0, 10, 10, 50]), ("bore", [0, 0, 0, 12, 12, 50])]),
+        _fg(named=("shaft", "bore")),
+        [
+            {"id": "t1", "kind": "no_interference", "part_a": "shaft", "part_b": "bore"},
+            {"id": "t2", "kind": "coaxial_within", "part_a": "shaft", "part_b": "bore", "tolerance_mm": 0.1},
+            {"id": "t3", "kind": "faces_flush_within", "part_a": "shaft", "part_b": "bore", "tolerance_mm": 0.1},
+            {"id": "t4", "kind": "clearance_within", "part_a": "shaft", "part_b": "bore", "min_clearance_mm": 0.1, "max_clearance_mm": 0.5},
+        ],
+    )
+    assert all(t["status"] == "unknown" for t in r["targets"])
+    assert r["verdict"] == "unknown"
+
+
+def test_brep_targets_merge_pass_and_fail() -> None:
+    brep_results = {
+        "t1": {"status": "pass", "detail": "no interference", "measured": 0.0,
+               "expected": {"intersection_volume_mm3": 0}},
+        "t2": {"status": "fail", "detail": "axis offset 2.0mm", "measured": {"axis_distance_mm": 2.0},
+               "expected": {"max_axis_distance_mm": 0.1}},
+        "t3": {"status": "pass", "detail": "flush", "measured": {"plane_distance_mm": 0.0}},
+        "t4": {"status": "pass", "detail": "clearance ok", "measured": 0.3},
+    }
+    r = validate_geometry_targets(
+        _topo([("shaft", [0, 0, 0, 10, 10, 50]), ("bore", [0, 0, 0, 12, 12, 50])]),
+        _fg(named=("shaft", "bore")),
+        [
+            {"id": "t1", "kind": "no_interference", "part_a": "shaft", "part_b": "bore"},
+            {"id": "t2", "kind": "coaxial_within", "part_a": "shaft", "part_b": "bore", "tolerance_mm": 0.1},
+            {"id": "t3", "kind": "faces_flush_within", "part_a": "shaft", "part_b": "bore", "tolerance_mm": 0.1},
+            {"id": "t4", "kind": "clearance_within", "part_a": "shaft", "part_b": "bore", "min_clearance_mm": 0.1, "max_clearance_mm": 0.5},
+        ],
+        brep_results=brep_results,
+    )
+    statuses = {t["id"]: t["status"] for t in r["targets"]}
+    assert statuses == {"t1": "pass", "t2": "fail", "t3": "pass", "t4": "pass"}
+    assert r["verdict"] == "fail"
+
+
+def test_brep_clearance_recomputed_from_measured() -> None:
+    # When the subprocess only returns measured distance, geometry_targets recomputes pass/fail.
+    r = validate_geometry_targets(
+        _topo([("a", [0, 0, 0, 10, 10, 10]), ("b", [20, 0, 0, 30, 10, 10])]),
+        _fg(named=("a", "b")),
+        [{"id": "c1", "kind": "clearance_within", "part_a": "a", "part_b": "b",
+          "min_clearance_mm": 0.1, "max_clearance_mm": 0.5}],
+        brep_results={"c1": {"status": "unknown", "measured": 10.0, "detail": ""}},
+    )
+    assert r["targets"][0]["status"] == "fail"
+    assert r["targets"][0]["measured"] == 10.0

@@ -318,9 +318,11 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         description=(
             "Read-only deterministic geometry target validator: verify a build's exact "
             "geometric promises (named parts present, feature present, part count, overall/part "
-            "bbox size + center within tolerance, no floating parts, no deep bbox overlap) against "
-            "its topology + feature graph. Each target returns pass / fail / unknown with measured "
+            "bbox size + center within tolerance, no floating parts, no deep bbox overlap, plus "
+            "exact B-Rep checks: no_interference, coaxial_within, faces_flush_within, clearance_within) "
+            "against its topology + feature graph. Each target returns pass / fail / unknown with measured "
             "vs expected — catching plausible-looking but mispositioned or over-modeled results. "
+            "Exact B-Rep checks run in a sandboxed subprocess on the STEP geometry when available. "
             "Bbox-level, not a GD&T solver; mutates nothing."
         ),
     )

@@ -6,7 +6,6 @@ They are skipped when OCP is not installed so core CI stays fast.
 from __future__ import annotations
 
 import json
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -212,13 +211,9 @@ def test_faces_flush_within_detects_gap(tmp_path: Path) -> None:
     assert measured["plane_distance_mm"] >= 0.4
 
 
-def test_missing_ocp_returns_graceful_error(tmp_path: Path) -> None:
+def test_missing_ocp_returns_graceful_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If the runner subprocess cannot import OCP, we surface an error honestly."""
     step_path = _make_box_step(tmp_path, 10, 10, 10)
-    # Pass an empty environment by overriding sys.executable to a fake command?
-    # Easier: monkeypatch subprocess.run to simulate failure.
-    import subprocess as _subprocess
-    original_run = _subprocess.run
 
     def _fake_run(*args, **kwargs):
         class _FakeProc:
@@ -227,13 +222,10 @@ def test_missing_ocp_returns_graceful_error(tmp_path: Path) -> None:
             stdout = ""
         return _FakeProc()
 
-    _subprocess.run = _fake_run
-    try:
-        report = run_brep_checks(
-            step_path,
-            [{"id": "t1", "kind": "no_interference", "part_a": 0, "part_b": 1}],
-        )
-        assert "error" in report
-        assert report["results"]["t1"]["status"] == "unknown"
-    finally:
-        _subprocess.run = original_run
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    report = run_brep_checks(
+        step_path,
+        [{"id": "t1", "kind": "no_interference", "part_a": 0, "part_b": 1}],
+    )
+    assert "error" in report
+    assert report["results"]["t1"]["status"] == "unknown"

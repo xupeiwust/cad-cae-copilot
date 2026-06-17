@@ -3934,11 +3934,15 @@ def validate_targets(settings: Any, project_id: str, inp: dict[str, Any]) -> dic
             with tempfile.TemporaryDirectory() as tmpdir:
                 step_path = Path(tmpdir) / "generated.step"
                 step_path.write_bytes(step_bytes)
+                try:
+                    brep_timeout = max(1, min(int(inp.get("brep_timeout", 120)), 600))
+                except (TypeError, ValueError):
+                    brep_timeout = 120
                 brep_report = run_brep_checks(
                     step_path,
                     targets,
                     topology_map=topo,
-                    timeout=int(inp.get("brep_timeout", 120)),
+                    timeout=brep_timeout,
                 )
                 brep_results = brep_report.get("results")
                 brep_error = brep_report.get("error")
@@ -4056,17 +4060,45 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
     brep_struct_targets: list[dict[str, Any]] = []
     brep_results: dict[str, Any] | None = None
     brep_honesty: str | None = None
-    if part_count >= 2 and step_bytes is not None:
+    brep_pair_coverage: dict[str, Any] | None = None
+    if part_count >= 2:
+        # Exclude obvious assembly container bodies (solids whose bbox fully
+        # contains another solid's bbox). Leaf parts are what physically interact.
+        def _bbox_contains(outer: list[float], inner: list[float], tol: float = 1e-6) -> bool:
+            if len(outer) != 6 or len(inner) != 6:
+                return False
+            return (
+                outer[0] - tol <= inner[0] and outer[1] - tol <= inner[1] and outer[2] - tol <= inner[2]
+                and outer[3] + tol >= inner[3] and outer[4] + tol >= inner[4] and outer[5] + tol >= inner[5]
+            )
+
+        leaf_solids = []
+        for idx, s in enumerate(solids):
+            bb = s.get("bounding_box") or []
+            is_container = any(
+                i != idx and _bbox_contains(bb, other.get("bounding_box") or [])
+                for i, other in enumerate(solids)
+            )
+            if not is_container:
+                leaf_solids.append((idx, s))
+
         # Limit pairwise checks to avoid runaway cost on large assemblies.
-        max_pairs = int(inp.get("max_brep_interference_pairs", 10))
-        pairs = []
-        for i in range(part_count):
-            for j in range(i + 1, part_count):
-                pairs.append((i, j))
+        try:
+            max_pairs = max(0, int(inp.get("max_brep_interference_pairs", 10)))
+        except (TypeError, ValueError):
+            max_pairs = 10
+
+        pairs: list[tuple[int, int]] = []
+        leaf_count = len(leaf_solids)
+        for i in range(leaf_count):
+            for j in range(i + 1, leaf_count):
                 if len(pairs) >= max_pairs:
                     break
+                pairs.append((leaf_solids[i][0], leaf_solids[j][0]))
             if len(pairs) >= max_pairs:
                 break
+
+        total_pairs = leaf_count * (leaf_count - 1) // 2
         for k, (i, j) in enumerate(pairs):
             name_i = str(solids[i].get("name") or solids[i].get("id") or f"solid_{i}")
             name_j = str(solids[j].get("name") or solids[j].get("id") or f"solid_{j}")
@@ -4076,17 +4108,32 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
                 "part_a": name_i,
                 "part_b": name_j,
             })
-        with tempfile.TemporaryDirectory() as tmpdir:
-            step_path = Path(tmpdir) / "generated.step"
-            step_path.write_bytes(step_bytes)
-            brep_report = run_brep_checks(
-                step_path,
-                brep_struct_targets,
-                topology_map=topo,
-                timeout=int(inp.get("brep_timeout", 120)),
-            )
-            brep_results = brep_report.get("results")
-            brep_honesty = brep_report.get("error")
+
+        brep_pair_coverage = {
+            "leaf_parts": leaf_count,
+            "total_possible_pairs": total_pairs,
+            "checked_pairs": len(pairs),
+            "capped": len(pairs) < total_pairs,
+        }
+
+        if brep_struct_targets and step_bytes is not None:
+            try:
+                brep_timeout = max(1, min(int(inp.get("brep_timeout", 120)), 600))
+            except (TypeError, ValueError):
+                brep_timeout = 120
+            with tempfile.TemporaryDirectory() as tmpdir:
+                step_path = Path(tmpdir) / "generated.step"
+                step_path.write_bytes(step_bytes)
+                brep_report = run_brep_checks(
+                    step_path,
+                    brep_struct_targets,
+                    topology_map=topo,
+                    timeout=brep_timeout,
+                )
+                brep_results = brep_report.get("results")
+                brep_honesty = brep_report.get("error")
+        elif brep_struct_targets and step_bytes is None:
+            brep_honesty = "geometry/generated.step not found; exact B-Rep interference checks unavailable"
 
     struct_targets: list[dict[str, Any]] = [
         {"kind": "no_floating_parts"},
@@ -4181,6 +4228,8 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
     }
     if brep_honesty:
         snapshot["brep_honesty"] = brep_honesty
+    if brep_pair_coverage:
+        snapshot["brep_pair_coverage"] = brep_pair_coverage
 
     return {
         "status": "ok",

@@ -253,6 +253,69 @@ def test_feature_graph_unnamed_solid_has_no_named_part() -> None:
     assert [f for f in fg["features"] if f["type"] == "named_part"] == []
 
 
+def test_feature_graph_detects_hollow_body_candidate() -> None:
+    from app.cad_generation import _slim_feature_graph_for_response, _topology_to_feature_graph
+
+    topo = {
+        "entities": [
+            {
+                "id": "body_001",
+                "type": "solid",
+                "name": "housing_shell",
+                "bounding_box": [0, 0, 0, 100, 80, 60],
+                "volume": 42000.0,
+            },
+            *[
+                {
+                    "id": f"face_{idx:03d}",
+                    "type": "face",
+                    "surface_type": "plane",
+                    "body_id": "body_001",
+                    "area": 100.0,
+                }
+                for idx in range(1, 9)
+            ],
+        ]
+    }
+
+    fg = _topology_to_feature_graph(topo, source_code="body = housing(100, 80, 60, wall=4)", model_kind="mechanical")
+    hollow = [f for f in fg["features"] if f["type"] == "hollow_body"]
+
+    assert len(hollow) == 1
+    assert hollow[0]["intent"]["role"] == "shell"
+    assert hollow[0]["parameters"]["bbox_fill_ratio"] < 0.1
+    assert hollow[0]["recognition"]["method"] == "bbox_volume_fill_ratio"
+    assert hollow[0]["recognition"]["confidence"] == "high"
+    slim = _slim_feature_graph_for_response(fg)
+    slim_hollow = next(f for f in slim["features"] if f["type"] == "hollow_body")
+    assert slim_hollow["geometry_refs"]["body"] == "body_001"
+    assert slim_hollow["geometry_refs"]["face_count"] == 8
+
+
+def test_feature_graph_does_not_mark_solid_block_as_hollow_body() -> None:
+    from app.cad_generation import _topology_to_feature_graph
+
+    topo = {
+        "entities": [
+            {
+                "id": "body_001",
+                "type": "solid",
+                "name": "solid_block",
+                "bounding_box": [0, 0, 0, 10, 10, 10],
+                "volume": 1000.0,
+            },
+            *[
+                {"id": f"face_{idx:03d}", "type": "face", "surface_type": "plane", "body_id": "body_001"}
+                for idx in range(1, 7)
+            ],
+        ]
+    }
+
+    fg = _topology_to_feature_graph(topo, model_kind="mechanical")
+
+    assert [f for f in fg["features"] if f["type"] == "hollow_body"] == []
+
+
 def test_feature_graph_two_hole_groups() -> None:
     from app.cad_generation import _topology_to_feature_graph
 

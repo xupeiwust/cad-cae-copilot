@@ -2133,6 +2133,46 @@ def _topology_to_feature_graph(
                 "intent": {"role": "structural_base"},
             })
 
+        # Hollow body / shell detection — candidate-level recognition for
+        # enclosures and housings. This uses the solid volume against its bbox
+        # volume, so it only fires when the topology carries real volume
+        # evidence; source helper usage can raise confidence but cannot invent
+        # the feature on its own.
+        source_lower = (source_code or "").lower()
+        for body in [e for e in entities if e.get("type") == "solid" and not e.get("assembly")]:
+            if body.get("standard_part"):
+                continue
+            fill_ratio = _solid_fill_ratio(body)
+            if fill_ratio is None or fill_ratio >= 0.60:
+                continue
+            body_faces = [f["id"] for f in faces if f.get("body_id") == body["id"]]
+            if len(body_faces) < 6:
+                continue
+            name_text = str(body.get("name") or body.get("id") or "").lower()
+            source_hint = any(token in source_lower for token in ("housing(", "shell(", "thicken(", "offset("))
+            name_hint = any(token in name_text for token in ("housing", "shell", "enclosure", "case"))
+            feat_counter += 1
+            confidence = "high" if source_hint or name_hint else "medium"
+            features.append({
+                "id": f"feat_{feat_counter:03d}",
+                "type": "hollow_body",
+                "name": f"Hollow body {body.get('name') or body['id']}",
+                "geometry_refs": {"body": body["id"], "faces": body_faces},
+                "parameters": {
+                    "bbox_fill_ratio": round(fill_ratio, 3),
+                    "face_count": len(body_faces),
+                },
+                "intent": {"role": "shell", "manufacturing_note": "candidate hollow enclosure/housing"},
+                "recognition": {
+                    "method": "bbox_volume_fill_ratio",
+                    "confidence": confidence,
+                    "limitations": (
+                        "Heuristic candidate only; wall thickness/open-face status "
+                        "requires explicit geometry validation."
+                    ),
+                },
+            })
+
     feature_graph = {"format_version": "0.1.0", "features": features, "model_kind": resolved_kind}
     standard_part_summary = _standard_part_bom_summary(features)
     if standard_part_summary:

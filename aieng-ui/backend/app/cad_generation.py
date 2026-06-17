@@ -3536,12 +3536,40 @@ def _detect_advanced_features(features: list[dict[str, Any]], source_code: str) 
     src = source_code.lower()
     counter = {"n": 0}
 
-    def _add(ftype: str, name: str, params: dict[str, Any], role: str) -> None:
+    def _add(
+        ftype: str,
+        name: str,
+        params: dict[str, Any],
+        role: str,
+        recognition: dict[str, Any] | None = None,
+    ) -> None:
         counter["n"] += 1
-        features.append({
+        feature = {
             "id": f"feat_{ftype}_{counter['n']:03d}",
             "type": ftype, "name": name, "parameters": params, "intent": {"role": role},
-        })
+        }
+        if recognition:
+            feature["recognition"] = recognition
+        features.append(feature)
+
+    def _source_recognition(patterns: list[str]) -> dict[str, Any]:
+        return {
+            "method": "source_pattern",
+            "confidence": "medium",
+            "matched_patterns": patterns,
+            "limitations": (
+                "Source-intent signal only; topology-level feature validation is not implied."
+            ),
+        }
+
+    def _add_source_feature(
+        ftype: str,
+        name: str,
+        role: str,
+        patterns: list[str],
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        _add(ftype, name, params or {}, role, _source_recognition(patterns))
 
     loft_count = src.count("loft(")
     if loft_count > 0:
@@ -3591,6 +3619,64 @@ def _detect_advanced_features(features: list[dict[str, Any]], source_code: str) 
         _add("fillet", "Edge-breaking via high-level helper", {}, "edge_rounding")
     if loft_count == 0 and revolve_count == 0 and sweep_count == 0 and any(h in src for h in _shaped_helpers):
         _add("loft", "Shaped body via high-level helper", {}, "tapered_body")
+
+    rib_patterns = [p for p in ("rib(", "gusset(") if p in src]
+    if rib_patterns:
+        _add_source_feature(
+            "rib",
+            f"Rib/gusset source intent ({', '.join(rib_patterns)})",
+            "stiffener",
+            rib_patterns,
+        )
+
+    boss_patterns = [p for p in ("boss(", "boss_") if p in src]
+    if boss_patterns:
+        _add_source_feature(
+            "boss",
+            f"Boss source intent ({', '.join(boss_patterns)})",
+            "mounting_boss",
+            boss_patterns,
+        )
+
+    slot_patterns = [
+        p for p in ("slot(", "slotoverall", "slotcenter", "slotarc", "slot_")
+        if p in src
+    ]
+    if slot_patterns:
+        _add_source_feature(
+            "slot",
+            f"Slot source intent ({', '.join(slot_patterns)})",
+            "slotted_feature",
+            slot_patterns,
+        )
+
+    pocket_patterns = [
+        p for p in ("pocket(", "pocket_", "recess(", "recess_", "counterbore", "countersink")
+        if p in src
+    ]
+    if "mode.subtract" in src and any(p in src for p in ("pocket", "recess")):
+        pocket_patterns.append("Mode.SUBTRACT")
+    # Use a stable, de-duplicated list so tests and serialized feature graphs are deterministic.
+    pocket_patterns = list(dict.fromkeys(pocket_patterns))
+    if pocket_patterns:
+        _add_source_feature(
+            "pocket",
+            f"Pocket/recess source intent ({', '.join(pocket_patterns)})",
+            "material_removal",
+            pocket_patterns,
+        )
+
+    thread_patterns = [
+        p for p in ("thread.", "thread(", "isothread", "metricthread", "threaded")
+        if p in src
+    ]
+    if thread_patterns:
+        _add_source_feature(
+            "thread",
+            f"Thread source intent ({', '.join(thread_patterns)})",
+            "threaded_interface",
+            thread_patterns,
+        )
 
 
 def _enrich_feature_graph_with_source_params(

@@ -1958,6 +1958,33 @@ def test_nested_paren_fillet_is_credited_as_edge_breaking() -> None:
     assert any(f["type"] == "fillet" for f in feats)
 
 
+def test_source_intent_feature_candidates_are_tagged_honestly() -> None:
+    from app.cad_generation import _detect_advanced_features
+
+    feats: list[dict] = []
+    src = """
+rib_wall = rib(length=40, height=18, thickness=4)
+seat_boss = boss(outer_diameter=24, height=14)
+slot_profile = SlotOverall(32, 8)
+pocket_cut = Box(20, 12, 4, mode=Mode.SUBTRACT)  # pocket relief
+threaded_hole = thread.IsoThread(major_diameter=6, pitch=1)
+"""
+
+    _detect_advanced_features(feats, src)
+
+    by_type = {f["type"]: f for f in feats}
+    for feature_type in ("rib", "boss", "slot", "pocket", "thread"):
+        assert feature_type in by_type
+        assert by_type[feature_type]["recognition"]["method"] == "source_pattern"
+        assert by_type[feature_type]["recognition"]["confidence"] == "medium"
+        assert "Source-intent signal only" in by_type[feature_type]["recognition"]["limitations"]
+
+    assert by_type["rib"]["intent"]["role"] == "stiffener"
+    assert by_type["pocket"]["intent"]["role"] == "material_removal"
+    assert "Mode.SUBTRACT" in by_type["pocket"]["recognition"]["matched_patterns"]
+    assert by_type["thread"]["intent"]["role"] == "threaded_interface"
+
+
 def test_cylinder_face_carries_axis_for_mate_predicates(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import _execute_build123d_code

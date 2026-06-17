@@ -16,6 +16,8 @@ venv/
 env/
 ENV/
 .conda/
+.ocp_venv/
+.uv/
 
 # ── Caches ───────────────────────────────────────────────
 .pytest_cache/

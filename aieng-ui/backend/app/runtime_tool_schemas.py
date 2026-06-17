@@ -1446,6 +1446,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "newValue": {
                 "description": "Replacement value. Type follows the parameter's declared schema (number, string, bool).",
             },
+            "confirmScopeRisk": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "Required for global/unscoped parameters whose edit may ripple across "
+                    "multiple parts or unbound geometry. Leave false for ordinary local edits."
+                ),
+            },
             "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
             "thumbnail": {
                 "type": "boolean",

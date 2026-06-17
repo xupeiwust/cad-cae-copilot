@@ -347,6 +347,7 @@ def run_sizing_sweep(
             winner,
             timeout=timeout,
             response_detail="summary",
+            confirm_scope_risk=True,
         )
         report["apply_status"] = edit_result.get("status", "error")
         report["applied_value"] = winner

@@ -2418,7 +2418,8 @@ def test_edit_build123d_parameter_expression_rhs_end_to_end(tmp_path: Path) -> N
     pid = _make_project(settings, "param-edit-expression")
     code = (
         "from build123d import *\n"
-        "BODY_LENGTH = 60 * 2  # expression stays editable\n"
+        "INNER_LENGTH = 60\n"
+        "BODY_LENGTH = INNER_LENGTH * 2  # expression stays editable\n"
         "BODY_WIDTH = 80\n"
         "BODY_HEIGHT = 8\n"
         "body = Box(BODY_LENGTH, BODY_WIDTH, BODY_HEIGHT); body.label = 'base_plate'\n"
@@ -2426,21 +2427,33 @@ def test_edit_build123d_parameter_expression_rhs_end_to_end(tmp_path: Path) -> N
     )
     out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
     assert out["status"] == "ok", out
-    feat = next(
-        f for f in out["feature_graph"]["features"]
-        if f.get("name") == "base_plate" and (f.get("parameters") or {})
-    )
-    assert feat["parameters"]["length_mm"]["current_value"] == 120
+    target_feature = None
+    target_parameter_name = None
+    target_parameter = None
+    for feature in out["feature_graph"]["features"]:
+        for name, param in (feature.get("parameters") or {}).items():
+            if isinstance(param, dict) and param.get("cad_parameter_name") == "BODY_LENGTH":
+                target_feature = feature
+                target_parameter_name = name
+                target_parameter = param
+                break
+        if target_feature:
+            break
+    assert target_feature is not None
+    assert target_parameter_name is not None
+    assert target_parameter["current_value"] == 120
 
     edited = edit_build123d_parameter(
         settings, pid,
-        feature_id=feat["id"], parameter_name="length_mm", new_value="100 * 2",
+        feature_id=target_feature["id"],
+        parameter_name=target_parameter_name,
+        new_value="INNER_LENGTH * 3 + 20",
         thumbnail=False,
     )
 
     assert edited["status"] == "ok", edited
     assert edited["previous_value"] == 120
-    assert edited["new_value"] == "100 * 2"
+    assert edited["new_value"] == "INNER_LENGTH * 3 + 20"
     bbox = edited["topology_summary"]["bounding_box"]
     assert abs((bbox[3] - bbox[0]) - 200) < 1.0
     assert edited["topology_changed"] is False
@@ -2449,11 +2462,11 @@ def test_edit_build123d_parameter_expression_rhs_end_to_end(tmp_path: Path) -> N
     pkg = resolve_project_path(settings, pid, get_project(settings, pid).get("aieng_file"))
     with zipfile.ZipFile(pkg, "r") as z:
         source_after = z.read("geometry/source.py").decode("utf-8")
-    assert "BODY_LENGTH = 100 * 2  # expression stays editable" in source_after
+    assert "BODY_LENGTH = INNER_LENGTH * 3 + 20  # expression stays editable" in source_after
 
     rejected = edit_build123d_parameter(
         settings, pid,
-        feature_id=feat["id"], parameter_name="length_mm",
+        feature_id=target_feature["id"], parameter_name=target_parameter_name,
         new_value="__import__('os').system('echo unsafe')",
         thumbnail=False,
     )
@@ -2512,6 +2525,60 @@ def test_edit_build123d_integer_count_reports_topology_change(tmp_path: Path) ->
     assert edited["topology_change"]["stale_reference_risk"] is True
     face_change = edited["topology_change"]["entity_id_changes"]["face"]
     assert face_change["before_count"] != face_change["after_count"]
+
+
+def test_edit_build123d_shared_parameter_requires_explicit_scope_confirmation(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import edit_build123d_parameter, execute_build123d_code
+    from app.project_io import get_project, resolve_project_path
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "param-edit-shared")
+    code = (
+        "from build123d import *\n"
+        "GEAR_IN_DIA = 30\n"
+        "GEAR_OUT_DIA = 50\n"
+        "GEAR_WIDTH = 8\n"
+        "gi = Cylinder(GEAR_IN_DIA / 2, GEAR_WIDTH); gi.label = 'gear_input'\n"
+        "go = Cylinder(GEAR_OUT_DIA / 2, GEAR_WIDTH); go.label = 'gear_output'\n"
+        "result = Compound(children=[gi, go])\n"
+    )
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+    assert out["status"] == "ok", out
+    global_feat = next(f for f in out["feature_graph"]["features"] if f.get("type") == "global_params")
+    assert any(
+        p.get("cad_parameter_name") == "GEAR_WIDTH"
+        for p in global_feat["parameters"].values()
+        if isinstance(p, dict)
+    )
+
+    pkg = resolve_project_path(settings, pid, get_project(settings, pid).get("aieng_file"))
+    with zipfile.ZipFile(pkg, "r") as z:
+        source_before = z.read("geometry/source.py").decode("utf-8")
+
+    rejected = edit_build123d_parameter(
+        settings, pid,
+        feature_id=global_feat["id"], parameter_name="width_mm", new_value=10,
+        thumbnail=False,
+    )
+    assert rejected["status"] == "error"
+    assert rejected["code"] == "scope_risk_confirmation_required"
+    assert rejected["scope_risk"]["scope"] == "global"
+    with zipfile.ZipFile(pkg, "r") as z:
+        assert z.read("geometry/source.py").decode("utf-8") == source_before
+
+    edited = edit_build123d_parameter(
+        settings, pid,
+        feature_id=global_feat["id"], parameter_name="width_mm", new_value=10,
+        thumbnail=False,
+        confirm_scope_risk=True,
+    )
+    assert edited["status"] == "ok", edited
+    assert edited["scope_risk"]["scope"] == "global"
+    assert edited["confirm_scope_risk"] is True
+    with zipfile.ZipFile(pkg, "r") as z:
+        source_after = z.read("geometry/source.py").decode("utf-8")
+    assert "GEAR_WIDTH = 10" in source_after
 
 
 def test_edit_build123d_parameter_invalid_value_preserves_geometry(tmp_path: Path) -> None:

@@ -576,6 +576,7 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             timeout=int(inp.get("timeout", 120)),
             response_detail=str(inp.get("response_detail") or "full"),
             thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
+            confirm_scope_risk=bool(inp.get("confirmScopeRisk")),
         )
         _record_cad_snapshot(result, inp.get("project_id"), "cad.edit_parameter")
         return result

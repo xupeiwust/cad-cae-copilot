@@ -3966,7 +3966,21 @@ def _enrich_feature_graph_with_source_params(
         if isinstance(existing, dict):
             # Source-derived params win over topology-derived heuristics because
             # they are the ground truth the user can actually edit.
-            existing.update(params)
+            for key, value in params.items():
+                target = key
+                if (
+                    target in existing
+                    and isinstance(existing.get(target), dict)
+                    and isinstance(value, dict)
+                    and existing[target].get("cad_parameter_name") != value.get("cad_parameter_name")
+                ):
+                    target = str(value.get("cad_parameter_name") or key).lower()
+                    suffix = 2
+                    base = target
+                    while target in existing:
+                        target = f"{base}_{suffix}"
+                        suffix += 1
+                existing[target] = value
             feature["parameters"] = existing
         elif isinstance(existing, list):
             for k, v in params.items():
@@ -8187,6 +8201,7 @@ def edit_build123d_parameter(
     timeout: int = 120,
     response_detail: str = "full",
     thumbnail: bool | None = None,
+    confirm_scope_risk: bool = False,
 ) -> dict[str, Any]:
     """Apply a parametric edit by replacing a named constant in source.py.
 
@@ -8233,6 +8248,35 @@ def edit_build123d_parameter(
     param_info = contract["parameter"]
     cad_parameter_name = param_info.get("cad_parameter_name") or parameter_name
     previous_value = param_info.get("current_value")
+    edited_feature = contract.get("feature") or {}
+    feature_type = str(edited_feature.get("type") or "")
+    scope_risk: dict[str, Any] | None = None
+    if feature_type == "global_params":
+        scope_risk = {
+            "scope": "global",
+            "reason": "parameter belongs to shared/global dimensions and may affect multiple parts",
+            "confirmation_field": "confirmScopeRisk",
+        }
+    elif feature_type == "model_params":
+        scope_risk = {
+            "scope": "unscoped",
+            "reason": "parameter could not be bound to one named part",
+            "confirmation_field": "confirmScopeRisk",
+        }
+    if scope_risk and not confirm_scope_risk:
+        return {
+            "status": "error",
+            "code": "scope_risk_confirmation_required",
+            "message": (
+                f"Editing {cad_parameter_name!r} is a {scope_risk['scope']} parameter edit; "
+                "set confirmScopeRisk=true only after the approved modeling plan explicitly "
+                "accepts that the edit may affect multiple or unscoped geometry."
+            ),
+            "previous_value": previous_value,
+            "new_value": new_value,
+            "cad_parameter_name": cad_parameter_name,
+            "scope_risk": scope_risk,
+        }
 
     # 3. Read source.py + reference image + the BEFORE topology (for regression diff)
     try:
@@ -8361,7 +8405,6 @@ def edit_build123d_parameter(
     # The set of parts we EXPECT to move: for a named_part feature, just that
     # part; for a shared/global constant, any part is fair game (no collateral
     # judgment); otherwise we can't attribute it to one part, so skip the verdict.
-    edited_feature = contract.get("feature") or {}
     before_names = set(_solids_by_name(before_topo))
     if edited_feature.get("type") == "global_params":
         expected_parts: set[str] | None = None
@@ -8439,6 +8482,8 @@ def edit_build123d_parameter(
         "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "topology_changed": topology_change["topology_changed"],
         "topology_change": topology_change,
+        "scope_risk": scope_risk,
+        "confirm_scope_risk": confirm_scope_risk,
         "regression_diff": regression_diff,
         "critique_diff": critique_diff,
         "written_artifacts": [

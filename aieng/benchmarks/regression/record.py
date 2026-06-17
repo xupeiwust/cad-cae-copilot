@@ -8,8 +8,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,102 @@ def load_manifest(run_dir: Path) -> dict[str, Any]:
 
 def save_manifest(run_dir: Path, manifest: dict[str, Any]) -> None:
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+
+
+def _part_index(key: str) -> int | None:
+    if not key.startswith("part_"):
+        return None
+    suffix = key[len("part_"):]
+    if not suffix.isdigit():
+        return None
+    value = int(suffix)
+    return value if value > 0 else None
+
+
+def _extract_named_parts(metrics: dict[str, Any]) -> list[str]:
+    """Return the benchmark's best known named-part order.
+
+    Agents normally write ``named_parts`` from ``cad.execute_build123d``. Older
+    runs sometimes carried labels under ``part_labels`` or embedded per-part
+    objects; accept those shapes so old metrics can be migrated without reruns.
+    """
+    for key in ("named_parts", "part_labels"):
+        raw = metrics.get(key)
+        if isinstance(raw, list):
+            return [str(item) for item in raw if str(item).strip()]
+
+    raw_parts = metrics.get("parts")
+    if isinstance(raw_parts, list):
+        labels: list[str] = []
+        for part in raw_parts:
+            if isinstance(part, dict):
+                label = part.get("label") or part.get("name")
+                if label:
+                    labels.append(str(label))
+        if labels:
+            return labels
+
+    report = metrics.get("geometry_report")
+    if isinstance(report, dict):
+        raw_report_parts = report.get("parts")
+        if isinstance(raw_report_parts, list):
+            labels = [
+                str(part.get("name"))
+                for part in raw_report_parts
+                if isinstance(part, dict) and part.get("name")
+            ]
+            if labels:
+                return labels
+    return []
+
+
+def normalize_named_part_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Migrate legacy ``part_N`` metric keys to stable named-part labels.
+
+    Unknown labels become ``__unlabeled_N`` and a warning is recorded, so the
+    benchmark never silently pretends a synthetic key is a semantic part name.
+    """
+    normalized = copy.deepcopy(metrics)
+    labels = _extract_named_parts(normalized)
+    warnings = list(normalized.get("warnings") or [])
+
+    def label_for(key: str) -> str:
+        index = _part_index(key)
+        if index is None:
+            return key
+        if index <= len(labels):
+            return labels[index - 1]
+        synthetic = f"__unlabeled_{index}"
+        warnings.append(f"Metric key {key} had no named-part label; migrated to {synthetic}.")
+        return synthetic
+
+    for section in ("volumes", "bounding_boxes"):
+        raw = normalized.get(section)
+        if not isinstance(raw, dict):
+            continue
+        migrated: dict[str, Any] = {}
+        for key, value in raw.items():
+            new_key = label_for(str(key))
+            if new_key in migrated and new_key != key:
+                warnings.append(f"Metric key {key} collided with existing label {new_key}; keeping latest value.")
+            migrated[new_key] = value
+        normalized[section] = migrated
+
+    if labels:
+        normalized["named_parts"] = labels
+    elif any(isinstance(normalized.get(section), dict) for section in ("volumes", "bounding_boxes")):
+        inferred = sorted({
+            str(key)
+            for section in ("volumes", "bounding_boxes")
+            for key in (normalized.get(section) or {})
+            if not str(key).startswith("__unlabeled_")
+        })
+        if inferred:
+            normalized["named_parts"] = inferred
+
+    if warnings:
+        normalized["warnings"] = warnings
+    return normalized
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,8 +146,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         metrics_text = metrics_path.read_text(encoding="utf-8")
         metrics = json.loads(metrics_text)
+        metrics = normalize_named_part_metrics(metrics)
         # Copy metrics into prompt dir for self-containment.
-        (prompt_dir / "metrics.json").write_text(metrics_text, encoding="utf-8")
+        (prompt_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8")
 
     if args.error:
         metrics["error"] = args.error

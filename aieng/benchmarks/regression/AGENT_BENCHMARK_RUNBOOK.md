@@ -152,6 +152,7 @@ Create `metrics.json` as a plain object, for example:
 
 ```json
 {
+  "named_parts": ["bracket"],
   "volumes": {"bracket": 21748.67},
   "bounding_boxes": {"bracket": {"x": 40.0, "y": 110.0, "z": 5.0}},
   "part_count": 1,
@@ -159,6 +160,11 @@ Create `metrics.json` as a plain object, for example:
   "resolved_intent": "create_geometry"
 }
 ```
+
+Use stable named-part labels from `cad.execute_build123d` / `feature_graph` as
+metric keys. Do not write `part_1`, `part_2`, etc. unless a part is genuinely
+unlabeled; `record.py` will migrate legacy `part_N` keys to labels when
+`named_parts` is present and will flag unknown labels as `__unlabeled_N`.
 
 Always include `tool_sequence` (the list of tool names called) and `resolved_intent` (e.g. `create_geometry`, `modify_geometry`, `plan_simulation`, `critique`, `explain_project`) so the benchmark captures the reasoning path, not just the geometry.
 

@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from record import normalize_named_part_metrics
+
 
 def load_manifest(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "manifest.json"
@@ -46,6 +48,22 @@ def metric_delta(baseline: dict[str, Any], current: dict[str, Any], key: str) ->
         return {"baseline": b_val, "current": c_val, "delta": delta, "delta_pct": delta_pct}
     except (TypeError, ValueError):
         return None
+
+
+def _metric_part_names(metrics: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    raw_named = metrics.get("named_parts")
+    if isinstance(raw_named, list):
+        names.update(str(item) for item in raw_named if str(item).strip())
+    for section in ("volumes", "bounding_boxes"):
+        raw = metrics.get(section)
+        if isinstance(raw, dict):
+            names.update(str(key) for key in raw if str(key).strip())
+    return names
+
+
+def _format_name_list(names: set[str]) -> str:
+    return ", ".join(f"`{name}`" for name in sorted(names)) if names else "-"
 
 
 def build_diff(baseline_dir: Path, current_dir: Path) -> str:
@@ -90,11 +108,34 @@ def build_diff(baseline_dir: Path, current_dir: Path) -> str:
         lines.append(f"- Baseline status: {b.get('status', 'missing')}")
         lines.append(f"- Current status: {c.get('status', 'missing')}")
 
-        b_metrics = b.get("metrics", {})
-        c_metrics = c.get("metrics", {})
+        b_metrics = normalize_named_part_metrics(b.get("metrics", {}))
+        c_metrics = normalize_named_part_metrics(c.get("metrics", {}))
         if b_metrics or c_metrics:
             lines.append("")
             lines.append("### Metrics")
+            lines.append("")
+            b_parts = _metric_part_names(b_metrics)
+            c_parts = _metric_part_names(c_metrics)
+            removed_parts = b_parts - c_parts
+            added_parts = c_parts - b_parts
+            if removed_parts or added_parts:
+                lines.append("### Named Parts")
+                lines.append("")
+                lines.append(f"- Removed: {_format_name_list(removed_parts)}")
+                lines.append(f"- Added: {_format_name_list(added_parts)}")
+                if removed_parts and added_parts:
+                    lines.append("- Warning: named parts changed; this may be a rename rather than a geometric addition/removal.")
+                lines.append("")
+
+            warnings = list(b_metrics.get("warnings") or []) + list(c_metrics.get("warnings") or [])
+            if warnings:
+                lines.append("### Warnings")
+                lines.append("")
+                for warning in warnings:
+                    lines.append(f"- {warning}")
+                lines.append("")
+
+            lines.append("### Scalar Deltas")
             lines.append("")
             lines.append("| Metric | Baseline | Current | Delta |")
             lines.append("|---|---|---|---|")
@@ -106,10 +147,10 @@ def build_diff(baseline_dir: Path, current_dir: Path) -> str:
                 d = metric_delta(b_volumes, c_volumes, part)
                 if d:
                     lines.append(
-                        f"| volume_{part} | {d['baseline']:.2f} | {d['current']:.2f} | {d['delta']:+.2f} ({format_pct(d['delta_pct'])}) |"
+                        f"| {part}.volume | {d['baseline']:.2f} | {d['current']:.2f} | {d['delta']:+.2f} ({format_pct(d['delta_pct'])}) |"
                     )
                 else:
-                    lines.append(f"| volume_{part} | {b_volumes.get(part, '-')} | {c_volumes.get(part, '-')} | - |")
+                    lines.append(f"| {part}.volume | {b_volumes.get(part, '-')} | {c_volumes.get(part, '-')} | - |")
 
             # Bounding boxes per named part
             b_bboxes = b_metrics.get("bounding_boxes", {})
@@ -119,7 +160,7 @@ def build_diff(baseline_dir: Path, current_dir: Path) -> str:
                     d = metric_delta(b_bboxes.get(part, {}), c_bboxes.get(part, {}), axis)
                     if d:
                         lines.append(
-                            f"| bbox_{part}_{axis} | {d['baseline']:.2f} | {d['current']:.2f} | {d['delta']:+.2f} ({format_pct(d['delta_pct'])}) |"
+                            f"| {part}.bbox.{axis} | {d['baseline']:.2f} | {d['current']:.2f} | {d['delta']:+.2f} ({format_pct(d['delta_pct'])}) |"
                         )
 
             # Part count

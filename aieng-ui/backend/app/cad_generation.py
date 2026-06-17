@@ -3875,13 +3875,19 @@ def define_assembly_interface(settings: Any, project_id: str, inp: dict[str, Any
 
 
 def validate_targets(settings: Any, project_id: str, inp: dict[str, Any]) -> dict[str, Any]:
-    """Read-only: check declared geometry targets against the built model (#291).
+    """Read-only: check declared geometry targets against the built model (#291, #296).
 
     Verifies the exact geometric promises (named parts present, overall/part bbox
     size + center within tolerance, part count, no floating/deep-overlap) from the
-    package's topology + feature graph. Deterministic; mutates nothing.
+    package's topology + feature graph. Exact B-Rep checks (interference,
+    coaxiality, flushness, clearance) run in a sandboxed subprocess on the STEP
+    geometry. Deterministic; mutates nothing.
     """
-    from aieng.converters.geometry_targets import validate_geometry_targets
+    from aieng.converters.geometry_targets import (
+        BREP_TARGET_KINDS,
+        validate_geometry_targets,
+    )
+    from .brep_geometry_checks import run_brep_checks
 
     targets = inp.get("targets")
     targets_source = "explicit"
@@ -3900,6 +3906,7 @@ def validate_targets(settings: Any, project_id: str, inp: dict[str, Any]) -> dic
         return err
     topo: dict[str, Any] = {}
     fg: dict[str, Any] = {}
+    step_bytes: bytes | None = None
     try:
         with zipfile.ZipFile(pkg, "r") as zf:
             names = zf.namelist()
@@ -3907,13 +3914,45 @@ def validate_targets(settings: Any, project_id: str, inp: dict[str, Any]) -> dic
                 topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
             if "graph/feature_graph.json" in names:
                 fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+            if "geometry/generated.step" in names:
+                step_bytes = zf.read("geometry/generated.step")
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "code": "package_read_error", "message": f"{type(exc).__name__}: {exc}"}
     if not topo.get("entities"):
         return {"status": "error", "code": "no_geometry",
                 "message": "No geometry to validate — build the model with cad.execute_build123d first."}
-    report = validate_geometry_targets(topo, fg, targets)
-    return {"status": "ok", "project_id": project_id, "targets_source": targets_source, **report}
+
+    brep_results: dict[str, Any] | None = None
+    brep_error: str | None = None
+    needs_brep = any(
+        isinstance(t, dict) and t.get("kind") in BREP_TARGET_KINDS for t in targets
+    )
+    if needs_brep:
+        if step_bytes is None:
+            brep_error = "geometry/generated.step not found in package; exact B-Rep checks unavailable"
+        else:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                step_path = Path(tmpdir) / "generated.step"
+                step_path.write_bytes(step_bytes)
+                try:
+                    brep_timeout = max(1, min(int(inp.get("brep_timeout", 120)), 600))
+                except (TypeError, ValueError):
+                    brep_timeout = 120
+                brep_report = run_brep_checks(
+                    step_path,
+                    targets,
+                    topology_map=topo,
+                    timeout=brep_timeout,
+                )
+                brep_results = brep_report.get("results")
+                brep_error = brep_report.get("error")
+
+    report = validate_geometry_targets(topo, fg, targets, brep_results=brep_results)
+    out: dict[str, Any] = {"status": "ok", "project_id": project_id,
+                           "targets_source": targets_source, **report}
+    if brep_error:
+        out["brep_honesty"] = f"Exact B-Rep checks could not run: {brep_error}"
+    return out
 
 
 def _cad_brief_path(settings: Any, project_id: str) -> Path | None:
@@ -3977,16 +4016,18 @@ def get_brief(settings: Any, project_id: str, _inp: dict[str, Any] | None = None
 
 
 def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Read-only diagnostic snapshot + repair verdict for a build (#293).
+    """Read-only diagnostic snapshot + repair verdict for a build (#293, #296).
 
     Composes the verification signals (design_review = critique + symmetry +
-    fidelity + fix targets; structural geometry checks; the CAD brief's
-    validation_targets) into ONE snapshot, classifies the build's risk triggers,
-    and returns a ``ready`` / ``needs_repair`` verdict + prioritized repair
-    actions. The repair-loop contract: for a high-risk build, fix every blocking
-    issue and re-diagnose until ``ready`` before presenting. Mutates nothing.
+    fidelity + fix targets; structural geometry checks including exact B-Rep
+    interference; the CAD brief's validation_targets) into ONE snapshot,
+    classifies the build's risk triggers, and returns a ``ready`` /
+    ``needs_repair`` verdict + prioritized repair actions. The repair-loop
+    contract: for a high-risk build, fix every blocking issue and re-diagnose
+    until ``ready`` before presenting. Mutates nothing.
     """
     from aieng.converters.geometry_targets import validate_geometry_targets
+    from .brep_geometry_checks import run_brep_checks
 
     inp = inp or {}
     dr = design_review(settings, project_id, {"response_detail": "full"})
@@ -3999,6 +4040,7 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
     topo: dict[str, Any] = {}
     fg: dict[str, Any] = {}
     members: set[str] = set()
+    step_bytes: bytes | None = None
     try:
         with zipfile.ZipFile(pkg, "r") as zf:
             members = set(zf.namelist())
@@ -4006,13 +4048,90 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
                 topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
             if "graph/feature_graph.json" in members:
                 fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+            if "geometry/generated.step" in members:
+                step_bytes = zf.read("geometry/generated.step")
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "code": "package_read_error", "message": f"{type(exc).__name__}: {exc}"}
 
     solids = [e for e in topo.get("entities", []) if isinstance(e, dict) and e.get("type") == "solid"]
     part_count = len(solids)
-    struct = validate_geometry_targets(topo, fg, [{"kind": "no_floating_parts"}, {"kind": "no_deep_overlap"}])
+
+    # Run exact B-Rep interference checks for multi-part models (#296).
+    brep_struct_targets: list[dict[str, Any]] = []
+    brep_results: dict[str, Any] | None = None
+    brep_honesty: str | None = None
+    brep_pair_coverage: dict[str, Any] | None = None
+    if part_count >= 2:
+        # Exclude assembly container bodies (top-level wrappers marked with
+        # assembly=True). Leaf parts are what physically interact.
+        leaf_solids = [
+            (idx, s) for idx, s in enumerate(solids)
+            if s.get("assembly") is not True
+        ]
+
+        # Limit pairwise checks to avoid runaway cost on large assemblies.
+        try:
+            max_pairs = max(0, int(inp.get("max_brep_interference_pairs", 10)))
+        except (TypeError, ValueError):
+            max_pairs = 10
+
+        pairs: list[tuple[int, int]] = []
+        leaf_count = len(leaf_solids)
+        for i in range(leaf_count):
+            for j in range(i + 1, leaf_count):
+                if len(pairs) >= max_pairs:
+                    break
+                pairs.append((leaf_solids[i][0], leaf_solids[j][0]))
+            if len(pairs) >= max_pairs:
+                break
+
+        total_pairs = leaf_count * (leaf_count - 1) // 2
+        for k, (i, j) in enumerate(pairs):
+            name_i = str(solids[i].get("name") or solids[i].get("id") or f"solid_{i}")
+            name_j = str(solids[j].get("name") or solids[j].get("id") or f"solid_{j}")
+            brep_struct_targets.append({
+                "id": f"brep_no_interference_{k:03d}",
+                "kind": "no_interference",
+                "part_a": name_i,
+                "part_b": name_j,
+            })
+
+        brep_pair_coverage = {
+            "leaf_parts": leaf_count,
+            "total_possible_pairs": total_pairs,
+            "checked_pairs": len(pairs),
+            "capped": len(pairs) < total_pairs,
+        }
+
+        if brep_struct_targets and step_bytes is not None:
+            try:
+                brep_timeout = max(1, min(int(inp.get("brep_timeout", 120)), 600))
+            except (TypeError, ValueError):
+                brep_timeout = 120
+            with tempfile.TemporaryDirectory() as tmpdir:
+                step_path = Path(tmpdir) / "generated.step"
+                step_path.write_bytes(step_bytes)
+                brep_report = run_brep_checks(
+                    step_path,
+                    brep_struct_targets,
+                    topology_map=topo,
+                    timeout=brep_timeout,
+                )
+                brep_results = brep_report.get("results")
+                brep_honesty = brep_report.get("error")
+        elif brep_struct_targets and step_bytes is None:
+            brep_honesty = "geometry/generated.step not found; exact B-Rep interference checks unavailable"
+
+    struct_targets: list[dict[str, Any]] = [
+        {"kind": "no_floating_parts"},
+        {"kind": "no_deep_overlap"},
+    ]
+    struct_targets.extend(brep_struct_targets)
+    struct = validate_geometry_targets(topo, fg, struct_targets, brep_results=brep_results)
     overlap_fail = any(t["kind"] == "no_deep_overlap" and t["status"] == "fail" for t in struct["targets"])
+    interference_fail = any(
+        t["kind"] == "no_interference" and t["status"] == "fail" for t in struct["targets"]
+    )
 
     brief = load_cad_brief(settings, project_id)
     tv = None
@@ -4034,6 +4153,8 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
         triggers.append("floating_parts")
     if overlap_fail:
         triggers.append("spatial_overlap")
+    if interference_fail:
+        triggers.append("brep_interference")
     if broken_sym:
         triggers.append("broken_symmetry")
     if fid_level in ("crude", "basic"):
@@ -4051,6 +4172,12 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
         blocking.append(f"{len(floating)} floating part(s): {floating}")
     if broken_sym:
         blocking.append(f"broken symmetry: {broken_sym}")
+    if interference_fail:
+        offenders = [
+            t["detail"] for t in struct["targets"]
+            if t["kind"] == "no_interference" and t["status"] == "fail"
+        ]
+        blocking.append(f"exact B-Rep interference detected: {offenders[:3]}")
     if target_fail:
         blocking.append(f"{len(target_fail)} brief target(s) failing: {[t.get('detail') for t in target_fail][:3]}")
     if dr.get("critique_verdict") == "fails_audit":
@@ -4066,9 +4193,30 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
             "source": "validate_targets", "issue": t.get("detail"),
             "fix": "adjust geometry (cad.execute_build123d / cad.edit_parameter / positioning helpers) to meet the target, then re-diagnose",
         })
+    if interference_fail:
+        repair_actions.append({
+            "source": "brep_geometry_checks",
+            "issue": "solids physically intersect",
+            "fix": "reposition parts or subtract overlapping material; re-run cad.diagnose to verify",
+        })
     if part_count >= 2 and fid_level in ("crude", "basic"):
         for f in (fidelity.get("findings") or []):
             repair_actions.append({"source": "fidelity", "issue": f.get("rule"), "fix": f.get("suggested_fix")})
+
+    snapshot: dict[str, Any] = {
+        "part_count": part_count,
+        "critique_verdict": dr.get("critique_verdict"),
+        "modeling_fidelity": dr["summary"].get("modeling_fidelity"),
+        "floating_parts": floating,
+        "broken_symmetry": broken_sym,
+        "structural": struct["summary"],
+        "brief_targets": (tv.get("summary") if isinstance(tv, dict) else None),
+        "reference_image": has_ref,
+    }
+    if brep_honesty:
+        snapshot["brep_honesty"] = brep_honesty
+    if brep_pair_coverage:
+        snapshot["brep_pair_coverage"] = brep_pair_coverage
 
     return {
         "status": "ok",
@@ -4078,22 +4226,16 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
         "verdict": verdict,
         "blocking_issues": blocking,
         "repair_actions": repair_actions,
-        "snapshot": {
-            "part_count": part_count,
-            "critique_verdict": dr.get("critique_verdict"),
-            "modeling_fidelity": dr["summary"].get("modeling_fidelity"),
-            "floating_parts": floating,
-            "broken_symmetry": broken_sym,
-            "structural": struct["summary"],
-            "brief_targets": (tv.get("summary") if isinstance(tv, dict) else None),
-            "reference_image": has_ref,
-        },
+        "snapshot": snapshot,
         "contract": (
             "Repair-loop contract: for a high-risk build, fix every blocking issue and re-run "
             "cad.diagnose until verdict='ready' before presenting the result as done. Fixes go "
             "through the approval-gated edit path; cad.diagnose itself mutates nothing."
         ),
-        "honesty": "Read-only deterministic composition. Bbox-level structural checks, not GD&T or a solver.",
+        "honesty": (
+            "Read-only deterministic composition. Exact B-Rep interference checks run in a "
+            "sandboxed subprocess when STEP geometry is available; bbox checks are used otherwise."
+        ),
     }
 
 

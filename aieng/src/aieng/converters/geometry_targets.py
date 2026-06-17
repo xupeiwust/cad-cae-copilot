@@ -1,10 +1,10 @@
-"""Geometry target validator v0 (#291).
+"""Geometry target validator v0 (#291) + exact B-Rep checks (#296).
 
 Deterministic, spec-driven checks of the exact geometric promises in a modeling
 brief — so an agent can't ship a plausible-looking but mispositioned or
-over-modeled model. Operates purely on ``topology_map`` + ``feature_graph`` dicts
-(no solver, no OCC kernel); every target yields pass / fail / unknown with the
-measured vs expected values.
+over-modeled model. Operates on ``topology_map`` + ``feature_graph`` dicts for
+bbox/topology checks; exact B-Rep checks require an external ``brep_results``
+dict produced by a CAD-kernel subprocess.
 
 Honesty: ``unknown`` is used when the data needed to judge a target is absent
 (never guessed). Bbox-based checks are axis-aligned bounding-box measurements,
@@ -15,6 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
+BREP_TARGET_KINDS = (
+    "no_interference",
+    "coaxial_within",
+    "faces_flush_within",
+    "clearance_within",
+)
+
 TARGET_KINDS = (
     "named_part_present",
     "feature_present",
@@ -24,7 +31,7 @@ TARGET_KINDS = (
     "part_center",
     "no_floating_parts",
     "no_deep_overlap",
-)
+) + BREP_TARGET_KINDS
 
 
 def _solids(topology_map: dict[str, Any]) -> list[dict[str, Any]]:
@@ -85,12 +92,27 @@ def _result(target: dict[str, Any], idx: int, status: str, detail: str,
     }
 
 
+def _target_id(t: dict[str, Any], idx: int) -> str:
+    return str(t.get("id") or f"target_{idx:03d}")
+
+
 def validate_geometry_targets(
     topology_map: dict[str, Any],
     feature_graph: dict[str, Any],
     targets: list[dict[str, Any]],
+    *,
+    brep_results: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate a list of geometry targets against the model. See module docstring."""
+    """Validate a list of geometry targets against the model.
+
+    Args:
+        topology_map: model topology entities (solids/faces/edges).
+        feature_graph: feature graph with named parts and recognized features.
+        targets: list of target spec dicts.
+        brep_results: optional dict mapping target id -> result produced by an
+            exact B-Rep kernel subprocess. Required for ``no_interference``,
+            ``coaxial_within``, ``faces_flush_within`` and ``clearance_within``.
+    """
     solids = _solids(topology_map)
     by_name = {_solid_key(e): e for e in solids}
     union = _union([e["bounding_box"] for e in solids])
@@ -100,6 +122,7 @@ def validate_geometry_targets(
                    if f.get("type") in {"named_part", "standard_part"} and f.get("name")}
     named_parts |= {_solid_key(e) for e in solids if e.get("name")}
 
+    brep_results = brep_results or {}
     results: list[dict[str, Any]] = []
     for idx, t in enumerate(targets if isinstance(targets, list) else []):
         if not isinstance(t, dict):
@@ -107,6 +130,10 @@ def validate_geometry_targets(
             continue
         kind = str(t.get("kind") or "")
         tol = float(t["tolerance_mm"]) if isinstance(t.get("tolerance_mm"), (int, float)) else 1.0
+
+        if kind in BREP_TARGET_KINDS:
+            results.append(_validate_brep_target(t, idx, brep_results, kind))
+            continue
 
         if kind == "named_part_present":
             part = str(t.get("part") or "")
@@ -208,13 +235,89 @@ def validate_geometry_targets(
                                              ("incomplete" if counts["unknown"] else "pass"))
     return {
         "format": "aieng.geometry_target_validation",
-        "format_version": "0.1",
+        "format_version": "0.2",
         "verdict": verdict,
         "summary": {"total": len(results), **counts},
         "targets": results,
         "honesty": (
             "Deterministic bbox/topology checks of declared targets — not a GD&T solver. "
             "'unknown' means the data to judge the target was absent (not guessed). "
-            "no_deep_overlap is an opt-in AABB-overlap heuristic."
+            "no_deep_overlap is an opt-in AABB-overlap heuristic. "
+            "Exact B-Rep checks (no_interference, coaxial_within, faces_flush_within, "
+            "clearance_within) require a CAD-kernel subprocess; without brep_results they report 'unknown'."
         ),
     }
+
+
+def _validate_brep_target(
+    t: dict[str, Any],
+    idx: int,
+    brep_results: dict[str, Any],
+    kind: str,
+) -> dict[str, Any]:
+    """Merge a pre-computed exact B-Rep result for a single target.
+
+    The heavy OCC work is intentionally not done here; this function only
+    normalizes the subprocess result into the same pass/fail/unknown schema.
+    """
+    tid = _target_id(t, idx)
+    br = brep_results.get(tid)
+    if br is None:
+        return _result(
+            t, idx, "unknown",
+            f"{kind} requires exact B-Rep geometry; no brep_results provided for this target",
+            measured=None,
+            expected=_expected_for_brep_kind(t, kind),
+        )
+
+    status = str(br.get("status", "unknown"))
+    if status not in ("pass", "fail", "unknown"):
+        status = "unknown"
+    detail = str(br.get("detail") or "")
+    measured = br.get("measured")
+    expected = br.get("expected") if br.get("expected") is not None else _expected_for_brep_kind(t, kind)
+
+    # Validate numeric bounds for clearance_within when a measurement is present.
+    if kind == "clearance_within" and status == "unknown" and measured is not None:
+        lo = t.get("min_clearance_mm")
+        hi = t.get("max_clearance_mm")
+        try:
+            val = float(measured)
+            lo_ok = lo is None or val >= float(lo) - 1e-9
+            hi_ok = hi is None or val <= float(hi) + 1e-9
+            status = "pass" if lo_ok and hi_ok else "fail"
+            detail = (
+                f"clearance {val:.4f}mm within [{lo}, {hi}]mm"
+                if status == "pass"
+                else f"clearance {val:.4f}mm outside [{lo}, {hi}]mm"
+            )
+        except (TypeError, ValueError):
+            pass
+
+    return _result(t, idx, status, detail, measured=measured, expected=expected)
+
+
+def _expected_for_brep_kind(t: dict[str, Any], kind: str) -> Any:
+    if kind == "no_interference":
+        return {"part_a": t.get("part_a"), "part_b": t.get("part_b"), "intersection_volume_mm3": 0}
+    if kind == "coaxial_within":
+        return {
+            "part_a": t.get("part_a"),
+            "part_b": t.get("part_b"),
+            "max_axis_distance_mm": t.get("tolerance_mm", 1.0),
+            "max_axis_angle_deg": t.get("angle_tolerance_deg", 1.0),
+        }
+    if kind == "faces_flush_within":
+        return {
+            "part_a": t.get("part_a"),
+            "part_b": t.get("part_b"),
+            "max_plane_distance_mm": t.get("tolerance_mm", 1.0),
+        }
+    if kind == "clearance_within":
+        return {
+            "part_a": t.get("part_a"),
+            "part_b": t.get("part_b"),
+            "min_clearance_mm": t.get("min_clearance_mm"),
+            "max_clearance_mm": t.get("max_clearance_mm"),
+        }
+    return None

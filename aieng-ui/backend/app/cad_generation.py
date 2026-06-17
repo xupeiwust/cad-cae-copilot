@@ -4062,25 +4062,12 @@ def diagnose(settings: Any, project_id: str, inp: dict[str, Any] | None = None) 
     brep_honesty: str | None = None
     brep_pair_coverage: dict[str, Any] | None = None
     if part_count >= 2:
-        # Exclude obvious assembly container bodies (solids whose bbox fully
-        # contains another solid's bbox). Leaf parts are what physically interact.
-        def _bbox_contains(outer: list[float], inner: list[float], tol: float = 1e-6) -> bool:
-            if len(outer) != 6 or len(inner) != 6:
-                return False
-            return (
-                outer[0] - tol <= inner[0] and outer[1] - tol <= inner[1] and outer[2] - tol <= inner[2]
-                and outer[3] + tol >= inner[3] and outer[4] + tol >= inner[4] and outer[5] + tol >= inner[5]
-            )
-
-        leaf_solids = []
-        for idx, s in enumerate(solids):
-            bb = s.get("bounding_box") or []
-            is_container = any(
-                i != idx and _bbox_contains(bb, other.get("bounding_box") or [])
-                for i, other in enumerate(solids)
-            )
-            if not is_container:
-                leaf_solids.append((idx, s))
+        # Exclude assembly container bodies (top-level wrappers marked with
+        # assembly=True). Leaf parts are what physically interact.
+        leaf_solids = [
+            (idx, s) for idx, s in enumerate(solids)
+            if s.get("assembly") is not True
+        ]
 
         # Limit pairwise checks to avoid runaway cost on large assemblies.
         try:

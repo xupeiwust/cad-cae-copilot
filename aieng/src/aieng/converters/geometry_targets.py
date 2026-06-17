@@ -132,7 +132,7 @@ def validate_geometry_targets(
         tol = float(t["tolerance_mm"]) if isinstance(t.get("tolerance_mm"), (int, float)) else 1.0
 
         if kind in BREP_TARGET_KINDS:
-            results.append(_validate_brep_target(t, idx, brep_results, kind, tol))
+            results.append(_validate_brep_target(t, idx, brep_results, kind))
             continue
 
         if kind == "named_part_present":
@@ -254,7 +254,6 @@ def _validate_brep_target(
     idx: int,
     brep_results: dict[str, Any],
     kind: str,
-    tol: float,
 ) -> dict[str, Any]:
     """Merge a pre-computed exact B-Rep result for a single target.
 

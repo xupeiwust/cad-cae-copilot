@@ -15,21 +15,29 @@ pytest.importorskip("OCP.STEPControl", reason="OCP not installed; skipping B-Rep
 from app.brep_geometry_checks import run_brep_checks
 
 
+def _step_control_as_is():
+    """Return STEPControl_AsIs, with version fallback."""
+    try:
+        from OCP.STEPControl import STEPControl_AsIs
+        return STEPControl_AsIs
+    except ImportError:
+        from OCP.STEPControl import STEPControl_StepModelType
+        return STEPControl_StepModelType.STEPControl_AsIs
+
+
+STEP_CONTROL_AS_IS = _step_control_as_is()
+
+
 def _make_box_step(tmp_path: Path, x: float, y: float, z: float, *, label: str | None = None) -> Path:
     """Create a STEP file with a single box using OCP."""
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.STEPControl import STEPControl_Writer
     from OCP.IFSelect import IFSelect_RetDone
-    try:
-        from OCP.STEPControl import STEPControl_AsIs
-    except ImportError:
-        from OCP.STEPControl import STEPControl_StepModelType
-        STEPControl_AsIs = STEPControl_StepModelType.STEPControl_AsIs
 
     box = BRepPrimAPI_MakeBox(x, y, z).Shape()
     step_path = tmp_path / (f"{label or 'box'}_{int(x)}_{int(y)}_{int(z)}.step")
     writer = STEPControl_Writer()
-    writer.Transfer(box, STEPControl_AsIs)
+    writer.Transfer(box, STEP_CONTROL_AS_IS)
     status = writer.Write(str(step_path))
     if status != IFSelect_RetDone:
         pytest.skip(f"OCP STEP writer failed (status={status}); cannot create fixture")
@@ -41,16 +49,11 @@ def _make_cylinder_step(tmp_path: Path, radius: float, height: float) -> Path:
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
     from OCP.STEPControl import STEPControl_Writer
     from OCP.IFSelect import IFSelect_RetDone
-    try:
-        from OCP.STEPControl import STEPControl_AsIs
-    except ImportError:
-        from OCP.STEPControl import STEPControl_StepModelType
-        STEPControl_AsIs = STEPControl_StepModelType.STEPControl_AsIs
 
     cyl = BRepPrimAPI_MakeCylinder(radius, height).Shape()
     step_path = tmp_path / f"cylinder_r{radius}_h{height}.step"
     writer = STEPControl_Writer()
-    writer.Transfer(cyl, STEPControl_AsIs)
+    writer.Transfer(cyl, STEP_CONTROL_AS_IS)
     status = writer.Write(str(step_path))
     if status != IFSelect_RetDone:
         pytest.skip(f"OCP STEP writer failed (status={status}); cannot create fixture")
@@ -63,11 +66,6 @@ def _make_compound_step(tmp_path: Path, *shapes) -> Path:
     from OCP.TopoDS import TopoDS_Compound
     from OCP.STEPControl import STEPControl_Writer
     from OCP.IFSelect import IFSelect_RetDone
-    try:
-        from OCP.STEPControl import STEPControl_AsIs
-    except ImportError:
-        from OCP.STEPControl import STEPControl_StepModelType
-        STEPControl_AsIs = STEPControl_StepModelType.STEPControl_AsIs
 
     builder = BRep_Builder()
     compound = TopoDS_Compound()
@@ -76,7 +74,7 @@ def _make_compound_step(tmp_path: Path, *shapes) -> Path:
         builder.Add(compound, shape)
     step_path = tmp_path / "compound.step"
     writer = STEPControl_Writer()
-    writer.Transfer(compound, STEPControl_AsIs)
+    writer.Transfer(compound, STEP_CONTROL_AS_IS)
     status = writer.Write(str(step_path))
     if status != IFSelect_RetDone:
         pytest.skip(f"OCP STEP writer failed (status={status}); cannot create fixture")
@@ -171,7 +169,7 @@ def test_coaxial_within_detects_offset_cylinders(tmp_path: Path) -> None:
     topo = {
         "entities": [
             {"id": "c1", "type": "solid", "name": "shaft", "bounding_box": [-5, -5, 0, 5, 5, 20]},
-            {"id": "c2", "type": "solid", "name": "bore", "bounding_box": [-3, 0, 0, 7, 10, 20]},
+            {"id": "c2", "type": "solid", "name": "bore", "bounding_box": [-3, -5, 0, 7, 5, 20]},
         ]
     }
     report = run_brep_checks(
@@ -222,7 +220,7 @@ def test_missing_ocp_returns_graceful_error(tmp_path: Path, monkeypatch: pytest.
             stdout = ""
         return _FakeProc()
 
-    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("app.brep_geometry_checks.subprocess.run", _fake_run)
     report = run_brep_checks(
         step_path,
         [{"id": "t1", "kind": "no_interference", "part_a": 0, "part_b": 1}],

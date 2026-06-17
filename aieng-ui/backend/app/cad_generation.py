@@ -853,6 +853,174 @@ if isinstance(result, (list, tuple)) or type(result).__name__ == "ShapeList":
         result = Compound(children=_items)
 
 
+def _aieng_bbox_contains(outer, inner, tol=1e-4):
+    \"\"\"Return True if ``inner`` bounding box is contained within ``outer``.\"\"\"
+    return (
+        outer.min.X <= inner.min.X + tol
+        and outer.min.Y <= inner.min.Y + tol
+        and outer.min.Z <= inner.min.Z + tol
+        and outer.max.X >= inner.max.X - tol
+        and outer.max.Y >= inner.max.Y - tol
+        and outer.max.Z >= inner.max.Z - tol
+    )
+
+
+def _aieng_extract_color_local(part):
+    \"\"\"Normalize a build123d color attribute to an RGB float triplet.\"\"\"
+    try:
+        c = getattr(part, "color", None)
+        if c is None:
+            return None
+        if isinstance(c, (tuple, list)) and len(c) >= 3:
+            return [float(c[0]), float(c[1]), float(c[2])]
+        # Prefer tuple() over the deprecated to_tuple() for build123d Color.
+        try:
+            t = tuple(c)
+            if len(t) >= 3:
+                return [float(t[0]), float(t[1]), float(t[2])]
+        except Exception:
+            pass
+        if hasattr(c, "r") and hasattr(c, "g") and hasattr(c, "b"):
+            return [float(c.r), float(c.g), float(c.b)]
+        return None
+    except Exception:
+        return None
+
+
+def _aieng_recover_boolean_labels(result):
+    \"\"\"Recover labels/colors lost by build123d boolean or list-like results.
+
+    When ``result`` is a Compound/Shape that has lost per-child metadata, attempt
+    to match each solid to a labeled operand still present in ``globals()`` by
+    bounding-box containment. Matched solids keep (or recover) their label and
+    color so ``_collect_parts`` can enumerate them by name and the thumbnail
+    renderer can tint them correctly.
+
+    For Compound results the original hierarchy is preserved; only the leaf
+    solids are annotated. Non-Compound results (single solids from booleans,
+    ShapeLists, etc.) are wrapped into a new Compound so downstream topology
+    collection sees discrete, named parts.
+    \"\"\"
+    try:
+        def _collect_candidate(_value, _label):
+            try:
+                _bbox = _value.bounding_box()
+            except Exception:
+                return None
+            if _bbox is None:
+                return None
+            _color = _aieng_extract_color_local(_value)
+            _cvolume = (
+                (_bbox.max.X - _bbox.min.X)
+                * (_bbox.max.Y - _bbox.min.Y)
+                * (_bbox.max.Z - _bbox.min.Z)
+            )
+            return (_label, _bbox, _color, _cvolume)
+
+        # Collect labeled candidate operands from the user's namespace.
+        _candidates = []
+        for _name, _value in list(globals().items()):
+            if _name.startswith("_") or _name in ("result", "build123d", "__builtins__"):
+                continue
+            _label = getattr(_value, "label", "") or ""
+            if _label:
+                _cand = _collect_candidate(_value, _label)
+                if _cand is not None:
+                    _candidates.append(_cand)
+            # ``previous_result`` is injected by append-mode execution; STEP import
+            # preserves labels on immediate children but loses labels on leaf solids.
+            # Use those labeled children as tight candidates instead of the aggregate.
+            if _name == "previous_result":
+                for _child in list(getattr(_value, "children", None) or []):
+                    _clabel = getattr(_child, "label", "") or ""
+                    if _clabel:
+                        _ccand = _collect_candidate(_child, _clabel)
+                        if _ccand is not None:
+                            _candidates.append(_ccand)
+        if not _candidates:
+            return result
+
+        def _match_solid(_solid):
+            \"\"\"Return the tightest (label, color) match for a solid, or None.\"\"\"
+            try:
+                _sbbox = _solid.bounding_box()
+            except Exception:
+                return None
+            if _sbbox is None:
+                return None
+            _best_match = None
+            _best_volume = float("inf")
+            for _clabel, _cbbox, _ccolor, _cvolume in _candidates:
+                if _aieng_bbox_contains(_cbbox, _sbbox):
+                    if _cvolume < _best_volume:
+                        _best_volume = _cvolume
+                        _best_match = (_clabel, _ccolor)
+            return _best_match
+
+        def _annotate_solid(_solid):
+            \"\"\"Best-effort label/color restore for one leaf solid.\"\"\"
+            _match = _match_solid(_solid)
+            if _match is None:
+                return False
+            _clabel, _ccolor = _match
+            _changed = False
+            if not (getattr(_solid, "label", "") or ""):
+                _solid.label = _clabel
+                _changed = True
+            if _ccolor is not None and getattr(_solid, "color", None) is None:
+                _solid.color = Color(float(_ccolor[0]), float(_ccolor[1]), float(_ccolor[2]))
+                _changed = True
+            return _changed
+
+        def _recover_node(_node):
+            \"\"\"Recursively annotate leaf solids; preserve Compound hierarchy.\"\"\"
+            _children = list(getattr(_node, "children", None) or [])
+            if _children:
+                _changed = False
+                for _c in _children:
+                    if _recover_node(_c):
+                        _changed = True
+                return _changed
+            return _annotate_solid(_node)
+
+        # Detect Compound results by the presence of children rather than
+        # ``isinstance`` because the runner template's Compound shim returns an
+        # instance of the original Compound class, so ``isinstance(result, Compound)``
+        # is False even for genuine Compound results.
+        _result_children = list(getattr(result, "children", None) or [])
+        if _result_children:
+            _recover_node(result)
+            return result
+
+        # No accessible children: flatten to discrete solids so boolean/list-like
+        # results (e.g. ``a + b``) become separate named parts even when the
+        # wrapper Compound hides them from ``.children``.
+        _solids = list(result.solids()) if hasattr(result, "solids") else []
+
+        # A single solid can keep the result-level label if there is one.
+        if len(_solids) <= 1:
+            _annotate_solid(result)
+            return result
+
+        _child_labels = set()
+        for _solid in _solids:
+            _annotate_solid(_solid)
+            _l = getattr(_solid, "label", "") or ""
+            if _l:
+                _child_labels.add(_l)
+
+        _new_result = Compound(children=_solids)
+        _top_label = getattr(result, "label", "") or ""
+        if _top_label and _top_label not in _child_labels:
+            _new_result.label = _top_label
+        return _new_result
+    except Exception:
+        return result
+
+
+result = _aieng_recover_boolean_labels(result)
+
+
 def _bbox_list(bb):
     return [
         round(bb.min.X, 4), round(bb.min.Y, 4), round(bb.min.Z, 4),
@@ -1128,14 +1296,16 @@ def _aieng_extract_color(part):
             return None
         if isinstance(c, (tuple, list)) and len(c) >= 3:
             return [float(c[0]), float(c[1]), float(c[2])]
-        if hasattr(c, "to_tuple"):
-            t = c.to_tuple()
-            return [float(t[0]), float(t[1]), float(t[2])]
+        # Prefer tuple() over the deprecated to_tuple() for build123d Color.
+        try:
+            t = tuple(c)
+            if len(t) >= 3:
+                return [float(t[0]), float(t[1]), float(t[2])]
+        except Exception:
+            pass
         if hasattr(c, "r") and hasattr(c, "g") and hasattr(c, "b"):
             return [float(c.r), float(c.g), float(c.b)]
-        # Last resort: iterable of floats
-        t = tuple(c)
-        return [float(t[0]), float(t[1]), float(t[2])]
+        return None
     except Exception:
         return None
 
@@ -1167,9 +1337,29 @@ if _aieng_use_combined and _aieng_combined_count > 0:
     out_stl.write_bytes(_aieng_hdr + _aieng_struct.pack("<I", _aieng_combined_count) + b"".join(_aieng_combined_tris))
 else:
     # Per-body path failed for at least one part — write whole-result STL and
-    # invalidate mesh_meta so the renderer falls back to default coloring.
+    # keep a fallback mesh_meta with body names/colors so the thumbnail can still
+    # pick a reasonable tint instead of falling back to the generic palette.
     _export("stl", result, out_stl)
-    _aieng_mesh_meta = {"bodies": []}
+    _aieng_fallback_bodies = []
+    for _aieng_fbi, (_aieng_fpname, _aieng_fpart, _aieng_fisasm) in enumerate(_aieng_collected):
+        _aieng_fallback_bodies.append({
+            "body_id": f"body_{_aieng_fbi + 1:03d}",
+            "name": _aieng_fpname,
+            "color": _aieng_extract_color(_aieng_fpart),
+            "triangle_count": 0,
+        })
+    _aieng_total_tris = 0
+    try:
+        _aieng_fallback_raw = out_stl.read_bytes()
+        if len(_aieng_fallback_raw) >= 84:
+            _aieng_total_tris = _aieng_struct.unpack("<I", _aieng_fallback_raw[80:84])[0]
+    except Exception:
+        pass
+    _aieng_mesh_meta = {
+        "bodies": _aieng_fallback_bodies,
+        "fallback": True,
+        "total_triangles": _aieng_total_tris,
+    }
 
 (out_stl.with_name("mesh_meta.json")).write_text(json.dumps(_aieng_mesh_meta, indent=2))
 
@@ -1414,6 +1604,9 @@ def _build_face_colors_from_mesh_meta(mesh_meta: Any) -> Any:
 
     Bodies that supplied an explicit `.color` use that RGB; bodies without a
     color get a cycling palette entry so part boundaries are still visible.
+    When ``mesh_meta`` carries a fallback marker (per-body STL export failed),
+    the whole mesh is tinted with the first available body color instead of
+    defaulting to the generic palette.
     Returns None when mesh_meta is missing or invalid — caller then falls back
     to the default uniform tint inside render_mesh_thumbnail.
     """
@@ -1424,6 +1617,22 @@ def _build_face_colors_from_mesh_meta(mesh_meta: Any) -> Any:
         return None
     try:
         import numpy as np
+
+        # Fallback path: per-body STL export failed, but we still have body colors.
+        if mesh_meta.get("fallback"):
+            total_tris = int(mesh_meta.get("total_triangles", 0) or 0)
+            if total_tris <= 0:
+                return None
+            for body in bodies:
+                raw_color = body.get("color")
+                if (
+                    isinstance(raw_color, (list, tuple))
+                    and len(raw_color) >= 3
+                    and all(isinstance(x, (int, float)) for x in raw_color[:3])
+                ):
+                    color = [float(raw_color[0]), float(raw_color[1]), float(raw_color[2])]
+                    return np.asarray([color] * total_tris, dtype=float)
+            return None
 
         rows: list[list[float]] = []
         palette_idx = 0
@@ -2362,7 +2571,7 @@ def _geometry_report_for_response(report: dict[str, Any], response_detail: str) 
     return report
 
 
-_BUILD123D_CACHE_FORMAT_VERSION = "1"
+_BUILD123D_CACHE_FORMAT_VERSION = "2"
 def _parse_cache_env(key: str, default: int) -> int:
     try:
         return int(os.environ[key])
@@ -2400,10 +2609,11 @@ _STEP_LABELS_SURVIVE_ROUNDTRIP: bool | None = None
 
 
 def _step_roundtrip_preserves_labels() -> bool:
-    """Check whether build123d preserves part labels through STEP export/import.
+    """Check whether build123d preserves part labels and colors through STEP export/import.
 
     Cached per-process so the probe runs at most once. Returns ``False`` when
-    build123d is unavailable or the roundtrip drops the label.
+    build123d is unavailable or the roundtrip drops either labels or colors,
+    because append-mode STEP prefix-reuse must not silently lose per-body color.
     """
     global _STEP_LABELS_SURVIVE_ROUNDTRIP
     if _STEP_LABELS_SURVIVE_ROUNDTRIP is not None:
@@ -2417,18 +2627,44 @@ def _step_roundtrip_preserves_labels() -> bool:
             path = Path(td) / "probe.step"
             left = b3d.Box(10, 10, 10)
             left.label = "aieng_probe_left"
+            left.color = b3d.Color(1, 0, 0)
             right = b3d.Box(10, 10, 10)
             right = right.translate((20, 0, 0))
             right.label = "aieng_probe_right"
+            right.color = b3d.Color(0, 1, 0)
             probe = b3d.Compound(children=[left, right])
             b3d.export_step(probe, str(path))
             imported = b3d.import_step(str(path))
             imported_children = list(getattr(imported, "children", None) or [])
             imported_labels = {getattr(child, "label", "") for child in imported_children}
-            _STEP_LABELS_SURVIVE_ROUNDTRIP = {
+            labels_ok = {
                 "aieng_probe_left",
                 "aieng_probe_right",
             }.issubset(imported_labels)
+
+            def _color_of(part):
+                c = getattr(part, "color", None)
+                if c is None:
+                    return None
+                if isinstance(c, (tuple, list)) and len(c) >= 3:
+                    return tuple(round(float(c[i]), 3) for i in range(3))
+                try:
+                    t = tuple(c)
+                    if len(t) >= 3:
+                        return tuple(round(float(t[i]), 3) for i in range(3))
+                except Exception:
+                    pass
+                return None
+
+            imported_colors = {
+                getattr(child, "label", ""): _color_of(child)
+                for child in imported_children
+            }
+            colors_ok = (
+                imported_colors.get("aieng_probe_left") == (1.0, 0.0, 0.0)
+                and imported_colors.get("aieng_probe_right") == (0.0, 1.0, 0.0)
+            )
+            _STEP_LABELS_SURVIVE_ROUNDTRIP = labels_ok and colors_ok
     except Exception:
         _STEP_LABELS_SURVIVE_ROUNDTRIP = False
     return _STEP_LABELS_SURVIVE_ROUNDTRIP
@@ -2680,8 +2916,7 @@ def _execute_build123d_cached(
                 "cache_hit": True,
             }
 
-        step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(code, timeout=timeout)
-        mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+        step_bytes, stl_bytes, glb_bytes, topo, mesh_meta = _execute_build123d_code(code, timeout=timeout)
         feature_graph = _topology_to_feature_graph(
             topo, source_code=code, model_kind=model_kind,
         )
@@ -2812,6 +3047,7 @@ def _finish_execute_build123d_response(
         "write_files": write_files,
         "preview_url": f"/api/projects/{project_id}/cad-preview",
         "preview_format": "glb" if glb_bytes else "stl",
+        "mesh_meta": mesh_meta,
     }
     if critique_diff is not None:
         result["critique_diff"] = critique_diff
@@ -3594,11 +3830,13 @@ def _extract_design_rule_violation(stderr_text: str | None) -> str | None:
 def _execute_build123d_code(
     code: str,
     timeout: int = 60,
-) -> tuple[bytes, bytes, bytes, dict[str, Any]]:
+) -> tuple[bytes, bytes, bytes, dict[str, Any], Any]:
     """Execute build123d code in a subprocess (blocking).
 
-    Returns ``(step_bytes, stl_bytes, glb_bytes, topology_map)``.
-    Used by the non-streaming code path; the streaming variant
+    Returns ``(step_bytes, stl_bytes, glb_bytes, topology_map, mesh_meta)``.
+    ``mesh_meta`` carries per-body color/triangle metadata for the thumbnail
+    renderer; it is returned explicitly so it cannot leak into persisted
+    topology maps. Used by the non-streaming code path; the streaming variant
     ``_execute_build123d_code_streaming`` runs a near-identical subprocess but
     yields periodic heartbeats so the SSE client sees progress during a long
     build123d invocation.
@@ -3648,16 +3886,16 @@ def _execute_build123d_code(
             else {}
         )
         # mesh_meta.json is best-effort: when present, it carries per-body color
-        # and triangle counts for the thumbnail renderer. Stash it under a "_"-
-        # prefixed key inside topo so it travels through the existing return
-        # tuple without breaking any caller that unpacks 4 values.
+        # and triangle counts for the thumbnail renderer. Return it explicitly so
+        # transient thumbnail metadata never leaks into persisted topology maps.
+        mesh_meta: Any = None
         mesh_meta_path = out_stl.with_name("mesh_meta.json")
         if mesh_meta_path.exists():
             try:
-                topo["_mesh_meta"] = json.loads(mesh_meta_path.read_text(encoding="utf-8"))
+                mesh_meta = json.loads(mesh_meta_path.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        return step_bytes, stl_bytes, glb_bytes, topo
+        return step_bytes, stl_bytes, glb_bytes, topo, mesh_meta
 
 
 def validate_subpart(settings: Any, inp: dict[str, Any]) -> dict[str, Any]:
@@ -3689,7 +3927,7 @@ def validate_subpart(settings: Any, inp: dict[str, Any]) -> dict[str, Any]:
     timeout = max(1, min(timeout, 600))
 
     try:
-        _step, _stl, _glb, topo = _execute_build123d_code(code, timeout=timeout)
+        _step, _stl, _glb, topo, _mesh_meta = _execute_build123d_code(code, timeout=timeout)
     except DesignRuleViolation as exc:
         return {
             "status": "invalid",
@@ -4249,7 +4487,7 @@ def _execute_build123d_code_streaming(
     Yields:
       ``{"kind": "heartbeat", "elapsed_s": int}`` every ``heartbeat_interval_s``
       until completion. The final yield is exactly one of:
-        - ``{"kind": "result", "step_bytes": bytes, "stl_bytes": bytes, "glb_bytes": bytes, "topo": dict}``
+        - ``{"kind": "result", "step_bytes": bytes, "stl_bytes": bytes, "glb_bytes": bytes, "topo": dict, "mesh_meta": Any}``
         - ``{"kind": "error", "error": str}``
 
     The subprocess is always reaped before the generator returns, even when the
@@ -4330,10 +4568,11 @@ def _execute_build123d_code_streaming(
                 if out_topo.exists()
                 else {}
             )
+            mesh_meta: Any = None
             mesh_meta_path = out_stl.with_name("mesh_meta.json")
             if mesh_meta_path.exists():
                 try:
-                    topo["_mesh_meta"] = json.loads(mesh_meta_path.read_text(encoding="utf-8"))
+                    mesh_meta = json.loads(mesh_meta_path.read_text(encoding="utf-8"))
                 except Exception:
                     pass
             yield {
@@ -4342,6 +4581,7 @@ def _execute_build123d_code_streaming(
                 "stl_bytes": stl_bytes,
                 "glb_bytes": glb_bytes,
                 "topo": topo,
+                "mesh_meta": mesh_meta,
             }
         finally:
             if proc.poll() is None:
@@ -5319,9 +5559,7 @@ def recompile_shape_ir_package(package_path: Path, *, timeout: int = 120, use_ca
     summary: dict[str, Any] = {"representation": representation, "runtime": runtime, "executed": False}
     try:
         if runtime == "build123d":
-            step, stl, glb, topo = _execute_build123d_code(source, timeout=timeout)
-            if isinstance(topo, dict):
-                topo.pop("_mesh_meta", None)
+            step, stl, glb, topo, _mesh_meta = _execute_build123d_code(source, timeout=timeout)
             fg = _topology_to_feature_graph(topo, source_code=source, model_kind=str(payload.get("model_kind") or "auto"))
             _write_cad_artifacts(package_path, step_bytes=step, stl_bytes=stl, topology_map=topo,
                                  feature_graph=fg, generated_code=source, glb_bytes=glb)
@@ -5658,7 +5896,7 @@ class Build123dBackend:
 
         for attempt in range(max_retries + 1):
             try:
-                step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(
+                step_bytes, stl_bytes, glb_bytes, topo, _mesh_meta = _execute_build123d_code(
                     generated_code, timeout=timeout
                 )
                 feature_graph = _topology_to_feature_graph(topo, source_code=generated_code)
@@ -6076,9 +6314,7 @@ def execute_build123d_code(
     stl_bytes = result_evt["stl_bytes"]
     glb_bytes = result_evt["glb_bytes"]
     topo = result_evt["topo"]
-    # _mesh_meta is transient (used only for thumbnail coloring) — pop it so it
-    # doesn't get written to topology_map.json on disk.
-    mesh_meta = topo.pop("_mesh_meta", None) if isinstance(topo, dict) else None
+    mesh_meta = result_evt.get("mesh_meta")
     feature_graph = _topology_to_feature_graph(
         topo, source_code=storage_code, model_kind=model_kind,
     )
@@ -6190,6 +6426,7 @@ def execute_build123d_code(
         "write_files": write_files,
         "preview_url": f"/api/projects/{project_id}/cad-preview",
         "preview_format": "glb" if glb_bytes else "stl",
+        "mesh_meta": mesh_meta,
     }
 
     # Append-mode engineering-diagnostics diff (#216 follow-up): flag when this
@@ -6557,7 +6794,7 @@ def refine_cad_generation(
     )
 
     try:
-        step_bytes, stl_bytes, glb_bytes, topo = _execute_build123d_code(refined_code, timeout=timeout)
+        step_bytes, stl_bytes, glb_bytes, topo, _mesh_meta = _execute_build123d_code(refined_code, timeout=timeout)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Refined CAD execution failed: {exc}")
 
@@ -7787,7 +8024,7 @@ def edit_build123d_parameter(
     _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
     # 9. Render thumbnail so the caller can verify visually
-    # mesh_meta was already extracted from topo by _execute_build123d_cached.
+    # mesh_meta is returned explicitly by _execute_build123d_cached.
     thumb = None
     if _should_render_thumbnail(thumbnail, response_detail):
         face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
@@ -7963,7 +8200,7 @@ def _rebuild_after_part_edit(
     _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
     response_detail = _normalize_response_detail(response_detail)
-    # mesh_meta was already extracted from topo by _execute_build123d_cached.
+    # mesh_meta is returned explicitly by _execute_build123d_cached.
     mesh_meta = cached_result.get("mesh_meta")
     thumb = None
     if _should_render_thumbnail(thumbnail, response_detail):

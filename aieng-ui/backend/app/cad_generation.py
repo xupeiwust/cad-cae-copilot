@@ -5371,24 +5371,27 @@ def _write_last_edit_diff(
     tool: str,
     regression_diff: dict[str, Any] | None = None,
     critique_diff: dict[str, Any] | None = None,
+    geometry_verification: dict[str, Any] | None = None,
 ) -> None:
     """Persist the most recent edit's diffs to ``state/last_edit_diff.json``.
 
-    The ``regression_diff`` (topology drift) and ``critique_diff``
-    (manufacturability) verdicts live in the mutation tool's response, which the
-    connecting agent sees but the web viewer never does. Persisting the latest one
-    lets the UI re-surface it as a first-class "this edit changed X" diff (#226)
-    and lets ``observe_cad_state`` report it. Best-effort: never breaks the edit.
+    The ``regression_diff`` (topology drift), ``critique_diff``
+    (manufacturability), and ``geometry_verification`` (topology/export survival)
+    verdicts live in the mutation tool's response, which the connecting agent sees
+    but the web viewer never does. Persisting the latest one lets the UI re-surface
+    it as a first-class "this edit changed X" diff (#226, #311) and lets
+    ``observe_cad_state`` report it. Best-effort: never breaks the edit.
     """
     if not pkg_path.exists():
         return
-    if regression_diff is None and critique_diff is None:
+    if regression_diff is None and critique_diff is None and geometry_verification is None:
         return
     payload = {
         "format": "aieng.last_edit_diff.v0",
         "tool": tool,
         "regression_diff": regression_diff,
         "critique_diff": critique_diff,
+        "geometry_verification": geometry_verification,
     }
     try:
         data = json.dumps(payload, indent=2).encode("utf-8")
@@ -8608,6 +8611,7 @@ def edit_build123d_parameter(
     _write_last_edit_diff(
         pkg_path, tool="cad.edit_parameter",
         regression_diff=regression_diff, critique_diff=critique_diff,
+        geometry_verification=geometry_verification,
     )
 
     # 8. Mark project as updated
@@ -8797,6 +8801,7 @@ def _rebuild_after_part_edit(
     _write_last_edit_diff(
         pkg_path, tool=f"cad.{action}_part",
         regression_diff=regression_diff, critique_diff=critique_diff,
+        geometry_verification=geometry_verification,
     )
 
     try:

@@ -1464,6 +1464,45 @@ export type CritiqueDiff = {
   resolved_count?: number;
 };
 
+/** Survival summary for one topology entity kind after a CAD edit (#311). */
+export type EntitySurvivalSummary = {
+  before_count: number;
+  after_count: number;
+  survived_count: number;
+  added_count: number;
+  removed_count: number;
+  sample_added?: string[];
+  sample_removed?: string[];
+  referenced?: Array<{ id: string; status: string }>;
+};
+
+/** Topology / export survival evidence from a CAD edit (#309, #311). */
+export type GeometryVerification = {
+  topology_preserved: boolean;
+  stale_reference_risk: boolean;
+  topology_change?: {
+    topology_changed: boolean;
+    added_count?: number;
+    removed_count?: number;
+  } | null;
+  face_edge_survival?: {
+    solid?: EntitySurvivalSummary;
+    face?: EntitySurvivalSummary;
+    edge?: EntitySurvivalSummary;
+  } | null;
+  brep_validity?: {
+    status: string;
+    detail: string;
+  } | null;
+  export_sanity?: {
+    step_exported: boolean;
+    stl_exported: boolean;
+    glb_exported: boolean;
+    status: string;
+    detail: string;
+  } | null;
+};
+
 /** The most recent edit's diff (#226), from GET /api/projects/{id}/edit-diff. */
 export type EditDiffResponse = {
   available: boolean;
@@ -1471,6 +1510,7 @@ export type EditDiffResponse = {
   tool?: string;
   regression_diff?: RegressionDiff | null;
   critique_diff?: CritiqueDiff | null;
+  geometry_verification?: GeometryVerification | null;
 };
 
 /** One deterministic engineering-critique finding (from cad.critique). */

@@ -87,6 +87,41 @@ def _make_cad_only_package(pkg_path: Path) -> None:
         zf.writestr("graph/feature_graph.json", json.dumps({"features": []}))
 
 
+def _make_partial_geometry_package(pkg_path: Path) -> None:
+    """Geometry is partial (only topology map), but results and targets exist."""
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    targets = [
+        {
+            "target_id": "stress_pass",
+            "label": "Stress pass",
+            "metric": "max_von_mises_stress",
+            "operator": "<=",
+            "value": 200,
+            "unit": "MPa",
+        }
+    ]
+    metrics = {
+        "schema_version": "0.1",
+        "global_metrics": {
+            "max_von_mises_stress": {"value": 150.0, "unit": "MPa"},
+        },
+    }
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "test", "resources": {}}))
+        zf.writestr(
+            "geometry/topology_map.json",
+            json.dumps({
+                "format_version": "0.1",
+                "entities": [{"id": "body_001", "type": "body", "name": "bracket"}],
+            }),
+        )
+        zf.writestr(
+            "task/design_targets.yaml",
+            yaml.safe_dump({"schema_version": "0.1", "targets": targets}, sort_keys=False),
+        )
+        zf.writestr("results/computed_metrics.json", json.dumps(metrics))
+
+
 def _client_with_package(
     tmp_path: Path,
     pkg_builder: Any,
@@ -156,7 +191,7 @@ def test_credibility_report_for_solved_design_study(tmp_path: Path) -> None:
 
 
 def test_credibility_report_for_cad_only_project(tmp_path: Path) -> None:
-    client, project_id, pkg = _client_with_package(tmp_path, _make_cad_only_package)
+    client, project_id, _pkg = _client_with_package(tmp_path, _make_cad_only_package)
 
     resp = client.get(f"/api/projects/{project_id}/reports/credibility")
     assert resp.status_code == 200, resp.text
@@ -183,6 +218,22 @@ def test_credibility_report_for_cad_only_project(tmp_path: Path) -> None:
     assert any("Computed result evidence" in m for m in missing)
     assert any("design targets" in m.lower() for m in missing)
     assert any("assumptions" in m.lower() for m in missing)
+
+
+def test_partial_geometry_rolls_up_to_partial_overall(tmp_path: Path) -> None:
+    """A partial geometry tier must roll up to overall 'partial', not 'unknown'."""
+    client, project_id, _pkg = _client_with_package(
+        tmp_path, _make_partial_geometry_package
+    )
+
+    resp = client.get(f"/api/projects/{project_id}/reports/credibility")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["summary"]["geometry_evidence"] == "partial"
+    assert body["summary"]["result_evidence"] == "present"
+    assert body["summary"]["design_targets"] == "pass"
+    assert body["summary"]["overall"] == "partial"
 
 
 def test_credibility_report_returns_404_for_missing_project(tmp_path: Path) -> None:

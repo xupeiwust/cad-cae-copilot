@@ -697,9 +697,7 @@ def _build_credibility_report(
     warnings: list[str] = []
     missing_evidence: list[str] = []
 
-    geometry_evidence, last_edit_diff, part_count, named_parts = _read_geometry_evidence(
-        package_path, warnings
-    )
+    geometry_evidence, _, _, _ = _read_geometry_evidence(package_path, warnings)
     cae_evidence = _read_cae_evidence(package_path)
     result_evidence = _read_result_evidence(settings, project_id, package_path)
     design_targets = _read_design_target_comparison(settings, project_id, warnings)
@@ -997,6 +995,6 @@ def _rollup_overall_status(
         return "pass"
     if all(t == "missing" for t in tiers) and design_targets == "not_evaluated":
         return "not_evaluated"
-    if any(t == "missing" for t in tiers) or design_targets in ("partial", "unknown"):
+    if any(t in ("partial", "missing") for t in tiers) or design_targets in ("partial", "unknown"):
         return "partial"
     return "unknown"

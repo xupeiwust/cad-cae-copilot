@@ -83,6 +83,46 @@ def _make_frd(
     return "\n".join(lines) + "\n"
 
 
+def _make_multistep_frd(steps: list[dict[str, dict[int, list[float]]]]) -> str:
+    """Build a minimal FRD with multiple DISP/S steps.
+
+    Each step dict may contain ``disp`` and/or ``stress`` node maps.
+    """
+    lines = [
+        "    1C                                                                         1",
+        "    1UCUT.......................                                                2",
+    ]
+    for step in steps:
+        disp_nodes = step.get("disp")
+        stress_nodes = step.get("stress")
+        if disp_nodes is not None:
+            lines += [
+                "    -4  DISP        4    1",
+                "    -5  D1          1    2    1    0",
+                "    -5  D2          1    2    2    0",
+                "    -5  D3          1    2    3    0",
+                "    -5  ALL         1    2    0    1",
+            ]
+            for nid, vals in disp_nodes.items():
+                lines.append(_node_line(nid, vals))
+            lines.append("    -3")
+        if stress_nodes is not None:
+            lines += [
+                "    -4  S           6    1",
+                "    -5  SXX         1    4    1    1",
+                "    -5  SYY         1    4    2    1",
+                "    -5  SZZ         1    4    3    1",
+                "    -5  SXY         1    4    4    1",
+                "    -5  SXZ         1    4    5    1",
+                "    -5  SYZ         1    4    6    1",
+            ]
+            for nid, vals in stress_nodes.items():
+                lines.append(_node_line(nid, vals))
+            lines.append("    -3")
+    lines.append(" 9999")
+    return "\n".join(lines) + "\n"
+
+
 def _write_frd(tmp_path: Path, content: str) -> Path:
     p = tmp_path / "job.frd"
     p.write_text(content, encoding="utf-8")
@@ -162,6 +202,38 @@ class TestParseFrd:
         frd = _write_frd(tmp_path, _make_frd(disp, None))
         fields = parse_frd(frd)
         assert len(fields["DISP"]["node_data"]) == 5
+
+    def test_parse_frd_steps_multiple_disp_steps(self, tmp_path: Path) -> None:
+        from aieng.simulation.frd_result_extractor import parse_frd_steps
+
+        frd = _write_frd(
+            tmp_path,
+            _make_multistep_frd(
+                [
+                    {"disp": {1: [1.0, 0.0, 0.0, 1.0]}},
+                    {"disp": {1: [2.0, 0.0, 0.0, 2.0]}},
+                ]
+            ),
+        )
+        fields = parse_frd_steps(frd)
+        assert "DISP" in fields
+        assert len(fields["DISP"]) == 2
+        assert fields["DISP"][0]["node_data"][1][3] == pytest.approx(1.0, abs=1e-5)
+        assert fields["DISP"][1]["node_data"][1][3] == pytest.approx(2.0, abs=1e-5)
+
+    def test_parse_frd_backward_compatible_single_step(self, tmp_path: Path) -> None:
+        frd = _write_frd(
+            tmp_path,
+            _make_multistep_frd(
+                [
+                    {"disp": {1: [1.0, 0.0, 0.0, 1.0]}, "stress": {1: [100.0] * 6}},
+                ]
+            ),
+        )
+        fields = parse_frd(frd)
+        assert "DISP" in fields
+        assert "S" in fields
+        assert fields["DISP"]["node_data"][1][3] == pytest.approx(1.0, abs=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +316,40 @@ class TestExtractComputedMetrics:
         frd = _write_frd(tmp_path, _make_frd({1: [1.0, 0.0, 0.0, 1.0]}, None))
         result = extract_computed_metrics(frd, software="MyFEMSolver")
         assert result["metrics_source"]["software"] == "MyFEMSolver"
+
+    def test_multi_step_computed_metrics(self, tmp_path: Path) -> None:
+        frd = _write_frd(
+            tmp_path,
+            _make_multistep_frd(
+                [
+                    {"disp": {1: [1.0, 0.0, 0.0, 1.0]}},
+                    {"disp": {1: [3.0, 0.0, 0.0, 3.0]}},
+                ]
+            ),
+        )
+        result = extract_computed_metrics(frd)
+        assert len(result["load_cases"]) == 2
+        assert result["load_cases"][0]["id"] == "load_case_001"
+        assert result["load_cases"][1]["id"] == "load_case_002"
+        assert result["load_cases"][0]["metrics"]["max_displacement"]["value"] == pytest.approx(
+            1.0, abs=1e-4
+        )
+        assert result["load_cases"][1]["metrics"]["max_displacement"]["value"] == pytest.approx(
+            3.0, abs=1e-4
+        )
+
+    def test_explicit_load_case_ids_multi_step(self, tmp_path: Path) -> None:
+        frd = _write_frd(
+            tmp_path,
+            _make_multistep_frd(
+                [
+                    {"disp": {1: [1.0, 0.0, 0.0, 1.0]}},
+                    {"disp": {1: [2.0, 0.0, 0.0, 2.0]}},
+                ]
+            ),
+        )
+        result = extract_computed_metrics(frd, load_case_ids=["mode_1", "mode_2"])
+        assert [lc["id"] for lc in result["load_cases"]] == ["mode_1", "mode_2"]
 
 
 # ---------------------------------------------------------------------------

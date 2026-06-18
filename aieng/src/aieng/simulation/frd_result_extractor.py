@@ -30,26 +30,20 @@ METRICS_PATH = "results/computed_metrics.json"
 # FRD parser
 # ---------------------------------------------------------------------------
 
-def parse_frd(frd_path: Path) -> dict[str, dict[str, Any]]:
-    """Parse a CalculiX FRD text file and return per-field node data.
+def _parse_frd_text(text: str) -> list[dict[str, Any]]:
+    """Parse FRD text and return a flat list of datasets in file order.
 
-    Args:
-        frd_path: Path to the .frd file.
-
-    Returns:
-        Dict keyed by field name (e.g. ``'DISP'``, ``'S'``), each containing:
-          - ``components``: list of component name strings
-          - ``node_data``: dict mapping node ID (int) to list of float | None
+    Each dataset is a dict with:
+      - ``field_name``: upper-case field name (e.g. ``'DISP'``, ``'S'``)
+      - ``components``: list of component name strings
+      - ``node_data``: dict mapping node ID (int) to list of float | None
+      - ``step_index``: sequential dataset index within this field
     """
-    try:
-        text = frd_path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        raise FileNotFoundError(f"FRD file not found or unreadable: {frd_path}") from exc
-
     lines = text.splitlines()
-    fields: dict[str, dict[str, Any]] = {}
-
+    datasets: list[dict[str, Any]] = []
     i = 0
+    field_occurrence: dict[str, int] = {}
+
     while i < len(lines):
         line = lines[i]
         tag = line[:6] if len(line) >= 6 else ""
@@ -106,15 +100,65 @@ def parse_frd(frd_path: Path) -> dict[str, dict[str, Any]]:
                 i += 1
 
             if field_name and node_data:
-                fields[field_name] = {
-                    "components": component_names,
-                    "node_data": node_data,
-                }
+                occurrence = field_occurrence.get(field_name, 0)
+                datasets.append(
+                    {
+                        "field_name": field_name,
+                        "components": component_names,
+                        "node_data": node_data,
+                        "step_index": occurrence,
+                    }
+                )
+                field_occurrence[field_name] = occurrence + 1
 
         else:
             i += 1
 
+    return datasets
+
+
+def parse_frd_steps(frd_path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Parse a CalculiX FRD text file and return per-field, per-step data.
+
+    Args:
+        frd_path: Path to the .frd file.
+
+    Returns:
+        Dict keyed by field name; each value is a list of datasets, one per
+        step/analysis increment in file order.  Modal/buckling mode shapes and
+        multi-step static results therefore appear as successive list entries.
+    """
+    try:
+        text = frd_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise FileNotFoundError(f"FRD file not found or unreadable: {frd_path}") from exc
+
+    datasets = _parse_frd_text(text)
+    fields: dict[str, list[dict[str, Any]]] = {}
+    for dataset in datasets:
+        fields.setdefault(dataset["field_name"], []).append(dataset)
     return fields
+
+
+def parse_frd(frd_path: Path) -> dict[str, dict[str, Any]]:
+    """Parse a CalculiX FRD text file and return per-field node data.
+
+    Backward-compatible convenience wrapper: returns the **first** dataset for
+    each field name. For multi-step files use :func:`parse_frd_steps`.
+
+    Args:
+        frd_path: Path to the .frd file.
+
+    Returns:
+        Dict keyed by field name (e.g. ``'DISP'``, ``'S'``), each containing:
+          - ``components``: list of component name strings
+          - ``node_data``: dict mapping node ID (int) to list of float | None
+    """
+    fields = parse_frd_steps(frd_path)
+    return {
+        field_name: datasets[0] if datasets else {}
+        for field_name, datasets in fields.items()
+    }
 
 
 def _slice_values(line: str, start: int, count: int) -> list[float | None]:
@@ -139,35 +183,18 @@ def _slice_values(line: str, start: int, count: int) -> list[float | None]:
 # Extrema computation
 # ---------------------------------------------------------------------------
 
-def extract_computed_metrics(
-    frd_path: Path,
-    *,
-    load_case_id: str = "load_case_001",
-    software: str = "CalculiX",
+def _extract_step_metrics(
+    disp_dataset: dict[str, Any] | None,
+    stress_dataset: dict[str, Any] | None,
+    warnings: list[str],
 ) -> dict[str, Any]:
-    """Extract scalar extrema from a CalculiX FRD file.
-
-    Returns a dict matching the ``results/computed_metrics.json`` schema
-    (version ``"0.1"``).
-
-    Args:
-        frd_path: Path to the CalculiX ``.frd`` file.
-        load_case_id: Load case ID to associate the metrics with.
-        software: Name of the solver software (used in metrics_source).
-
-    Returns:
-        Dict with ``schema_version``, ``metrics_source``, ``load_cases``,
-        and ``warnings``.
-    """
-    fields = parse_frd(frd_path)
+    """Return scalar metrics for one FRD step, appending any warnings."""
     metrics: dict[str, Any] = {}
-    warnings: list[str] = []
 
     # --- Max displacement ---------------------------------------------------
-    disp = fields.get("DISP")
-    if disp:
-        components = disp["components"]
-        node_data = disp["node_data"]
+    if disp_dataset:
+        components = disp_dataset["components"]
+        node_data = disp_dataset["node_data"]
 
         all_idx = next((i for i, c in enumerate(components) if c == "ALL"), None)
         d1_idx = next((i for i, c in enumerate(components) if c == "D1"), None)
@@ -179,7 +206,9 @@ def extract_computed_metrics(
             if all_idx is not None and all_idx < len(vals) and vals[all_idx] is not None:
                 v: float = abs(float(vals[all_idx]))
             elif (
-                d1_idx is not None and d2_idx is not None and d3_idx is not None
+                d1_idx is not None
+                and d2_idx is not None
+                and d3_idx is not None
                 and all(
                     idx < len(vals) and vals[idx] is not None
                     for idx in (d1_idx, d2_idx, d3_idx)
@@ -205,9 +234,8 @@ def extract_computed_metrics(
         warnings.append("DISP field not found in FRD file; max_displacement not computed")
 
     # --- Max von Mises stress -----------------------------------------------
-    s_field = fields.get("S")
-    if s_field:
-        node_data = s_field["node_data"]
+    if stress_dataset:
+        node_data = stress_dataset["node_data"]
         max_vm: float | None = None
         for vals in node_data.values():
             if len(vals) < 6 or any(v is None for v in vals[:6]):
@@ -237,6 +265,67 @@ def extract_computed_metrics(
             "max_von_mises_stress not computed"
         )
 
+    return metrics
+
+
+def _load_case_id_for_step(
+    step_index: int,
+    *,
+    provided_id: str,
+    provided_ids: list[str] | None,
+    n_steps: int,
+) -> str:
+    """Pick a load-case id for a given step."""
+    if provided_ids is not None and step_index < len(provided_ids):
+        return provided_ids[step_index]
+    if n_steps == 1:
+        return provided_id
+    return f"load_case_{step_index + 1:03d}"
+
+
+def extract_computed_metrics(
+    frd_path: Path,
+    *,
+    load_case_id: str = "load_case_001",
+    load_case_ids: list[str] | None = None,
+    software: str = "CalculiX",
+) -> dict[str, Any]:
+    """Extract scalar extrema from a CalculiX FRD file.
+
+    Returns a dict matching the ``results/computed_metrics.json`` schema
+    (version ``"0.1"``).  Multi-step FRDs produce one load case per step.
+
+    Args:
+        frd_path: Path to the CalculiX ``.frd`` file.
+        load_case_id: Load case ID for a single-step result. Ignored when
+            ``load_case_ids`` is supplied or when the FRD contains multiple steps.
+        load_case_ids: Optional explicit load-case ids, one per FRD step.
+        software: Name of the solver software (used in metrics_source).
+
+    Returns:
+        Dict with ``schema_version``, ``metrics_source``, ``load_cases``,
+        and ``warnings``.
+    """
+    fields = parse_frd_steps(frd_path)
+    disp_steps = fields.get("DISP", [])
+    stress_steps = fields.get("S", [])
+    n_steps = max(len(disp_steps), len(stress_steps), 1)
+
+    warnings: list[str] = []
+    load_cases: list[dict[str, Any]] = []
+
+    for step_index in range(n_steps):
+        disp = disp_steps[step_index] if step_index < len(disp_steps) else None
+        stress = stress_steps[step_index] if step_index < len(stress_steps) else None
+        case_metrics = _extract_step_metrics(disp, stress, warnings)
+        case_id = _load_case_id_for_step(
+            step_index,
+            provided_id=load_case_id,
+            provided_ids=load_case_ids,
+            n_steps=n_steps,
+        )
+        load_cases.append({"id": case_id, "metrics": case_metrics})
+
     return {
         "schema_version": FRD_COMPUTED_METRICS_SCHEMA,
         "metrics_source": {
@@ -244,12 +333,7 @@ def extract_computed_metrics(
             "software": software,
             "source_files": [str(frd_path)],
         },
-        "load_cases": [
-            {
-                "id": load_case_id,
-                "metrics": metrics,
-            }
-        ],
+        "load_cases": load_cases,
         "warnings": warnings,
     }
 

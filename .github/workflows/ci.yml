@@ -74,6 +74,9 @@ jobs:
             exit 1
           fi
 
+      - name: Version surface anti-drift tests
+        run: pytest tests/test_version_surface_drift.py -q
+
       - name: Autopilot / adapter tests
         # Adapter tests mock the CLI subprocess (no real Claude/Codex needed);
         # autopilot tests use the deterministic fake adapter (no LLM/network).

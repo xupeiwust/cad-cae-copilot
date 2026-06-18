@@ -8,7 +8,6 @@ stale and missing surfaces correctly.
 from __future__ import annotations
 
 import json
-import shutil
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -23,13 +22,9 @@ import update_version_surface as vss  # noqa: E402
 
 
 @pytest.fixture
-def temp_surface_path() -> Path:
-    """Return a temporary path inside the repo so relative paths work."""
-    test_dir = REPO_ROOT / "tmp_version_surface_test"
-    test_dir.mkdir(exist_ok=True)
-    path = test_dir / "version_surface.json"
-    yield path
-    shutil.rmtree(test_dir, ignore_errors=True)
+def temp_surface_path(tmp_path: Path) -> Path:
+    """Return an isolated temporary version-surface path."""
+    return tmp_path / "version_surface.json"
 
 
 def _write_valid_surface(path: Path) -> None:

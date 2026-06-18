@@ -65,7 +65,14 @@ jobs:
           pip install -e .[dev]
 
       - name: Version surface anti-drift
-        run: python ../../scripts/update_version_surface.py --check
+        run: |
+          python ../../scripts/update_version_surface.py
+          STATUS=$(git status --porcelain -- ../../aieng/src/aieng/schemas/version_surface.json)
+          if [ -n "$STATUS" ]; then
+            echo "::error::Version surface drift detected. Run 'python scripts/update_version_surface.py' from the repo root and commit the updated aieng/src/aieng/schemas/version_surface.json."
+            git diff -- ../../aieng/src/aieng/schemas/version_surface.json
+            exit 1
+          fi
 
       - name: Autopilot / adapter tests
         # Adapter tests mock the CLI subprocess (no real Claude/Codex needed);

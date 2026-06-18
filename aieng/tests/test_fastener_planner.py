@@ -80,6 +80,19 @@ def test_threaded_hole_requires_explicit_thread_evidence():
     assert spec["nut_requirement"] == "not_required_threaded_hole"
 
 
+def test_unsupported_thread_form_returns_no_match():
+    result = plan_fastener_for_hole(
+        {
+            "diameter_mm": 6.0,
+            "thread": {"designation": "M6", "pitch_mm": 1.0, "form": "unc"},
+        }
+    )
+
+    assert result["status"] == "no_match"
+    assert "unsupported thread form" in result["reasons"][0]
+    assert "fastener_spec" not in result
+
+
 def test_thread_like_clearance_diameter_without_thread_evidence_does_not_invent_threaded_match():
     result = plan_fastener_for_hole({"diameter_mm": 6.0})
 

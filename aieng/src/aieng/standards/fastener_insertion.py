@@ -99,6 +99,37 @@ def insert_fasteners_for_holes(
             )
             continue
 
+        spec = plan.get("fastener_spec")
+        if not isinstance(spec, dict):
+            blockers.append(_blocker(feature_id, "missing_fastener_spec", "Planner result has no fastener_spec.", plan=plan))
+            continue
+
+        if plan.get("mode") == "threaded" or spec.get("mode") == "threaded":
+            inserted = _threaded_standard_part(
+                feature=feature,
+                feature_id=feature_id,
+                placement=placement,
+                spec=spec,
+                material=material,
+                existing_feature_ids=existing_feature_ids,
+            )
+            if isinstance(inserted, dict) and inserted.get("blocker"):
+                blockers.append(inserted["blocker"])
+                continue
+            screw_feature = inserted["feature"]
+            inserted_features.append(screw_feature)
+            existing_feature_ids.add(screw_feature["id"])
+            inserted_records.append(
+                {
+                    "hole_feature_id": feature_id,
+                    "inserted_feature_id": screw_feature["id"],
+                    "kind": "threaded_screw",
+                    "designation": screw_feature["designation"],
+                    "length_mm": screw_feature["parameters"]["length_mm"],
+                }
+            )
+            continue
+
         stack = hole_metadata.get("mating_stack")
         if not isinstance(stack, dict) or stack.get("status") != "known":
             blockers.append(
@@ -122,10 +153,6 @@ def insert_fasteners_for_holes(
             )
             continue
 
-        spec = plan.get("fastener_spec")
-        if not isinstance(spec, dict):
-            blockers.append(_blocker(feature_id, "missing_fastener_spec", "Planner result has no fastener_spec.", plan=plan))
-            continue
         length_mm = _length_covering_stack(spec, stack_thickness)
         if length_mm is None:
             blockers.append(
@@ -329,6 +356,60 @@ def _standard_part_feature(
     }
 
 
+def _threaded_standard_part(
+    *,
+    feature: dict[str, Any],
+    feature_id: str,
+    placement: dict[str, Any],
+    spec: dict[str, Any],
+    material: str,
+    existing_feature_ids: set[str],
+) -> dict[str, Any]:
+    hole_metadata = feature.get("hole_metadata") if isinstance(feature.get("hole_metadata"), dict) else {}
+    depth_mm = _num(hole_metadata.get("depth_mm"))
+    if depth_mm is None or depth_mm <= 0:
+        return {
+            "blocker": _blocker(
+                feature_id,
+                "missing_thread_depth",
+                "Threaded insertion requires known positive hole depth to avoid overlong insertion.",
+                plan={"fastener_spec": spec, "mode": "threaded"},
+            )
+        }
+    length_mm = _threaded_length(spec, depth_mm)
+    if length_mm is None or length_mm <= 0 or length_mm > depth_mm:
+        return {
+            "blocker": _blocker(
+                feature_id,
+                "unsupported_thread_length",
+                "No threaded fastener length could be chosen within the known hole depth.",
+                plan={"fastener_spec": spec, "mode": "threaded", "depth_mm": depth_mm},
+            )
+        }
+    feature_out = _standard_part_feature(
+        feature_id=feature_id,
+        suffix="threaded_screw",
+        name=f"{spec.get('designation', 'metric')} threaded screw for {feature_id}",
+        canonical_type="screw",
+        designation=str(spec.get("designation") or spec.get("metric_size") or "unknown"),
+        material=material,
+        geometry_refs=feature.get("geometry_refs"),
+        placement=placement,
+        parameters={
+            "length_mm": length_mm,
+            "thread_engagement_depth_mm": depth_mm,
+            "nominal_thread_diameter_mm": spec.get("nominal_thread_diameter_mm"),
+            "thread_pitch_mm": spec.get("thread_pitch_mm"),
+        },
+        spec=spec,
+        selected_hole_feature_id=feature_id,
+        existing_feature_ids=existing_feature_ids,
+    )
+    feature_out["intent"]["role"] = "inserted_threaded_fastener"
+    feature_out["standard_part_metadata"]["threaded_hole"] = True
+    return {"feature": feature_out}
+
+
 def _placement_from_metadata(hole_metadata: dict[str, Any]) -> dict[str, Any] | None:
     axis = hole_metadata.get("axis")
     if not isinstance(axis, dict):
@@ -370,6 +451,19 @@ def _length_covering_stack(spec: dict[str, Any], stack_thickness_mm: float) -> f
     if suggested is not None and suggested >= required:
         return suggested
     return required
+
+
+def _threaded_length(spec: dict[str, Any], depth_mm: float) -> float | None:
+    suggested = _num(spec.get("suggested_length_mm"))
+    if suggested is not None and suggested <= depth_mm:
+        return suggested
+    lengths = spec.get("standard_lengths")
+    if isinstance(lengths, list):
+        numeric = sorted(float(item) for item in lengths if isinstance(item, NUMERIC_TYPES))
+        shorter_or_equal = [length for length in numeric if length <= depth_mm]
+        if shorter_or_equal:
+            return shorter_or_equal[-1]
+    return depth_mm
 
 
 def _geometry_refs_for_inserted_part(geometry_refs: Any) -> dict[str, list[str]]:

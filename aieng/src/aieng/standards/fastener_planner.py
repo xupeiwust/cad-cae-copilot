@@ -105,6 +105,14 @@ def _threaded_match(
     catalog: dict[str, dict[str, Any]],
     tolerance_mm: float,
 ) -> dict[str, Any]:
+    thread_form = threaded.get("form") or threaded.get("standard") or "metric"
+    if isinstance(thread_form, str) and thread_form.lower() not in {"metric", "iso_metric"}:
+        return _result(
+            "no_match",
+            reasons=[f"unsupported thread form '{thread_form}'"],
+            observed={"thread_form": thread_form},
+        )
+
     designation = threaded.get("designation")
     if isinstance(designation, str) and designation in catalog:
         size = designation
@@ -154,6 +162,7 @@ def _thread_evidence(hole_metadata: dict[str, Any]) -> dict[str, Any] | None:
             "designation": thread.get("designation") or thread.get("size"),
             "diameter_mm": thread.get("diameter_mm") or thread.get("major_diameter_mm"),
             "pitch_mm": thread.get("pitch_mm") or thread.get("thread_pitch_mm"),
+            "form": thread.get("form") or thread.get("standard"),
         }
     if hole_metadata.get("threaded") is True or hole_metadata.get("tapped") is True:
         return {

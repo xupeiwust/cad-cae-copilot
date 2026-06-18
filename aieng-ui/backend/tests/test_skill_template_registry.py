@@ -1,3 +1,5 @@
+"""Tests for the declarative CAD skill template registry and planner integration."""
+
 import pytest
 
 from app.cad_skill_planner import plan_build123d_skill
@@ -9,6 +11,7 @@ from app.skill_template_registry import (
 
 
 def test_registry_loads_builtin_gear_pulley_template() -> None:
+    """The built-in gear_pulley template loads with expected metadata."""
     registry = SkillTemplateRegistry.load(default_template_directory())
     assert "gear_pulley" in registry.templates
     template = registry.templates["gear_pulley"]
@@ -18,6 +21,7 @@ def test_registry_loads_builtin_gear_pulley_template() -> None:
 
 
 def test_registry_rejects_unsupported_primitive(tmp_path) -> None:
+    """A template referencing an unsupported primitive fails to load loudly."""
     bad_yaml = tmp_path / "bad.yaml"
     bad_yaml.write_text(
         "template_id: bad\n"
@@ -33,6 +37,7 @@ def test_registry_rejects_unsupported_primitive(tmp_path) -> None:
 
 
 def test_registry_match_uses_full_tag_phrases() -> None:
+    """Declarative template matching uses full tag phrases and avoids shadowing."""
     registry = SkillTemplateRegistry.load(default_template_directory())
     gear = registry.templates["gear_pulley"]
 
@@ -44,6 +49,7 @@ def test_registry_match_uses_full_tag_phrases() -> None:
 
 
 def test_declarative_gear_pulley_generates_build123d_plan() -> None:
+    """The planner returns a ready build123d plan for a declarative gear pulley."""
     result = plan_build123d_skill({
         "project_id": "p1",
         "message": "make a gear pulley",
@@ -69,6 +75,7 @@ def test_declarative_gear_pulley_generates_build123d_plan() -> None:
 
 
 def test_declarative_gear_pulley_honors_payload_overrides() -> None:
+    """Payload overrides are reflected in the generated parameter constants."""
     result = plan_build123d_skill({
         "project_id": "p1",
         "message": "make a gear pulley",
@@ -83,6 +90,7 @@ def test_declarative_gear_pulley_honors_payload_overrides() -> None:
 
 
 def test_declarative_template_rejects_out_of_range_parameter() -> None:
+    """Out-of-range parameter values produce a clear error response."""
     result = plan_build123d_skill({
         "project_id": "p1",
         "message": "make a gear pulley",
@@ -95,6 +103,7 @@ def test_declarative_template_rejects_out_of_range_parameter() -> None:
 
 
 def test_declarative_template_does_not_break_existing_templates() -> None:
+    """Existing hand-written templates still win for their original keywords."""
     result = plan_build123d_skill({
         "project_id": "p1",
         "message": "建模一个40mm的法兰盘",
@@ -106,5 +115,6 @@ def test_declarative_template_does_not_break_existing_templates() -> None:
 
 
 def test_registry_empty_directory_is_valid() -> None:
+    """Loading a missing directory yields an empty registry without error."""
     registry = SkillTemplateRegistry.load("/nonexistent/path/for/templates")
     assert registry.templates == {}

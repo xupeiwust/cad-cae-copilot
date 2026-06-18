@@ -35,6 +35,7 @@
               "base_plate",
               "mounting_hole",
               "mounting_hole_pattern",
+              "bore",
               "rib",
               "fillet",
               "chamfer",

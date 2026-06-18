@@ -215,6 +215,9 @@ def _base_spec(
         value = _num(data.get(source_key))
         if value is not None:
             spec[target_key] = value
+    lengths = data.get("standard_lengths")
+    if isinstance(lengths, list):
+        spec["standard_lengths"] = [float(length) for length in lengths if isinstance(length, NUMERIC_TYPES)]
     return spec
 
 

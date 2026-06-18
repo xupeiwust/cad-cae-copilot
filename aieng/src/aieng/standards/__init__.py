@@ -35,6 +35,10 @@ from .fastener_planner import (
     plan_fastener_for_hole,
     plan_fasteners_for_features,
 )
+from .fastener_insertion import (
+    FASTENER_INSERTION_REPORT_PATH,
+    insert_fasteners_for_holes,
+)
 from .holes import (
     blind_hole,
     counterbored_hole,
@@ -66,6 +70,8 @@ __all__ = [
     "METRIC_WASHER_PRESETS",
     "METRIC_SOCKET_HEAD_PRESETS",
     "METRIC_SET_SCREW_PRESETS",
+    "FASTENER_INSERTION_REPORT_PATH",
+    "insert_fasteners_for_holes",
     "plan_fastener_for_hole",
     "plan_fasteners_for_features",
     # bearings

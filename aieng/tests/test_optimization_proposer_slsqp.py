@@ -20,6 +20,13 @@ from aieng.converters.optimization_proposer_slsqp import (
 )
 
 
+_scipy_available = _has_scipy()
+scipy_required = pytest.mark.skipif(
+    not _scipy_available,
+    reason="scipy is not installed (optional optimization dependency)",
+)
+
+
 def _variables_doc(*, integer=False):
     vars_ = [
         {"id": "wall_t", "type": "continuous", "min_value": 2.0, "max_value": 8.0,
@@ -90,8 +97,9 @@ def _vals(patch):
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
+@scipy_required
 def test_has_scipy():
-    # scipy is a declared dependency in this test environment
+    # When scipy is present, the proposer can use the real SLSQP backend.
     assert _has_scipy() is True
 
 
@@ -161,6 +169,7 @@ def test_compute_gradient_fd_forward_only():
     assert not missing
 
 
+@scipy_required
 def test_slsqp_next_point():
     incumbent = {"wall_t": 5.0, "fillet_r": 2.0}
     safe_vars = [
@@ -177,6 +186,7 @@ def test_slsqp_next_point():
     assert nxt[1] >= 2.0  # fillet_r should increase
 
 
+@scipy_required
 def test_slsqp_next_point_respects_bounds():
     incumbent = {"wall_t": 7.9}
     safe_vars = [
@@ -205,6 +215,7 @@ def test_missing_variables_errors(tmp_path: Path):
     assert res["code"] == "missing_variables"
 
 
+@scipy_required
 def test_no_incumbent_falls_back_to_lhs(tmp_path: Path):
     ranking = _ranking(None, {})
     pkg = _pkg(tmp_path, ranking=ranking)
@@ -215,6 +226,7 @@ def test_no_incumbent_falls_back_to_lhs(tmp_path: Path):
     assert "no_incumbent_fallback" in res["reason_codes"]
 
 
+@scipy_required
 def test_incumbent_without_score_proposes_baseline_eval(tmp_path: Path):
     pkg = _pkg(
         tmp_path,
@@ -229,6 +241,7 @@ def test_incumbent_without_score_proposes_baseline_eval(tmp_path: Path):
     assert any("slsqp_baseline" in n for n in patches)
 
 
+@scipy_required
 def test_fd_collection_when_gradient_missing(tmp_path: Path):
     pkg = _pkg(
         tmp_path,
@@ -250,6 +263,7 @@ def test_fd_collection_when_gradient_missing(tmp_path: Path):
         assert diff_count == 1
 
 
+@scipy_required
 def test_slsqp_step_when_gradient_available(tmp_path: Path):
     # Provide forward evaluations for both variables so gradients are complete
     pkg = _pkg(
@@ -277,6 +291,7 @@ def test_slsqp_step_when_gradient_available(tmp_path: Path):
     assert 1.0 <= v["fillet_r"] <= 4.0
 
 
+@scipy_required
 def test_slsqp_step_integer_rounding(tmp_path: Path):
     # Provide forward evaluations for ALL variables so gradients are complete
     # n_holes range [0, 100], center 50, dx = 1.0, forward = 51

@@ -30,6 +30,7 @@ class SkillTemplateError(Exception):
     """Raised when a template cannot be loaded or used."""
 
     def __init__(self, message: str, template_id: str | None = None) -> None:
+        """Initialize the error with an optional source template id."""
         self.template_id = template_id
         prefix = f"Template '{template_id}': " if template_id else ""
         super().__init__(prefix + message)
@@ -50,6 +51,7 @@ class ParametricInput(BaseModel):
     @field_validator("name")
     @classmethod
     def _name_is_snake_case(cls, value: str) -> str:
+        """Ensure parameter names are safe snake_case identifiers."""
         if not value.replace("_", "").isalnum():
             raise ValueError("parameter name must be snake_case alphanumeric")
         return value
@@ -80,6 +82,7 @@ class BasePrimitive(BaseModel):
     @field_validator("kind")
     @classmethod
     def _primitive_supported(cls, value: str) -> str:
+        """Reject unsupported base primitives with a clear allowed list."""
         if value not in SUPPORTED_PRIMITIVE_KINDS:
             raise ValueError(
                 f"unsupported primitive '{value}'; supported: {sorted(SUPPORTED_PRIMITIVE_KINDS)}"
@@ -113,6 +116,7 @@ class FeatureOperation(BaseModel):
     @field_validator("kind")
     @classmethod
     def _feature_supported(cls, value: str) -> str:
+        """Reject unsupported feature operations with a clear allowed list."""
         if value not in SUPPORTED_FEATURE_KINDS:
             raise ValueError(
                 f"unsupported feature '{value}'; supported: {sorted(SUPPORTED_FEATURE_KINDS)}"
@@ -157,6 +161,7 @@ class SkillTemplate(BaseModel):
     @field_validator("template_id")
     @classmethod
     def _template_id_safe(cls, value: str) -> str:
+        """Prevent template ids from containing path traversal characters."""
         if "/" in value or "\\" in value or ".." in value:
             raise ValueError("template_id must not contain path separators")
         return value
@@ -251,7 +256,11 @@ class SkillTemplateRegistry:
 def _resolve_parameters(
     template: SkillTemplate, payload: dict[str, Any]
 ) -> dict[str, float]:
-    """Collect parameter values from payload overrides and template defaults."""
+    """Collect parameter values from payload overrides and template defaults.
+
+    Accepts both the exact parameter name (e.g. ``outer_diameter``) and the
+    ``_mm`` suffix used by the existing planner override convention.
+    """
     resolved: dict[str, float] = {}
     for inp in template.parametric_inputs:
         key_mm = f"{inp.name}_mm"
@@ -284,7 +293,12 @@ def _resolve_parameters(
 
 
 def _expr(value: str | float | int | None) -> str:
-    """Return a Python expression string for a numeric or expression value."""
+    """Return a Python expression string for a numeric or expression value.
+
+    Numeric values are formatted with three decimal places.  Strings are passed
+    through unchanged so template authors can use parameter names and simple
+    arithmetic expressions.
+    """
     if value is None:
         return "0.0"
     if isinstance(value, bool):
@@ -297,7 +311,13 @@ def _expr(value: str | float | int | None) -> str:
 def _generate_build123d_code(
     template: SkillTemplate, params: dict[str, float]
 ) -> str:
-    """Render a complete build123d script from a validated template."""
+    """Render a complete build123d script from a validated template.
+
+    The generated script declares UPPER_SNAKE_CASE constants so the feature
+    graph can expose them as editable parameters, builds the base primitive,
+    applies the configured feature operations, labels the resulting part, and
+    binds the final shape to ``result``.
+    """
     lines: list[str] = ["from build123d import *", ""]
 
     for name, value in params.items():
@@ -331,6 +351,7 @@ def _generate_build123d_code(
 def _emit_primitive(
     lines: list[str], primitive: BasePrimitive, indent_level: int
 ) -> None:
+    """Emit the build123d code for a single base primitive."""
     indent = "    " * indent_level
     kind = primitive.kind
 
@@ -377,6 +398,7 @@ def _emit_primitive(
 
 
 def _emit_feature(lines: list[str], feature: FeatureOperation, indent_level: int) -> None:
+    """Emit the build123d code for a single feature operation."""
     indent = "    " * indent_level
     kind = feature.kind
 

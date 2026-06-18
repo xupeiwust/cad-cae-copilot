@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import { shapeEditDiff } from "../app/editDiff";
+import type { EntitySurvivalView } from "../app/editDiff";
 import type { EditDiffResponse } from "../types";
 
 type EditDiffPanelProps = {
@@ -79,6 +80,76 @@ export function EditDiffPanel({ editDiff }: EditDiffPanelProps) {
           ) : null}
         </div>
       ) : null}
+
+      {view.geometryVerification ? (
+        <div className="editdiff-section">
+          <div className={`editdiff-verdict editdiff-${view.geometryVerification.tone}`}>
+            Geometry verification: {view.geometryVerification.status}
+          </div>
+          <p className="editdiff-headline">{view.geometryVerification.headline}</p>
+
+          {view.geometryVerification.topologyPreserved === false || view.geometryVerification.staleReferenceRisk ? (
+            <div className="editdiff-topo-changes">
+              {view.geometryVerification.topologyPreserved === false ? (
+                <span>Topology changed</span>
+              ) : null}
+              {view.geometryVerification.staleReferenceRisk ? (
+                <span>Stale reference risk</span>
+              ) : null}
+            </div>
+          ) : null}
+
+          <EntitySurvivalRow label="Faces" survival={view.geometryVerification.faceSurvival} />
+          <EntitySurvivalRow label="Edges" survival={view.geometryVerification.edgeSurvival} />
+
+          {view.geometryVerification.brepStatus ? (
+            <p className="editdiff-headline" title={view.geometryVerification.brepDetail ?? undefined}>
+              BRep validity: {view.geometryVerification.brepStatus}
+            </p>
+          ) : null}
+
+          {view.geometryVerification.exportStatus ? (
+            <p className="editdiff-headline">
+              Export sanity: {view.geometryVerification.exportStatus}
+              {view.geometryVerification.exportDetail ? ` — ${view.geometryVerification.exportDetail}` : ""}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+function EntitySurvivalRow({
+  label,
+  survival,
+}: {
+  label: string;
+  survival: EntitySurvivalView | null;
+}) {
+  if (!survival) return null;
+  return (
+    <div className="editdiff-topo-changes">
+      <span>
+        {label}: {survival.before} → {survival.after}
+      </span>
+      {survival.survived > 0 ? <span>{survival.survived} survived</span> : null}
+      {survival.added > 0 ? <span>+ {survival.added} added</span> : null}
+      {survival.removed > 0 ? <span>− {survival.removed} removed</span> : null}
+      {survival.referenced.length > 0 ? (
+        <span className="editdiff-referenced">
+          {survival.referenced.map((ref) => {
+            const statusClass = ["lost", "survived", "new", "unknown"].includes(ref.status)
+              ? `editdiff-ref-${ref.status}`
+              : "editdiff-ref-unknown";
+            return (
+              <code key={`${ref.id}:${ref.status}`} className={`editdiff-ref ${statusClass}`}>
+                {ref.id}: {ref.status}
+              </code>
+            );
+          })}
+        </span>
+      ) : null}
+    </div>
   );
 }

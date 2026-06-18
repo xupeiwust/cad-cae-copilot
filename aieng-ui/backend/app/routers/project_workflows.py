@@ -528,6 +528,7 @@ def register_project_workflow_routes(
             "tool": payload.get("tool"),
             "regression_diff": payload.get("regression_diff"),
             "critique_diff": payload.get("critique_diff"),
+            "geometry_verification": payload.get("geometry_verification"),
         }
 
     @app.get("/api/projects/{project_id}/cae-result-map")

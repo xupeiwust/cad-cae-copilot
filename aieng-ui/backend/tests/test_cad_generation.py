@@ -2272,6 +2272,7 @@ def test_write_last_edit_diff_persists_to_package(tmp_path: Path) -> None:
         tool="cad.edit_parameter",
         regression_diff={"verdict": "clean"},
         critique_diff={"verdict": "warn"},
+        geometry_verification={"topology_preserved": True, "stale_reference_risk": False},
     )
     with zipfile.ZipFile(pkg, "r") as zf:
         assert _LAST_EDIT_DIFF_MEMBER in zf.namelist()
@@ -2279,6 +2280,7 @@ def test_write_last_edit_diff_persists_to_package(tmp_path: Path) -> None:
     assert payload["tool"] == "cad.edit_parameter"
     assert payload["regression_diff"]["verdict"] == "clean"
     assert payload["critique_diff"]["verdict"] == "warn"
+    assert payload["geometry_verification"]["topology_preserved"] is True
 
     # A later edit replaces (not appends) the record.
     _write_last_edit_diff(pkg, tool="cad.remove_part", regression_diff={"verdict": "topology_changed"})
@@ -2286,6 +2288,7 @@ def test_write_last_edit_diff_persists_to_package(tmp_path: Path) -> None:
         payload2 = json.loads(zf.read(_LAST_EDIT_DIFF_MEMBER).decode("utf-8"))
     assert payload2["tool"] == "cad.remove_part"
     assert payload2["critique_diff"] is None
+    assert payload2["geometry_verification"] is None
 
 
 def test_write_last_edit_diff_noop_when_both_none(tmp_path: Path) -> None:

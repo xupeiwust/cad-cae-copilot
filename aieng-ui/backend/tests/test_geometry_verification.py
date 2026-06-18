@@ -186,3 +186,24 @@ def test_feature_reference_ids_supports_direct_keys_and_deduplicates() -> None:
     }
 
     assert _feature_reference_ids(feature, "face") == ["face_001", "face_002", "face_003"]
+
+
+def test_feature_reference_ids_reads_edge_refs() -> None:
+    """Edge references are extracted from geometry_refs.edges."""
+    feature = {
+        "id": "feat_edge",
+        "edge_ids": ["edge_001"],
+        "geometry_refs": {"edges": ["edge_001", "edge_002"]},
+    }
+
+    assert _feature_reference_ids(feature, "edge") == ["edge_001", "edge_002"]
+
+
+def test_feature_reference_ids_reads_entities_face_fallback() -> None:
+    """Faces stored in geometry_refs.entities are picked up as a fallback."""
+    feature = {
+        "id": "feat_entities",
+        "geometry_refs": {"entities": ["face_010", "edge_777", "face_011"]},
+    }
+
+    assert _feature_reference_ids(feature, "face") == ["face_010", "face_011"]

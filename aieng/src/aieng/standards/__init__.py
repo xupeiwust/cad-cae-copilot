@@ -31,6 +31,10 @@ from .fasteners import (
     socket_head_cap_screw,
     washer,
 )
+from .fastener_planner import (
+    plan_fastener_for_hole,
+    plan_fasteners_for_features,
+)
 from .holes import (
     blind_hole,
     counterbored_hole,
@@ -62,6 +66,8 @@ __all__ = [
     "METRIC_WASHER_PRESETS",
     "METRIC_SOCKET_HEAD_PRESETS",
     "METRIC_SET_SCREW_PRESETS",
+    "plan_fastener_for_hole",
+    "plan_fasteners_for_features",
     # bearings
     "deep_groove_ball_bearing",
     "thrust_ball_bearing",

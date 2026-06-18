@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
 
+from ..cad_generation import load_cad_brief
+from ..computed_metrics import get_computed_metrics
+from ..config import now_iso
 from ..legacy_app_symbols import sync_main_symbols
 from ..logging_utils import log_exception
+from ..target_comparison import compare_package_targets
 
 LOGGER = logging.getLogger("app.app_factory")
 
@@ -663,3 +669,334 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
             "resolved": resolved,
             "claim_advancement": "none",
         }
+
+    @app.get("/api/projects/{project_id}/reports/credibility")
+    def get_project_credibility_report(project_id: str) -> dict[str, Any]:
+        """Return a structured credibility report for the project.
+
+        Gathers available geometry evidence, CAE/result evidence, design-target
+        comparisons, known assumptions, warnings, and missing evidence. This
+        endpoint is read-only: it does not execute solvers, mutate CAD, or
+        advance any engineering claim.
+        """
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return _build_credibility_report(active_settings, project_id, package_path)
+
+
+def _build_credibility_report(
+    settings: Any,
+    project_id: str,
+    package_path: Path,
+) -> dict[str, Any]:
+    """Assemble a read-only credibility report from existing project artifacts."""
+    warnings: list[str] = []
+    missing_evidence: list[str] = []
+
+    geometry_evidence, _, _, _ = _read_geometry_evidence(package_path, warnings)
+    cae_evidence = _read_cae_evidence(package_path)
+    result_evidence = _read_result_evidence(settings, project_id, package_path)
+    design_targets = _read_design_target_comparison(settings, project_id, warnings)
+    assumptions = _read_assumptions(settings, project_id, missing_evidence)
+    warnings.extend(result_evidence.get("warnings") or [])
+    warnings.extend(design_targets.get("warnings") or [])
+
+    missing_evidence.extend(_missing_evidence_notes(geometry_evidence, cae_evidence, result_evidence, design_targets, assumptions))
+
+    overall = _rollup_overall_status(
+        geometry_evidence["status"],
+        cae_evidence["status"],
+        result_evidence["status"],
+        design_targets["status"],
+    )
+
+    return {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "package_path": str(package_path),
+        "generated_at": now_iso(),
+        "claim_advancement": "none",
+        "summary": {
+            "overall": overall,
+            "geometry_evidence": geometry_evidence["status"],
+            "cae_evidence": cae_evidence["status"],
+            "result_evidence": result_evidence["status"],
+            "design_targets": design_targets["status"],
+        },
+        "geometry_evidence": geometry_evidence,
+        "cae_evidence": cae_evidence,
+        "result_evidence": result_evidence,
+        "design_targets": design_targets,
+        "assumptions": assumptions,
+        "warnings": warnings,
+        "missing_evidence": missing_evidence,
+        "revalidation_status": _build_revalidation_response(
+            _read_revalidation_status(package_path)
+        ),
+    }
+
+
+def _read_geometry_evidence(
+    package_path: Path,
+    warnings: list[str],
+) -> tuple[dict[str, Any], dict[str, Any] | None, int | None, list[str]]:
+    """Inspect the package for compiled geometry artifacts and the last edit diff."""
+    has_geometry = False
+    has_topology_map = False
+    has_feature_graph = False
+    part_count: int | None = None
+    named_parts: list[str] = []
+    last_edit_diff: dict[str, Any] | None = None
+
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            names = set(zf.namelist())
+            geometry_files = [n for n in names if n.startswith("geometry/")]
+            has_geometry = bool(geometry_files) and any(
+                n.endswith((".step", ".stp", ".glb", ".stl")) for n in geometry_files
+            )
+            has_topology_map = "geometry/topology_map.json" in names
+            has_feature_graph = "graph/feature_graph.json" in names
+
+            if has_topology_map:
+                try:
+                    topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
+                    entities = topo.get("entities") or []
+                    part_entities = [
+                        e for e in entities
+                        if isinstance(e, dict) and e.get("type") in {"solid", "body"}
+                    ]
+                    part_count = len(part_entities)
+                    named_parts = [
+                        str(e.get("name") or e.get("id"))
+                        for e in part_entities
+                        if isinstance(e, dict) and e.get("name")
+                    ]
+                except Exception as exc:
+                    warnings.append(f"Could not read topology_map.json: {exc}.")
+
+            if "state/last_edit_diff.json" in names:
+                try:
+                    last_edit_diff = json.loads(zf.read("state/last_edit_diff.json").decode("utf-8"))
+                except Exception as exc:
+                    warnings.append(f"Could not read state/last_edit_diff.json: {exc}.")
+    except zipfile.BadZipFile as exc:
+        warnings.append(f"Package is not a valid zip file: {exc}.")
+
+    score = sum([has_geometry, has_topology_map, has_feature_graph])
+    if score == 3:
+        status = "present"
+    elif score > 0:
+        status = "partial"
+    else:
+        status = "missing"
+
+    geometry_evidence = {
+        "status": status,
+        "has_geometry": has_geometry,
+        "has_topology_map": has_topology_map,
+        "has_feature_graph": has_feature_graph,
+        "part_count": part_count,
+        "named_parts": named_parts,
+        "last_edit_diff": last_edit_diff,
+    }
+    return geometry_evidence, last_edit_diff, part_count, named_parts
+
+
+def _read_cae_evidence(package_path: Path) -> dict[str, Any]:
+    """Inspect the package for solver input/run/FRD artifacts."""
+    has_solver_input = False
+    has_solver_run = False
+    has_frd_output = False
+    solver_run_artifacts: list[str] = []
+
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            names = zf.namelist()
+            for n in names:
+                if "simulation/runs/" not in n:
+                    continue
+                if n.endswith("solver_input.inp"):
+                    has_solver_input = True
+                if n.endswith("solver_run.json"):
+                    has_solver_run = True
+                if n.endswith("result.frd") or ".frd" in n:
+                    has_frd_output = True
+                    solver_run_artifacts.append(n)
+    except zipfile.BadZipFile:
+        pass
+
+    score = sum([has_solver_input, has_solver_run, has_frd_output])
+    if score == 3:
+        status = "present"
+    elif score > 0:
+        status = "partial"
+    else:
+        status = "missing"
+
+    return {
+        "status": status,
+        "has_solver_input": has_solver_input,
+        "has_solver_run": has_solver_run,
+        "has_frd_output": has_frd_output,
+        "solver_run_artifacts": solver_run_artifacts,
+    }
+
+
+def _read_result_evidence(
+    settings: Any,
+    project_id: str,
+    package_path: Path,
+) -> dict[str, Any]:
+    """Read computed metrics and extract headline result scalars."""
+    has_computed_metrics = False
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            has_computed_metrics = "results/computed_metrics.json" in zf.namelist()
+    except zipfile.BadZipFile:
+        pass
+
+    cm = get_computed_metrics(settings, project_id)
+    document = cm.get("document")
+    status = "present" if (has_computed_metrics and cm.get("ok") and document is not None) else "missing"
+    if has_computed_metrics and not (cm.get("ok") and document is not None):
+        status = "partial"
+
+    key_results: dict[str, Any] = {
+        "max_von_mises_stress": None,
+        "max_displacement": None,
+        "safety_factor": None,
+    }
+    if isinstance(document, dict):
+        key_results["max_von_mises_stress"] = _first_scalar(document, ["max_von_mises_stress", "von_mises_stress"])
+        key_results["max_displacement"] = _first_scalar(document, ["max_displacement", "displacement"])
+        key_results["safety_factor"] = _first_scalar(document, ["safety_factor", "min_safety_factor"])
+
+    return {
+        "status": status,
+        "has_computed_metrics": has_computed_metrics,
+        "computed_metrics": cm,
+        "key_results": key_results,
+        "warnings": list(cm.get("warnings") or []),
+    }
+
+
+def _first_scalar(document: dict[str, Any], names: list[str]) -> dict[str, Any] | None:
+    """Return the first matching scalar metric from global or load-case metrics."""
+    global_metrics = document.get("global_metrics") or {}
+    for name in names:
+        item = global_metrics.get(name)
+        if isinstance(item, dict) and item.get("value") is not None:
+            return {"value": item["value"], "unit": item.get("unit"), "metric": name}
+    for lc in document.get("load_cases") or []:
+        if not isinstance(lc, dict):
+            continue
+        metrics = lc.get("metrics") or {}
+        for name in names:
+            item = metrics.get(name)
+            if isinstance(item, dict) and item.get("value") is not None:
+                return {
+                    "value": item["value"],
+                    "unit": item.get("unit"),
+                    "metric": name,
+                    "load_case_id": lc.get("load_case_id") or lc.get("id"),
+                }
+    return None
+
+
+def _read_design_target_comparison(
+    settings: Any,
+    project_id: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Return the design-target comparison block or an unevaluated placeholder."""
+    try:
+        comparison = compare_package_targets(settings, project_id)
+    except Exception as exc:
+        warnings.append(f"Could not compare design targets: {exc}.")
+        return {
+            "status": "unknown",
+            "summary": {"total": 0, "pass": 0, "fail": 0, "unknown": 0, "not_evaluated": 0},
+            "items": [],
+            "warnings": [],
+        }
+
+    summary = comparison.get("summary") or {"total": 0, "pass": 0, "fail": 0, "unknown": 0, "not_evaluated": 0}
+    total = summary.get("total", 0)
+    passes = summary.get("pass", 0)
+    fails = summary.get("fail", 0)
+    if total == 0:
+        status = "not_evaluated"
+    elif fails > 0:
+        status = "fail"
+    elif passes == total:
+        status = "pass"
+    else:
+        status = "partial"
+
+    return {
+        "status": status,
+        "summary": summary,
+        "items": comparison.get("items") or [],
+        "warnings": list(comparison.get("warnings") or []),
+    }
+
+
+def _read_assumptions(
+    settings: Any,
+    project_id: str,
+    missing_evidence: list[str],
+) -> list[str]:
+    """Read assumptions from the CAD brief sidecar if it exists."""
+    brief = load_cad_brief(settings, project_id)
+    if not isinstance(brief, dict):
+        missing_evidence.append("No authored CAD brief assumptions.")
+        return []
+    assumptions = brief.get("assumptions")
+    if not isinstance(assumptions, list) or not assumptions:
+        missing_evidence.append("No assumptions recorded in CAD brief.")
+        return []
+    return [str(a) for a in assumptions]
+
+
+def _missing_evidence_notes(
+    geometry_evidence: dict[str, Any],
+    cae_evidence: dict[str, Any],
+    result_evidence: dict[str, Any],
+    design_targets: dict[str, Any],
+    assumptions: list[str],
+) -> list[str]:
+    """Return human-readable missing-evidence notes."""
+    notes: list[str] = []
+    if geometry_evidence["status"] in ("partial", "missing"):
+        notes.append("Geometry evidence is incomplete.")
+    if cae_evidence["status"] in ("partial", "missing"):
+        notes.append("CAE solver-run evidence is incomplete.")
+    if result_evidence["status"] in ("partial", "missing"):
+        notes.append("Computed result evidence is incomplete.")
+    if design_targets["status"] == "not_evaluated":
+        notes.append("No design targets have been authored.")
+    if not assumptions:
+        notes.append("No assumptions have been recorded.")
+    return notes
+
+
+def _rollup_overall_status(
+    geometry: str,
+    cae: str,
+    result: str,
+    design_targets: str,
+) -> str:
+    """Roll up an overall credibility status from the four subsystems."""
+    tiers = [geometry, cae, result]
+    if design_targets == "fail":
+        return "fail"
+    if all(t == "present" for t in tiers) and design_targets == "pass":
+        return "pass"
+    if all(t == "missing" for t in tiers) and design_targets == "not_evaluated":
+        return "not_evaluated"
+    if any(t in ("partial", "missing") for t in tiers) or design_targets in ("partial", "unknown"):
+        return "partial"
+    return "unknown"

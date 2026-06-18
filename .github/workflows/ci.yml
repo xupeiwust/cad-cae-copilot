@@ -82,6 +82,9 @@ jobs:
         # autopilot tests use the deterministic fake adapter (no LLM/network).
         run: pytest tests -q -k "claude or adapter or autopilot"
 
+      - name: Credibility report tests
+        run: pytest tests/test_credibility_report.py -q
+
       - name: Geometry verification tests
         run: pytest tests/test_geometry_verification.py -q
 

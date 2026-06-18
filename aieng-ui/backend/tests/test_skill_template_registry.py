@@ -59,6 +59,7 @@ def test_declarative_gear_pulley_generates_build123d_plan() -> None:
     assert result["pattern"] == "gear_pulley"
     assert result["proposed_tool"] == "cad.execute_build123d"
     assert result["match_confidence"] > 0.9
+    assert result["execute_input"]["project_id"] == "p1"
 
     code = result["execute_input"]["code"]
     assert "OUTER_DIAMETER = 60.000" in code

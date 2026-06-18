@@ -244,6 +244,7 @@ class SkillTemplateRegistry:
         code = _generate_build123d_code(template, params)
         name = template.name.format(**params)
         execute_input = {
+            "project_id": str(payload.get("project_id") or "").strip(),
             "name": name,
             "code": code,
             "mode": "replace",

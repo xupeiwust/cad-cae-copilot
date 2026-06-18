@@ -14,6 +14,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -136,6 +137,14 @@ def _write_surface() -> None:
     )
 
 
+def _display_path(path: Path) -> str:
+    """Return a compact path for repo-local files, else the absolute path."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _check_surface() -> list[str]:
     """Return list of mismatch descriptions between stored and computed hashes."""
     mismatches: list[str] = []
@@ -176,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _write_surface()
     surface = json.loads(VERSION_SURFACE_PATH.read_text(encoding="utf-8"))
-    print(f"Updated {VERSION_SURFACE_PATH.relative_to(REPO_ROOT)}")
+    print(f"Updated {_display_path(VERSION_SURFACE_PATH)}")
     print(json.dumps(surface["surfaces"], indent=2, sort_keys=True))
     return 0
 

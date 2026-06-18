@@ -3314,6 +3314,164 @@ def _topology_change_summary(before: dict[str, Any], after: dict[str, Any]) -> d
     }
 
 
+def _topology_entity_ids(topology_map: dict[str, Any], entity_type: str) -> set[str]:
+    """Return the set of string ids for a given entity type in a topology map."""
+    return {
+        str(e.get("id"))
+        for e in (topology_map or {}).get("entities", [])
+        if isinstance(e, dict) and e.get("type") == entity_type and e.get("id")
+    }
+
+
+def _entity_survival_summary(
+    before_topo: dict[str, Any],
+    after_topo: dict[str, Any],
+    entity_type: str,
+    referenced_ids: list[str] | None = None,
+    sample_limit: int = 8,
+) -> dict[str, Any]:
+    """Report how many ids of ``entity_type`` survived an edit/rebuild.
+
+    ``referenced_ids`` are checked individually and reported as
+    ``survived`` / ``lost`` / ``new`` / ``unknown``.  Unknown is used when
+    the referenced id was not present in either topology, keeping the result
+    honest rather than defaulting to false.
+    """
+    before_ids = _topology_entity_ids(before_topo, entity_type)
+    after_ids = _topology_entity_ids(after_topo, entity_type)
+    added = sorted(after_ids - before_ids)
+    removed = sorted(before_ids - after_ids)
+    survived = before_ids & after_ids
+
+    summary: dict[str, Any] = {
+        "before_count": len(before_ids),
+        "after_count": len(after_ids),
+        "survived_count": len(survived),
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "sample_added": added[:sample_limit],
+        "sample_removed": removed[:sample_limit],
+    }
+
+    if referenced_ids is not None:
+        referenced_statuses: list[dict[str, str]] = []
+        for rid in referenced_ids:
+            in_before = rid in before_ids
+            in_after = rid in after_ids
+            if in_before and in_after:
+                status = "survived"
+            elif in_before:
+                status = "lost"
+            elif in_after:
+                status = "new"
+            else:
+                status = "unknown"
+            referenced_statuses.append({"id": str(rid), "status": status})
+        summary["referenced"] = referenced_statuses
+
+    return summary
+
+
+def _feature_reference_ids(feature: dict[str, Any], entity_kind: str) -> list[str] | None:
+    """Extract referenced topology ids from feature-graph variants.
+
+    Older and hand-authored feature graphs may expose ``face_ids`` / ``edge_ids``
+    directly, while generated feature graphs use ``geometry_refs.faces`` and
+    ``geometry_refs.edges``. Return ``None`` when the feature has no authoritative
+    references so callers can distinguish "not checked" from an empty list.
+    """
+    if entity_kind not in {"face", "edge"}:
+        return None
+
+    direct_key = f"{entity_kind}_ids"
+    refs_key = f"{entity_kind}s"
+    candidates: list[Any] = []
+    if isinstance(feature.get(direct_key), list):
+        candidates.extend(feature[direct_key])
+
+    geometry_refs = feature.get("geometry_refs")
+    if isinstance(geometry_refs, dict):
+        if isinstance(geometry_refs.get(refs_key), list):
+            candidates.extend(geometry_refs[refs_key])
+        if entity_kind == "face" and isinstance(geometry_refs.get("entities"), list):
+            candidates.extend(
+                ref for ref in geometry_refs["entities"] if str(ref).startswith("face_")
+            )
+
+    if not candidates:
+        return None
+
+    seen: set[str] = set()
+    ids: list[str] = []
+    for candidate in candidates:
+        value = str(candidate)
+        if value and value not in seen:
+            seen.add(value)
+            ids.append(value)
+    return ids
+
+
+def _geometry_verification(
+    before_topo: dict[str, Any],
+    after_topo: dict[str, Any],
+    step_bytes: bytes | None = None,
+    stl_bytes: bytes | None = None,
+    glb_bytes: bytes | None = None,
+    referenced_face_ids: list[str] | None = None,
+    referenced_edge_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return a structured topology/export survival block for CAD edit flows.
+
+    This is evidence, not certification: full BRep validity is reported as
+    ``unknown`` because the current execution pipeline only checks build
+    success, non-empty solids, and export sanity.
+    """
+    topology_change = _topology_change_summary(before_topo, after_topo)
+    step_ok = bool(step_bytes)
+    stl_ok = bool(stl_bytes)
+    glb_ok = bool(glb_bytes)
+
+    if step_ok and stl_ok:
+        export_status = "pass"
+        export_detail = "STEP and STL exports produced."
+    elif step_ok or stl_ok:
+        export_status = "warn"
+        export_detail = "Only one export format produced; preview/secondary workflows may be degraded."
+    else:
+        export_status = "fail"
+        export_detail = "No STEP or STL export produced; the rebuild did not yield usable geometry artifacts."
+
+    return {
+        "topology_preserved": not topology_change["topology_changed"],
+        "stale_reference_risk": topology_change["stale_reference_risk"],
+        "topology_change": topology_change,
+        "face_edge_survival": {
+            "solid": _entity_survival_summary(before_topo, after_topo, "solid"),
+            "face": _entity_survival_summary(
+                before_topo, after_topo, "face", referenced_ids=referenced_face_ids
+            ),
+            "edge": _entity_survival_summary(
+                before_topo, after_topo, "edge", referenced_ids=referenced_edge_ids
+            ),
+        },
+        "brep_validity": {
+            "status": "unknown",
+            "detail": (
+                "Full BRep validity (self-intersection / watertightness via BRepCheck) is not "
+                "verified by the edit pipeline; 'builds + non-empty solid + successful export' "
+                "is a sanity proxy, not a manifold guarantee."
+            ),
+        },
+        "export_sanity": {
+            "step_exported": step_ok,
+            "stl_exported": stl_ok,
+            "glb_exported": glb_ok,
+            "status": export_status,
+            "detail": export_detail,
+        },
+    }
+
+
 def _diff_critique(
     before_topo: dict[str, Any],
     before_fg: dict[str, Any],
@@ -8417,6 +8575,25 @@ def edit_build123d_parameter(
     # 6c. Engineering-diagnostics diff — flag if the edit worsened manufacturability.
     critique_diff = _diff_critique(before_topo, before_fg, topo, feature_graph)
 
+    # 6d. Topology / export survival evidence for downstream trust checks.
+    referenced_face_ids = (
+        _feature_reference_ids(edited_feature, "face")
+        if isinstance(edited_feature, dict) else None
+    )
+    referenced_edge_ids = (
+        _feature_reference_ids(edited_feature, "edge")
+        if isinstance(edited_feature, dict) else None
+    )
+    geometry_verification = _geometry_verification(
+        before_topo,
+        topo,
+        step_bytes=step_bytes,
+        stl_bytes=stl_bytes,
+        glb_bytes=glb_bytes,
+        referenced_face_ids=referenced_face_ids,
+        referenced_edge_ids=referenced_edge_ids,
+    )
+
     # 7. Write artifacts back into the package atomically
     _write_cad_artifacts(
         pkg_path=pkg_path,
@@ -8482,6 +8659,7 @@ def edit_build123d_parameter(
         "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "topology_changed": topology_change["topology_changed"],
         "topology_change": topology_change,
+        "geometry_verification": geometry_verification,
         "scope_risk": scope_risk,
         "confirm_scope_risk": confirm_scope_risk,
         "regression_diff": regression_diff,
@@ -8598,6 +8776,13 @@ def _rebuild_after_part_edit(
     feature_graph = cached_result["feature_graph"]
     regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
     critique_diff = _diff_critique(before_topo, before_fg, topo, feature_graph)
+    geometry_verification = _geometry_verification(
+        before_topo,
+        topo,
+        step_bytes=step_bytes,
+        stl_bytes=stl_bytes,
+        glb_bytes=glb_bytes,
+    )
 
     _write_cad_artifacts(
         pkg_path=pkg_path,
@@ -8655,6 +8840,7 @@ def _rebuild_after_part_edit(
         "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
         "geometry_report_summary": _geometry_report_summary(geometry_report_full),
         "modeling_fidelity": _fidelity_brief(topo, feature_graph),
+        "geometry_verification": geometry_verification,
         "regression_diff": regression_diff,
         "critique_diff": critique_diff,
         "written_artifacts": [

@@ -1,0 +1,62 @@
+template_id: gear_pulley
+name: "Ø{outer_diameter:g}mm gear pulley"
+description: A simple V-groove pulley/gear blank with a central bore, defined entirely by a revolved X-Z profile.
+tags:
+  - gear pulley
+  - timing pulley
+  - belt pulley
+  - v-groove pulley
+  - 皮带轮
+  - 同步轮
+model_kind: mechanical
+parametric_inputs:
+  - name: outer_diameter
+    default: 60.0
+    min: 10.0
+    max: 500.0
+    unit: mm
+    type: float
+  - name: width
+    default: 20.0
+    min: 4.0
+    max: 200.0
+    unit: mm
+    type: float
+  - name: bore_diameter
+    default: 10.0
+    min: 2.0
+    max: 200.0
+    unit: mm
+    type: float
+  - name: groove_depth
+    default: 3.0
+    min: 0.5
+    max: 50.0
+    unit: mm
+    type: float
+
+base_primitive:
+  kind: revolve_profile
+  label: gear_pulley
+  color: [0.55, 0.62, 0.70]
+  profile:
+    - ["BORE_DIAMETER / 2", 0]
+    - ["OUTER_DIAMETER / 2", 0]
+    - ["OUTER_DIAMETER / 2", "WIDTH * 0.35"]
+    - ["(OUTER_DIAMETER / 2) - GROOVE_DEPTH", "WIDTH * 0.5"]
+    - ["OUTER_DIAMETER / 2", "WIDTH * 0.65"]
+    - ["OUTER_DIAMETER / 2", "WIDTH"]
+    - ["BORE_DIAMETER / 2", "WIDTH"]
+
+features:
+  - kind: hole
+    diameter: BORE_DIAMETER
+    depth: WIDTH
+
+feature_graph_rules:
+  - target: base_part
+    label: gear_pulley
+
+mate_hints:
+  - role: bolt_hole
+    description: Central bore can be used as a shaft/bolt passage.

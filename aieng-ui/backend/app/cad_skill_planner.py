@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from .agent_autopilot.schema import SkillToolOutput
+from .skill_template_registry import (
+    SkillTemplateError,
+    SkillTemplateRegistry,
+    default_template_directory,
+)
+
+LOGGER = logging.getLogger(__name__)
+
+_TEMPLATE_REGISTRY: SkillTemplateRegistry | None = None
 
 
 _MM_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)\s*(?:mm|毫米|公厘)", re.IGNORECASE)
@@ -143,6 +153,89 @@ def _skill_output(output: SkillToolOutput, **compat: Any) -> dict[str, Any]:
         data["validation_targets"] = output.verification_targets
     data.update(compat)
     return data
+
+
+def _get_template_registry() -> SkillTemplateRegistry:
+    """Lazy-load the declarative template registry.
+
+    A load failure is logged but does not break the existing Python template
+    fallback path.  Tests that need strict validation construct the registry
+    directly with ``SkillTemplateRegistry.load``.
+    """
+    global _TEMPLATE_REGISTRY
+    if _TEMPLATE_REGISTRY is None:
+        try:
+            _TEMPLATE_REGISTRY = SkillTemplateRegistry.load(default_template_directory())
+        except Exception:
+            LOGGER.exception(
+                "Failed to load declarative skill templates; "
+                "falling back to Python templates only."
+            )
+            _TEMPLATE_REGISTRY = SkillTemplateRegistry({})
+    return _TEMPLATE_REGISTRY
+
+
+def _try_declarative_template(
+    message: str, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Return a plan from the declarative registry, or None if no match."""
+    registry = _get_template_registry()
+    if not registry.templates:
+        return None
+
+    requested_id = str(payload.get("template_id") or "").strip()
+    if requested_id:
+        template = registry.templates.get(requested_id)
+        matched = [template] if template else []
+    else:
+        matched = registry.match(message)
+
+    if not matched:
+        return None
+
+    template = matched[0]
+    try:
+        plan = registry.generate_plan(template, payload)
+    except SkillTemplateError as exc:
+        return _skill_output(
+            SkillToolOutput(
+                status="error",
+                skill_name="cad.plan_build123d_skill",
+                intent=message,
+                brief=str(exc),
+                code="invalid_template",
+                rejection_reason="invalid_template",
+            ),
+            pattern=template.template_id,
+        )
+
+    params = plan["resolved_parameters"]
+    execute_input = plan["execute_input"]
+    assumptions = [
+        f"{name.replace('_', ' ').title()} = {value:g}{next((inp.unit for inp in template.parametric_inputs if inp.name == name), 'mm')}"
+        for name, value in params.items()
+    ]
+    warnings: list[str] = []
+    brief = template.name.format(**params)
+    return _skill_output(
+        SkillToolOutput(
+            status="ready",
+            skill_name="cad.plan_build123d_skill",
+            intent=message,
+            brief=f"{brief} from declarative template '{template.template_id}'.",
+            assumptions=assumptions,
+            warnings=warnings,
+            proposed_tool="cad.execute_build123d",
+            proposed_input=execute_input,
+            verification_targets=[
+                f"{template.base_primitive.label or template.template_id} named part exists",
+                "cad.critique reports no floating components",
+            ],
+            match_confidence=0.92,
+            matched_terms=[template.template_id, *template.tags[:2]],
+        ),
+        pattern=template.template_id,
+    )
 
 
 def _flange_code(
@@ -568,6 +661,10 @@ def plan_build123d_skill(payload: dict[str, Any]) -> dict[str, Any]:
                 rejection_reason="empty_request",
             )
         )
+
+    declarative_result = _try_declarative_template(message, payload)
+    if declarative_result is not None:
+        return declarative_result
 
     if _is_bushing_request(message):
         dims = _dimension_values(message)

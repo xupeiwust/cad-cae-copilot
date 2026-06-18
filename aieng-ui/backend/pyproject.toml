@@ -98,6 +98,9 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["app*", "aieng_workbench_mcp*"]
 
+[tool.setuptools.package-data]
+app = ["data/skill_templates/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

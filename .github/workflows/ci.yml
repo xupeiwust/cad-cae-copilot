@@ -72,6 +72,9 @@ jobs:
         # autopilot tests use the deterministic fake adapter (no LLM/network).
         run: pytest tests -q -k "claude or adapter or autopilot"
 
+      - name: Credibility report tests
+        run: pytest tests/test_credibility_report.py -q
+
       - name: CAD generation tests (labels / named parts / append)
         run: pytest tests/test_cad_generation.py -q -k "label or named_parts or append_preserves or single_labeled"
 

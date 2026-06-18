@@ -58,7 +58,11 @@ def _make_solved_package(pkg_path: Path) -> None:
             "geometry/topology_map.json",
             json.dumps({
                 "format_version": "0.1",
-                "entities": [{"id": "body_001", "type": "body", "name": "bracket"}],
+                "entities": [
+                    {"id": "body_001", "type": "solid", "name": "bracket"},
+                    {"id": "face_001", "type": "face"},
+                    {"id": "edge_001", "type": "edge"},
+                ],
             }),
         )
         zf.writestr("graph/feature_graph.json", json.dumps({"features": []}))
@@ -81,7 +85,11 @@ def _make_cad_only_package(pkg_path: Path) -> None:
             "geometry/topology_map.json",
             json.dumps({
                 "format_version": "0.1",
-                "entities": [{"id": "body_001", "type": "body", "name": "bracket"}],
+                "entities": [
+                    {"id": "body_001", "type": "solid", "name": "bracket"},
+                    {"id": "face_001", "type": "face"},
+                    {"id": "edge_001", "type": "edge"},
+                ],
             }),
         )
         zf.writestr("graph/feature_graph.json", json.dumps({"features": []}))
@@ -112,7 +120,10 @@ def _make_partial_geometry_package(pkg_path: Path) -> None:
             "geometry/topology_map.json",
             json.dumps({
                 "format_version": "0.1",
-                "entities": [{"id": "body_001", "type": "body", "name": "bracket"}],
+                "entities": [
+                    {"id": "body_001", "type": "solid", "name": "bracket"},
+                    {"id": "face_001", "type": "face"},
+                ],
             }),
         )
         zf.writestr(

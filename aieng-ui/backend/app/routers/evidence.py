@@ -14,10 +14,8 @@ from fastapi import FastAPI
 from ..cad_generation import load_cad_brief
 from ..computed_metrics import get_computed_metrics
 from ..config import now_iso
-from ..design_targets import get_design_targets
 from ..legacy_app_symbols import sync_main_symbols
 from ..logging_utils import log_exception
-from ..project_io import project_dir
 from ..target_comparison import compare_package_targets
 
 LOGGER = logging.getLogger("app.app_factory")
@@ -766,10 +764,14 @@ def _read_geometry_evidence(
                 try:
                     topo = json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
                     entities = topo.get("entities") or []
-                    part_count = len(entities)
+                    part_entities = [
+                        e for e in entities
+                        if isinstance(e, dict) and e.get("type") in {"solid", "body"}
+                    ]
+                    part_count = len(part_entities)
                     named_parts = [
                         str(e.get("name") or e.get("id"))
-                        for e in entities
+                        for e in part_entities
                         if isinstance(e, dict) and e.get("name")
                     ]
                 except Exception as exc:

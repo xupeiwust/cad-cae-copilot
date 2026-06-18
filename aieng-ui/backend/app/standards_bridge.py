@@ -6,6 +6,8 @@ material binding, and BOM generation.
 from __future__ import annotations
 
 import copy
+import csv
+import io
 import json
 import math
 import zipfile
@@ -504,6 +506,43 @@ def set_part_material(
     }
 
 
+def to_bom_frontend_payload(
+    result: dict[str, Any],
+    project_id: str | None,
+    generated_at: str,
+) -> dict[str, Any]:
+    """Map a ``generate_bom`` result (snake_case) to the frontend ``BOMData`` shape.
+
+    The React BOM panel (``types/bom.ts``) expects camelCase line items; this is
+    the single mapping point so the panel and the structured tool output do not
+    drift. Standard-part-only fields collapse to ``None`` for custom parts.
+    """
+    items_in = result.get("items") or []
+    items: list[dict[str, Any]] = []
+    for idx, item in enumerate(items_in, start=1):
+        is_standard = bool(item.get("standard_part", False))
+        items.append({
+            "id": f"{item.get('part_type', 'part')}:{item.get('part_name', '')}:{idx}",
+            "name": item.get("part_name", ""),
+            "quantity": int(item.get("quantity", 1) or 1),
+            "material": (item.get("material") or None),
+            "isStandardPart": is_standard,
+            "standardPartType": (item.get("canonical_type") or None) if is_standard else None,
+            "standardPartPreset": (item.get("designation") or None) if is_standard else None,
+            "parameters": None,
+        })
+    total = int(result.get("total_parts", sum(i["quantity"] for i in items)))
+    standard_count = sum(i["quantity"] for i in items if i["isStandardPart"])
+    return {
+        "projectId": project_id or "",
+        "items": items,
+        "totalCount": total,
+        "standardPartCount": standard_count,
+        "customPartCount": max(0, total - standard_count),
+        "generatedAt": generated_at,
+    }
+
+
 def generate_bom(
     active_settings: Any,
     project_id: str | None,
@@ -607,6 +646,30 @@ def generate_bom(
         "limitations": "Best-effort semantic recognition; not a supplier BOM or validation claim.",
     }
 
+    # Flat, ERP-style line items with a stable column schema, shared by the CSV
+    # and JSON exports (#280). 1-based contiguous line numbers; standard-part-only
+    # fields default to empty so the schema is uniform across part types.
+    _BOM_COLUMNS = (
+        "line_no", "part_name", "part_type", "material", "quantity",
+        "standard_part", "canonical_type", "designation", "source_library",
+    )
+
+    def _line_items() -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for idx, item in enumerate(bom, start=1):
+            rows.append({
+                "line_no": idx,
+                "part_name": item.get("part_name", ""),
+                "part_type": item.get("part_type", ""),
+                "material": item.get("material", "") or "",
+                "quantity": item.get("quantity", 1),
+                "standard_part": bool(item.get("standard_part", False)),
+                "canonical_type": item.get("canonical_type", "") or "",
+                "designation": item.get("designation", "") or "",
+                "source_library": item.get("source_library", "") or "",
+            })
+        return rows
+
     if fmt == "markdown":
         lines = [
             "# Bill of Materials",
@@ -619,5 +682,21 @@ def generate_bom(
                 f"| {item['part_name']} | {item['part_type']} | {item.get('material', '-')} | {item['quantity']} |"
             )
         result["markdown"] = "\n".join(lines)
+    elif fmt == "csv":
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=list(_BOM_COLUMNS), lineterminator="\n")
+        writer.writeheader()
+        for row in _line_items():
+            writer.writerow({**row, "standard_part": "true" if row["standard_part"] else "false"})
+        result["csv"] = buffer.getvalue()
+    elif fmt == "json":
+        result["json"] = json.dumps(
+            {
+                "bill_of_materials": _line_items(),
+                "total_parts": total_parts,
+                "unique_parts": len(bom),
+            },
+            indent=2,
+        )
 
     return result

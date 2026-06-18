@@ -112,6 +112,104 @@ def test_generate_bom_markdown_includes_quantities(tmp_path: Path) -> None:
     assert "| 2 |" in result["markdown"]
 
 
+def test_generate_bom_csv_export_matches_schema(tmp_path: Path) -> None:
+    """CSV export carries a stable header schema + one row per BOM line (#280)."""
+    import csv
+    import io
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-csv.aieng"
+    _make_bom_package(pkg_path, [
+        {"id": "b1", "type": "standard_part", "name": "mounting_bolt_M6",
+         "canonical_type": "screw", "designation": "M6-1", "source_library": "bd_warehouse", "parameters": {}},
+        {"id": "b2", "type": "standard_part", "name": "mounting_bolt_M6",
+         "canonical_type": "screw", "designation": "M6-1", "source_library": "bd_warehouse", "parameters": {}},
+        {"id": "p1", "type": "named_part", "name": "base_plate", "parameters": {"material": "Al6061-T6"}},
+    ])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path), fmt="csv")
+    assert result["status"] == "ok"
+    assert "csv" in result
+
+    rows = list(csv.DictReader(io.StringIO(result["csv"])))
+    assert [
+        "line_no", "part_name", "part_type", "material", "quantity",
+        "standard_part", "canonical_type", "designation", "source_library",
+    ] == list(rows[0].keys())
+    bolt = next(r for r in rows if r["part_name"] == "mounting_bolt_M6")
+    assert bolt["quantity"] == "2"
+    assert bolt["standard_part"] == "true"
+    assert bolt["designation"] == "M6-1"
+    plate = next(r for r in rows if r["part_name"] == "base_plate")
+    assert plate["material"] == "Al6061-T6"
+    assert plate["standard_part"] == "false"
+    # line numbers are 1-based and contiguous
+    assert [r["line_no"] for r in rows] == [str(i + 1) for i in range(len(rows))]
+
+
+def test_generate_bom_json_export_is_erp_line_items(tmp_path: Path) -> None:
+    """JSON export is a serialized ERP-style line-item document (#280)."""
+    import json as _json
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-json.aieng"
+    _make_bom_package(pkg_path, [
+        {"id": "b1", "type": "standard_part", "name": "washer_M6",
+         "canonical_type": "washer", "designation": "M6", "source_library": "bd_warehouse", "parameters": {}},
+    ])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path), fmt="json")
+    assert result["status"] == "ok"
+    assert "json" in result
+    doc = _json.loads(result["json"])
+    assert doc["total_parts"] == 1
+    assert doc["unique_parts"] == 1
+    line = doc["bill_of_materials"][0]
+    assert line["line_no"] == 1
+    assert line["part_name"] == "washer_M6"
+    assert line["quantity"] == 1
+    assert line["standard_part"] is True
+    assert line["canonical_type"] == "washer"
+
+
+def test_to_bom_frontend_payload_maps_to_camelcase_shape() -> None:
+    """The frontend BOMData shape (camelCase) is mapped from the snake_case BOM result."""
+    from app.standards_bridge import to_bom_frontend_payload
+
+    result = {
+        "status": "ok",
+        "total_parts": 3,
+        "unique_parts": 2,
+        "items": [
+            {"part_name": "mounting_bolt_M6", "part_type": "standard_part", "material": "", "quantity": 2,
+             "standard_part": True, "canonical_type": "screw", "designation": "M6-1", "source_library": "bd_warehouse"},
+            {"part_name": "base_plate", "part_type": "named_part", "material": "Al6061-T6", "quantity": 1},
+        ],
+    }
+    payload = to_bom_frontend_payload(result, "proj-123", "2026-06-18T00:00:00+00:00")
+
+    assert payload["projectId"] == "proj-123"
+    assert payload["totalCount"] == 3
+    assert payload["standardPartCount"] == 2
+    assert payload["customPartCount"] == 1
+    assert payload["generatedAt"] == "2026-06-18T00:00:00+00:00"
+
+    bolt = next(i for i in payload["items"] if i["name"] == "mounting_bolt_M6")
+    assert bolt["isStandardPart"] is True
+    assert bolt["quantity"] == 2
+    assert bolt["standardPartType"] == "screw"
+    assert bolt["standardPartPreset"] == "M6-1"
+
+    plate = next(i for i in payload["items"] if i["name"] == "base_plate")
+    assert plate["isStandardPart"] is False
+    assert plate["material"] == "Al6061-T6"
+    assert plate["standardPartType"] is None
+    # ids are unique so they are safe React keys
+    assert len({i["id"] for i in payload["items"]}) == len(payload["items"])
+
+
 def test_generate_bom_returns_error_when_package_missing(tmp_path: Path) -> None:
     """generate_bom returns a structured error when the package cannot be found."""
     from app.standards_bridge import generate_bom

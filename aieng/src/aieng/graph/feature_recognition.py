@@ -159,6 +159,9 @@ class RuleBasedFeatureRecognizer:
                     ],
                 },
             }
+            hole_metadata = self._hole_metadata(face, radius)
+            if hole_metadata:
+                feature["hole_metadata"] = hole_metadata
             if recognition_context.get("real_topology"):
                 feature["recognition"]["signals"] = {
                     "real_topology": True,
@@ -168,6 +171,149 @@ class RuleBasedFeatureRecognizer:
             self._attach_aag_metadata(feature, face.get("id"), aag_face_index)
             features.append(feature)
         return features
+
+    def _hole_metadata(self, face: dict[str, Any], radius: float) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "diameter_mm": radius * 2.0,
+            "mating_stack": self._mating_stack_metadata(face),
+        }
+
+        axis = face.get("axis")
+        if self._is_numeric_vec3(axis):
+            axis_direction = [float(item) for item in axis]
+            axis_record: dict[str, Any] = {
+                "direction": axis_direction,
+                "direction_source": "topology_map.face.axis",
+            }
+            explicit_origin = self._vec3(face.get("axis_origin") or face.get("origin") or face.get("center"))
+            if explicit_origin is not None:
+                axis_record["origin_mm"] = explicit_origin
+                axis_record["origin_source"] = "topology_map.face"
+            else:
+                bbox_center = self._bbox_center(face.get("bounding_box"))
+                if bbox_center is not None:
+                    axis_record["origin_mm"] = bbox_center
+                    axis_record["origin_source"] = "bounding_box_center"
+            metadata["axis"] = axis_record
+
+        depth = self._hole_depth(face)
+        if depth is not None:
+            metadata["depth_mm"] = depth
+
+        depth_kind = self._hole_depth_kind(face)
+        metadata["hole_depth_kind"] = depth_kind
+        if depth_kind == "through":
+            metadata["through"] = True
+        elif depth_kind == "blind":
+            metadata["through"] = False
+
+        counterbore = self._counterbore_metadata(face)
+        if counterbore:
+            metadata["counterbore"] = counterbore
+        countersink = self._countersink_metadata(face)
+        if countersink:
+            metadata["countersink"] = countersink
+
+        return metadata
+
+    def _hole_depth_kind(self, face: dict[str, Any]) -> str:
+        explicit = face.get("hole_depth_kind") or face.get("depth_kind")
+        if isinstance(explicit, str) and explicit in {"through", "blind", "unknown"}:
+            return explicit
+        if face.get("through") is True or face.get("is_through") is True:
+            return "through"
+        if face.get("through") is False or face.get("is_through") is False:
+            return "blind"
+
+        adjacent = face.get("adjacent_entity_ids")
+        if isinstance(adjacent, list):
+            boundary_face_count = sum(1 for item in adjacent if isinstance(item, str) and item.startswith("face_"))
+            if boundary_face_count >= 2:
+                return "through"
+            if boundary_face_count == 1 and self._hole_depth(face) is not None:
+                return "blind"
+        return "unknown"
+
+    def _hole_depth(self, face: dict[str, Any]) -> float | None:
+        for key in ("depth_mm", "depth", "hole_depth_mm"):
+            value = face.get(key)
+            if isinstance(value, NUMERIC_TYPES) and float(value) >= 0:
+                return float(value)
+
+        bbox = self._bbox(face.get("bounding_box"))
+        axis = self._vec3(face.get("axis"))
+        if bbox is None or axis is None:
+            return None
+
+        extents = [abs(bbox[3] - bbox[0]), abs(bbox[4] - bbox[1]), abs(bbox[5] - bbox[2])]
+        dominant = max(range(3), key=lambda idx: abs(axis[idx]))
+        depth = extents[dominant]
+        return float(depth) if depth >= 0 else None
+
+    def _mating_stack_metadata(self, face: dict[str, Any]) -> dict[str, Any]:
+        value = face.get("mating_stack_thickness_mm")
+        if isinstance(value, NUMERIC_TYPES):
+            return {
+                "status": "known",
+                "thickness_mm": float(value),
+                "source": "topology_map.face.mating_stack_thickness_mm",
+            }
+        if isinstance(value, list) and value:
+            return {
+                "status": "ambiguous",
+                "candidate_count": len(value),
+                "reason": "Multiple mating stack thickness candidates were provided.",
+            }
+        return {
+            "status": "unknown",
+            "reason": "No part-stack relationship metadata is available for this hole candidate.",
+        }
+
+    def _counterbore_metadata(self, face: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(face.get("counterbore"), dict):
+            return dict(face["counterbore"])
+        result: dict[str, Any] = {}
+        diameter = face.get("counterbore_diameter_mm")
+        depth = face.get("counterbore_depth_mm")
+        if isinstance(diameter, NUMERIC_TYPES):
+            result["diameter_mm"] = float(diameter)
+        if isinstance(depth, NUMERIC_TYPES):
+            result["depth_mm"] = float(depth)
+        return result
+
+    def _countersink_metadata(self, face: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(face.get("countersink"), dict):
+            return dict(face["countersink"])
+        result: dict[str, Any] = {}
+        angle = face.get("countersink_angle_deg")
+        diameter = face.get("countersink_diameter_mm")
+        if isinstance(angle, NUMERIC_TYPES):
+            result["angle_deg"] = float(angle)
+        if isinstance(diameter, NUMERIC_TYPES):
+            result["diameter_mm"] = float(diameter)
+        return result
+
+    def _bbox(self, value: Any) -> list[float] | None:
+        if not isinstance(value, list) or len(value) != 6:
+            return None
+        if not all(isinstance(item, NUMERIC_TYPES) for item in value):
+            return None
+        return [float(item) for item in value]
+
+    def _bbox_center(self, value: Any) -> list[float] | None:
+        bbox = self._bbox(value)
+        if bbox is None:
+            return None
+        return [
+            (bbox[0] + bbox[3]) / 2.0,
+            (bbox[1] + bbox[4]) / 2.0,
+            (bbox[2] + bbox[5]) / 2.0,
+        ]
+
+    def _vec3(self, value: Any) -> list[float] | None:
+        if not self._is_numeric_vec3(value):
+            return None
+        return [float(item) for item in value]
 
     def _is_numeric_vec3(self, value: Any) -> bool:
         return isinstance(value, list) and len(value) == 3 and all(isinstance(item, NUMERIC_TYPES) for item in value)

@@ -135,6 +135,121 @@ def test_mounting_hole_candidates_exist(tmp_path):
     assert holes[0]["intent"]["role"] == "mounting_or_passage_candidate"
 
 
+def test_through_hole_metadata_from_topology_bbox(tmp_path):
+    package_path = imported_and_topologized_package(tmp_path)
+    recognize_features_package(package_path)
+    features = read_feature_graph(package_path)["features"]
+
+    hole = next(feature for feature in features if feature["id"] == "feat_hole_001")
+    metadata = hole["hole_metadata"]
+
+    assert metadata["diameter_mm"] == 10.0
+    assert metadata["depth_mm"] == 10.0
+    assert metadata["hole_depth_kind"] == "through"
+    assert metadata["through"] is True
+    assert metadata["axis"]["direction"] == [0.0, 0.0, 1.0]
+    assert metadata["axis"]["origin_mm"] == [20.0, 20.0, 5.0]
+    assert metadata["axis"]["origin_source"] == "bounding_box_center"
+    assert metadata["mating_stack"]["status"] == "unknown"
+    assert "counterbore" not in metadata
+    assert "countersink" not in metadata
+
+
+def test_blind_hole_metadata_exposes_depth_when_available():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "metadata": {"extraction_backend": "occ", "real_step_parsing": True},
+            "entities": [
+                {"id": "face_base_bottom", "type": "face", "surface_type": "plane", "area": 100.0},
+                {
+                    "id": "face_blind_hole_cyl",
+                    "type": "face",
+                    "surface_type": "cylinder",
+                    "radius": 4.0,
+                    "axis": [0.0, 0.0, 1.0],
+                    "bounding_box": [6.0, 6.0, 0.0, 14.0, 14.0, 12.0],
+                    "adjacent_entity_ids": ["face_pocket_floor"],
+                },
+            ],
+        }
+    )
+
+    hole = next(feature for feature in result["features"] if feature["type"] == "mounting_hole")
+    metadata = hole["hole_metadata"]
+
+    assert metadata["diameter_mm"] == 8.0
+    assert metadata["depth_mm"] == 12.0
+    assert metadata["hole_depth_kind"] == "blind"
+    assert metadata["through"] is False
+    assert metadata["axis"]["origin_mm"] == [10.0, 10.0, 6.0]
+
+
+def test_hole_metadata_surfaces_counterbore_and_countersink_hints_when_known():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "entities": [
+                {"id": "face_base_bottom", "type": "face", "surface_type": "plane", "area": 100.0},
+                {
+                    "id": "face_counterbored_hole",
+                    "type": "face",
+                    "surface_type": "cylinder",
+                    "radius": 3.0,
+                    "axis": [0.0, 0.0, 1.0],
+                    "depth_mm": 9.0,
+                    "through": True,
+                    "counterbore_diameter_mm": 11.0,
+                    "counterbore_depth_mm": 2.5,
+                    "countersink_angle_deg": 90.0,
+                },
+            ],
+        }
+    )
+
+    hole = next(feature for feature in result["features"] if feature["type"] == "mounting_hole")
+    metadata = hole["hole_metadata"]
+
+    assert metadata["hole_depth_kind"] == "through"
+    assert metadata["counterbore"] == {"diameter_mm": 11.0, "depth_mm": 2.5}
+    assert metadata["countersink"] == {"angle_deg": 90.0}
+
+
+def test_hole_metadata_keeps_unknown_and_ambiguous_values_honest():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "entities": [
+                {"id": "face_base_bottom", "type": "face", "surface_type": "plane", "area": 100.0},
+                {
+                    "id": "face_hole_without_axis",
+                    "type": "face",
+                    "surface_type": "cylinder",
+                    "radius": 2.5,
+                    "mating_stack_thickness_mm": [4.0, 6.0],
+                },
+            ],
+        }
+    )
+
+    hole = next(feature for feature in result["features"] if feature["type"] == "mounting_hole")
+    metadata = hole["hole_metadata"]
+
+    assert metadata["diameter_mm"] == 5.0
+    assert metadata["hole_depth_kind"] == "unknown"
+    assert "through" not in metadata
+    assert "axis" not in metadata
+    assert "depth_mm" not in metadata
+    assert metadata["mating_stack"] == {
+        "status": "ambiguous",
+        "candidate_count": 2,
+        "reason": "Multiple mating stack thickness candidates were provided.",
+    }
+
+
 def test_mounting_hole_pattern_exists_when_multiple_cylindrical_faces_present(tmp_path):
     package_path = imported_and_topologized_package(tmp_path)
     recognize_features_package(package_path)

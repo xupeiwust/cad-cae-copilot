@@ -179,6 +179,83 @@
             },
             "additionalProperties": true
           },
+          "hole_metadata": {
+            "type": "object",
+            "description": "Optional geometric metadata for hole-like features, used by downstream fastener planning. Values must come from topology/feature evidence; unknowns should be omitted or marked with status fields rather than guessed.",
+            "properties": {
+              "axis": {
+                "type": "object",
+                "properties": {
+                  "origin_mm": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "direction": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "origin_source": {
+                    "type": "string"
+                  },
+                  "direction_source": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "diameter_mm": {
+                "type": "number"
+              },
+              "depth_mm": {
+                "type": "number"
+              },
+              "through": {
+                "type": "boolean"
+              },
+              "hole_depth_kind": {
+                "enum": ["through", "blind", "unknown"]
+              },
+              "counterbore": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "countersink": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "mating_stack": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "enum": ["known", "unknown", "ambiguous"]
+                  },
+                  "thickness_mm": {
+                    "type": "number"
+                  },
+                  "candidate_count": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
+          },
           "children": {
             "type": "array",
             "items": {

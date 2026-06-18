@@ -27,6 +27,7 @@ which carries its own model access. The aieng backend itself needs no API key.
 [What is this?](#what-is-this--architecture--information-flow) ·
 [Quick Start](#quick-start) ·
 [CAD Examples](#industrial-cad-examples) ·
+[Benchmarks](#quantitative-benchmarking) ·
 [Why aieng](#why-aieng--beyond-text-to-cad) ·
 [MCP Setup](aieng-ui/backend/MCP_SETUP.md) ·
 [Agent Guide](AGENTS.md)
@@ -53,6 +54,24 @@ optimization.** A human-in-the-loop **trust & approval** layer gates every
 mutation, a **credibility tier** is stamped on every result, and all artifacts
 land in a self-describing `.aieng` package — so any MCP-capable agent can design,
 analyze, optimize, and deliver verified, reproducible CAD/CAE solutions.
+
+## Quantitative benchmarking
+
+The project includes a machine-readable analytical FEA benchmark corpus at
+[`aieng/benchmarks/datasets/analytical_fea`](aieng/benchmarks/datasets/analytical_fea).
+It builds runnable `.aieng` cases, compares solver metrics against documented
+closed-form references, and emits an
+`aieng.benchmark.analytical_fea.scorecard` JSON artifact. The harness reports
+"agreement within tolerance"; it is not certification or a production-safety
+claim.
+
+```bash
+cd aieng
+python -m aieng.benchmarks.analytical_fea --out analytical_fea_scorecard.json
+```
+
+CI runs the analytical benchmark corpus tests so corpus/reference drift and
+scorecard regressions fail fast.
 
 ## Quick start
 

@@ -88,6 +88,9 @@ jobs:
       - name: Geometry verification tests
         run: pytest tests/test_geometry_verification.py -q
 
+      - name: Analytical FEA benchmark corpus tests
+        run: cd ../../aieng && pytest tests/test_benchmarks_analytical_fea.py -q
+
       - name: CAD generation tests (labels / named parts / append)
         run: pytest tests/test_cad_generation.py -q -k "label or named_parts or append_preserves or single_labeled"
 

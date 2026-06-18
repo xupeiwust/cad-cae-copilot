@@ -78,6 +78,22 @@ The handoff benchmark does not compare raw STEP vs. `.aieng`. It evaluates a sin
 
 See [`handoff/README.md`](handoff/README.md) for details.
 
+## Analytical FEA benchmark corpus
+
+The quantitative solver-accuracy corpus lives at
+[`datasets/analytical_fea/`](datasets/analytical_fea/). It contains
+closed-form beam/rod/column reference cases plus a scorer that emits a
+machine-readable `aieng.benchmark.analytical_fea.scorecard` JSON artifact.
+
+```bash
+cd aieng
+python -m aieng.benchmarks.analytical_fea --out analytical_fea_scorecard.json
+```
+
+The scorecard reports agreement with analytical references inside documented
+tolerances. It is regression evidence, not certification or a production-safety
+claim.
+
 ## Manual benchmark run package
 
 A self-contained manual benchmark run package for the bracket reference scenario is available at:

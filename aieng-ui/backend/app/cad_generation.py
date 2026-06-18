@@ -3372,6 +3372,45 @@ def _entity_survival_summary(
     return summary
 
 
+def _feature_reference_ids(feature: dict[str, Any], entity_kind: str) -> list[str] | None:
+    """Extract referenced topology ids from feature-graph variants.
+
+    Older and hand-authored feature graphs may expose ``face_ids`` / ``edge_ids``
+    directly, while generated feature graphs use ``geometry_refs.faces`` and
+    ``geometry_refs.edges``. Return ``None`` when the feature has no authoritative
+    references so callers can distinguish "not checked" from an empty list.
+    """
+    if entity_kind not in {"face", "edge"}:
+        return None
+
+    direct_key = f"{entity_kind}_ids"
+    refs_key = f"{entity_kind}s"
+    candidates: list[Any] = []
+    if isinstance(feature.get(direct_key), list):
+        candidates.extend(feature[direct_key])
+
+    geometry_refs = feature.get("geometry_refs")
+    if isinstance(geometry_refs, dict):
+        if isinstance(geometry_refs.get(refs_key), list):
+            candidates.extend(geometry_refs[refs_key])
+        if entity_kind == "face" and isinstance(geometry_refs.get("entities"), list):
+            candidates.extend(
+                ref for ref in geometry_refs["entities"] if str(ref).startswith("face_")
+            )
+
+    if not candidates:
+        return None
+
+    seen: set[str] = set()
+    ids: list[str] = []
+    for candidate in candidates:
+        value = str(candidate)
+        if value and value not in seen:
+            seen.add(value)
+            ids.append(value)
+    return ids
+
+
 def _geometry_verification(
     before_topo: dict[str, Any],
     after_topo: dict[str, Any],
@@ -8537,8 +8576,14 @@ def edit_build123d_parameter(
     critique_diff = _diff_critique(before_topo, before_fg, topo, feature_graph)
 
     # 6d. Topology / export survival evidence for downstream trust checks.
-    referenced_face_ids = edited_feature.get("face_ids") if isinstance(edited_feature, dict) else None
-    referenced_edge_ids = edited_feature.get("edge_ids") if isinstance(edited_feature, dict) else None
+    referenced_face_ids = (
+        _feature_reference_ids(edited_feature, "face")
+        if isinstance(edited_feature, dict) else None
+    )
+    referenced_edge_ids = (
+        _feature_reference_ids(edited_feature, "edge")
+        if isinstance(edited_feature, dict) else None
+    )
     geometry_verification = _geometry_verification(
         before_topo,
         topo,

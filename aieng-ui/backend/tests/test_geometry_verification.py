@@ -11,6 +11,7 @@ import pytest
 
 from app.cad_generation import (
     _entity_survival_summary,
+    _feature_reference_ids,
     _geometry_verification,
 )
 
@@ -164,3 +165,24 @@ def test_entity_survival_summary_with_referenced_ids() -> None:
         "face_003": "new",
         "face_999": "unknown",
     }
+
+
+def test_feature_reference_ids_reads_geometry_refs() -> None:
+    """Generated feature graphs store face references under geometry_refs."""
+    feature = {
+        "id": "feat_hole",
+        "geometry_refs": {"faces": ["face_001", "face_002"]},
+    }
+
+    assert _feature_reference_ids(feature, "face") == ["face_001", "face_002"]
+
+
+def test_feature_reference_ids_supports_direct_keys_and_deduplicates() -> None:
+    """Legacy direct face_ids keys remain supported without duplicate output."""
+    feature = {
+        "id": "feat_legacy",
+        "face_ids": ["face_001", "face_002"],
+        "geometry_refs": {"faces": ["face_002", "face_003"]},
+    }
+
+    assert _feature_reference_ids(feature, "face") == ["face_001", "face_002", "face_003"]

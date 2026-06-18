@@ -97,7 +97,7 @@ def _hole_metadata(idx: int, *, known_stack: bool, with_axis: bool) -> dict:
         "hole_depth_kind": "through",
         "through": True,
         "mating_stack": (
-            {"status": "known", "thickness_mm": 9.0, "source": "test_fixture"}
+            {"status": "known", "thickness_mm": 9.0, "source": "test_fixture", "part_ids": ["plate_a", "plate_b"]}
             if known_stack
             else {"status": "unknown", "reason": "test fixture omitted stack"}
         ),

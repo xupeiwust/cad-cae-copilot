@@ -39,6 +39,10 @@ from .fastener_insertion import (
     FASTENER_INSERTION_REPORT_PATH,
     insert_fasteners_for_holes,
 )
+from .fastener_validation import (
+    validate_inserted_fasteners,
+    validate_inserted_fasteners_package,
+)
 from .holes import (
     blind_hole,
     counterbored_hole,
@@ -74,6 +78,8 @@ __all__ = [
     "insert_fasteners_for_holes",
     "plan_fastener_for_hole",
     "plan_fasteners_for_features",
+    "validate_inserted_fasteners",
+    "validate_inserted_fasteners_package",
     # bearings
     "deep_groove_ball_bearing",
     "thrust_ball_bearing",

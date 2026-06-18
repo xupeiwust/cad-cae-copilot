@@ -226,6 +226,56 @@ def test_field_descriptor_returns_real_frd_data(tmp_path: Path) -> None:
     assert data["max_value"] == 220.0
 
 
+def test_field_descriptor_load_case_switching(tmp_path: Path) -> None:
+    """GET /fields/{name}?load_case_id=... selects the matching FRD step."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("frd-field-multistep"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "multistep.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    coords = {
+        1: (0.0, 0.0, 0.0),
+        2: (1.0, 0.0, 0.0),
+        3: (1.0, 1.0, 0.0),
+        4: (0.0, 1.0, 0.0),
+    }
+    steps = [
+        {"stress": {i: [float(i * 10), 0.0, 0.0, 0.0, 0.0, 0.0] for i in coords}},
+        {"stress": {i: [float(90 + i * 10), 0.0, 0.0, 0.0, 0.0, 0.0] for i in coords}},
+    ]
+    frd_text = _make_test_multistep_frd_with_coords(coords, steps=steps)
+
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "multistep", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", frd_text)
+
+    project["aieng_file"] = "multistep.aieng"
+    save_project(settings, project)
+
+    resp1 = client.get(f"/api/projects/{project_id}/fields/stress")
+    assert resp1.status_code == 200
+    data1 = resp1.json()
+    assert data1["source"] == "frd"
+    assert data1["load_case_id"] == "load_case_001"
+    assert data1["min_value"] == 10.0
+    assert data1["max_value"] == 40.0
+
+    resp2 = client.get(f"/api/projects/{project_id}/fields/stress?load_case_id=load_case_002")
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["source"] == "frd"
+    assert data2["load_case_id"] == "load_case_002"
+    assert data2["min_value"] == 100.0
+    assert data2["max_value"] == 130.0
+
+
 def test_field_descriptor_returns_displacement_vectors(tmp_path: Path) -> None:
     """GET /fields/{name} returns per-node displacement vectors for DISP-sourced fields."""
     from app.main import create_app, default_project, project_dir, save_project
@@ -2654,6 +2704,45 @@ def _make_test_frd_with_coords(
         for nid, vals in stress_nodes.items():
             lines.append(_frd_node_line(nid, vals))
         lines.append("    -3")
+    lines.append(" 9999")
+    return "\n".join(lines) + "\n"
+
+
+def _make_test_multistep_frd_with_coords(
+    coords: dict[int, tuple[float, float, float]],
+    steps: list[dict[str, dict[int, list[float]]]],
+) -> str:
+    """Build an FRD with mesh coordinates followed by multiple field steps."""
+    lines = ["    1C                                                                         1"]
+    for nid, (x, y, z) in coords.items():
+        lines.append(_frd_node_line(nid, [x, y, z]))
+    for step in steps:
+        disp_nodes = step.get("disp")
+        stress_nodes = step.get("stress")
+        if disp_nodes is not None:
+            lines += [
+                "    -4  DISP        4    1",
+                "    -5  D1          1    2    1    0",
+                "    -5  D2          1    2    2    0",
+                "    -5  D3          1    2    3    0",
+                "    -5  ALL         1    2    0    1",
+            ]
+            for nid, vals in disp_nodes.items():
+                lines.append(_frd_node_line(nid, vals))
+            lines.append("    -3")
+        if stress_nodes is not None:
+            lines += [
+                "    -4  S           6    1",
+                "    -5  SXX         1    4    1    1",
+                "    -5  SYY         1    4    2    1",
+                "    -5  SZZ         1    4    3    1",
+                "    -5  SXY         1    4    4    1",
+                "    -5  SXZ         1    4    5    1",
+                "    -5  SYZ         1    4    6    1",
+            ]
+            for nid, vals in stress_nodes.items():
+                lines.append(_frd_node_line(nid, vals))
+            lines.append("    -3")
     lines.append(" 9999")
     return "\n".join(lines) + "\n"
 

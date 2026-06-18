@@ -385,8 +385,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, execute, ...(sessionId ? { session_id: sessionId } : {}) }),
     }),
-  getFieldDescriptor: (projectId: string, fieldName: string) =>
-    request<SolverFieldDescriptor>(`/api/projects/${projectId}/fields/${fieldName}`),
+  getFieldDescriptor: (projectId: string, fieldName: string, loadCaseId?: string | null) =>
+    request<SolverFieldDescriptor>(
+      `/api/projects/${projectId}/fields/${fieldName}${loadCaseId ? `?load_case_id=${encodeURIComponent(loadCaseId)}` : ""}`,
+    ),
   listRuns: () => request<RuntimeRunSummary[]>("/api/runtime/runs"),
   startRun: (message: string, projectId?: string | null, toolInput?: Record<string, unknown> | null, extras?: { workflow_id?: string; steps?: WorkflowStep[]; llm_config?: LLMConfig }) =>
     request<RuntimeRun>("/api/runtime/runs", {

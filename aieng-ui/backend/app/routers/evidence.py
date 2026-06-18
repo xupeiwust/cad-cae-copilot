@@ -95,18 +95,24 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
     _sync_main_symbols()
 
     @app.get("/api/projects/{project_id}/fields/{field_name}")
-    def get_field_descriptor(project_id: str, field_name: str) -> dict[str, Any]:
+    def get_field_descriptor(
+        project_id: str,
+        field_name: str,
+        load_case_id: str | None = None,
+    ) -> dict[str, Any]:
         project = get_project(active_settings, project_id)
         meta = _FIELD_SYNTHETIC_DEFAULTS.get(
             field_name, {"min_value": 0.0, "max_value": 1.0, "unit": "", "colormap": "thermal"}
         )
 
-        # Attempt real FRD extraction
+        # Attempt real FRD extraction for the requested load case / step
         pkg = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
         frd_data: dict[str, Any] | None = None
         if pkg is not None and pkg.exists():
             try:
-                frd_data = _extract_frd_field_data(pkg, field_name, active_settings.aieng_root)
+                frd_data = _extract_frd_field_data(
+                    pkg, field_name, active_settings.aieng_root, load_case_id=load_case_id
+                )
             except Exception:
                 log_exception(
                     LOGGER,
@@ -120,6 +126,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
             return {
                 "field_name": field_name,
                 "project_id": project_id,
+                "load_case_id": load_case_id or "load_case_001",
                 "format": "vertex_json",
                 "basis": "frd_nearest_node",
                 "min_value": frd_data["min_value"],
@@ -138,6 +145,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
         return {
             "field_name": field_name,
             "project_id": project_id,
+            "load_case_id": load_case_id or "load_case_001",
             "format": "vertex_synthetic",
             "basis": "y_normalized",
             "min_value": meta["min_value"],

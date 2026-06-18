@@ -381,6 +381,21 @@ single-part edit.
   by `useFieldColorOverlay` without reloading the preview asset. Reset restores the
   solver-derived defaults. State lives in `useWorkbenchApp` and is reset when the
   project or selected field changes.
+- **Load-case / analysis-step selector (#256).** When a CAE result summary reports
+  multiple load cases, a `LoadCasePicker` appears next to the field picker in
+  [`ViewerPane.tsx`](aieng-ui/frontend/src/components/ViewerPane.tsx). Switching
+  the selector passes `load_case_id` to
+  `GET /api/projects/{id}/fields/{field_name}`, which selects the matching FRD
+  step on the backend. State lives in `useWorkbenchApp` and resets to the first
+  available load case when the project changes.
+- **Result animation / deformed-shape playback (#255).** The deformed-shape overlay
+  (`DeformationControls` in
+  [`DeformationControls.tsx`](aieng-ui/frontend/src/components/viewer/DeformationControls.tsx))
+  adds a **Play / Pause** button and a choice between **Sweep** (scale 0→1→0) and
+  **Oscillate** (scale ±1) modes. Animation updates deformed geometry positions via
+  `applyDeformationScale` in a `requestAnimationFrame` loop rather than rebuilding
+  the mesh every frame. This works for any displacement-sourced FRD field,
+  including modal and buckling mode shapes.
 - **CAE setup overlay (in-3D affordance, #247).** The model viewer has a "Show CAE setup"
   toggle ([`ModelViewer.tsx`](aieng-ui/frontend/src/components/ModelViewer.tsx),
   fed by `useCaeSetupOverlay` → `GET /api/projects/{id}/cae-setup-overlay`, drawn by

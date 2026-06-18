@@ -2173,6 +2173,43 @@ def _topology_to_feature_graph(
                 },
             })
 
+    # ── Merge Phase 1 topology-only heuristics from the core recognizer (#297).
+    # The workbench runtime already handles named parts, bolt patterns, base plate,
+    # and hollow_body; here we pull in slot / pocket / rib candidates that do not
+    # overlap with any of those existing features.
+    used_face_ids: set[str] = set()
+    for feature in features:
+        refs = feature.get("geometry_refs") or {}
+        if isinstance(refs, dict):
+            used_face_ids.update(refs.get("faces") or [])
+
+    try:
+        from aieng.graph.feature_recognition import RuleBasedFeatureRecognizer
+
+        recognizer = RuleBasedFeatureRecognizer()
+        core_graph = recognizer.recognize(topo)
+        solid_bbox = None
+        if solid:
+            bb = solid.get("bounding_box")
+            if isinstance(bb, list) and len(bb) == 6:
+                solid_bbox = [float(v) for v in bb]
+        for core_feature in core_graph.get("features", []):
+            ftype = core_feature.get("type")
+            if ftype not in {"slot", "pocket", "rib"}:
+                continue
+            refs = core_feature.get("geometry_refs") or {}
+            face_ids = set(refs.get("faces") or [])
+            if face_ids & used_face_ids:
+                continue
+            # Re-id to fit the workbench sequence and avoid collisions.
+            feat_counter += 1
+            core_feature["id"] = f"feat_{feat_counter:03d}"
+            features.append(core_feature)
+            used_face_ids.update(face_ids)
+    except Exception:
+        # Best-effort: do not fail CAD execution if heuristic merge fails.
+        pass
+
     feature_graph = {"format_version": "0.1.0", "features": features, "model_kind": resolved_kind}
     standard_part_summary = _standard_part_bom_summary(features)
     if standard_part_summary:

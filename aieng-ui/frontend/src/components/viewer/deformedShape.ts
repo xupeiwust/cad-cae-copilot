@@ -29,10 +29,80 @@ export function computeDeformationScale(
   return (targetRatio * diagonal) / maxDisp;
 }
 
+type DeformationMap = {
+  original: Float32Array;
+  vectors: Float32Array;
+};
+
+/**
+ * Build a reusable vertex -> displacement mapping for a BufferGeometry.
+ * Each vertex is matched to its nearest FRD node via the same spatial grid used
+ * for field colouring.  The original positions and the per-vertex displacement
+ * vectors are stored on `geometry.userData.deformationMap` so the scale can be
+ * updated cheaply later (e.g. during animation).
+ */
+export function prepareDeformation(
+  geometry: THREE.BufferGeometry,
+  nodeCoords: [number, number, number][],
+  vectors: [number, number, number][],
+): DeformationMap {
+  const pos = geometry.attributes.position;
+  const original = new Float32Array(pos.array.length);
+  original.set(pos.array as Float32Array);
+
+  const perVertexVectors = new Float32Array(pos.count * 3);
+  const grid = nodeCoords.length > 0 ? buildUniformGrid(nodeCoords) : null;
+
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = original[i * 3];
+    const y = original[i * 3 + 1];
+    const z = original[i * 3 + 2];
+    const nodeIdx = grid ? nearestNodeIndex(x, y, z, grid, nodeCoords) : -1;
+    if (nodeIdx >= 0 && nodeIdx < vectors.length) {
+      const [dx, dy, dz] = vectors[nodeIdx];
+      perVertexVectors[i * 3] = dx;
+      perVertexVectors[i * 3 + 1] = dy;
+      perVertexVectors[i * 3 + 2] = dz;
+    }
+  }
+
+  const map: DeformationMap = { original, vectors: perVertexVectors };
+  geometry.userData.deformationMap = map;
+  return map;
+}
+
+/**
+ * Apply a uniform exaggeration scale to every vertex of a BufferGeometry that
+ * has previously been prepared with `prepareDeformation`.
+ */
+export function applyDeformationScale(
+  geometry: THREE.BufferGeometry,
+  scale: number,
+): void {
+  const map = geometry.userData.deformationMap as DeformationMap | undefined;
+  const pos = geometry.attributes.position;
+  if (!map || !pos || pos.count === 0) return;
+
+  const { original, vectors } = map;
+  for (let i = 0; i < pos.count; i += 1) {
+    pos.array[i * 3] = original[i * 3] + scale * vectors[i * 3];
+    pos.array[i * 3 + 1] = original[i * 3 + 1] + scale * vectors[i * 3 + 1];
+    pos.array[i * 3 + 2] = original[i * 3 + 2] + scale * vectors[i * 3 + 2];
+  }
+
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+}
+
 /**
  * Apply a uniform exaggeration scale to every vertex of a BufferGeometry.
  * Each vertex is matched to its nearest FRD node via the same spatial grid
  * used for field colouring, then offset by `scale * displacement_vector`.
+ *
+ * This is a one-shot convenience; for repeated updates use
+ * `prepareDeformation` + `applyDeformationScale`.
  */
 export function applyDeformation(
   geometry: THREE.BufferGeometry,
@@ -40,31 +110,8 @@ export function applyDeformation(
   vectors: [number, number, number][],
   scale: number,
 ): void {
-  const pos = geometry.attributes.position;
-  if (!pos || pos.count === 0 || nodeCoords.length === 0 || vectors.length === 0) {
-    return;
-  }
-
-  const grid = buildUniformGrid(nodeCoords);
-  const original = new Float32Array(pos.array.length);
-  original.set(pos.array);
-
-  for (let i = 0; i < pos.count; i += 1) {
-    const x = original[i * 3];
-    const y = original[i * 3 + 1];
-    const z = original[i * 3 + 2];
-    const nodeIdx = nearestNodeIndex(x, y, z, grid, nodeCoords);
-    if (nodeIdx < 0 || nodeIdx >= vectors.length) continue;
-    const [dx, dy, dz] = vectors[nodeIdx];
-    pos.array[i * 3] = x + scale * dx;
-    pos.array[i * 3 + 1] = y + scale * dy;
-    pos.array[i * 3 + 2] = z + scale * dz;
-  }
-
-  pos.needsUpdate = true;
-  geometry.computeVertexNormals();
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
+  prepareDeformation(geometry, nodeCoords, vectors);
+  applyDeformationScale(geometry, scale);
 }
 
 /**
@@ -79,7 +126,8 @@ export function buildDeformedMesh(
 ): THREE.Mesh {
   const sourceGeo = source.geometry as THREE.BufferGeometry;
   const deformedGeo = sourceGeo.clone();
-  applyDeformation(deformedGeo, nodeCoords, vectors, scale);
+  prepareDeformation(deformedGeo, nodeCoords, vectors);
+  applyDeformationScale(deformedGeo, scale);
 
   const hasColors = Boolean(
     deformedGeo.attributes.color && deformedGeo.attributes.color.count > 0,

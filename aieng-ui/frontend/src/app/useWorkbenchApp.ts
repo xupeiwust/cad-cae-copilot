@@ -301,15 +301,36 @@ export function useWorkbenchApp() {
       caeSummary?.result_summary?.status.has_results ||
       caeSummary?.result_summary?.status.has_fields,
   );
+
+  // Load-case / analysis-step selector state.  Defaults to the first load case
+  // reported by the result summary (modal modes, multi-step static, etc.).
+  const loadCases = useMemo(
+    () => caeSummary?.result_summary?.load_cases ?? [],
+    [caeSummary?.result_summary?.load_cases],
+  );
+  const [selectedLoadCaseId, setSelectedLoadCaseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (loadCases.length === 0) {
+      setSelectedLoadCaseId(null);
+      return;
+    }
+    const valid = loadCases.some((lc) => lc.id === selectedLoadCaseId);
+    if (!selectedLoadCaseId || !valid) {
+      setSelectedLoadCaseId(loadCases[0].id);
+    }
+  }, [loadCases]);
+
   const activeFieldDescriptor = hasCaeResultArtifacts ? fieldDescriptor : null;
 
-  // Fetch the descriptor for the picked field. The picker offers the full result-field
-  // catalog; the backend serves any of them from the FRD (or falls back to synthetic).
+  // Fetch the descriptor for the picked field + load case. The picker offers the
+  // full result-field catalog; the backend serves any of them from the FRD (or
+  // falls back to synthetic).
   useEffect(() => {
-    // Reset manual legend controls when the project or field changes so the
-    // user starts from the solver-derived range/colormap for the new result.
+    // Reset manual legend controls when the project, field, or load case changes
+    // so the user starts from the solver-derived range/colormap for the new result.
     setFieldOverlayConfig(null);
-  }, [selectedId, selectedCaeField]);
+  }, [selectedId, selectedCaeField, selectedLoadCaseId]);
 
   useEffect(() => {
     if (!selectedId || !hasCaeResultArtifacts || !selectedCaeField) {
@@ -317,7 +338,7 @@ export function useWorkbenchApp() {
       return;
     }
     let cancelled = false;
-    void api.getFieldDescriptor(selectedId, selectedCaeField)
+    void api.getFieldDescriptor(selectedId, selectedCaeField, selectedLoadCaseId)
       .then((desc) => {
         if (cancelled) return;
         setFieldDescriptor((current) => {
@@ -325,13 +346,15 @@ export function useWorkbenchApp() {
             current &&
             current.project_id === desc.project_id &&
             current.field_name === desc.field_name &&
+            current.load_case_id === desc.load_case_id &&
             current.format === desc.format &&
             current.basis === desc.basis &&
             current.colormap === desc.colormap &&
             current.min_value === desc.min_value &&
             current.max_value === desc.max_value &&
             current.unit === desc.unit &&
-            current.source === desc.source
+            current.source === desc.source &&
+            (current.values?.length ?? 0) === (desc.values?.length ?? 0)
           ) {
             return current;
           }
@@ -340,7 +363,7 @@ export function useWorkbenchApp() {
       })
       .catch(() => { if (!cancelled) setFieldDescriptor(null); });
     return () => { cancelled = true; };
-  }, [selectedId, selectedCaeField, hasCaeResultArtifacts]);
+  }, [selectedId, selectedCaeField, selectedLoadCaseId, hasCaeResultArtifacts]);
 
   const copyPointerText = useCallback((text: string) => {
     if (!text.trim()) return;
@@ -380,6 +403,9 @@ export function useWorkbenchApp() {
     activeFieldDescriptor,
     selectedCaeField,
     setSelectedCaeField,
+    selectedLoadCaseId,
+    setSelectedLoadCaseId,
+    loadCases,
     fieldOverlayConfig,
     setFieldOverlayConfig,
     caeResultsAvailable: hasCaeResultArtifacts,

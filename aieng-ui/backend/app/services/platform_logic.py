@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app import aieng_bridge
@@ -976,12 +977,41 @@ def _resolve_material_yield(package_path: Path) -> float | None:
     return _lookup_yield_strength(name) if name else None
 
 
+def _frd_step_index_from_load_case_id(load_case_id: str | None, max_steps: int) -> int:
+    """Map a load-case id to a 0-based FRD step index.
+
+    Supports conventions like ``load_case_001`` (→ 0), ``mode_1`` (→ 0),
+    ``mode_01`` (→ 0), and ``buckling_001`` (→ 0).  Unknown or missing ids
+    default to step 0.  Out-of-range indices are clamped to the last step.
+    """
+    if not load_case_id:
+        return 0
+    match = re.search(r"(\d+)\s*$", load_case_id)
+    if not match:
+        return 0
+    try:
+        index = int(match.group(1)) - 1
+    except ValueError:
+        return 0
+    if max_steps <= 0:
+        return 0
+    return max(0, min(index, max_steps - 1))
+
+
 def _extract_frd_field_data(
     package_path: Path,
     field_name: str,
     aieng_root: Path,
+    load_case_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Extract per-node scalar values and coordinates from an FRD inside a package.
+
+    Args:
+        package_path: Path to the .aieng package.
+        field_name: CAE field name to extract.
+        aieng_root: Root of the aieng repository checkout.
+        load_case_id: Optional load-case / mode identifier used to select the
+            corresponding FRD step. Defaults to the first step.
 
     Returns a dict with ``values``, ``node_coords``, ``min_value``,
     ``max_value``, ``unit``, ``warnings`` — or ``None`` if no usable FRD.
@@ -1008,7 +1038,7 @@ def _extract_frd_field_data(
             sys.path.insert(0, str(aieng_src))
             injected = True
 
-        from aieng.simulation.frd_result_extractor import parse_frd
+        from aieng.simulation.frd_result_extractor import parse_frd_steps
         from aieng.simulation.field_region_extractor import _extract_node_coords_from_frd
         from aieng.simulation.field_derivation import (
             FIELD_CATALOG,
@@ -1017,7 +1047,7 @@ def _extract_frd_field_data(
             derive_stress_value,
         )
 
-        fields = parse_frd(temp_frd)
+        fields = parse_frd_steps(temp_frd)
         coords = _extract_node_coords_from_frd(temp_frd)
         if not coords:
             return None
@@ -1032,11 +1062,17 @@ def _extract_frd_field_data(
             return None
         unit = meta["unit"]
 
+        step_index = _frd_step_index_from_load_case_id(
+            load_case_id,
+            max(len(fields.get("S", [])), len(fields.get("DISP", [])), 1),
+        )
+
         if meta["source"] == "stress":
-            s_field = fields.get("S")
-            if not s_field:
+            s_steps = fields.get("S", [])
+            if not s_steps:
                 warnings.append("S (stress tensor) field not found in FRD.")
                 return None
+            s_field = s_steps[step_index] if step_index < len(s_steps) else s_steps[-1]
             yield_strength: float | None = None
             if name == "safety_factor":
                 yield_strength = _resolve_material_yield(package_path)
@@ -1052,10 +1088,11 @@ def _extract_frd_field_data(
                 if v is not None:
                     values[nid] = v
         else:  # displacement
-            disp = fields.get("DISP")
-            if not disp:
+            disp_steps = fields.get("DISP", [])
+            if not disp_steps:
                 warnings.append("DISP field not found in FRD.")
                 return None
+            disp = disp_steps[step_index] if step_index < len(disp_steps) else disp_steps[-1]
             components = disp["components"]
             idx = {c: next((i for i, cc in enumerate(components) if cc == c), None) for c in ("D1", "D2", "D3")}
 

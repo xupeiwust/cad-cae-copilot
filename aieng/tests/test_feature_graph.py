@@ -596,3 +596,126 @@ def test_validator_rejects_editable_true_with_empty_parameters(tmp_path):
     report = validate_package(package_path)
     assert not report.ok
     assert any("editable=true requires" in msg.text for msg in report.messages)
+
+
+def test_slot_recognition_from_elongated_cut_component():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "metadata": {"extraction_backend": "occ", "real_step_parsing": True},
+            "entities": [
+                {"id": "face_base_bottom", "type": "face", "surface_type": "plane", "area": 10000.0, "bounding_box": [0.0, 0.0, 0.0, 100.0, 100.0, 0.0], "normal": [0.0, 0.0, -1.0]},
+                # Slot walls + floor (elongated in X, narrow in Y, shallow in Z)
+                {"id": "face_slot_left", "type": "face", "surface_type": "plane", "area": 200.0, "bounding_box": [10.0, 20.0, 0.0, 50.0, 20.0, 5.0], "adjacent_entity_ids": ["face_base_bottom", "face_slot_floor"]},
+                {"id": "face_slot_right", "type": "face", "surface_type": "plane", "area": 200.0, "bounding_box": [10.0, 22.0, 0.0, 50.0, 22.0, 5.0], "adjacent_entity_ids": ["face_base_bottom", "face_slot_floor"]},
+                {"id": "face_slot_floor", "type": "face", "surface_type": "plane", "area": 800.0, "bounding_box": [10.0, 20.0, 0.0, 50.0, 22.0, 0.0], "adjacent_entity_ids": ["face_base_bottom", "face_slot_left", "face_slot_right"]},
+            ],
+        }
+    )
+    slots = [f for f in result["features"] if f["type"] == "slot"]
+    assert len(slots) == 1
+    assert slots[0]["parameters"]["length_mm"] == 40.0
+    assert slots[0]["parameters"]["width_mm"] == 2.0
+    assert slots[0]["parameters"]["depth_mm"] == 5.0
+
+
+def test_pocket_recognition_from_recessed_component():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "metadata": {"extraction_backend": "occ", "real_step_parsing": True},
+            "entities": [
+                {"id": "face_base_bottom", "type": "face", "surface_type": "plane", "area": 10000.0, "bounding_box": [0.0, 0.0, 0.0, 100.0, 100.0, 0.0]},
+                # Pocket floor + four walls
+                {"id": "face_pocket_floor", "type": "face", "surface_type": "plane", "area": 400.0, "bounding_box": [10.0, 10.0, 0.0, 30.0, 30.0, 0.0], "adjacent_entity_ids": ["face_pocket_front", "face_pocket_back", "face_pocket_left", "face_pocket_right"]},
+                {"id": "face_pocket_front", "type": "face", "surface_type": "plane", "area": 200.0, "bounding_box": [10.0, 10.0, 0.0, 30.0, 10.0, 4.0], "adjacent_entity_ids": ["face_base_bottom", "face_pocket_floor", "face_pocket_left", "face_pocket_right"]},
+                {"id": "face_pocket_back", "type": "face", "surface_type": "plane", "area": 200.0, "bounding_box": [10.0, 30.0, 0.0, 30.0, 30.0, 4.0], "adjacent_entity_ids": ["face_base_bottom", "face_pocket_floor", "face_pocket_left", "face_pocket_right"]},
+                {"id": "face_pocket_left", "type": "face", "surface_type": "plane", "area": 200.0, "bounding_box": [10.0, 10.0, 0.0, 10.0, 30.0, 4.0], "adjacent_entity_ids": ["face_base_bottom", "face_pocket_floor", "face_pocket_front", "face_pocket_back"]},
+                {"id": "face_pocket_right", "type": "face", "surface_type": "plane", "area": 200.0, "bounding_box": [30.0, 10.0, 0.0, 30.0, 30.0, 4.0], "adjacent_entity_ids": ["face_base_bottom", "face_pocket_floor", "face_pocket_front", "face_pocket_back"]},
+            ],
+        }
+    )
+    pockets = [f for f in result["features"] if f["type"] == "pocket"]
+    assert len(pockets) == 1
+    assert pockets[0]["parameters"]["depth_mm"] == 4.0
+    assert pockets[0]["parameters"]["floor_area_mm2"] == 400.0
+
+
+def test_rib_recognition_from_thin_bridging_face():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "metadata": {"extraction_backend": "occ", "real_step_parsing": True},
+            "entities": [
+                {
+                    "id": "body_001",
+                    "type": "solid",
+                    "bounding_box": [0.0, 0.0, 0.0, 100.0, 100.0, 20.0],
+                    "volume": 200000.0,
+                },
+                {"id": "face_base_bottom", "type": "face", "surface_type": "plane", "area": 10000.0, "bounding_box": [0.0, 0.0, 0.0, 100.0, 100.0, 0.0], "adjacent_entity_ids": ["face_rib"]},
+                {"id": "face_top", "type": "face", "surface_type": "plane", "area": 10000.0, "bounding_box": [0.0, 0.0, 20.0, 100.0, 100.0, 20.0], "adjacent_entity_ids": ["face_rib"]},
+                # Internal rib: thin in Y, tall in Z, long in X; not on outer bbox
+                {"id": "face_rib", "type": "face", "surface_type": "plane", "area": 600.0, "normal": [0.0, 1.0, 0.0], "bounding_box": [20.0, 50.0, 0.0, 80.0, 50.0, 20.0], "adjacent_entity_ids": ["face_base_bottom", "face_top"]},
+            ],
+        }
+    )
+    ribs = [f for f in result["features"] if f["type"] == "rib"]
+    assert len(ribs) == 1
+    assert ribs[0]["parameters"]["thickness_mm"] == 0.0
+    assert ribs[0]["parameters"]["height_mm"] == 20.0
+    assert ribs[0]["parameters"]["length_mm"] == 60.0
+
+
+def test_hollow_body_recognition_from_low_fill_ratio():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "metadata": {"extraction_backend": "occ", "real_step_parsing": True},
+            "entities": [
+                {
+                    "id": "body_001",
+                    "type": "solid",
+                    "bounding_box": [0.0, 0.0, 0.0, 100.0, 100.0, 100.0],
+                    "volume": 100000.0,
+                },
+                {"id": "face_1", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_2", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_3", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_4", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_5", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_6", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+            ],
+        }
+    )
+    hollow = [f for f in result["features"] if f["type"] == "hollow_body"]
+    assert len(hollow) == 1
+    assert hollow[0]["parameters"]["bbox_fill_ratio"] == 0.1
+
+
+def test_solid_block_is_not_hollow_body():
+    recognizer = RuleBasedFeatureRecognizer()
+    result = recognizer.recognize(
+        {
+            "format_version": "0.1.0",
+            "entities": [
+                {
+                    "id": "body_001",
+                    "type": "solid",
+                    "bounding_box": [0.0, 0.0, 0.0, 100.0, 100.0, 100.0],
+                    "volume": 950000.0,
+                },
+                {"id": "face_1", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_2", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_3", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_4", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_5", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+                {"id": "face_6", "type": "face", "surface_type": "plane", "area": 10000.0, "body_id": "body_001"},
+            ],
+        }
+    )
+    assert not any(f["type"] == "hollow_body" for f in result["features"])

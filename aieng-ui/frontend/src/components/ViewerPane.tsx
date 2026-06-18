@@ -1,9 +1,16 @@
 import { ModelViewer } from "./ModelViewer";
 import { FieldPicker } from "./FieldPicker";
+import { LoadCasePicker } from "./LoadCasePicker";
 import { FieldLegend } from "./FieldLegend";
 import { resultFieldLabel } from "./viewer/resultFields";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace } from "../appTypes";
 import type { CaeSetupOverlayResponse, FieldOverlayConfig, ProjectRecord, SolverFieldDescriptor } from "../types";
+
+type LoadCaseOption = {
+  id: string;
+  name?: string | null;
+  type?: string | null;
+};
 
 type ViewerPaneProps = {
   runtimeReady: boolean;
@@ -13,6 +20,9 @@ type ViewerPaneProps = {
   activeFieldDescriptor: SolverFieldDescriptor | null;
   selectedCaeField: string;
   onSelectCaeField(name: string): void;
+  selectedLoadCaseId: string | null;
+  loadCases: LoadCaseOption[];
+  onSelectLoadCase(id: string): void;
   caeSetupOverlay?: CaeSetupOverlayResponse | null;
   caeResultsAvailable: boolean;
   effectiveViewerUrl?: string | null;
@@ -36,6 +46,9 @@ export function ViewerPane({
   activeFieldDescriptor,
   selectedCaeField,
   onSelectCaeField,
+  selectedLoadCaseId,
+  loadCases,
+  onSelectLoadCase,
   caeSetupOverlay,
   caeResultsAvailable,
   effectiveViewerUrl,
@@ -79,6 +92,13 @@ export function ViewerPane({
         <div className="viewer-canvas-shell" style={{ position: "relative" }}>
           {caeResultsAvailable ? (
             <FieldPicker value={selectedCaeField} onChange={onSelectCaeField} />
+          ) : null}
+          {caeResultsAvailable && loadCases.length > 0 ? (
+            <LoadCasePicker
+              value={selectedLoadCaseId}
+              loadCases={loadCases}
+              onChange={onSelectLoadCase}
+            />
           ) : null}
           <FieldLegend
             descriptor={activeFieldDescriptor}

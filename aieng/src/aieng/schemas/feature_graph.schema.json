@@ -42,7 +42,11 @@
               "boss",
               "flange",
               "interface_face",
-              "unknown_feature"
+              "unknown_feature",
+              "slot",
+              "pocket",
+              "thread",
+              "hollow_body"
             ]
           },
           "name": {

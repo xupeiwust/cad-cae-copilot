@@ -8,6 +8,10 @@ type DeformationControlsProps = {
   onEnabledChange(enabled: boolean): void;
   scale: number;
   onScaleChange(scale: number): void;
+  animationActive?: boolean;
+  onAnimationActiveChange?(active: boolean): void;
+  animationMode?: "sweep" | "oscillate";
+  onAnimationModeChange?(mode: "sweep" | "oscillate"): void;
   disabled?: boolean;
 };
 
@@ -55,6 +59,13 @@ const BUTTON: CSSProperties = {
   padding: "2px 6px",
 };
 
+const PLAY_BUTTON: CSSProperties = {
+  ...BUTTON,
+  background: "rgba(59, 130, 246, 0.25)",
+  borderColor: "#3b82f6",
+  minWidth: 56,
+};
+
 function _formatScale(scale: number): string {
   if (!Number.isFinite(scale)) return "—";
   if (scale >= 100) return scale.toFixed(0);
@@ -63,9 +74,9 @@ function _formatScale(scale: number): string {
 }
 
 /**
- * Viewer overlay for toggling the exaggerated deformed-shape visualization and
- * adjusting the exaggeration scale. Only appears when the active field carries
- * per-node displacement vectors.
+ * Viewer overlay for toggling the exaggerated deformed-shape visualization,
+ * adjusting the exaggeration scale, and playing a result animation (#255).
+ * Only appears when the active field carries per-node displacement vectors.
  */
 export function DeformationControls({
   descriptor,
@@ -73,6 +84,10 @@ export function DeformationControls({
   onEnabledChange,
   scale,
   onScaleChange,
+  animationActive,
+  onAnimationActiveChange,
+  animationMode,
+  onAnimationModeChange,
   disabled,
 }: DeformationControlsProps) {
   const hasVectors = Boolean(
@@ -87,6 +102,7 @@ export function DeformationControls({
 
   const minScale = 0;
   const maxScale = Math.max(200, scale * 2);
+  const canAnimate = Boolean(onAnimationActiveChange);
 
   return (
     <div className="deformation-controls" style={SHELL}>
@@ -120,13 +136,47 @@ export function DeformationControls({
             max={maxScale}
             step={Math.max(0.01, maxScale / 20000)}
             value={scale}
-            disabled={disabled}
+            disabled={disabled || animationActive}
             onChange={(e) => onScaleChange(parseFloat(e.target.value))}
             style={SLIDER}
           />
           <span style={{ minWidth: 48, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
             {_formatScale(scale)}×
           </span>
+        </div>
+      )}
+
+      {enabled && canAnimate && (
+        <div style={{ ...ROW, justifyContent: "flex-start", gap: 6 }}>
+          <button
+            type="button"
+            style={PLAY_BUTTON}
+            onClick={() => onAnimationActiveChange?.(!animationActive)}
+            disabled={disabled}
+            title={animationActive ? "Pause animation" : "Play result animation"}
+          >
+            {animationActive ? "⏸ Pause" : "▶ Play"}
+          </button>
+          {onAnimationModeChange && (
+            <select
+              aria-label="Animation mode"
+              value={animationMode}
+              disabled={disabled || animationActive}
+              onChange={(e) => onAnimationModeChange(e.target.value as "sweep" | "oscillate")}
+              style={{
+                background: "#111827",
+                color: "#e5e7eb",
+                border: "1px solid #374151",
+                borderRadius: 4,
+                fontSize: 11,
+                padding: "2px 4px",
+                flex: 1,
+              }}
+            >
+              <option value="sweep">Sweep 0→1→0</option>
+              <option value="oscillate">Oscillate ±1</option>
+            </select>
+          )}
         </div>
       )}
 

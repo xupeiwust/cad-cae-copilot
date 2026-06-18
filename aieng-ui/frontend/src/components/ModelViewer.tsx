@@ -245,13 +245,17 @@ export function ModelViewer({
     objectReadyKey,
   );
 
-  // 11b. Deformed-shape overlay state (availability, toggle, auto scale).
+  // 11b. Deformed-shape overlay state (availability, toggle, auto scale, animation).
   const {
     deformationAvailable,
     showDeformedShape,
     setShowDeformedShape,
     deformationScale,
     setDeformationScale,
+    animationActive,
+    setAnimationActive,
+    animationMode,
+    setAnimationMode,
   } = useDeformationOrchestration(fieldDescriptor, objectRef, objectReadyKey);
 
   // 11c. Displacement-warped deformed shape overlay
@@ -263,6 +267,8 @@ export function ModelViewer({
     deformationScale,
     objectReadyKey,
     fieldOverlayConfig,
+    animationActive,
+    animationMode,
   );
 
   // 12. Field-region cluster markers
@@ -522,6 +528,10 @@ export function ModelViewer({
           onEnabledChange={setShowDeformedShape}
           scale={deformationScale}
           onScaleChange={setDeformationScale}
+          animationActive={animationActive}
+          onAnimationActiveChange={setAnimationActive}
+          animationMode={animationMode}
+          onAnimationModeChange={setAnimationMode}
         />
       )}
       <ClippingPlaneControls

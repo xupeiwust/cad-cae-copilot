@@ -835,6 +835,7 @@ export type ProjectSummary = {
 export type SolverFieldDescriptor = {
   field_name: string;
   project_id: string;
+  load_case_id?: string | null;
   format: "vertex_synthetic" | "vertex_json" | string;
   basis?: string | null;
   min_value: number;

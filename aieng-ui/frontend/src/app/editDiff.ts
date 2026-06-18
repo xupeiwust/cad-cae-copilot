@@ -43,7 +43,7 @@ export type GeometryVerificationView = {
   tone: DiffTone;
   headline: string;
   topologyPreserved: boolean | null;
-  staleReferenceRisk: boolean;
+  staleReferenceRisk: boolean | null;
   faceSurvival: EntitySurvivalView | null;
   edgeSurvival: EntitySurvivalView | null;
   brepStatus: string | null;
@@ -121,6 +121,7 @@ function shapeCritique(diff: CritiqueDiff | null | undefined): CritiqueView | nu
   };
 }
 
+/** Turn one backend entity-survival summary into a display-ready view. */
 function shapeEntitySurvival(
   summary: EntitySurvivalSummary | undefined | null,
 ): EntitySurvivalView | null {
@@ -138,13 +139,28 @@ function shapeEntitySurvival(
   };
 }
 
+/**
+ * Derive a read-only geometry-verification view from the backend block.
+ *
+ * Honest states:
+ *   - ``pass``  : topology preserved, no stale-reference risk, no lost refs, exports OK.
+ *   - ``warn``  : topology changed, stale-reference risk, a referenced id was lost,
+ *                 or export sanity degraded.
+ *   - ``fail``  : export sanity failed.
+ *   - ``unknown``: the payload is missing key booleans (e.g. topology_preserved).
+ *
+ * BRep validity is always surfaced as the backend reports it and never used to
+ * force pass/fail.
+ */
 function shapeGeometryVerification(
   gv: GeometryVerification | null | undefined,
 ): GeometryVerificationView | null {
   if (!gv || typeof gv !== "object") return null;
 
-  const topologyPreserved = gv.topology_preserved === true;
-  const staleReferenceRisk = gv.stale_reference_risk === true;
+  const topologyPreserved =
+    typeof gv.topology_preserved === "boolean" ? gv.topology_preserved : null;
+  const staleReferenceRisk =
+    typeof gv.stale_reference_risk === "boolean" ? gv.stale_reference_risk : null;
   const faceSurvival = shapeEntitySurvival(gv.face_edge_survival?.face);
   const edgeSurvival = shapeEntitySurvival(gv.face_edge_survival?.edge);
 
@@ -153,22 +169,25 @@ function shapeGeometryVerification(
   const brep = gv.brep_validity;
 
   const lostReferenced =
-    faceSurvival?.referenced.some((r) => r.status === "lost") ??
-    edgeSurvival?.referenced.some((r) => r.status === "lost") ??
-    false;
+    (faceSurvival?.referenced.some((r) => r.status === "lost") || false) ||
+    (edgeSurvival?.referenced.some((r) => r.status === "lost") || false);
 
   let status: string;
   let tone: DiffTone;
   if (exportStatus === "fail") {
     status = "fail";
     tone = "bad";
-  } else if (!topologyPreserved || staleReferenceRisk || lostReferenced) {
+  } else if (
+    topologyPreserved === false ||
+    staleReferenceRisk === true ||
+    lostReferenced
+  ) {
     status = "warn";
     tone = "caution";
   } else if (exportStatus === "warn") {
     status = "warn";
     tone = "caution";
-  } else if (topologyPreserved) {
+  } else if (topologyPreserved === true && exportStatus === "pass") {
     status = "pass";
     tone = "good";
   } else {
@@ -180,15 +199,19 @@ function shapeGeometryVerification(
   if (status === "pass") {
     headline = "Topology and exports survived the edit.";
   } else if (status === "fail") {
-    headline = exportSanity?.detail ?? "Geometry export failed; the rebuild did not produce usable artifacts.";
+    headline =
+      exportSanity?.detail ??
+      "Geometry export failed; the rebuild did not produce usable artifacts.";
   } else if (lostReferenced) {
     headline = "A referenced face or edge was lost during the edit.";
-  } else if (staleReferenceRisk) {
+  } else if (staleReferenceRisk === true) {
     headline = "Referenced topology may be stale; downstream selections could dangle.";
-  } else if (!topologyPreserved) {
+  } else if (topologyPreserved === false) {
     headline = "Topology changed; some faces/edges were added or removed.";
   } else {
-    headline = exportSanity?.detail ?? "Geometry verification result is unclear.";
+    headline =
+      exportSanity?.detail ??
+      "Geometry verification data is incomplete; topology/export status cannot be determined.";
   }
 
   return {

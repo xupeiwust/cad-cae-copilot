@@ -3275,18 +3275,17 @@ def _diff_topology(
 
 
 def _topology_change_summary(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
-    def _ids(topo: dict[str, Any], entity_type: str) -> set[str]:
-        return {
-            str(e.get("id"))
-            for e in topo.get("entities", [])
-            if isinstance(e, dict) and e.get("type") == entity_type and e.get("id")
-        }
+    """Return a compact topology-drift summary between two topology maps.
 
+    Compares solid/face/edge entity id sets and reports counts, samples, and
+    whether any entity type changed. Reuses ``_topology_entity_ids`` so the id
+    extraction logic is not duplicated.
+    """
     entity_id_changes: dict[str, Any] = {}
     changed = False
     for entity_type in ("solid", "face", "edge"):
-        before_ids = _ids(before, entity_type)
-        after_ids = _ids(after, entity_type)
+        before_ids = _topology_entity_ids(before, entity_type)
+        after_ids = _topology_entity_ids(after, entity_type)
         added = sorted(after_ids - before_ids)
         removed = sorted(before_ids - after_ids)
         survived = before_ids & after_ids
@@ -3393,9 +3392,10 @@ def _feature_reference_ids(feature: dict[str, Any], entity_kind: str) -> list[st
     if isinstance(geometry_refs, dict):
         if isinstance(geometry_refs.get(refs_key), list):
             candidates.extend(geometry_refs[refs_key])
-        if entity_kind == "face" and isinstance(geometry_refs.get("entities"), list):
+        if isinstance(geometry_refs.get("entities"), list):
+            prefix = f"{entity_kind}_"
             candidates.extend(
-                ref for ref in geometry_refs["entities"] if str(ref).startswith("face_")
+                ref for ref in geometry_refs["entities"] if str(ref).startswith(prefix)
             )
 
     if not candidates:

@@ -129,8 +129,62 @@ test("geometry verification warns when referenced face is lost", () => {
   expect(view.needsAttention).toBe(true);
 });
 
+test("geometry verification preserves unknown referenced-id status", () => {
+  const view = shapeEditDiff(
+    resp({
+      geometry_verification: {
+        topology_preserved: true,
+        stale_reference_risk: false,
+        topology_change: { topology_changed: false },
+        face_edge_survival: {
+          face: {
+            before_count: 2,
+            after_count: 2,
+            survived_count: 2,
+            added_count: 0,
+            removed_count: 0,
+            referenced: [{ id: "face_999", status: "unknown" }],
+          },
+        },
+        export_sanity: {
+          step_exported: true,
+          stl_exported: true,
+          glb_exported: true,
+          status: "pass",
+          detail: "",
+        },
+      },
+    }),
+  );
+  expect(view.geometryVerification?.faceSurvival?.referenced[0]).toMatchObject({
+    id: "face_999",
+    status: "unknown",
+  });
+  expect(view.geometryVerification?.status).toBe("pass");
+});
+
 test("geometry verification absent when payload missing leaves view empty", () => {
   const view = shapeEditDiff(resp({}));
   expect(view.geometryVerification).toBeNull();
   expect(view.hasData).toBe(false);
+});
+
+test("geometry verification unknown when topology_preserved is missing", () => {
+  const view = shapeEditDiff(
+    resp({
+      geometry_verification: {
+        topology_preserved: undefined as unknown as boolean,
+        stale_reference_risk: false,
+        export_sanity: {
+          step_exported: true,
+          stl_exported: true,
+          glb_exported: true,
+          status: "pass",
+          detail: "",
+        },
+      },
+    }),
+  );
+  expect(view.geometryVerification?.status).toBe("unknown");
+  expect(view.geometryVerification?.topologyPreserved).toBeNull();
 });

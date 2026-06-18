@@ -1478,8 +1478,8 @@ export type EntitySurvivalSummary = {
 
 /** Topology / export survival evidence from a CAD edit (#309, #311). */
 export type GeometryVerification = {
-  topology_preserved: boolean;
-  stale_reference_risk: boolean;
+  topology_preserved?: boolean;
+  stale_reference_risk?: boolean;
   topology_change?: {
     topology_changed: boolean;
     added_count?: number;

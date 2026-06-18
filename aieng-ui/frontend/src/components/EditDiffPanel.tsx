@@ -137,8 +137,17 @@ function EntitySurvivalRow({
       {survival.added > 0 ? <span>+ {survival.added} added</span> : null}
       {survival.removed > 0 ? <span>− {survival.removed} removed</span> : null}
       {survival.referenced.length > 0 ? (
-        <span title={survival.referenced.map((r) => `${r.id}: ${r.status}`).join("\n")}>
-          {survival.referenced.length} referenced
+        <span className="editdiff-referenced">
+          {survival.referenced.map((ref) => {
+            const statusClass = ["lost", "survived", "new", "unknown"].includes(ref.status)
+              ? `editdiff-ref-${ref.status}`
+              : "editdiff-ref-unknown";
+            return (
+              <code key={`${ref.id}:${ref.status}`} className={`editdiff-ref ${statusClass}`}>
+                {ref.id}: {ref.status}
+              </code>
+            );
+          })}
         </span>
       ) : null}
     </div>

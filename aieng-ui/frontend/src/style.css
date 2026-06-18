@@ -5366,7 +5366,18 @@ textarea {
   text-transform: uppercase;
   color: #b45309;
 }
-.editdiff-topo-changes { display: flex; gap: 12px; font-size: 11px; color: var(--text-secondary); }
+.editdiff-topo-changes { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; color: var(--text-secondary); }
+.editdiff-referenced { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.editdiff-ref {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.12);
+  color: var(--text-secondary);
+}
+.editdiff-ref-lost { color: #b91c1c; background: rgba(239, 68, 68, 0.12); }
+.editdiff-ref-survived { color: #166534; background: rgba(22, 163, 74, 0.12); }
+.editdiff-ref-new { color: #1d4ed8; background: rgba(59, 130, 246, 0.12); }
+.editdiff-ref-unknown { color: #b45309; background: rgba(217, 119, 6, 0.12); }
 
 /* V&V-40 credibility badge (#218) — risk-commensurate trust tier, read-only. */
 .credibility-badge {

@@ -88,5 +88,6 @@ describe("EditDiffPanel geometry verification surface (#311)", () => {
     expect(screen.getByText(/referenced face or edge was lost/i)).toBeTruthy();
     expect(screen.getByText(/Stale reference risk/i)).toBeTruthy();
     expect(screen.getByText(/Topology changed/i)).toBeTruthy();
+    expect(screen.getByText(/face_003: lost/i)).toBeTruthy();
   });
 });

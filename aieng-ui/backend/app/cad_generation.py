@@ -7467,6 +7467,97 @@ def get_named_part_bbox(
     }
 
 
+def insert_fasteners(
+    settings: Any,
+    project_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Insert semantic standard-part fasteners for selected hole features.
+
+    Wraps ``aieng.standards.fastener_insertion.insert_fasteners_for_holes`` so
+    agents can populate recognized holes with matched screws/nuts through the MCP
+    runtime. The call rewrites the .aieng package atomically and records an
+    insertion report; it does not rebuild CAD geometry or claim B-Rep solids exist.
+    """
+    from aieng.standards import insert_fasteners_for_holes
+    from .project_io import get_project, resolve_project_path
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+
+    package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if package_path is None or not package_path.exists():
+        return {"status": "error", "code": "package_not_found", "message": ".aieng package not found"}
+
+    auto_select = bool(payload.get("auto_select_holes"))
+    material = str(payload.get("material") or "Steel-1045")
+    overwrite_existing = bool(payload.get("overwrite_existing"))
+    hole_feature_ids = payload.get("hole_feature_ids")
+
+    if not auto_select and (not isinstance(hole_feature_ids, list) or not hole_feature_ids):
+        return {
+            "status": "error",
+            "code": "missing_hole_feature_ids",
+            "message": "Provide hole_feature_ids or set auto_select_holes=true.",
+        }
+
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            if "graph/feature_graph.json" not in zf.namelist():
+                return {
+                    "status": "error",
+                    "code": "feature_graph_missing",
+                    "message": "graph/feature_graph.json not found in package",
+                }
+            feature_graph = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+    except Exception as exc:
+        return {"status": "error", "code": "feature_graph_read_failed", "message": f"{exc}"}
+
+    if auto_select:
+        features = feature_graph.get("features", []) if isinstance(feature_graph, dict) else []
+        selected = [
+            str(f.get("id"))
+            for f in features
+            if isinstance(f, dict) and f.get("id") and isinstance(f.get("hole_metadata"), dict)
+        ]
+        if not selected:
+            return {
+                "status": "error",
+                "code": "no_holes_found",
+                "message": "auto_select_holes found no features carrying hole_metadata.",
+            }
+        hole_feature_ids = selected
+
+    if not isinstance(hole_feature_ids, list) or not hole_feature_ids:
+        return {
+            "status": "error",
+            "code": "bad_hole_feature_ids",
+            "message": "hole_feature_ids must be a non-empty list.",
+        }
+
+    lock_path = str(package_path) + ".lock"
+    try:
+        with FileLock(lock_path, timeout=30):
+            report = insert_fasteners_for_holes(
+                package_path,
+                [str(item) for item in hole_feature_ids],
+                material=material,
+                overwrite_existing=overwrite_existing,
+            )
+    except TimeoutError:
+        return {
+            "status": "error",
+            "code": "package_lock_timeout",
+            "message": "Could not acquire package lock within 30 seconds.",
+        }
+    except Exception as exc:
+        return {"status": "error", "code": "insertion_failed", "message": f"{exc}"}
+
+    return {"status": "ok", "project_id": project_id, **report}
+
+
 # ── Stale mapping marker ──────────────────────────────────────────────────────
 
 def _mark_cae_mapping_stale(pkg_path: Path) -> None:

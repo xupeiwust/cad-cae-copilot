@@ -1406,6 +1406,40 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "additionalProperties": True,
     },
+    "cad.insert_fasteners": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "hole_feature_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Explicit hole feature IDs to populate. Required unless auto_select_holes is true. "
+                    "Each ID must match a feature in graph/feature_graph.json that carries hole_metadata."
+                ),
+            },
+            "auto_select_holes": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "When true, select every feature in the feature graph that carries hole_metadata. "
+                    "Equivalent to passing all such feature IDs in hole_feature_ids."
+                ),
+            },
+            "material": {
+                "type": "string",
+                "default": "Steel-1045",
+                "description": "Material name for inserted fasteners (default Steel-1045).",
+            },
+            "overwrite_existing": {
+                "type": "boolean",
+                "default": False,
+                "description": "Allow re-inserting fasteners for holes that already have inserted features.",
+            },
+        },
+        "additionalProperties": True,
+    },
     "cad.refine": {
         "type": "object",
         "required": ["project_id", "feedback"],

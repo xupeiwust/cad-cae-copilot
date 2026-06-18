@@ -532,6 +532,32 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_insert_fasteners(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import cad_generation as _cg
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        return _cg.insert_fasteners(active_settings, str(project_id), dict(inp))
+
+    rt.register_tool(
+        "cad.insert_fasteners",
+        _tool_cad_insert_fasteners,
+        requires_approval=True,
+        read_only=False,
+        destructive=False,
+        input_schema=_schema("cad.insert_fasteners"),
+        description=(
+            "Insert semantic standard-part fasteners for selected hole features. "
+            "Matches hole diameter to the metric clearance-hole catalog, chooses screw length "
+            "from the mating stack thickness, and appends screw/nut standard_part features plus "
+            "a fastener_insertion_report to the .aieng package. Pass explicit hole_feature_ids "
+            "or set auto_select_holes=true to populate every feature that carries hole_metadata. "
+            "Does not rebuild CAD geometry or claim B-Rep fastener solids exist — it records "
+            "semantic placement for downstream BOM and assembly CAE."
+        ),
+    )
+
     def _tool_cad_refine(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
 

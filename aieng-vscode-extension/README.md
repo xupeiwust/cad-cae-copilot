@@ -11,7 +11,9 @@ AIENG project and ask your agent to generate the first model.
 
 1. Install the extension from a local `.vsix` or build it from this folder.
 2. In VS Code, run `AIENG: Open AIENG Home`.
-3. If the backend is not running, click `Start AIENG Backend`.
+3. Connect to a running AIENG backend. For users, the simplest path is the
+   Docker all-in-one backend; contributors can also click `Start AIENG Backend`
+   from a repo checkout.
 4. Click `Start New Project`.
 5. Click `Copy starter prompt` and paste it into your existing agent chat
    (Codex, Copilot Chat, Claude Code, or another MCP-capable agent).
@@ -74,11 +76,33 @@ http://127.0.0.1:8000
 
 Change `aieng.backendUrl` in VS Code settings if your backend runs elsewhere.
 
+## Use with Docker, no repo checkout
+
+The extension can connect to an already-running packaged AIENG backend. This is
+the recommended path for users who installed the extension from a `.vsix` and do
+not have a contributor checkout.
+
+Start the all-in-one backend:
+
+```powershell
+docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data ghcr.io/armpro24-blip/aieng-workbench:latest
+```
+
+Then in VS Code:
+
+1. Set `aieng.backendUrl` to `http://127.0.0.1:8000`.
+2. Run `AIENG: Open AIENG Home`.
+3. Use `Start New Project` or open an existing project from the backend.
+
+Do not use `Start AIENG Backend` in this Docker mode. That button is a
+contributor convenience for starting a backend from `aieng-ui/backend` in a repo
+checkout. The Docker container owns the backend process.
+
 ## Install it
 
 ### Option 1: Install from a local `.vsix`
 
-If you already have a file such as `aieng-cad-preview-0.1.1.vsix`:
+If you already have a file such as `aieng-cad-preview-0.1.4.vsix`:
 
 1. Open the Extensions view in VS Code.
 2. Click the `...` menu in the Extensions panel.
@@ -93,7 +117,7 @@ From `cad-cae-copilot/aieng-vscode-extension`:
 ```powershell
 npm install
 npm run vsix
-code --install-extension .\aieng-cad-preview-0.1.1.vsix
+code --install-extension .\aieng-cad-preview-0.1.4.vsix
 ```
 
 Confirm installation by searching for `AIENG CAD Preview` in the Extensions

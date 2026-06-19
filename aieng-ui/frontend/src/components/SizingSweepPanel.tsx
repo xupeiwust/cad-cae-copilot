@@ -2,6 +2,7 @@ import { useMemo } from "react";
 
 import {
   isSizingSweepReportMeaningful,
+  sizingSweepRunDraft,
   sizingSweepRows,
   sizingSweepSummary,
   sizingSweepWinnerDraft,
@@ -30,6 +31,7 @@ const STATUS_CLASS: Record<string, string> = {
 export function SizingSweepPanel({ report, onUseInChat }: SizingSweepPanelProps) {
   const rows = useMemo(() => (report ? sizingSweepRows(report) : []), [report]);
   const winnerDraft = useMemo(() => (report ? sizingSweepWinnerDraft(report) : null), [report]);
+  const runDraft = useMemo(() => (report ? sizingSweepRunDraft(report) : null), [report]);
 
   if (!isSizingSweepReportMeaningful(report)) return null;
 
@@ -38,6 +40,17 @@ export function SizingSweepPanel({ report, onUseInChat }: SizingSweepPanelProps)
       <div className="sizing-sweep-head">
         <strong>Sizing sweep</strong>
         <span className="sizing-sweep-summary">{sizingSweepSummary(report!)}</span>
+        {runDraft ? (
+          <button
+            type="button"
+            className="sizing-sweep-action"
+            onClick={() => onUseInChat?.(runDraft)}
+            disabled={!onUseInChat}
+            title="Draft an approval-gated opt.sizing_sweep run with the same parameter and values"
+          >
+            Run again
+          </button>
+        ) : null}
         {winnerDraft ? (
           <button
             type="button"

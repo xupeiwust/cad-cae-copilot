@@ -12,9 +12,13 @@ afterEach(cleanup);
 const makeReport = (): SizingSweepReport => ({
   status: "ok",
   tool: "opt.sizing_sweep",
+  project_id: "proj_1",
+  feature_id: "feat_wall",
   parameter_name: "thickness",
   objective: "min_mass",
   objective_metric: "mass",
+  swept_values: [2, 3],
+  constraint: { stress_limit: 250, safety_factor: 1.5 },
   variants: [
     {
       value: 2.0,
@@ -57,8 +61,18 @@ describe("SizingSweepPanel", () => {
     const onUseInChat = vi.fn();
     render(<SizingSweepPanel report={makeReport()} onUseInChat={onUseInChat} />);
     expect(screen.getByText("Sizing sweep")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Run again" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Apply winner" })).toBeTruthy();
     expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 variants
+  });
+
+  it("drafts a repeat sizing sweep with feature id, parameter, values, and constraints", () => {
+    const onUseInChat = vi.fn();
+    render(<SizingSweepPanel report={makeReport()} onUseInChat={onUseInChat} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(onUseInChat).toHaveBeenCalledWith(
+      "Run opt.sizing_sweep project_id=proj_1 featureId=feat_wall parameterName=thickness values=[2, 3] objective=min_mass stress_limit=250 safety_factor=1.5 apply_winner=false",
+    );
   });
 
   it("drafts the winner on button click", () => {

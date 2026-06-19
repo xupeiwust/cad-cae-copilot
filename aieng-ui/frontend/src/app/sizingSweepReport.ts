@@ -41,6 +41,28 @@ export function sizingSweepWinnerDraft(report: SizingSweepReport): string | null
   return `/modify set ${parameterName} to ${report.recommended.value}`;
 }
 
+export function sizingSweepRunDraft(report: SizingSweepReport): string | null {
+  const featureId = report.feature_id;
+  const parameterName = report.parameter_name;
+  if (!featureId || !parameterName) return null;
+  const values = (report.swept_values?.length ? report.swept_values : report.variants?.map((v) => v.value) ?? [])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (values.length === 0) return null;
+  const parts = [
+    "Run opt.sizing_sweep",
+    report.project_id ? `project_id=${report.project_id}` : null,
+    `featureId=${featureId}`,
+    `parameterName=${parameterName}`,
+    `values=[${values.join(", ")}]`,
+    `objective=${report.objective ?? "min_mass"}`,
+    report.constraint?.stress_limit != null ? `stress_limit=${report.constraint.stress_limit}` : null,
+    report.constraint?.safety_factor != null ? `safety_factor=${report.constraint.safety_factor}` : null,
+    report.constraint?.displacement_limit != null ? `displacement_limit=${report.constraint.displacement_limit}` : null,
+    "apply_winner=false",
+  ].filter(Boolean);
+  return parts.join(" ");
+}
+
 export function sizingSweepSummary(report: SizingSweepReport): string {
   const feasible = report.feasible_count ?? 0;
   const total = report.variant_count ?? 0;

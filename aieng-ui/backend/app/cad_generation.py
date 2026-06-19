@@ -840,6 +840,8 @@ sys.excepthook = _aieng_excepthook
 __AIENG_GENERATED_CODE__
 # ---- end generated code ----
 
+_AIENG_SOURCE_LABEL_HINTS = __AIENG_SOURCE_LABEL_HINTS__
+
 # normalise: BuildPart context → Part
 if hasattr(result, "part"):
     result = result.part
@@ -924,10 +926,14 @@ def _aieng_recover_boolean_labels(result):
         for _name, _value in list(globals().items()):
             if _name.startswith("_") or _name in ("result", "build123d", "__builtins__"):
                 continue
-            _label = getattr(_value, "label", "") or ""
-            if _label:
+            _hint = _AIENG_SOURCE_LABEL_HINTS.get(_name, {})
+            _label = getattr(_value, "label", "") or _hint.get("label") or ""
+            _color_hint = _hint.get("color")
+            if _label or _color_hint:
                 _cand = _collect_candidate(_value, _label)
                 if _cand is not None:
+                    if _cand[2] is None and _color_hint is not None:
+                        _cand = (_cand[0], _cand[1], _color_hint, _cand[3])
                     _candidates.append(_cand)
             # ``previous_result`` is injected by append-mode execution; STEP import
             # preserves labels on immediate children but loses labels on leaf solids.
@@ -4416,6 +4422,67 @@ def _extract_design_rule_violation(stderr_text: str | None) -> str | None:
     return None
 
 
+def _extract_source_label_map(source_code: str) -> dict[str, dict[str, Any]]:
+    """Extract explicit variable `.label` / `.color` assignments from build123d code."""
+    import ast
+
+    def _rgb(node: ast.AST) -> list[float] | None:
+        if isinstance(node, (ast.Tuple, ast.List)):
+            values = list(node.elts)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Color"
+        ):
+            values = list(node.args)
+        else:
+            return None
+        if len(values) < 3:
+            return None
+        rgb: list[float] = []
+        for value in values[:3]:
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, (int, float)):
+                return None
+            rgb.append(float(value.value))
+        return rgb
+
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return {}
+
+    hints: dict[str, dict[str, Any]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.attr in {"label", "color"}
+            ):
+                continue
+            name = target.value.id
+            if target.attr == "label":
+                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    hints.setdefault(name, {})["label"] = node.value.value
+            else:
+                rgb = _rgb(node.value)
+                if rgb is not None:
+                    hints.setdefault(name, {})["color"] = rgb
+    return hints
+
+
+def _build_build123d_runner_script(code: str, timeout: int) -> str:
+    source_hints = json.dumps(_extract_source_label_map(code), sort_keys=True)
+    return (
+        _build_resource_limit_preamble(_resource_limits_from_env(timeout))
+        + _RUNNER_TEMPLATE
+        .replace("__AIENG_GENERATED_CODE__", code)
+        .replace("__AIENG_SOURCE_LABEL_HINTS__", source_hints)
+    )
+
+
 def _execute_build123d_code(
     code: str,
     timeout: int = 60,
@@ -4430,9 +4497,7 @@ def _execute_build123d_code(
     yields periodic heartbeats so the SSE client sees progress during a long
     build123d invocation.
     """
-    runner_script = _build_resource_limit_preamble(
-        _resource_limits_from_env(timeout)
-    ) + _RUNNER_TEMPLATE.replace("__AIENG_GENERATED_CODE__", code)
+    runner_script = _build_build123d_runner_script(code, timeout)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
@@ -5082,9 +5147,7 @@ def _execute_build123d_code_streaming(
     The subprocess is always reaped before the generator returns, even when the
     caller stops consuming early (e.g. client disconnect).
     """
-    runner_script = _build_resource_limit_preamble(
-        _resource_limits_from_env(timeout)
-    ) + _RUNNER_TEMPLATE.replace("__AIENG_GENERATED_CODE__", code)
+    runner_script = _build_build123d_runner_script(code, timeout)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)

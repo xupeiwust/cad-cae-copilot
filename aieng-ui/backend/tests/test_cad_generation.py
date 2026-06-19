@@ -820,6 +820,44 @@ def test_execute_build123d_boolean_preserves_part_labels_and_colors(tmp_path: Pa
     assert body_colors.get("part_b") == [0.0, 1.0, 0.0]
 
 
+def test_extract_source_label_map_parses_semicolon_assignments() -> None:
+    from app.cad_generation import _extract_source_label_map
+
+    code = (
+        "from build123d import *\n"
+        "body = Box(10, 10, 10); body.label = 'housing'; body.color = Color(0.2, 0.4, 0.6)\n"
+        "pin = Cylinder(1, 5); pin.color = [0.7, 0.8, 0.9]\n"
+    )
+
+    hints = _extract_source_label_map(code)
+    assert hints["body"]["label"] == "housing"
+    assert hints["body"]["color"] == [0.2, 0.4, 0.6]
+    assert hints["pin"]["color"] == [0.7, 0.8, 0.9]
+
+
+def test_execute_build123d_recovers_label_after_variable_boolean_overwrite(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "overwrite-label")
+    code = (
+        "from build123d import *\n"
+        "body = Box(20, 20, 20); body.label = 'housing'; body.color = Color(0.2, 0.4, 0.6)\n"
+        "cutter = Cylinder(3, 30)\n"
+        "body = body - cutter\n"
+        "result = body\n"
+    )
+
+    out = execute_build123d_code(settings, pid, {"code": code, "thumbnail": False})
+
+    assert out["status"] == "ok"
+    assert out["named_parts"] == ["housing"]
+    body = next((b for b in out["mesh_meta"]["bodies"] if b["name"] == "housing"), None)
+    assert body is not None
+    assert body["color"] == pytest.approx([0.2, 0.4, 0.6])
+
+
 def test_execute_build123d_subtraction_preserves_part_label_and_color(tmp_path: Path) -> None:
     pytest.importorskip("build123d")
     from app.cad_generation import execute_build123d_code

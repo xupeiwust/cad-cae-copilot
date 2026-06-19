@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from aieng.converters.critique_engine import critique_geometry, get_rule_pack
+from aieng.converters.critique_engine import critique_geometry, get_rule_pack, resolve_rule_pack_key
 
 
 def _thin_wall_topology() -> dict:
@@ -53,6 +53,16 @@ def test_get_rule_pack_defaults_to_cnc() -> None:
     assert pack.name == "cnc_aluminium"
 
 
+def test_process_aliases_resolve_to_explicit_rule_packs() -> None:
+    assert resolve_rule_pack_key("machining") == "cnc"
+    assert get_rule_pack("cnc-aluminum").name == "cnc_aluminium"
+    assert resolve_rule_pack_key("additive manufacturing") == "fdm"
+    assert get_rule_pack("3d printing").name == "fdm"
+    assert resolve_rule_pack_key("resin") == "sla"
+    assert resolve_rule_pack_key("die casting") == "casting"
+    assert get_rule_pack("casting").name == "casting_aluminium"
+
+
 def test_cnc_flags_thin_wall() -> None:
     result = critique_geometry(
         _thin_wall_topology(),
@@ -93,6 +103,27 @@ def test_sheet_metal_intermediate_threshold() -> None:
     findings = [f for f in result["findings"] if f["rule"] == "min_wall_thickness"]
     assert findings
     assert "sheet_metal" in findings[0]["observation"]
+
+
+def test_casting_rule_pack_uses_casting_threshold_not_cnc_fallback() -> None:
+    topology = {
+        "entities": [
+            {"id": "body_001", "type": "solid", "bounding_box": [0, 0, 0, 50, 50, 3.5]},
+        ]
+    }
+    result = critique_geometry(
+        topology,
+        _thin_wall_feature_graph(),
+        mode="engineering",
+        process="casting",
+    )
+    assert result["process"] == "casting_aluminium"
+    assert result["rules_applied"]["requested_process"] == "casting"
+    assert result["rules_applied"]["process_key"] == "casting"
+    assert result["rules_applied"]["min_wall_mm"] == 4.0
+    findings = [f for f in result["findings"] if f["rule"] == "min_wall_thickness"]
+    assert findings
+    assert "casting_aluminium minimum is 4.0mm" in findings[0]["observation"]
 
 
 def test_cnc_checks_standard_hole_size() -> None:

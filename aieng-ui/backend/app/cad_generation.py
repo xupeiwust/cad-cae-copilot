@@ -8095,7 +8095,9 @@ def critique(
 
     Payload (all optional):
         mode: "auto" (default) | "engineering" | "geometry"
-        process: "cnc" (default) | "sheet_metal" | "fdm" | "sla"
+        process: "cnc" (default) | "sheet_metal" | "casting" | "fdm" | "sla";
+            common aliases such as "machining", "additive manufacturing",
+            "3d printing", and "resin" resolve to explicit rule packs.
         min_wall_mm: float, override the selected rule pack's min wall.
         min_corner_radius_mm: float, override the selected rule pack's min corner radius.
 

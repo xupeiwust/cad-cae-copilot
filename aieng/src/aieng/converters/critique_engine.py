@@ -59,6 +59,17 @@ _DFM_RULE_PACKS: dict[str, DfMRulePack] = {
             "not modeled.",
         ),
     ),
+    "casting": DfMRulePack(
+        name="casting_aluminium",
+        min_wall_mm=4.0,
+        min_corner_radius_mm=3.0,
+        check_standard_holes=False,
+        notes=(
+            "Assumes small aluminium casting. Uses coarse wall/radius proxies only; "
+            "draft angle, parting line, shrinkage allowance, risers/gates, and "
+            "post-machining stock are not modeled.",
+        ),
+    ),
     "fdm": DfMRulePack(
         name="fdm",
         min_wall_mm=1.2,
@@ -81,10 +92,44 @@ _DFM_RULE_PACKS: dict[str, DfMRulePack] = {
     ),
 }
 
+_DFM_RULE_PACK_ALIASES: dict[str, str] = {
+    "machining": "cnc",
+    "machine": "cnc",
+    "milled": "cnc",
+    "milling": "cnc",
+    "cnc_aluminum": "cnc",
+    "cnc_aluminium": "cnc",
+    "cast": "casting",
+    "die_cast": "casting",
+    "die_casting": "casting",
+    "sand_cast": "casting",
+    "sand_casting": "casting",
+    "additive": "fdm",
+    "additive_manufacturing": "fdm",
+    "3d_print": "fdm",
+    "3d_printing": "fdm",
+    "fff": "fdm",
+    "fused_deposition": "fdm",
+    "resin": "sla",
+    "resin_printing": "sla",
+    "stereolithography": "sla",
+}
+
+
+def _normalize_process_token(process: str) -> str:
+    return str(process or "cnc").lower().strip().replace("-", "_").replace(" ", "_")
+
+
+def resolve_rule_pack_key(process: str) -> str:
+    """Resolve user-facing process names to a known rule-pack key."""
+    token = _normalize_process_token(process)
+    token = _DFM_RULE_PACK_ALIASES.get(token, token)
+    return token if token in _DFM_RULE_PACKS else "cnc"
+
 
 def get_rule_pack(process: str) -> DfMRulePack:
     """Return the rule pack for a process name, falling back to CNC."""
-    return _DFM_RULE_PACKS.get(str(process or "cnc").lower().replace("-", "_"), _DFM_RULE_PACKS["cnc"])
+    return _DFM_RULE_PACKS[resolve_rule_pack_key(process)]
 
 
 def is_named_part_feature(feature: dict[str, Any]) -> bool:
@@ -296,7 +341,10 @@ def critique_geometry(
     rule_pack: DfMRulePack | None = None,
 ) -> dict[str, Any]:
     mode = str(mode or "auto")
-    pack = rule_pack or get_rule_pack(process)
+    requested_process = str(process or "cnc")
+    process_key = resolve_rule_pack_key(requested_process)
+    pack = rule_pack or _DFM_RULE_PACKS[process_key]
+    rule_pack_key = "custom" if rule_pack is not None else process_key
     min_wall = float(min_wall_mm if min_wall_mm is not None else pack.min_wall_mm)
     min_corner_radius = float(
         min_corner_radius_mm if min_corner_radius_mm is not None else pack.min_corner_radius_mm
@@ -327,6 +375,8 @@ def critique_geometry(
                 "engineering_audit_run": False,
             },
             "rules_applied": {
+                "requested_process": requested_process,
+                "process_key": rule_pack_key,
                 "process": pack.name,
                 "min_wall_mm": min_wall,
                 "min_corner_radius_mm": min_corner_radius,
@@ -534,6 +584,8 @@ def critique_geometry(
         "fail_first_objections": fail_first,
         "findings": findings,
         "rules_applied": {
+            "requested_process": requested_process,
+            "process_key": rule_pack_key,
             "process": pack.name,
             "min_wall_mm": min_wall,
             "min_corner_radius_mm": min_corner_radius,

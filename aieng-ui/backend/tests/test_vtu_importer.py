@@ -1,7 +1,9 @@
-"""Tests for the ASCII VTU result importer (#279 D1/D2)."""
+"""Tests for the VTU result importer (#279 D1/D2)."""
 
 from __future__ import annotations
 
+import base64
+import struct
 import zipfile
 from pathlib import Path
 
@@ -47,6 +49,33 @@ _BINARY_VTU = """<?xml version="1.0"?>
 """
 
 
+def _binary_data_array(values: list[float], *, vtk_type: str = "Float64") -> str:
+    code = {"Float32": "f", "Float64": "d"}[vtk_type]
+    payload = struct.pack(f"<{len(values)}{code}", *values)
+    blob = struct.pack("<I", len(payload)) + payload
+    return base64.b64encode(blob).decode("ascii")
+
+
+_INLINE_BINARY_VTU = f"""<?xml version="1.0"?>
+<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian" header_type="UInt32">
+  <UnstructuredGrid>
+    <Piece NumberOfPoints="3" NumberOfCells="0">
+      <Points>
+        <DataArray type="Float64" NumberOfComponents="3" format="binary">
+          {_binary_data_array([0, 0, 0, 1, 0, 0, 0, 2, 0])}
+        </DataArray>
+      </Points>
+      <PointData>
+        <DataArray type="Float64" Name="von_mises" format="binary">
+          {_binary_data_array([12, 24, 36])}
+        </DataArray>
+      </PointData>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>
+"""
+
+
 def _make_vtu_package(pkg_path: Path, vtu_text: str) -> None:
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -72,7 +101,16 @@ def test_parse_vtu_appended_binary_is_unavailable() -> None:
     parsed = parse_vtu(_BINARY_VTU)
     # Appended/binary payloads are not supported — degrade honestly, never crash.
     assert parsed["available"] is False
-    assert "ascii" in (parsed.get("reason") or "").lower()
+    assert "unsupported" in (parsed.get("reason") or "").lower()
+
+
+def test_parse_vtu_inline_binary_points_and_point_data() -> None:
+    from app.vtu_importer import parse_vtu
+
+    parsed = parse_vtu(_INLINE_BINARY_VTU)
+    assert parsed["available"] is True
+    assert parsed["points"] == [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 2.0, 0.0)]
+    assert parsed["point_data"]["von_mises"]["values"] == [12.0, 24.0, 36.0]
 
 
 def test_parse_vtu_malformed_component_count_skips_array() -> None:
@@ -102,6 +140,19 @@ def test_extract_vtu_field_scalar(tmp_path: Path) -> None:
     assert field["min_value"] == 10.0
     assert field["max_value"] == 40.0
     assert len(field["node_coords"]) == 4
+    assert field["source"] == "vtu"
+
+
+def test_extract_vtu_field_inline_binary_scalar(tmp_path: Path) -> None:
+    from app.vtu_importer import extract_vtu_field
+
+    pkg = tmp_path / "vtu_binary_scalar.aieng"
+    _make_vtu_package(pkg, _INLINE_BINARY_VTU)
+
+    field = extract_vtu_field(pkg, "von_mises")
+    assert field is not None
+    assert field["values"] == [12.0, 24.0, 36.0]
+    assert field["node_coords"] == [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]
     assert field["source"] == "vtu"
 
 

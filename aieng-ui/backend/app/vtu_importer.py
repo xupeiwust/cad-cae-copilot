@@ -1,17 +1,20 @@
-"""ASCII VTU (VTK UnstructuredGrid) result importer (#279 D1/D2).
+"""VTU (VTK UnstructuredGrid) result importer (#279 D1/D2).
 
-Parses inline-ASCII ``.vtu`` files so the viewer can display a scalar field from a
-second solver (Code_Aster / ParaView / ElmerFEM all export VTU) via the same
-``/api/projects/{id}/fields/{name}`` path used for CalculiX FRD.
+Parses inline ASCII and uncompressed inline base64-binary ``.vtu`` files so the
+viewer can display a scalar field from a second solver (Code_Aster / ParaView /
+ElmerFEM all export VTU) via the same ``/api/projects/{id}/fields/{name}`` path
+used for CalculiX FRD.
 
-Honest boundary: only the **inline ASCII** ``DataArray`` form is supported. Binary,
-base64, ``appended``, and compressed payloads are reported unavailable rather than
-mis-parsed — never guessed.
+Honest boundary: only inline ``DataArray`` payloads are supported. Appended data
+and compressed payloads are reported unavailable rather than mis-parsed — never
+guessed.
 """
 
 from __future__ import annotations
 
+import base64
 import math
+import struct
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -40,9 +43,19 @@ _FIELD_UNITS: dict[str, str] = {
 # Candidate member paths for a VTU result inside a .aieng package.
 _VTU_MEMBER_SUFFIXES = ("/outputs/result.vtu", "simulation/result.vtu", "result.vtu")
 
+_VTK_STRUCT_TYPES: dict[str, tuple[str, int]] = {
+    "Float32": ("f", 4),
+    "Float64": ("d", 8),
+    "Int32": ("i", 4),
+    "Int64": ("q", 8),
+    "UInt8": ("B", 1),
+    "UInt32": ("I", 4),
+    "UInt64": ("Q", 8),
+}
+
 
 def parse_vtu(content: str | bytes) -> dict[str, Any]:
-    """Parse an inline-ASCII VTU document into points + point-data arrays.
+    """Parse an inline ASCII or inline binary VTU document into points + point-data arrays.
 
     Returns ``{available, points, point_data}`` where ``points`` is a list of
     ``(x, y, z)`` tuples and ``point_data`` maps each array name to
@@ -57,6 +70,11 @@ def parse_vtu(content: str | bytes) -> dict[str, Any]:
     except Exception as exc:
         return {"available": False, "reason": f"VTU XML parse error: {exc}"}
 
+    if root.get("compressor"):
+        return {"available": False, "reason": "Compressed VTU DataArrays are not supported."}
+    byte_order = _byte_order_prefix(root.get("byte_order"))
+    header_type = root.get("header_type") or "UInt32"
+
     grid = root.find(".//UnstructuredGrid")
     if grid is None:
         return {"available": False, "reason": "No UnstructuredGrid element found."}
@@ -68,13 +86,13 @@ def parse_vtu(content: str | bytes) -> dict[str, Any]:
     points_elem = piece.find("Points/DataArray")
     if points_elem is None:
         return {"available": False, "reason": "No Points DataArray found."}
-    if not _is_ascii_array(points_elem):
+    flat = _parse_numeric_array(points_elem, byte_order=byte_order, header_type=header_type)
+    if flat is None:
         return {
             "available": False,
-            "reason": "Only inline-ascii VTU DataArrays are supported (got "
+            "reason": "Unsupported VTU Points DataArray payload (got "
             f"format={points_elem.get('format')!r}).",
         }
-    flat = _parse_floats(points_elem.text)
     points = [tuple(flat[i : i + 3]) for i in range(0, len(flat) - len(flat) % 3, 3)]
 
     # PointData arrays
@@ -82,19 +100,63 @@ def parse_vtu(content: str | bytes) -> dict[str, Any]:
     pd = piece.find("PointData")
     for arr in pd.findall("DataArray") if pd is not None else []:
         name = arr.get("Name")
-        if not name or not _is_ascii_array(arr):
+        if not name:
             continue
         ncomp = _parse_positive_int(arr.get("NumberOfComponents", "1") or "1")
         if ncomp is None:
             continue
-        point_data[name] = {"values": _parse_floats(arr.text), "num_components": ncomp}
+        values = _parse_numeric_array(arr, byte_order=byte_order, header_type=header_type)
+        if values is None:
+            continue
+        point_data[name] = {"values": values, "num_components": ncomp}
 
     return {"available": True, "points": points, "point_data": point_data}
 
 
-def _is_ascii_array(elem: ET.Element) -> bool:
+def _parse_numeric_array(elem: ET.Element, *, byte_order: str, header_type: str) -> list[float] | None:
     fmt = (elem.get("format") or "ascii").strip().lower()
-    return fmt == "ascii" and bool((elem.text or "").strip())
+    if fmt == "ascii":
+        return _parse_floats(elem.text) if (elem.text or "").strip() else None
+    if fmt == "binary":
+        return _parse_binary_numeric_array(elem, byte_order=byte_order, header_type=header_type)
+    return None
+
+
+def _byte_order_prefix(value: str | None) -> str:
+    return ">" if str(value or "").lower() == "bigendian" else "<"
+
+
+def _parse_binary_numeric_array(elem: ET.Element, *, byte_order: str, header_type: str) -> list[float] | None:
+    vtk_type = elem.get("type") or "Float64"
+    type_info = _VTK_STRUCT_TYPES.get(vtk_type)
+    header_info = _VTK_STRUCT_TYPES.get(header_type)
+    text = (elem.text or "").strip()
+    if type_info is None or header_info is None or not text:
+        return None
+    try:
+        blob = base64.b64decode(text, validate=True)
+    except Exception:
+        return None
+    header_code, header_size = header_info
+    if len(blob) < header_size:
+        return None
+    try:
+        (payload_size,) = struct.unpack(f"{byte_order}{header_code}", blob[:header_size])
+    except struct.error:
+        return None
+    if header_size + payload_size > len(blob):
+        return None
+    payload = blob[header_size : header_size + payload_size]
+    value_code, value_size = type_info
+    if len(payload) % value_size:
+        return None
+    count = len(payload) // value_size
+    if count == 0:
+        return []
+    try:
+        return [float(v) for v in struct.unpack(f"{byte_order}{count}{value_code}", payload)]
+    except struct.error:
+        return None
 
 
 def _parse_floats(text: str | None) -> list[float]:

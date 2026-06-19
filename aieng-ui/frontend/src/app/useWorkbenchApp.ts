@@ -285,6 +285,37 @@ export function useWorkbenchApp() {
     });
   }
 
+  async function runDesignStudyCandidates() {
+    if (!selectedId) {
+      setNotice({
+        tone: "info",
+        title: "Select a project first",
+        detail: "Choose a project before running design-study candidates.",
+      });
+      return;
+    }
+
+    await runBusyTask(async () => {
+      const result = await api.runDesignStudyCandidates(selectedId);
+      await refreshProjects(selectedId, runtime);
+      const executed = typeof result.executed === "number" ? result.executed : null;
+      const succeeded = typeof result.succeeded === "number" ? result.succeeded : null;
+      const failed = typeof result.failed === "number" ? result.failed : null;
+      const baselineModified = result.baseline_modified === true ? "baseline modified" : "baseline unchanged";
+      const detail = [
+        executed != null ? `${executed} executed` : null,
+        succeeded != null ? `${succeeded} succeeded` : null,
+        failed != null ? `${failed} failed` : null,
+        baselineModified,
+      ].filter(Boolean).join("; ");
+      setNotice({
+        tone: failed && failed > 0 ? "info" : "success",
+        title: "Design-study candidates ran",
+        detail: detail || "Candidate patches were executed in derived workspaces; baseline remains unpromoted.",
+      });
+    });
+  }
+
   // Selected post-processing result field (canonical names from resultFields catalog;
   // "" = no field overlay / plain geometry). Default to the most-used field.
   const [selectedCaeField, setSelectedCaeField] = useState("von_mises");
@@ -392,6 +423,7 @@ export function useWorkbenchApp() {
     runBusyTask,
     refreshProjects,
     runWorkbenchImportFlow,
+    runDesignStudyCandidates,
     runtimeReady,
     runtimeProvider,
     liveSyncStatus,

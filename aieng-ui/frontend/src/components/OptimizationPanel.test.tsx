@@ -244,6 +244,26 @@ describe("OptimizationPanel", () => {
     expect(onUseInChat).toHaveBeenCalledWith("/design-study accept candidate c1");
   });
 
+  it("runs candidate patches through the explicit derived-workspace action", () => {
+    const onRunCandidates = vi.fn();
+    const study = makeStudy({
+      candidates: [{ candidate_id: "c1", rank: 1, feasibility: "unknown" }],
+    });
+    render(<OptimizationPanel study={study} onRunCandidates={onRunCandidates} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Run candidates/i }));
+    expect(onRunCandidates).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the run-candidates action while busy", () => {
+    const study = makeStudy({
+      candidates: [{ candidate_id: "c1", rank: 1, feasibility: "unknown" }],
+    });
+    render(<OptimizationPanel study={study} onRunCandidates={vi.fn()} running />);
+
+    expect(screen.getByRole("button", { name: /Running/i }).hasAttribute("disabled")).toBe(true);
+  });
+
   it("renders the convergence chart when convergence data is provided", () => {
     const study = makeStudy({
       candidates: [{ candidate_id: "c1", rank: 1, feasibility: "feasible" }],

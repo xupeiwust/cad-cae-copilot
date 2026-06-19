@@ -263,6 +263,16 @@ export const api = {
     request<MeshConvergenceReportResponse>(`/api/projects/${projectId}/mesh-convergence-report`, { signal }),
   getDesignStudySummary: (projectId: string, signal?: AbortSignal) =>
     request<Record<string, unknown>>(`/api/projects/${projectId}/design-study/summary`, { signal }),
+  runDesignStudyCandidates: (
+    projectId: string,
+    payload: { candidate_ids?: string[]; compile?: boolean; max_candidates?: number } = {},
+  ) =>
+    request<Record<string, unknown>>(`/api/projects/${projectId}/design-study/run-candidates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      timeoutMs: 120000,
+    }),
   getProjectHealthCheck: (projectId: string) =>
     request<ProjectHealthCheckResponse>(`/api/projects/${projectId}/health-check`),
   getFreeCadAdapterPreflight: () =>

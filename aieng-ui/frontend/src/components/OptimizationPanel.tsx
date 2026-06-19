@@ -23,6 +23,9 @@ type OptimizationPanelProps = {
   surrogate?: SurrogateProposals | null;
   /** Iterative-loop convergence history; rendered as a chart when available. */
   convergence?: OptimizationConvergence | null;
+  /** Execute candidate patches into derived workspaces; never accepts/promotes. */
+  onRunCandidates?: () => void | Promise<void>;
+  running?: boolean;
   /** Prefill the composer with an approval-gated accept draft for a candidate. */
   onUseInChat?: (draft: string) => void;
 };
@@ -46,7 +49,14 @@ type OptimizationPanelProps = {
  * - Missing-stages transparency.
  * - Failed-candidates transparency.
  */
-export function OptimizationPanel({ study, surrogate, convergence, onUseInChat }: OptimizationPanelProps) {
+export function OptimizationPanel({
+  study,
+  surrogate,
+  convergence,
+  onRunCandidates,
+  running = false,
+  onUseInChat,
+}: OptimizationPanelProps) {
   const candidates = study?.candidates ?? [];
   const groups = useMemo(() => groupCandidatesByFeasibility(candidates), [candidates]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -71,10 +81,23 @@ export function OptimizationPanel({ study, surrogate, convergence, onUseInChat }
   return (
     <section className="optimization-card" aria-label="Optimization study">
       <div className="optimization-head">
-        <strong>Optimization study</strong>
-        <span>
-          {study.candidates.length} candidate{study.candidates.length !== 1 ? "s" : ""}
-        </span>
+        <div className="optimization-title">
+          <strong>Optimization study</strong>
+          <span>
+            {study.candidates.length} candidate{study.candidates.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        {onRunCandidates && (
+          <button
+            type="button"
+            className="optimization-run"
+            onClick={() => { void onRunCandidates(); }}
+            disabled={running}
+            title="Run design-study candidate patches into derived workspaces only; baseline is not promoted."
+          >
+            {running ? "Running..." : "Run candidates"}
+          </button>
+        )}
       </div>
 
       {/* Honesty banner */}
@@ -308,6 +331,7 @@ export function OptimizationPanel({ study, surrogate, convergence, onUseInChat }
       )}
 
       <div className="optimization-foot">
+        <strong>Run candidates</strong> writes derived evidence only.{" "}
         Click <strong>Accept</strong> to draft a <code>/design-study</code> — acceptance stays approval-gated.
       </div>
     </section>

@@ -5763,8 +5763,39 @@ textarea {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: 8px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.optimization-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.optimization-run {
+  appearance: none;
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  background: rgba(52, 211, 153, 0.1);
+  color: #b8f0d6;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.optimization-run:hover:not(:disabled) {
+  background: rgba(52, 211, 153, 0.2);
+}
+
+.optimization-run:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .optimization-warnings {

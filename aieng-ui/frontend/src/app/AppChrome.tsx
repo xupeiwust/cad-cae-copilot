@@ -167,6 +167,8 @@ export function AppChrome({ app }: AppChromeProps) {
             study={app.optimizationStudy}
             surrogate={app.surrogateProposals}
             convergence={app.optimizationConvergence}
+            onRunCandidates={app.runDesignStudyCandidates}
+            running={app.busy}
             onUseInChat={(draft) => app.setNotice({ tone: "info", title: "Draft ready", detail: draft })}
           />
 

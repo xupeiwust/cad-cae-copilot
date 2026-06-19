@@ -889,6 +889,27 @@ export type MeshPreviewResponse = {
   };
 };
 
+export type MeshDiagnosticsResponse = {
+  available: boolean;
+  overall_verdict?: string | null;
+  verdict?: string | null;
+  node_count?: number;
+  element_count?: number;
+  tet_count?: number;
+  degenerate_element_count?: number;
+  poor_element_count?: number;
+  broken_element_count?: number;
+  set_coverage?: {
+    verdict?: string | null;
+    set_count?: number;
+    empty_set_count?: number;
+    unresolved_set_count?: number;
+    sparse_set_count?: number;
+    note?: string | null;
+  } | null;
+  note?: string | null;
+};
+
 export type RuntimeEventType =
   | "run_started"
   | "plan_created"

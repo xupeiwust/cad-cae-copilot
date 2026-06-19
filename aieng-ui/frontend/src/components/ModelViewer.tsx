@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 import { assemblyAlertCounts } from "../app/geometryReport";
+import { meshDiagnosticsSummary } from "../app/meshDiagnostics";
 import { useGeometryReport } from "../app/useGeometryReport";
 import { useFieldRegions } from "../app/useFieldRegions";
+import { useMeshDiagnostics } from "../app/useMeshDiagnostics";
 import { useMeshPreview } from "../app/useMeshPreview";
 import type { BrepGraphSnapshot, CadGenerationProgress, PickedFace, ViewerLoadState } from "../appTypes";
 import { resolveAssetFormat } from "../appUtils";
@@ -113,10 +115,15 @@ export function ModelViewer({
     selectedId: projectId ?? null,
     geometryVersion: assetUrl ?? null,
   });
+  const { meshDiagnostics } = useMeshDiagnostics({
+    selectedId: projectId ?? null,
+    geometryVersion: assetUrl ?? null,
+  });
   const assemblyAlerts = assemblyAlertCounts(geometryReport);
   const resolvedAssetFormat = resolveAssetFormat(assetUrl, assetFormat);
   const fieldRegionsAvailable = Boolean(fieldRegions && fieldRegions.clusters.length > 0);
   const meshPreviewAvailable = Boolean(meshPreview && meshPreview.element_count && meshPreview.element_count > 0);
+  const meshDiagnosticSummary = meshDiagnosticsSummary(meshDiagnostics);
 
   // 1. Three.js scene lifecycle
   const {
@@ -449,6 +456,11 @@ export function ModelViewer({
           {meshPreview.quality?.coarse_flag ? (
             <span style={{ color: "#facc15" }} title={meshPreview.quality.note ?? undefined}>
               (coarse)
+            </span>
+          ) : null}
+          {meshDiagnosticSummary ? (
+            <span style={{ color: meshDiagnosticSummary.color }} title={meshDiagnosticSummary.detail}>
+              {meshDiagnosticSummary.label}
             </span>
           ) : null}
         </div>

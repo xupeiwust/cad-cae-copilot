@@ -11978,6 +11978,51 @@ def test_assembly_topology_optimization_run_endpoint_is_explicit_and_part_scoped
         assert "geometry/shape_ir.json" not in names
 
 
+def test_design_study_summary_endpoint_returns_readonly_artifact_envelope(tmp_path: Path) -> None:
+    """GET /design-study/summary aggregates panel artifacts without mutating."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("design-study-summary"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "summary.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    ranking = {
+        "format": "aieng.design_study_candidate_ranking",
+        "candidates": [{"candidate_id": "c1", "rank": 1, "feasibility": "feasible"}],
+        "best_candidate_id": "c1",
+    }
+    recommendation = {
+        "format": "aieng.optimization_recommendation",
+        "recommended_candidate_id": "c1",
+        "advisory_only": True,
+    }
+    convergence = {
+        "format": "aieng.optimization_iterations",
+        "iterations": [{"index": 1, "incumbent_candidate_id": "c1", "incumbent_objective": 1.0}],
+    }
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "design-study-summary"}))
+        zf.writestr("analysis/design_study_candidate_ranking.json", json.dumps(ranking))
+        zf.writestr("analysis/optimization_recommendation.json", json.dumps(recommendation))
+        zf.writestr("analysis/optimization_iterations.json", json.dumps(convergence))
+    project["aieng_file"] = "summary.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/design-study/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is True
+    assert data["available_artifacts"] == ["convergence", "ranking", "recommendation"]
+    assert data["artifacts"]["ranking"]["path"] == "analysis/design_study_candidate_ranking.json"
+    assert data["artifacts"]["ranking"]["report"]["best_candidate_id"] == "c1"
+    assert data["artifacts"]["surrogate"]["available"] is False
+    assert data["artifacts"]["surrogate"]["reason"] == "not_found"
+    assert "does not mean a candidate was accepted" in data["honesty"]
+
+
 def test_design_study_validate_endpoint(tmp_path: Path) -> None:
     """POST /design-study/validate validates the problem + candidate patches and writes
     diagnostics — contract + validation only, no patch applied, baseline untouched."""

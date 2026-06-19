@@ -333,6 +333,39 @@ def register_project_workflow_routes(
         """
         return _load_latest_json_artifact(project_id, "analysis/mesh_convergence_report.json")
 
+    @app.get("/api/projects/{project_id}/design-study/summary")
+    def get_design_study_summary_endpoint(project_id: str) -> dict[str, Any]:
+        """Read-only design-study artifact envelope for the workbench panel (#277).
+
+        This aggregates the artifacts that the frontend optimization panel needs
+        for polling/display. It never validates, executes, ranks, accepts, or
+        mutates candidates; missing artifacts are reported per-path so the UI can
+        degrade honestly instead of guessing which stage has run.
+        """
+
+        def _artifact(path: str) -> dict[str, Any]:
+            loaded = _load_latest_json_artifact(project_id, path)
+            return {"path": path, **loaded}
+
+        artifacts = {
+            "ranking": _artifact("analysis/design_study_candidate_ranking.json"),
+            "recommendation": _artifact("analysis/optimization_recommendation.json"),
+            "report": _artifact("diagnostics/optimization_report.json"),
+            "surrogate": _artifact("analysis/design_study_surrogate_proposals.json"),
+            "convergence": _artifact("analysis/optimization_iterations.json"),
+        }
+        available = {key: value for key, value in artifacts.items() if value.get("available")}
+        return {
+            "project_id": project_id,
+            "available": bool(available),
+            "artifacts": artifacts,
+            "available_artifacts": sorted(available),
+            "honesty": (
+                "Read-only artifact envelope. Presence of ranking/recommendation "
+                "does not mean a candidate was accepted or the baseline was changed."
+            ),
+        }
+
     @app.post("/api/projects/{project_id}/shape-ir-patch")
     def apply_shape_ir_patch_endpoint(
         project_id: str,

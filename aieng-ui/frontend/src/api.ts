@@ -259,6 +259,8 @@ export const api = {
     request<SizingSweepReportResponse>(`/api/projects/${projectId}/sizing-sweep-report`, { signal }),
   getMeshConvergenceReport: (projectId: string, signal?: AbortSignal) =>
     request<MeshConvergenceReportResponse>(`/api/projects/${projectId}/mesh-convergence-report`, { signal }),
+  getDesignStudySummary: (projectId: string, signal?: AbortSignal) =>
+    request<Record<string, unknown>>(`/api/projects/${projectId}/design-study/summary`, { signal }),
   getProjectHealthCheck: (projectId: string) =>
     request<ProjectHealthCheckResponse>(`/api/projects/${projectId}/health-check`),
   getFreeCadAdapterPreflight: () =>

@@ -10,10 +10,14 @@ type UseOptimizationStudyArgs = {
   geometryVersion?: string | null;
 };
 
-const RANKING_PATH = "analysis/design_study_candidate_ranking.json";
-const RECOMMENDATION_PATH = "analysis/optimization_recommendation.json";
-const REPORT_PATH = "diagnostics/optimization_report.json";
-const SURROGATE_PATH = "analysis/design_study_surrogate_proposals.json";
+function reportFromSummary(summary: unknown, key: string): unknown {
+  if (!summary || typeof summary !== "object") return null;
+  const artifacts = (summary as { artifacts?: unknown }).artifacts;
+  if (!artifacts || typeof artifacts !== "object") return null;
+  const entry = (artifacts as Record<string, unknown>)[key];
+  if (!entry || typeof entry !== "object") return null;
+  return (entry as { report?: unknown }).report ?? null;
+}
 
 /**
  * Loads the agent-guided design-study artifacts (candidate ranking, recommendation,
@@ -36,23 +40,18 @@ export function useOptimizationStudy({ selectedId, geometryVersion = null }: Use
 
     void (async () => {
       try {
-        const [rankingRes, recommendationRes, reportRes, surrogateRes] = await Promise.all([
-          api.getProjectArtifact(selectedId, RANKING_PATH, controller.signal).catch(() => null),
-          api.getProjectArtifact(selectedId, RECOMMENDATION_PATH, controller.signal).catch(() => null),
-          api.getProjectArtifact(selectedId, REPORT_PATH, controller.signal).catch(() => null),
-          api.getProjectArtifact(selectedId, SURROGATE_PATH, controller.signal).catch(() => null),
-        ]);
+        const summary = await api.getDesignStudySummary(selectedId, controller.signal).catch(() => null);
 
         if (controller.signal.aborted) return;
 
-        const ranking = rankingRes?.parsed_json ?? null;
-        const recommendation = recommendationRes?.parsed_json ?? null;
-        const report = reportRes?.parsed_json ?? null;
+        const ranking = reportFromSummary(summary, "ranking");
+        const recommendation = reportFromSummary(summary, "recommendation");
+        const report = reportFromSummary(summary, "report");
 
         const shaped = shapeOptimizationStudy(ranking, recommendation, report);
         setStudy(shaped.has_study ? shaped : null);
 
-        const shapedSurrogate = shapeSurrogateProposals(surrogateRes?.parsed_json ?? null);
+        const shapedSurrogate = shapeSurrogateProposals(reportFromSummary(summary, "surrogate"));
         setSurrogate(shapedSurrogate.hasProposals ? shapedSurrogate : null);
       } catch {
         if (!controller.signal.aborted) {

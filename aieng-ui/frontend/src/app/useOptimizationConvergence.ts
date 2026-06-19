@@ -9,7 +9,14 @@ type UseOptimizationConvergenceArgs = {
   geometryVersion?: string | null;
 };
 
-const ITERATIONS_PATH = "analysis/optimization_iterations.json";
+function convergenceFromSummary(summary: unknown): unknown {
+  if (!summary || typeof summary !== "object") return null;
+  const artifacts = (summary as { artifacts?: unknown }).artifacts;
+  if (!artifacts || typeof artifacts !== "object") return null;
+  const convergence = (artifacts as Record<string, unknown>).convergence;
+  if (!convergence || typeof convergence !== "object") return null;
+  return (convergence as { report?: unknown }).report ?? null;
+}
 
 /**
  * Loads the iterative-loop convergence history artifact for the convergence chart.
@@ -29,9 +36,9 @@ export function useOptimizationConvergence({ selectedId, geometryVersion = null 
 
     void (async () => {
       try {
-        const res = await api.getProjectArtifact(selectedId, ITERATIONS_PATH).catch(() => null);
+        const res = await api.getDesignStudySummary(selectedId).catch(() => null);
         if (cancelled) return;
-        const shaped = shapeOptimizationConvergence(res?.parsed_json ?? null);
+        const shaped = shapeOptimizationConvergence(convergenceFromSummary(res));
         setConvergence(shaped);
       } catch {
         if (!cancelled) setConvergence(null);

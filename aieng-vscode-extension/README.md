@@ -110,6 +110,9 @@ If you already have a file such as `aieng-cad-preview-0.1.4.vsix`:
 4. Select the `.vsix` file.
 5. Reload VS Code if prompted.
 
+On GitHub, the `VS Code extension package` workflow also publishes a short-lived
+`aieng-cad-preview-vsix` artifact for each relevant `main`/PR run.
+
 ### Option 2: Build and install from this repo
 
 From `cad-cae-copilot/aieng-vscode-extension`:

@@ -1,0 +1,55 @@
+name: VS Code extension package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "aieng-vscode-extension/**"
+      - ".github/workflows/vscode-extension-package.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "aieng-vscode-extension/**"
+      - ".github/workflows/vscode-extension-package.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vscode-extension-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-vsix:
+    name: Build installable .vsix
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aieng-vscode-extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: aieng-vscode-extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check extension
+        run: npm run check
+
+      - name: Build VSIX
+        run: npm run vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aieng-cad-preview-vsix
+          path: aieng-vscode-extension/*.vsix
+          if-no-files-found: error
+          retention-days: 14

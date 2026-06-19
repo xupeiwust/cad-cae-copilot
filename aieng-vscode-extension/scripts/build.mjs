@@ -1,14 +1,18 @@
 import { build, context } from "esbuild";
 import { mkdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const watch = process.argv.includes("--watch");
-await mkdir("out", { recursive: true });
-await mkdir("media", { recursive: true });
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+await mkdir(resolve(root, "out"), { recursive: true });
+await mkdir(resolve(root, "media"), { recursive: true });
 
 const configs = [
   {
-    entryPoints: ["src/extension.ts"],
-    outfile: "out/extension.js",
+    entryPoints: [resolve(root, "src/extension.ts")],
+    outfile: resolve(root, "out/extension.js"),
     bundle: true,
     platform: "node",
     format: "cjs",
@@ -16,16 +20,16 @@ const configs = [
     sourcemap: true,
   },
   {
-    entryPoints: ["webview-src/main.ts"],
-    outfile: "media/viewer.js",
+    entryPoints: [resolve(root, "webview-src/main.ts")],
+    outfile: resolve(root, "media/viewer.js"),
     bundle: true,
     platform: "browser",
     format: "iife",
     sourcemap: true,
   },
   {
-    entryPoints: ["webview-src/home.ts"],
-    outfile: "media/home.js",
+    entryPoints: [resolve(root, "webview-src/home.ts")],
+    outfile: resolve(root, "media/home.js"),
     bundle: true,
     platform: "browser",
     format: "iife",

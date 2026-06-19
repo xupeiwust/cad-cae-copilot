@@ -1256,20 +1256,39 @@ def register_project_workflow_routes(
         )
 
     @app.get("/api/projects/{project_id}/bom")
-    def bom_endpoint(project_id: str) -> dict[str, Any]:
+    def bom_endpoint(project_id: str, format: str | None = None) -> Any:
         """Return the project's Bill of Materials in the frontend ``BOMData`` shape.
 
         Backed by the shared ``generate_bom`` recognizer; the BOM panel renders
-        this and exports CSV/JSON client-side. 404 when the project has no
-        ``.aieng`` package.
+        this and can also request stable backend CSV / ERP-style JSON exports.
+        404 when the project has no ``.aieng`` package.
         """
         from datetime import datetime, timezone
+        from fastapi.responses import Response
         from .. import standards_bridge
 
-        result = standards_bridge.generate_bom(active_settings, project_id, None)
+        fmt = str(format or "").strip().lower() or None
+        if fmt not in (None, "csv", "json"):
+            raise HTTPException(status_code=400, detail="Unsupported BOM format. Use csv or json.")
+
+        result = standards_bridge.generate_bom(active_settings, project_id, None, fmt=fmt)
         if result.get("status") != "ok":
             status = 404 if result.get("code") == "missing_package" else 400
             raise HTTPException(status_code=status, detail=result.get("message", "BOM generation failed"))
+
+        if fmt == "csv":
+            return Response(
+                content=result.get("csv", ""),
+                media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="bom-{project_id}.csv"'},
+            )
+        if fmt == "json":
+            return Response(
+                content=result.get("json", "{}"),
+                media_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="bom-{project_id}.json"'},
+            )
+
         generated_at = datetime.now(timezone.utc).isoformat()
         return standards_bridge.to_bom_frontend_payload(result, project_id, generated_at)
 

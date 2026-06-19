@@ -32,40 +32,24 @@ export function BOMPanel({ projectId, onNotice }: BOMPanelProps) {
     void refresh();
   }, [refresh]);
 
-  const exportBOM = useCallback(() => {
-    if (!bom) return;
+  const exportBOM = useCallback(async () => {
+    if (!bom || !projectId) return;
     const filename = `bom-${bom.projectId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}`;
-    if (exportFormat === "json") {
-      const blob = new Blob([JSON.stringify(bom, null, 2)], { type: "application/json" });
+    try {
+      const blob = await api.exportBOM(projectId, exportFormat);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${filename}.json`;
+      a.download = `${filename}.${exportFormat}`;
       a.click();
       URL.revokeObjectURL(url);
-      onNotice?.("Exported", `BOM saved as ${filename}.json`);
-    } else {
-      const headers = ["ID", "Name", "Quantity", "Material", "Standard Part", "Type", "Parameters"];
-      const rows = bom.items.map((item) => [
-        item.id,
-        item.name,
-        String(item.quantity),
-        item.material ?? "",
-        item.isStandardPart ? "Yes" : "No",
-        item.standardPartType ?? "",
-        item.parameters ? JSON.stringify(item.parameters) : "",
-      ]);
-      const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))].join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${filename}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      onNotice?.("Exported", `BOM saved as ${filename}.csv`);
+      onNotice?.("Exported", `BOM saved as ${filename}.${exportFormat}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      onNotice?.("Export failed", message);
     }
-  }, [bom, exportFormat, onNotice]);
+  }, [bom, exportFormat, onNotice, projectId]);
 
   const summary = useMemo(() => {
     if (!bom) return null;
@@ -107,7 +91,7 @@ export function BOMPanel({ projectId, onNotice }: BOMPanelProps) {
           <button
             type="button"
             className="compact-button"
-            onClick={() => exportBOM()}
+            onClick={() => void exportBOM()}
             disabled={!bom}
             style={{ fontSize: "11px", padding: "4px 10px" }}
           >

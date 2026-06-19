@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import json
 import math
@@ -205,6 +206,29 @@ def test_bom_endpoint_returns_frontend_payload(tmp_path: Path) -> None:
     bolt = next(i for i in data["items"] if i["name"] == "bolt_M6")
     assert bolt["isStandardPart"] is True
     assert bolt["standardPartType"] == "screw"
+
+    csv_resp = client.get(f"/api/projects/{project_id}/bom?format=csv")
+    assert csv_resp.status_code == 200
+    assert csv_resp.headers["content-type"].startswith("text/csv")
+    rows = list(csv.DictReader(csv_resp.text.splitlines()))
+    assert rows
+    assert set(rows[0]) == {
+        "line_no", "part_name", "part_type", "material", "quantity",
+        "standard_part", "canonical_type", "designation", "source_library",
+    }
+    bolt_row = next(r for r in rows if r["part_name"] == "bolt_M6")
+    assert bolt_row["standard_part"] == "true"
+    assert bolt_row["canonical_type"] == "screw"
+    assert bolt_row["designation"] == "M6-1"
+
+    json_resp = client.get(f"/api/projects/{project_id}/bom?format=json")
+    assert json_resp.status_code == 200
+    export = json_resp.json()
+    assert export["total_parts"] == 2
+    assert any(r["part_name"] == "base_plate" for r in export["bill_of_materials"])
+
+    bad_resp = client.get(f"/api/projects/{project_id}/bom?format=xlsx")
+    assert bad_resp.status_code == 400
 
 
 def test_bom_endpoint_404_when_package_missing(tmp_path: Path) -> None:

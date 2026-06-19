@@ -2,9 +2,10 @@
 
 Source: https://github.com/earthtojake/text-to-cad
 
-This note summarises what `.aieng` should and should not borrow from text-to-cad. The analysis that produced this summary lives in `analysis/`:
+This note summarises what `.aieng` should and should not borrow from text-to-cad. Supporting analysis and follow-up decisions:
 
 - [text_to_cad_comparison.md](../analysis/text_to_cad_comparison.md)
+- [text_to_cad_integration_spike.md](text_to_cad_integration_spike.md)
 - [aieng_borrowing_candidates.md](../analysis/aieng_borrowing_candidates.md)
 - [aieng_reference_notation_proposal.md](../analysis/aieng_reference_notation_proposal.md)
 - [aieng_benchmark_upgrade_proposal.md](../analysis/aieng_benchmark_upgrade_proposal.md)
@@ -27,6 +28,7 @@ This note summarises what `.aieng` should and should not borrow from text-to-cad
 - **Reference inspection/list/check commands.** `aieng ref-inspect`, `aieng ref-list`, `aieng ref-check`. Planned as part of Phase 18A.
 - **Derived artifact discipline as a written rule.** Structured JSON/YAML resources are source of truth; AAG, registry, interface graph, visual index, summaries, and benchmark outputs are derived. See [`derived_artifact_discipline.md`](derived_artifact_discipline.md).
 - **Benchmark refresh focused on AI package understanding.** A small set of representative coverage probes (flange, plate_with_pattern, and later optionally enclosure, shaft_stepped) plus new categories: reference correctness, completeness reasoning, evidence trace, external-tool-boundary correctness, unsupported-claim correctness. Coverage probes, *not* a fixed list of supported part families.
+- **For the active workbench:** borrow source-level assembly-positioning discipline, not a production dependency. The bounded #295 spike concludes that the workbench should keep its internal relative-placement helpers (`stack_on`, `coaxial`, `centered_on`, `offset_from`) and Assembly IR/mate predicates, while deferring `cadpy` and `step.parts` to specific optional follow-ups. See [`text_to_cad_integration_spike.md`](text_to_cad_integration_spike.md).
 
 ## What `.aieng` should reject or defer
 

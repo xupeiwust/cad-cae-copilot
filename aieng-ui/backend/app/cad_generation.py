@@ -2817,7 +2817,11 @@ def _prune_build123d_cache(root: Path) -> None:
     def _mtime(path: Path) -> float:
         marker = path / ".complete"
         try:
-            return marker.stat().st_mtime if marker.exists() else path.stat().st_mtime
+            return marker.stat().st_mtime
+        except OSError:
+            pass
+        try:
+            return path.stat().st_mtime
         except OSError:
             return 0.0
 

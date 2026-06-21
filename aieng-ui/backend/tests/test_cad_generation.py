@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -3552,6 +3553,32 @@ print(_BUILD123D_CACHE_MAX_ENTRIES, _BUILD123D_CACHE_MAX_BYTES)
     entries, bytes_val = result.stdout.strip().split()
     assert int(entries) == 8
     assert int(bytes_val) == 1048576
+
+
+def test_prune_build123d_cache_uses_complete_marker_mtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cache pruning should evict the entry with the oldest completion marker."""
+    from app import cad_generation
+
+    root = tmp_path / "cache"
+    root.mkdir()
+    old_entry = root / "old"
+    new_entry = root / "new"
+    old_entry.mkdir()
+    new_entry.mkdir()
+    (old_entry / "payload.bin").write_bytes(b"old")
+    (new_entry / "payload.bin").write_bytes(b"new")
+    (old_entry / ".complete").write_text("ok", encoding="utf-8")
+    (new_entry / ".complete").write_text("ok", encoding="utf-8")
+    os.utime(old_entry / ".complete", (1000, 1000))
+    os.utime(new_entry / ".complete", (2000, 2000))
+
+    monkeypatch.setattr(cad_generation, "_BUILD123D_CACHE_MAX_ENTRIES", 1)
+    monkeypatch.setattr(cad_generation, "_BUILD123D_CACHE_MAX_BYTES", 1024 * 1024)
+
+    cad_generation._prune_build123d_cache(root)
+
+    assert not old_entry.exists()
+    assert new_entry.exists()
 
 
 def test_mutation_path_uses_shared_cache(tmp_path: Path) -> None:

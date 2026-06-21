@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import zipfile
 
-from aieng.package import PACKAGE_DIRECTORIES, create_package, read_manifest
+from aieng.package import PACKAGE_DIRECTORIES, build_manifest, create_package, read_manifest
 
 
 def test_create_package_writes_manifest_and_empty_directories(tmp_path):
@@ -53,3 +53,12 @@ def test_manifest_json_is_readable(tmp_path):
         "simulation": {},
         "task": {},
     }
+
+
+def test_build_manifest_resources_are_independent():
+    first = build_manifest("first").to_dict()
+    first["resources"]["ai"]["patches"].append("ai/patches/patch_0001.json")
+
+    second = build_manifest("second").to_dict()
+
+    assert second["resources"]["ai"]["patches"] == []

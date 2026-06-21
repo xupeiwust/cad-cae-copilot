@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import zipfile
 from dataclasses import dataclass
@@ -68,7 +69,7 @@ def build_manifest(model_id: str) -> Manifest:
         model_id=clean_model_id,
         format_version=FORMAT_VERSION,
         units=dict(DEFAULT_UNITS),
-        resources=json.loads(json.dumps(DEFAULT_RESOURCES)),
+        resources=deepcopy(DEFAULT_RESOURCES),
         created_by={
             "tool": f"aieng {__version__}",
             "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),

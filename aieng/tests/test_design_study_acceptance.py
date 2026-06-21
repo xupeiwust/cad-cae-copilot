@@ -246,6 +246,39 @@ def test_accept_baseline_unchanged(tmp_path: Path):
     assert _read(pkg, "geometry/shape_ir.json") == baseline
 
 
+def test_accept_sanitizes_candidate_id_like_execution_workspace(tmp_path: Path):
+    raw_id = r"cand good\..\evil"
+    sanitized_id = "cand_good_.._evil"
+    ranking = _ranking([_ranked_cand(sanitized_id)], best_id=sanitized_id, safe=True)
+    ws = {
+        sanitized_id: {
+            "patch.json": {"candidate_id": sanitized_id},
+            "geometry/shape_ir.json": {"parts": [{"id": "derived"}]},
+            "analysis/evaluation.json": {"metrics": {"mass_kg": 0.7}},
+        }
+    }
+    pkg = _write_pkg(
+        tmp_path, problem=_problem(), ranking=ranking,
+        iterations=[_iteration(sanitized_id)], candidate_ws=ws,
+    )
+
+    res = accept_design_study_candidate(pkg, raw_id)
+    assert res["accepted"] is True
+    assert res["candidate_id"] == sanitized_id
+    assert res["accepted_workspace"] == f"accepted/{sanitized_id}/"
+
+    with zipfile.ZipFile(pkg) as zf:
+        names = zf.namelist()
+        assert all("\\" not in name for name in names)
+        assert f"accepted/{sanitized_id}/patch.json" in names
+        assert f"accepted/{sanitized_id}/geometry/shape_ir.json" in names
+        assert f"accepted/{sanitized_id}/provenance/acceptance.json" in names
+
+    acc = _read(pkg, DESIGN_STUDY_ACCEPTANCE_PATH)
+    assert acc["accepted_candidate_id"] == sanitized_id
+    assert acc["baseline_modified"] is False
+
+
 def test_accept_non_best_requires_override(tmp_path: Path):
     ranking = _ranking(
         [_ranked_cand("c1", score=0.3), _ranked_cand("c2", score=0.1)],

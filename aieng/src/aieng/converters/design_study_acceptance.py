@@ -13,6 +13,7 @@ Hard safety contract:
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,8 @@ def _read_json(zf: zipfile.ZipFile, name: str, names: set[str]) -> Any:
 
 
 def _sanitize_cid(candidate_id: str) -> str:
-    return candidate_id.replace("..", "").strip("/")
+    s = re.sub(r"[^A-Za-z0-9_.-]", "_", str(candidate_id or "candidate"))
+    return s.strip("._") or "candidate"
 
 
 # ── eligibility checks ────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ ad-hoc keyword ordering scattered through UI code.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 import zipfile
@@ -307,7 +308,7 @@ def _action_for_intent(intent: str) -> dict[str, Any] | None:
     action = actions.get(intent)
     if action is None:
         return None
-    return json.loads(json.dumps(action))
+    return deepcopy(action)
 
 
 __all__ = ["SCHEMA_VERSION", "build_engineering_action_plan", "classify_engineering_message"]

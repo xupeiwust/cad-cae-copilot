@@ -75,6 +75,15 @@ def test_refine_mesh_extracts_mesh_size() -> None:
     assert plan["execution_policy"]["approval_tier"] == "gate"
 
 
+def test_action_plan_returns_independent_action_copy() -> None:
+    plan = classify_engineering_message("run simulation")
+    plan["action"]["writes"].append("mutated")
+
+    fresh = classify_engineering_message("run simulation")
+
+    assert "mutated" not in fresh["action"]["writes"]
+
+
 def test_endpoint_uses_package_state_for_existing_cad(tmp_path: Path) -> None:
     settings = _make_settings(tmp_path)
     project_id = "aabbccdd2211"

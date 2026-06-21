@@ -1629,6 +1629,26 @@ def test_cad_execute_build123d_tool_registered_for_plan_approved_execution() -> 
         assert tools[tool_name]["input_schema"]["properties"]["response_detail"]["enum"] == ["full", "compact"]
 
 
+def test_execute_build123d_project_not_found_recommends_create_project(tmp_path: Path) -> None:
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    out = execute_build123d_code(
+        settings,
+        "missing-project",
+        {
+            "code": "from build123d import *\nresult = Box(1, 1, 1)\n",
+            "name": "Pump bracket",
+        },
+    )
+
+    assert out["status"] == "error"
+    assert out["code"] == "project_not_found"
+    recs = out["recommended_next_calls"]
+    assert recs[0]["tool"] == "aieng.create_project"
+    assert recs[0]["input"] == {"name": "Pump bracket"}
+
+
 # ── geometry report ───────────────────────────────────────────────────────────
 
 def test_geometry_report_flags_asymmetry_and_floating() -> None:
@@ -1702,6 +1722,42 @@ def test_geometry_report_marks_hollow_containment_as_review_not_failure() -> Non
     assert report["spatial_summary"]["contained_in_hollow"] == 1
     assert report["spatial_summary"]["containments"] == 0
     assert report["spatial_relationships"][0]["status"] == "contained_in_hollow"
+
+
+def test_geometry_report_truncation_keeps_preferred_recent_parts() -> None:
+    from app.cad_generation import _compute_geometry_report
+
+    topo = {
+        "entities": [
+            {
+                "type": "solid",
+                "id": f"b{i}",
+                "name": f"part_{i:02d}",
+                "bounding_box": [float(i), 0.0, 0.0, float(i + 10), 10.0, 10.0],
+            }
+            for i in range(17)
+        ]
+    }
+
+    report = _compute_geometry_report(
+        topo,
+        max_parts=14,
+        preferred_parts=["part_15", "part_16"],
+    )
+
+    part_names = {row["name"] for row in report["parts"]}
+    assert {"part_15", "part_16"} <= part_names
+    gap_names = {row["part"] for row in report["gaps"]}
+    assert {"part_15", "part_16"} <= gap_names
+    assert report["parts_truncated"] == 3
+    assert report["gaps_truncated"] == 3
+    spatial_parts = {
+        part
+        for row in report.get("spatial_relationships", [])
+        for part in row.get("parts", [])
+    }
+    assert {"part_15", "part_16"} <= spatial_parts
+    assert report["gaps_summary"]["total"] == 17
 
 
 def _topo_from(parts: list[tuple[str, list[float]]]) -> dict:
@@ -3345,6 +3401,39 @@ def test_mechanical_helper_builds_named_part(tmp_path: Path, snippet: str, part_
     assert out["topology_summary"]["bounding_box"] is not None
     assert out["topology_summary"]["face_count"] > 0
     assert part_label in out["named_parts"], out["named_parts"]
+
+
+def test_tapered_cylinder_template_accepts_axis_argument() -> None:
+    from app.cad_generation import _RUNNER_TEMPLATE
+
+    assert 'def tapered_cylinder(bottom_radius, top_radius, height, axis="Z", label=None, color=None):' in _RUNNER_TEMPLATE
+    assert 'if a == "X":' in _RUNNER_TEMPLATE
+    assert "part = part.rotate(Axis.Y, 90)" in _RUNNER_TEMPLATE
+    assert 'elif a == "Y":' in _RUNNER_TEMPLATE
+    assert "part = part.rotate(Axis.X, 90)" in _RUNNER_TEMPLATE
+
+
+def test_tapered_cylinder_axis_x_orients_height_along_x(tmp_path: Path) -> None:
+    pytest.importorskip("build123d")
+    from app.cad_generation import execute_build123d_code
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "tapered-axis")
+    out = execute_build123d_code(
+        settings,
+        pid,
+        {
+            "code": "from build123d import *\nresult = tapered_cylinder(5, 8, 40, axis='X', label='nozzle')\n",
+            "thumbnail": False,
+        },
+    )
+
+    assert out["status"] == "ok", out
+    bbox = out["topology_summary"]["bounding_box"]
+    size = [round(float(bbox[i + 3]) - float(bbox[i]), 1) for i in range(3)]
+    assert size[0] == pytest.approx(40.0, abs=0.2)
+    assert size[1] == pytest.approx(16.0, abs=0.2)
+    assert size[2] == pytest.approx(16.0, abs=0.2)
 
 
 def test_tube_is_hollow(tmp_path: Path) -> None:

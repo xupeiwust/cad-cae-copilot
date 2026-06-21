@@ -162,8 +162,8 @@ Rules:
       filleted box; the default block for designed enclosures (not a hard Box).
     - capsule(radius, length, axis="Z") — cylinder with hemispherical caps; the
       go-to for arms, legs, limbs, rounded pins.
-    - tapered_cylinder(bottom_radius, top_radius, height) — truncated cone for
-      necks, nozzles, tapered legs.
+    - tapered_cylinder(bottom_radius, top_radius, height, axis="Z") — truncated
+      cone for necks, nozzles, tapered legs.
     - swept_tube(path_points, radius) — sweep a circle along a spline through
       (x,y,z) points; pipes, handles, exhausts, cable runs.
     - revolved_profile(profile_points) — revolve a list of (r, z) points around Z

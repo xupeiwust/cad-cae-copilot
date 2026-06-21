@@ -390,9 +390,17 @@ def capsule(radius, length, axis="Z", label=None, color=None):
     return _aieng_finish(part, label, color)
 
 
-def tapered_cylinder(bottom_radius, top_radius, height, label=None, color=None):
-    \"\"\"A truncated cone (different top/bottom radii) -- necks, nozzles, legs.\"\"\"
-    return _aieng_finish(Cone(bottom_radius, top_radius, height), label, color)
+def tapered_cylinder(bottom_radius, top_radius, height, axis="Z", label=None, color=None):
+    \"\"\"A truncated cone (different top/bottom radii) -- necks, nozzles, legs.
+    ``axis`` in {"X","Y","Z"}.
+    \"\"\"
+    part = Cone(bottom_radius, top_radius, height)
+    a = str(axis).upper()
+    if a == "X":
+        part = part.rotate(Axis.Y, 90)
+    elif a == "Y":
+        part = part.rotate(Axis.X, 90)
+    return _aieng_finish(part, label, color)
 
 
 def swept_tube(path_points, radius, label=None, color=None):
@@ -2422,7 +2430,48 @@ def _is_hollow_container(entity: dict[str, Any]) -> bool:
     return ratio is not None and ratio < 0.6
 
 
-def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) -> dict[str, Any]:
+def _prioritize_geometry_rows(
+    rows: list[dict[str, Any]],
+    max_rows: int,
+    preferred_parts: set[str],
+    *,
+    key: str,
+) -> list[dict[str, Any]]:
+    if len(rows) <= max_rows or not preferred_parts:
+        return rows[:max_rows]
+
+    preferred_lower = {p.lower() for p in preferred_parts if p}
+
+    def row_matches(row: dict[str, Any]) -> bool:
+        value = row.get(key)
+        if isinstance(value, str):
+            return value.lower() in preferred_lower
+        if isinstance(value, list):
+            return any(str(part).lower() in preferred_lower for part in value)
+        return False
+
+    selected: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for row in rows:
+        if row_matches(row):
+            selected.append(row)
+            seen_ids.add(id(row))
+            if len(selected) >= max_rows:
+                return selected
+    for row in rows:
+        if id(row) in seen_ids:
+            continue
+        selected.append(row)
+        if len(selected) >= max_rows:
+            break
+    return selected
+
+
+def _compute_geometry_report(
+    topology_map: dict[str, Any],
+    max_parts: int = 14,
+    preferred_parts: list[str] | set[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Produce a deterministic, agent-readable geometry report from topology.
 
     Sections:
@@ -2434,6 +2483,11 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
     travel in the MCP text response so the agent can cite specifics like
     "arm_len/torso_len = 0.42, too short".
     """
+    preferred_part_names = {
+        name
+        for raw in (preferred_parts or [])
+        if raw is not None and (name := str(raw).strip())
+    }
     entities = (topology_map or {}).get("entities", [])
     solids = [
         e for e in entities
@@ -2485,7 +2539,9 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
             "max_dim": _r(mx),
             "ratio_to_largest": _r(mx / largest_part_dim, 3),
         })
-    report["parts"] = part_recs[:max_parts]
+    report["parts"] = _prioritize_geometry_rows(
+        part_recs, max_parts, preferred_part_names, key="name"
+    )
     if len(part_recs) > max_parts:
         report["parts_truncated"] = len(part_recs) - max_parts
 
@@ -2594,7 +2650,9 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
                 "gap_mm": _r(min_gap),
                 "status": status,
             })
-        report["gaps"] = gap_recs[:max_parts]
+        report["gaps"] = _prioritize_geometry_rows(
+            gap_recs, max_parts, preferred_part_names, key="part"
+        )
         if len(gap_recs) > max_parts:
             report["gaps_truncated"] = len(gap_recs) - max_parts
         floating = [g["part"] for g in gap_recs if g["status"] == "floating"]
@@ -2610,7 +2668,9 @@ def _compute_geometry_report(topology_map: dict[str, Any], max_parts: int = 14) 
         if floating:
             report["floating_parts"] = floating
         if spatial_recs:
-            report["spatial_relationships"] = spatial_recs[:max_parts]
+            report["spatial_relationships"] = _prioritize_geometry_rows(
+                spatial_recs, max_parts, preferred_part_names, key="parts"
+            )
             if len(spatial_recs) > max_parts:
                 report["spatial_relationships_truncated"] = len(spatial_recs) - max_parts
         report["spatial_summary"] = {
@@ -3125,6 +3185,11 @@ def _finish_execute_build123d_response(
 
     solid = next((e for e in topo.get("entities", []) if e.get("type") == "solid"), None)
     named_parts = _named_parts_from_feature_graph(feature_graph)
+    parts_added = [p for p in named_parts if p not in prior_named_parts]
+    geometry_report_for_response = (
+        _compute_geometry_report(topo, preferred_parts=parts_added)
+        if parts_added else geometry_report_full
+    )
     result: dict[str, Any] = {
         "status": "ok",
         "schema_version": "0.1",
@@ -3135,15 +3200,15 @@ def _finish_execute_build123d_response(
         "cache_hit": cache_hit,
         "response_detail": response_detail,
         "named_parts": named_parts,
-        "parts_added": [p for p in named_parts if p not in prior_named_parts],
+        "parts_added": parts_added,
         "topology_summary": {
             "face_count": face_count,
             "feature_count": feature_count,
             "bounding_box": _union_solid_bbox(topo),
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
-        "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
-        "geometry_report_summary": _geometry_report_summary(geometry_report_full),
+        "geometry_report": _geometry_report_for_response(geometry_report_for_response, response_detail),
+        "geometry_report_summary": _geometry_report_summary(geometry_report_for_response),
         "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "written_artifacts": written,
         "write_files": write_files,
@@ -4870,6 +4935,33 @@ def load_cad_brief(settings: Any, project_id: str) -> dict[str, Any] | None:
         except Exception:
             return None
     return None
+
+
+def _project_not_found_with_create_hint(
+    project_id: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    name = str((payload or {}).get("name") or "").strip()
+    create_input: dict[str, Any] = {}
+    if name:
+        create_input["name"] = name
+    return {
+        "status": "error",
+        "code": "project_not_found",
+        "message": message or f"project {project_id} not found.",
+        "recommended_next_calls": [
+            {
+                "tool": "aieng.create_project",
+                "input": create_input,
+                "reason": (
+                    "No project with this id exists yet. Create one, then retry "
+                    "cad.execute_build123d with the returned project_id."
+                ),
+            }
+        ],
+    }
 
 
 def author_brief(settings: Any, project_id: str, inp: dict[str, Any]) -> dict[str, Any]:
@@ -6787,7 +6879,11 @@ def execute_build123d_code(
     try:
         project = get_project(settings, project_id)
     except Exception as exc:
-        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+        return _project_not_found_with_create_hint(
+            project_id,
+            payload=payload,
+            message=f"{exc}",
+        )
 
     backend = Build123dBackend(settings)
     if not backend.can_generate():
@@ -7060,6 +7156,10 @@ def execute_build123d_code(
     # in append mode, current minus the prior step's parts; in replace, all of them.
     named_parts = _named_parts_from_feature_graph(feature_graph)
     parts_added = [p for p in named_parts if p not in prior_named_parts]
+    geometry_report_for_response = (
+        _compute_geometry_report(topo, preferred_parts=parts_added)
+        if parts_added else geometry_report_full
+    )
 
     result: dict[str, Any] = {
         "status": "ok",
@@ -7078,8 +7178,8 @@ def execute_build123d_code(
             "bounding_box": _union_solid_bbox(topo),
         },
         "feature_graph": _slim_feature_graph_for_response(feature_graph),
-        "geometry_report": _geometry_report_for_response(geometry_report_full, response_detail),
-        "geometry_report_summary": _geometry_report_summary(geometry_report_full),
+        "geometry_report": _geometry_report_for_response(geometry_report_for_response, response_detail),
+        "geometry_report_summary": _geometry_report_summary(geometry_report_for_response),
         "modeling_fidelity": _fidelity_brief(topo, feature_graph),
         "written_artifacts": written,
         "write_files": write_files,

@@ -1080,6 +1080,38 @@ def test_rebind_cae_faces_maps_planes_after_geometry_change(tmp_path: Path) -> N
     assert new_mapping["topology_hash"] == compute_topology_hash(new_topology)
 
 
+def test_rebind_cae_faces_returns_independent_mapping_copy() -> None:
+    old_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 100, 50, 10]},
+            {"id": "face_load", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 5000.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 100, 50, 10]},
+        ]
+    }
+    new_topology = {
+        "entities": [
+            {"id": "body_1", "type": "solid", "bounding_box": [0, 0, 0, 120, 50, 10]},
+            {"id": "face_load_v2", "type": "face", "surface_type": "plane", "body_id": "body_1",
+             "area": 6000.0, "normal": [0, 0, 1], "bounding_box": [0, 0, 10, 120, 50, 10]},
+        ]
+    }
+    old_mapping = {
+        "mappings": [
+            {"cae_entity": "LOAD", "maps_to": {"feature_id": "load"}, "face_ids": ["face_load"]},
+        ]
+    }
+
+    report = rebind_cae_faces(old_mapping, old_topology, new_topology)
+
+    assert report["cae_mapping"] is not old_mapping
+    assert report["cae_mapping"]["mappings"][0] is not old_mapping["mappings"][0]
+    assert old_mapping == {
+        "mappings": [
+            {"cae_entity": "LOAD", "maps_to": {"feature_id": "load"}, "face_ids": ["face_load"]},
+        ]
+    }
+
+
 def test_rebind_cae_faces_rejects_ambiguous_match() -> None:
     old_topology = {
         "entities": [

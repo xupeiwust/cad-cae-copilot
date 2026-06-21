@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import fnmatch
 import hashlib
 import json
@@ -1438,7 +1439,7 @@ def rebind_cae_faces(
         default=1.0,
     ) or 1.0
 
-    new_cae_mapping = json.loads(json.dumps(old_cae_mapping))
+    new_cae_mapping = copy.deepcopy(old_cae_mapping)
     new_cae_mapping["topology_hash"] = compute_topology_hash(new_topology)
     new_cae_mapping["rebind_metadata"] = {
         "rebound": True,

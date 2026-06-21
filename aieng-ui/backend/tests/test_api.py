@@ -3012,6 +3012,45 @@ def test_cae_extract_solver_results_missing_frd_path_returns_error(tmp_path: Pat
     assert result["code"] == "missing_frd_path"
 
 
+def test_cae_extract_solver_results_binary_frd_returns_error_without_metrics(
+    tmp_path: Path,
+) -> None:
+    """Binary/non-text FRD input must not produce fake computed_metrics.json."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("frd-binary"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "extract-test.aieng"
+    _make_setup_package(pkg_path)
+    project["aieng_file"] = "extract-test.aieng"
+    save_project(settings, project)
+
+    frd_path = tmp_path / "binary.frd"
+    frd_path.write_bytes(b"\x00\x01not-a-text-frd\x00\xff")
+
+    resp = client.post("/api/runtime/runs", json={
+        "message": "extract solver results",
+        "project_id": project_id,
+        "tool_input": {
+            "project_id": project_id,
+            "frdPath": str(frd_path),
+        },
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["status"] == "error"
+    assert result["code"] == "extraction_error"
+    assert "binary or non-UTF-8 FRD files are unsupported" in result["message"]
+
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        assert "results/computed_metrics.json" not in zf.namelist()
+
+
 # ---------------------------------------------------------------------------
 # Phase 31 — cae.extract_field_regions runtime tool
 # ---------------------------------------------------------------------------

@@ -192,6 +192,13 @@ class TestParseFrd:
         with pytest.raises(FileNotFoundError):
             parse_frd(tmp_path / "missing.frd")
 
+    def test_binary_frd_is_rejected_honestly(self, tmp_path: Path) -> None:
+        frd = tmp_path / "binary.frd"
+        frd.write_bytes(b"\x00\x01not-a-text-frd\x00\xff")
+
+        with pytest.raises(ValueError, match="binary or non-UTF-8 FRD files are unsupported"):
+            parse_frd(frd)
+
     def test_empty_frd_returns_no_fields(self, tmp_path: Path) -> None:
         frd = _write_frd(tmp_path, " 9999\n")
         fields = parse_frd(frd)
@@ -410,3 +417,15 @@ class TestWriteComputedMetricsPackage:
         write_computed_metrics_package(pkg, frd)
         with pytest.raises(FileExistsError):
             write_computed_metrics_package(pkg, frd, overwrite=False)
+
+    def test_binary_frd_does_not_write_computed_metrics(self, tmp_path: Path) -> None:
+        pkg = tmp_path / "test.aieng"
+        _make_package(pkg)
+        frd = tmp_path / "binary.frd"
+        frd.write_bytes(b"\x00\x01not-a-text-frd\x00\xff")
+
+        with pytest.raises(ValueError, match="binary or non-UTF-8 FRD files are unsupported"):
+            write_computed_metrics_package(pkg, frd)
+
+        with zipfile.ZipFile(pkg, "r") as zf:
+            assert "results/computed_metrics.json" not in zf.namelist()

@@ -24,6 +24,10 @@ from typing import Any
 from ..schema_versions import FRD_COMPUTED_METRICS_SCHEMA
 
 METRICS_PATH = "results/computed_metrics.json"
+_BINARY_FRD_UNSUPPORTED = (
+    "binary or non-UTF-8 FRD files are unsupported by frd_parser_v1; "
+    "provide a CalculiX text FRD export before extracting computed metrics"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +121,19 @@ def _parse_frd_text(text: str) -> list[dict[str, Any]]:
     return datasets
 
 
+def _read_frd_text(frd_path: Path) -> str:
+    try:
+        raw = frd_path.read_bytes()
+    except OSError as exc:
+        raise FileNotFoundError(f"FRD file not found or unreadable: {frd_path}") from exc
+    if b"\x00" in raw:
+        raise ValueError(_BINARY_FRD_UNSUPPORTED)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(_BINARY_FRD_UNSUPPORTED) from exc
+
+
 def parse_frd_steps(frd_path: Path) -> dict[str, list[dict[str, Any]]]:
     """Parse a CalculiX FRD text file and return per-field, per-step data.
 
@@ -128,11 +145,7 @@ def parse_frd_steps(frd_path: Path) -> dict[str, list[dict[str, Any]]]:
         step/analysis increment in file order.  Modal/buckling mode shapes and
         multi-step static results therefore appear as successive list entries.
     """
-    try:
-        text = frd_path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        raise FileNotFoundError(f"FRD file not found or unreadable: {frd_path}") from exc
-
+    text = _read_frd_text(frd_path)
     datasets = _parse_frd_text(text)
     fields: dict[str, list[dict[str, Any]]] = {}
     for dataset in datasets:

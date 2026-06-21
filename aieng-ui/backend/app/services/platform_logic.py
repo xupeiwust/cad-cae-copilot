@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import zipfile
 from typing import Any
 
 from app import aieng_bridge
@@ -959,14 +960,18 @@ def _resolve_material_yield(package_path: Path) -> float | None:
     from ..post_processing import _lookup_yield_strength
 
     setup: dict[str, Any] | None = None
-    for member in ("simulation/setup.yaml", "simulation/setup.yml", "cae/setup.yaml"):
-        try:
-            with zipfile.ZipFile(package_path, "r") as zf:
-                if member in zf.namelist():
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            for member in ("simulation/setup.yaml", "simulation/setup.yml", "cae/setup.yaml"):
+                try:
                     setup = yaml.safe_load(zf.read(member).decode("utf-8"))
                     break
-        except Exception:
-            continue
+                except KeyError:
+                    continue
+                except Exception:
+                    continue
+    except Exception:
+        return None
     if not isinstance(setup, dict):
         return None
 

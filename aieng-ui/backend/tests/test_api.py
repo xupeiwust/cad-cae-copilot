@@ -532,6 +532,27 @@ def test_field_descriptor_safety_factor_unavailable_without_material(tmp_path: P
     assert sf["source"] == "synthetic_mock"  # not fabricated from FRD
 
 
+def test_resolve_material_yield_reads_setup_without_enumerating_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.platform_logic import _resolve_material_yield
+
+    pkg_path = tmp_path / "material-yield.aieng"
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "simulation/setup.yaml",
+            yaml.safe_dump({"material": {"name": "custom", "yield_strength_mpa": 345.0}}),
+        )
+
+    def fail_namelist(self):
+        raise AssertionError("namelist should not be needed for direct setup reads")
+
+    monkeypatch.setattr(zipfile.ZipFile, "namelist", fail_namelist)
+
+    assert _resolve_material_yield(pkg_path) == 345.0
+
+
 def test_field_descriptor_fallback_to_synthetic_when_no_frd(tmp_path: Path) -> None:
     """GET /fields/{name} falls back to synthetic when package has no FRD."""
     from app.main import create_app, default_project, project_dir, save_project

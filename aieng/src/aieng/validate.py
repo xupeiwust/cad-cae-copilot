@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from functools import lru_cache
 import json
 import warnings
 import zipfile
@@ -25,6 +27,15 @@ except Exception:  # pragma: no cover - exercised only when dependency is unavai
     Draft202012Validator = None  # type: ignore[assignment]
 
 NUMERIC_TYPES = (int, float)
+
+
+def _duplicate_values(items: Iterable[Any]) -> list[Any]:
+    """Return duplicate values with one linear scan."""
+    counts = Counter(items)
+    return sorted(
+        (item for item, count in counts.items() if count > 1),
+        key=lambda item: (type(item).__name__, str(item)),
+    )
 
 
 class Level(str, Enum):
@@ -570,7 +581,7 @@ def _validate_aag_semantics(
                     )
                 )
 
-    duplicate_node_ids = sorted({node_id for node_id in node_ids if node_ids.count(node_id) > 1})
+    duplicate_node_ids = _duplicate_values(node_ids)
     if duplicate_node_ids:
         messages.append(ValidationMessage(Level.FAIL, f"AAG node IDs are not unique: {', '.join(duplicate_node_ids)}"))
     else:
@@ -609,7 +620,7 @@ def _validate_aag_semantics(
                     )
                 )
 
-    duplicate_arc_ids = sorted({arc_id for arc_id in arc_ids if arc_ids.count(arc_id) > 1})
+    duplicate_arc_ids = _duplicate_values(arc_ids)
     if duplicate_arc_ids:
         messages.append(ValidationMessage(Level.FAIL, f"AAG arc IDs are not unique: {', '.join(duplicate_arc_ids)}"))
     else:
@@ -787,7 +798,7 @@ def _validate_allowed_operations_catalog_semantics(
                         )
                     )
 
-    duplicates = sorted({fid for fid in seen_feature_ids if seen_feature_ids.count(fid) > 1})
+    duplicates = _duplicate_values(seen_feature_ids)
     if duplicates:
         messages.append(
             ValidationMessage(
@@ -875,15 +886,17 @@ def _validate_manifest(manifest: dict[str, Any]) -> list[ValidationMessage]:
 
 
 def _validate_against_schema(member: str, data: Any, schema_name: str) -> list[ValidationMessage]:
-    schema_text = _read_schema_text(schema_name)
-    if schema_text is None:
+    schema = _schema_document(schema_name)
+    if schema is None:
         return [ValidationMessage(Level.FAIL, f"schema {schema_name} missing")]
 
-    schema = json.loads(schema_text)
     if Draft202012Validator is None:
         return _fallback_schema_check(member, data)
 
-    validator = Draft202012Validator(schema)
+    validator = _schema_validator(schema_name)
+    if validator is None:
+        return [ValidationMessage(Level.FAIL, f"schema {schema_name} missing")]
+
     errors = sorted(validator.iter_errors(data), key=lambda error: list(error.path))
     if not errors:
         return [ValidationMessage(Level.PASS, f"{member} conforms to {schema_name}")]
@@ -909,7 +922,7 @@ def _validate_topology_map_semantics(data: Any) -> list[ValidationMessage]:
         else:
             messages.append(ValidationMessage(Level.FAIL, f"topology entity at index {index} missing string id"))
 
-    duplicates = sorted({entity_id for entity_id in ids if ids.count(entity_id) > 1})
+    duplicates = _duplicate_values(ids)
     if duplicates:
         messages.append(ValidationMessage(Level.FAIL, f"topology entity IDs are not unique: {', '.join(duplicates)}"))
     else:
@@ -997,7 +1010,7 @@ def _validate_feature_graph_semantics(
         else:
             messages.append(ValidationMessage(Level.FAIL, f"feature at index {index} missing string id"))
 
-    duplicate_ids = sorted({feature_id for feature_id in feature_ids if feature_ids.count(feature_id) > 1})
+    duplicate_ids = _duplicate_values(feature_ids)
     if duplicate_ids:
         messages.append(ValidationMessage(Level.FAIL, f"feature IDs are not unique: {', '.join(duplicate_ids)}"))
     else:
@@ -1842,7 +1855,7 @@ def _validate_annotation_layers_semantics(
             layer_ids.append(layer["id"])
         else:
             messages.append(ValidationMessage(Level.FAIL, f"annotation layer at index {index} missing string id"))
-    duplicates = sorted({lid for lid in layer_ids if layer_ids.count(lid) > 1})
+    duplicates = _duplicate_values(layer_ids)
     if duplicates:
         messages.append(ValidationMessage(Level.FAIL, f"annotation layer IDs are not unique: {', '.join(duplicates)}"))
     else:
@@ -1902,7 +1915,7 @@ def _validate_annotation_layers_semantics(
                             )
 
     # Check item IDs are unique across all layers
-    dup_item_ids = sorted({iid for iid in all_item_ids if all_item_ids.count(iid) > 1})
+    dup_item_ids = _duplicate_values(all_item_ids)
     if dup_item_ids:
         messages.append(
             ValidationMessage(Level.FAIL, f"annotation item IDs are not unique: {', '.join(dup_item_ids)}")
@@ -2065,7 +2078,7 @@ def _validate_object_registry_semantics(
                         )
                     )
 
-    duplicate_object_ids = sorted({obj_id for obj_id in object_ids if object_ids.count(obj_id) > 1})
+    duplicate_object_ids = _duplicate_values(object_ids)
     if duplicate_object_ids:
         messages.append(
             ValidationMessage(
@@ -2364,7 +2377,7 @@ def _validate_interface_graph_semantics(
                     )
                 )
 
-    duplicates = sorted({item for item in interface_ids if interface_ids.count(item) > 1})
+    duplicates = _duplicate_values(interface_ids)
     if duplicates:
         messages.append(
             ValidationMessage(
@@ -2474,7 +2487,7 @@ def _validate_parsed_cae_materials_semantics(parsed_materials: Any) -> list[Vali
         return [ValidationMessage(Level.FAIL, "simulation/cae_imports/parsed_materials.json materials must be an array")]
 
     names = [item.get("name") for item in materials if isinstance(item, dict) and isinstance(item.get("name"), str)]
-    duplicates = sorted({name for name in names if names.count(name) > 1})
+    duplicates = _duplicate_values(names)
     if duplicates:
         messages.append(
             ValidationMessage(
@@ -2496,7 +2509,7 @@ def _validate_parsed_cae_boundary_conditions_semantics(parsed_bcs: Any) -> list[
         return [ValidationMessage(Level.FAIL, "simulation/cae_imports/parsed_boundary_conditions.json boundary_conditions must be an array")]
 
     ids = [item.get("id") for item in boundary_conditions if isinstance(item, dict) and isinstance(item.get("id"), str)]
-    duplicates = sorted({item_id for item_id in ids if ids.count(item_id) > 1})
+    duplicates = _duplicate_values(ids)
     if duplicates:
         messages.append(
             ValidationMessage(
@@ -2518,7 +2531,7 @@ def _validate_parsed_cae_loads_semantics(parsed_loads: Any) -> list[ValidationMe
         return [ValidationMessage(Level.FAIL, "simulation/cae_imports/parsed_loads.json loads must be an array")]
 
     ids = [item.get("id") for item in loads if isinstance(item, dict) and isinstance(item.get("id"), str)]
-    duplicates = sorted({item_id for item_id in ids if ids.count(item_id) > 1})
+    duplicates = _duplicate_values(ids)
     if duplicates:
         messages.append(
             ValidationMessage(
@@ -2728,6 +2741,24 @@ def _read_schema_text(schema_name: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=None)
+def _schema_document(schema_name: str) -> dict[str, Any] | None:
+    schema_text = _read_schema_text(schema_name)
+    if schema_text is None:
+        return None
+    return json.loads(schema_text)
+
+
+@lru_cache(maxsize=None)
+def _schema_validator(schema_name: str) -> Any | None:
+    if Draft202012Validator is None:
+        return None
+    schema = _schema_document(schema_name)
+    if schema is None:
+        return None
+    return Draft202012Validator(schema)
+
+
 def _error_path(path_parts: Iterable[Any]) -> str:
     parts = list(path_parts)
     if not parts:
@@ -2889,7 +2920,7 @@ def _validate_completeness_report_semantics(
                 )
             )
 
-    duplicate_categories = sorted({name for name in category_names if category_names.count(name) > 1})
+    duplicate_categories = _duplicate_values(category_names)
     if duplicate_categories:
         messages.append(ValidationMessage(Level.FAIL, f"{member} category names are not unique: {', '.join(duplicate_categories)}"))
     else:
@@ -2918,7 +2949,7 @@ def _validate_design_targets(package: zipfile.ZipFile, member: str) -> list[Vali
         for t in data.get("targets", [])
         if isinstance(t, dict) and isinstance((t.get("target_id") or t.get("id")), str)
     ]
-    duplicates = sorted({tid for tid in target_ids if target_ids.count(tid) > 1})
+    duplicates = _duplicate_values(target_ids)
     if duplicates:
         messages.append(
             ValidationMessage(Level.FAIL, f"{member} target IDs are not unique: {', '.join(duplicates)}")
@@ -3153,7 +3184,7 @@ def _validate_tool_trace_semantics(
                     ValidationMessage(Level.FAIL, f"{member} entry {entry_id!r} exit_status '{exit_status}' is unrecognized")
                 )
 
-    dup_entry_ids = sorted({eid for eid in entry_ids if entry_ids.count(eid) > 1})
+    dup_entry_ids = _duplicate_values(entry_ids)
     if dup_entry_ids:
         messages.append(
             ValidationMessage(Level.FAIL, f"{member} entry IDs are not unique: {', '.join(dup_entry_ids)}")
@@ -3276,7 +3307,7 @@ def _validate_evidence_index(member: str, data: Any, names: set[str]) -> list[Va
         if ev_type == "mesh_evidence":
             messages.extend(_validate_mesh_evidence_payload(member, item, names))
 
-    dup_ev_ids = sorted({eid for eid in evidence_ids if evidence_ids.count(eid) > 1})
+    dup_ev_ids = _duplicate_values(evidence_ids)
     if dup_ev_ids:
         messages.append(ValidationMessage(Level.FAIL, f"{member} evidence IDs are not unique: {', '.join(dup_ev_ids)}"))
     else:
@@ -3581,7 +3612,7 @@ def _validate_assembly_graph_semantics(assembly_graph: Any) -> list[ValidationMe
         return messages
 
     part_ids = [p.get("part_id") for p in parts if isinstance(p, dict)]
-    duplicates = {pid for pid in part_ids if part_ids.count(pid) > 1}
+    duplicates = _duplicate_values(part_ids)
     if duplicates:
         messages.append(
             ValidationMessage(
@@ -3595,7 +3626,7 @@ def _validate_assembly_graph_semantics(assembly_graph: Any) -> list[ValidationMe
     mates = assembly_graph.get("mates", [])
     if isinstance(mates, list):
         mate_ids = [m.get("mate_id") for m in mates if isinstance(m, dict)]
-        dup_mates = {mid for mid in mate_ids if mate_ids.count(mid) > 1}
+        dup_mates = _duplicate_values(mate_ids)
         if dup_mates:
             messages.append(
                 ValidationMessage(

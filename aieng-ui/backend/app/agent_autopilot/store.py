@@ -94,6 +94,17 @@ class AutopilotStore:
             # paths that flip state.status) don't corrupt the cached list.
             return list(self._list_runs_cache[cache_key])
 
+        all_runs = self._list_runs_cache.get((None, None))
+        if all_runs is not None:
+            runs = [
+                state
+                for state in all_runs
+                if (project_id is None or state.project_id == project_id)
+                and (session_id is None or state.session_id == session_id)
+            ]
+            self._list_runs_cache[cache_key] = runs
+            return list(runs)
+
         runs: list[AutopilotRunState] = []
         for path in sorted(self.runs_dir.glob("*.json")):
             if path.suffix != ".json":
@@ -117,14 +128,20 @@ class AutopilotStore:
             except Exception:
                 LOGGER.warning("list_runs: invalid run state in %s; skipping", path.name)
                 continue
-            if project_id is not None and state.project_id != project_id:
-                continue
-            if session_id is not None and state.session_id != session_id:
-                continue
             runs.append(state)
 
-        self._list_runs_cache[cache_key] = runs
-        return list(runs)
+        self._list_runs_cache[(None, None)] = runs
+        if cache_key == (None, None):
+            return list(runs)
+
+        filtered_runs = [
+            state
+            for state in runs
+            if (project_id is None or state.project_id == project_id)
+            and (session_id is None or state.session_id == session_id)
+        ]
+        self._list_runs_cache[cache_key] = filtered_runs
+        return list(filtered_runs)
 
     def delete_run(self, run_id: str) -> bool:
         deleted = False

@@ -26,6 +26,7 @@ from app.main import (
     import_aieng_file,
     package_summary,
     project_dir,
+    recent_logs,
     save_project,
     summarize_cae_payload,
     write_json,
@@ -3647,6 +3648,26 @@ def test_import_aieng_file_uses_core_bridge_without_cad_provider(tmp_path: Path)
     assert summary["summary_mode"] in {"bridge", "zip_fallback"}
     assert "geometry/source.step" in summary["members"]
     assert "validation/completeness_report.json" in summary["members"]
+
+
+def test_recent_logs_returns_newest_logs_with_metadata(tmp_path: Path) -> None:
+    settings = _make_patch_settings(tmp_path)
+    project = save_project(settings, default_project("logs"))
+    project_id = project["id"]
+    logs_dir = project_dir(settings, project_id) / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    older = logs_dir / "older.json"
+    newer = logs_dir / "newer.json"
+    older.write_text('{"message":"old"}', encoding="utf-8")
+    newer.write_text('{"message":"new"}', encoding="utf-8")
+    os.utime(older, (1000, 1000))
+    os.utime(newer, (2000, 2000))
+
+    logs = recent_logs(settings, project_id)
+
+    assert [item["name"] for item in logs] == ["newer.json", "older.json"]
+    assert logs[0]["size"] == newer.stat().st_size
+    assert logs[0]["updated_at"].startswith("1970-01-01T00:33:20")
 
 
 def test_convert_asset_reports_unavailable_honestly_without_provider(monkeypatch, tmp_path: Path) -> None:

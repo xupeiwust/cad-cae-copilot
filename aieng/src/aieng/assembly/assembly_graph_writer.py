@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import shutil
 import tempfile
@@ -87,7 +88,7 @@ def _validate_definition(raw: dict[str, Any], definition: Path) -> None:
             raise ValueError(f"{definition}: parts[{i}] missing 'label'")
         part_ids.append(pid)
 
-    duplicates = {p for p in part_ids if part_ids.count(p) > 1}
+    duplicates = [part_id for part_id, count in Counter(part_ids).items() if count > 1]
     if duplicates:
         raise ValueError(
             f"{definition}: duplicate part_id values: {', '.join(sorted(duplicates))}"
@@ -115,7 +116,7 @@ def _validate_definition(raw: dict[str, Any], definition: Path) -> None:
                     f"choose from: {', '.join(sorted(_VALID_MATE_TYPES))}"
                 )
 
-        dup_mates = {m for m in mate_ids if mate_ids.count(m) > 1}
+        dup_mates = [mate_id for mate_id, count in Counter(mate_ids).items() if count > 1]
         if dup_mates:
             raise ValueError(
                 f"{definition}: duplicate mate_id values: {', '.join(sorted(dup_mates))}"

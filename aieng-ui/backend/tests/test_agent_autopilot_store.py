@@ -186,6 +186,29 @@ def test_store_caches_list_runs_with_filters(tmp_path: Path) -> None:
     assert len(store.list_runs()) == 3
 
 
+def test_filtered_list_runs_warms_full_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = AutopilotStore(tmp_path / "runs")
+    store.save(AutopilotRunState(run_id="a", status="running", message="a", adapter_id="fake", project_id="p1"))
+    store.save(AutopilotRunState(run_id="b", status="running", message="b", adapter_id="fake", project_id="p2"))
+
+    read_calls = 0
+    real_read_text = Path.read_text
+
+    def counting_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        nonlocal read_calls
+        read_calls += 1
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    assert [state.run_id for state in store.list_runs(project_id="p1")] == ["a"]
+    reads_after_filtered = read_calls
+    assert reads_after_filtered == 2
+
+    assert [state.run_id for state in store.list_runs()] == ["a", "b"]
+    assert read_calls == reads_after_filtered
+
+
 def test_store_invalidate_cache_on_delete_run(tmp_path: Path) -> None:
     store = AutopilotStore(tmp_path / "runs")
     store.save(AutopilotRunState(run_id="run1", status="running", message="a", adapter_id="fake"))

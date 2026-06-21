@@ -503,14 +503,15 @@ def convert_asset(settings: Settings, project_id: str) -> dict[str, Any]:
 def recent_logs(settings: Settings, project_id: str, limit: int = 8) -> list[dict[str, Any]]:
     logs_root = project_dir(settings, project_id) / "logs"
     items: list[dict[str, Any]] = []
-    for path in sorted(logs_root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)[:limit]:
+    log_entries = [(path.stat(), path) for path in logs_root.glob("*.json")]
+    for stat_result, path in sorted(log_entries, key=lambda item: item[0].st_mtime, reverse=True)[:limit]:
         items.append(
             {
                 "name": path.name,
                 "path": project_relpath(settings, project_id, path),
                 "url": f"/assets/projects/{project_id}/{project_relpath(settings, project_id, path)}",
-                "size": path.stat().st_size,
-                "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat(),
+                "size": stat_result.st_size,
+                "updated_at": datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc).isoformat(),
             }
         )
     return items
@@ -1152,5 +1153,4 @@ def _extract_frd_field_data(
                 sys.path.remove(str(aieng_src))
             except ValueError:
                 pass
-
 

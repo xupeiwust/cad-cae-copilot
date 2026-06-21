@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import warnings
 import zipfile
@@ -131,7 +132,7 @@ def _validate_definition(definition: dict[str, Any]) -> None:
         for feature in definition.get("features", [])
         if isinstance(feature, dict)
     ]
-    duplicate_ids = sorted({feature_id for feature_id in feature_ids if feature_ids.count(feature_id) > 1})
+    duplicate_ids = sorted(feature_id for feature_id, count in Counter(feature_ids).items() if count > 1)
     if duplicate_ids:
         raise ValueError(f"feature_id values are not unique: {', '.join(duplicate_ids)}")
 

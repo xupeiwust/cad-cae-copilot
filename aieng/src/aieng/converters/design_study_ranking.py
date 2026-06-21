@@ -14,6 +14,7 @@ Hard safety contract (same as PR1/PR2):
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -76,7 +77,8 @@ def _read_json(zf: zipfile.ZipFile, name: str, names: set[str]) -> Any:
 
 def _sanitize_cid(candidate_id: str) -> str:
     """Sanitize candidate id for path construction."""
-    return candidate_id.replace("..", "").strip("/")
+    s = re.sub(r"[^A-Za-z0-9_.-]", "_", str(candidate_id or "candidate"))
+    return s.strip("._") or "candidate"
 
 
 # ── metric extraction ─────────────────────────────────────────────────────────
@@ -879,12 +881,11 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
             # CAE/solver tools.
             candidate_artifacts: dict[str, dict[str, Any]] = {}
             for it in iterations:
-                cid = it.get("candidate_id") or "unknown"
-                sid = _sanitize_cid(cid)
+                sid = _sanitize_cid(it.get("candidate_id") or "unknown")
                 ev = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/analysis/evaluation.json", names)
                 mf = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/provenance/geometry_execution_manifest.json", names)
                 vr = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/diagnostics/verification.json", names)
-                candidate_artifacts[cid] = {
+                candidate_artifacts[sid] = {
                     "evaluation": ev if isinstance(ev, dict) else None,
                     "manifest": mf if isinstance(mf, dict) else None,
                     "verification": vr if isinstance(vr, dict) else None,
@@ -923,7 +924,9 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
     for it in iterations:
         if it.get("validation_status") == "rejected" or it.get("execution_status") == "rejected":
             continue
-        res = evaluate_design_study_candidate(package_path, it.get("candidate_id") or "unknown")
+        res = evaluate_design_study_candidate(
+            package_path, _sanitize_cid(it.get("candidate_id") or "unknown")
+        )
         if isinstance(res, dict) and res.get("artifacts"):
             evaluation_artifacts.extend([a for a in res["artifacts"] if a not in evaluation_artifacts])
 
@@ -932,12 +935,11 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         with zipfile.ZipFile(package_path, "r") as zf:
             names = set(zf.namelist())
             for it in iterations:
-                cid = it.get("candidate_id") or "unknown"
-                sid = _sanitize_cid(cid)
+                sid = _sanitize_cid(it.get("candidate_id") or "unknown")
                 ev = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/analysis/evaluation.json", names)
                 mf = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/provenance/geometry_execution_manifest.json", names)
                 vr = _read_json(zf, f"{CANDIDATE_WORKSPACE_ROOT}{sid}/diagnostics/verification.json", names)
-                candidate_artifacts[cid] = {
+                candidate_artifacts[sid] = {
                     "evaluation": ev if isinstance(ev, dict) else None,
                     "manifest": mf if isinstance(mf, dict) else None,
                     "verification": vr if isinstance(vr, dict) else None,
@@ -946,7 +948,7 @@ def rank_design_study_candidates(package_path: str | Path) -> dict[str, Any]:
         return {"status": "failed", "reason": f"{type(exc).__name__}: {exc}"}
 
     for it in iterations:
-        cid = it.get("candidate_id") or "unknown"
+        cid = _sanitize_cid(it.get("candidate_id") or "unknown")
         artifacts = candidate_artifacts.get(cid) or {}
         extracted = _extract_metrics(
             it,

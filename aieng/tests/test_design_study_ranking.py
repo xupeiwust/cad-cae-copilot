@@ -518,6 +518,30 @@ def test_rank_reads_evaluation_artifact(tmp_path: Path):
     assert c["objective_delta"]["delta_percent"] == -50.0
 
 
+def test_rank_sanitizes_candidate_id_like_execution_workspace(tmp_path: Path):
+    raw_id = r"cand good\..\evil"
+    sanitized_id = "cand_good_.._evil"
+    iters = [
+        _iteration(raw_id, "evaluation_complete", metrics={}),
+    ]
+    extra = {
+        f"candidates/{sanitized_id}/analysis/evaluation.json": json.dumps({
+            "metrics": {"mass_kg": 0.5, "max_stress": 120.0, "max_deflection": 2.0},
+        }),
+    }
+    problem = _problem(baseline_metrics={"mass_kg": 1.0})
+    pkg = _write_pkg(tmp_path, problem=problem, iterations=iters, extra_members=extra)
+
+    res = rank_design_study_candidates(pkg)
+    assert res["status"] == "ok"
+    ranking = _read(pkg, DESIGN_STUDY_CANDIDATE_RANKING_PATH)
+    assert ranking["best_candidate_id"] == sanitized_id
+    assert ranking["safe_to_accept"] is True
+    assert ranking["candidates"][0]["candidate_id"] == sanitized_id
+    assert ranking["candidates"][0]["metrics_used"]["mass_kg"] == 0.5
+    assert raw_id not in {c["candidate_id"] for c in ranking["candidates"]}
+
+
 def test_rank_reads_manifest_and_verification(tmp_path: Path):
     iters = [
         _iteration("c1", "evaluation_complete", metrics={}),

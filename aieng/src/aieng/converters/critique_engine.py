@@ -32,6 +32,7 @@ class DfMRulePack:
     name: str
     min_wall_mm: float
     min_corner_radius_mm: float
+    min_draft_angle_deg: float | None = None
     check_standard_holes: bool = True
     standard_hole_diameters_mm: tuple[float, ...] = _STANDARD_HOLE_DIAMETERS_MM
     notes: tuple[str, ...] = ()
@@ -63,11 +64,12 @@ _DFM_RULE_PACKS: dict[str, DfMRulePack] = {
         name="casting_aluminium",
         min_wall_mm=4.0,
         min_corner_radius_mm=3.0,
+        min_draft_angle_deg=1.0,
         check_standard_holes=False,
         notes=(
-            "Assumes small aluminium casting. Uses coarse wall/radius proxies only; "
-            "draft angle, parting line, shrinkage allowance, risers/gates, and "
-            "post-machining stock are not modeled.",
+            "Assumes small aluminium casting. Uses coarse wall/radius proxies and "
+            "explicit feature draft-angle metadata when present; parting line, "
+            "shrinkage allowance, risers/gates, and post-machining stock are not modeled.",
         ),
     ),
     "fdm": DfMRulePack(
@@ -150,6 +152,17 @@ def _feature_corner_radius_mm(feature: dict[str, Any]) -> float | None:
     for key in keys:
         value = params.get(key)
         if isinstance(value, (int, float)) and float(value) > 0:
+            return float(value)
+    return None
+
+
+def _feature_draft_angle_deg(feature: dict[str, Any]) -> float | None:
+    params = feature.get("parameters") if isinstance(feature, dict) else None
+    if not isinstance(params, dict):
+        return None
+    for key in ("draft_angle_deg", "draft_deg", "side_wall_draft_deg", "taper_angle_deg"):
+        value = params.get(key)
+        if isinstance(value, (int, float)) and float(value) >= 0:
             return float(value)
     return None
 
@@ -371,6 +384,11 @@ def critique_geometry(
     min_corner_radius = float(
         min_corner_radius_mm if min_corner_radius_mm is not None else pack.min_corner_radius_mm
     )
+    min_draft_angle = (
+        float(pack.min_draft_angle_deg)
+        if isinstance(pack.min_draft_angle_deg, (int, float))
+        else None
+    )
     standard_holes = (
         pack.standard_hole_diameters_mm if pack.check_standard_holes else ()
     )
@@ -402,6 +420,7 @@ def critique_geometry(
                 "process": pack.name,
                 "min_wall_mm": min_wall,
                 "min_corner_radius_mm": min_corner_radius,
+                "min_draft_angle_deg": min_draft_angle,
                 "check_standard_holes": pack.check_standard_holes,
                 "standard_hole_diameters_mm": list(standard_holes),
             },
@@ -563,6 +582,26 @@ def critique_geometry(
                 f"for {pack.name}, or document why the sharp edge is intentional.",
             )
 
+        if min_draft_angle is not None:
+            for feat in features:
+                draft_angle = _feature_draft_angle_deg(feat)
+                if draft_angle is None or draft_angle >= min_draft_angle:
+                    continue
+                refs = feat.get("geometry_refs") if isinstance(feat.get("geometry_refs"), dict) else {}
+                counter = _add_finding(
+                    findings,
+                    counter,
+                    "medium",
+                    "manufacturing_rule",
+                    "min_draft_angle",
+                    feat.get("name", "<unnamed>"),
+                    refs.get("body") if isinstance(refs, dict) else None,
+                    f"{feat.get('name', '<unnamed>')}: explicit draft angle is {draft_angle:.2f}deg; "
+                    f"{pack.name} minimum is {min_draft_angle:.1f}deg.",
+                    f"Increase the modeled draft/taper metadata to at least {min_draft_angle:.1f}deg "
+                    f"for {pack.name}, or document why straight walls are intentional.",
+                )
+
         looks_like_bracket = any(
             "bracket" in (b.get("name") or "").lower()
             or "plate" in (b.get("name") or "").lower()
@@ -610,6 +649,7 @@ def critique_geometry(
         f["thresholds"] = {
             "min_wall_mm": min_wall,
             "min_corner_radius_mm": min_corner_radius,
+            "min_draft_angle_deg": min_draft_angle,
             "check_standard_holes": pack.check_standard_holes,
         }
 
@@ -632,6 +672,7 @@ def critique_geometry(
             "process": pack.name,
             "min_wall_mm": min_wall,
             "min_corner_radius_mm": min_corner_radius,
+            "min_draft_angle_deg": min_draft_angle,
             "check_standard_holes": pack.check_standard_holes,
             "standard_hole_diameters_mm": list(standard_holes),
         },

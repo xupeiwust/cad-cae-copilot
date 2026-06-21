@@ -137,6 +137,56 @@ def test_corner_radius_rule_ignores_unmeasured_edge_breaks():
     assert not any(f["rule"] == "min_corner_radius" for f in result["findings"])
 
 
+def test_casting_flags_explicit_low_draft_angle():
+    topo = _topo(_body("b1", "cast_housing", [0, 0, 0, 80, 60, 40]))
+    fg = _feature_graph(
+        _named_part("cast_housing", "b1"),
+        {
+            "id": "draft_1",
+            "type": "taper",
+            "name": "Side wall draft",
+            "parameters": {"draft_angle_deg": 0.25},
+            "geometry_refs": {"body": "b1"},
+        },
+    )
+    result = critique_geometry(topo, fg, mode="engineering", process="casting")
+    finding = next(f for f in result["findings"] if f["rule"] == "min_draft_angle")
+    assert finding["severity"] == "medium"
+    assert finding["category"] == "manufacturing_rule"
+    assert "0.25deg" in finding["observation"]
+    assert finding["thresholds"]["min_draft_angle_deg"] == 1.0
+    assert result["rules_applied"]["min_draft_angle_deg"] == 1.0
+
+
+def test_draft_angle_rule_requires_process_threshold_and_explicit_metadata():
+    topo = _topo(_body("b1", "housing", [0, 0, 0, 80, 60, 40]))
+    explicit_low_draft = _feature_graph(
+        _named_part("housing", "b1"),
+        {
+            "id": "draft_1",
+            "type": "taper",
+            "name": "Side wall draft",
+            "parameters": {"draft_angle_deg": 0.25},
+            "geometry_refs": {"body": "b1"},
+        },
+    )
+    missing_draft_metadata = _feature_graph(
+        _named_part("housing", "b1"),
+        {
+            "id": "draft_2",
+            "type": "taper",
+            "name": "Side wall draft",
+            "parameters": {},
+            "geometry_refs": {"body": "b1"},
+        },
+    )
+    cnc = critique_geometry(topo, explicit_low_draft, mode="engineering", process="cnc")
+    casting_missing = critique_geometry(topo, missing_draft_metadata, mode="engineering", process="casting")
+    assert cnc["rules_applied"]["min_draft_angle_deg"] is None
+    assert not any(f["rule"] == "min_draft_angle" for f in cnc["findings"])
+    assert not any(f["rule"] == "min_draft_angle" for f in casting_missing["findings"])
+
+
 def test_tapped_hole_at_tap_drill_diameter_is_not_flagged_nonstandard():
     """A hole recognized as a thread (tap-drill diameter) is intentionally a
     non-standard *final* diameter — flagging it 'non-standard hole' is a false

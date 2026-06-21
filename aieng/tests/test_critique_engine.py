@@ -187,6 +187,56 @@ def test_draft_angle_rule_requires_process_threshold_and_explicit_metadata():
     assert not any(f["rule"] == "min_draft_angle" for f in casting_missing["findings"])
 
 
+def test_fdm_flags_explicit_unsupported_overhang_from_vertical():
+    topo = _topo(_body("b1", "printed_bracket", [0, 0, 0, 80, 60, 40]))
+    fg = _feature_graph(
+        _named_part("printed_bracket", "b1"),
+        {
+            "id": "overhang_1",
+            "type": "overhang",
+            "name": "Cantilever lip",
+            "parameters": {"overhang_angle_from_vertical_deg": 62.0},
+            "geometry_refs": {"body": "b1"},
+        },
+    )
+    result = critique_geometry(topo, fg, mode="engineering", process="fdm")
+    finding = next(f for f in result["findings"] if f["rule"] == "max_unsupported_overhang")
+    assert finding["severity"] == "medium"
+    assert finding["category"] == "manufacturing_rule"
+    assert "62.00deg from vertical" in finding["observation"]
+    assert finding["thresholds"]["max_unsupported_overhang_from_vertical_deg"] == 45.0
+    assert result["rules_applied"]["max_unsupported_overhang_from_vertical_deg"] == 45.0
+
+
+def test_overhang_rule_requires_fdm_threshold_and_unambiguous_metadata():
+    topo = _topo(_body("b1", "printed_bracket", [0, 0, 0, 80, 60, 40]))
+    explicit_overhang = _feature_graph(
+        _named_part("printed_bracket", "b1"),
+        {
+            "id": "overhang_1",
+            "type": "overhang",
+            "name": "Cantilever lip",
+            "parameters": {"overhang_angle_from_vertical_deg": 62.0},
+            "geometry_refs": {"body": "b1"},
+        },
+    )
+    ambiguous_overhang = _feature_graph(
+        _named_part("printed_bracket", "b1"),
+        {
+            "id": "overhang_2",
+            "type": "overhang",
+            "name": "Cantilever lip",
+            "parameters": {"overhang_angle_deg": 62.0},
+            "geometry_refs": {"body": "b1"},
+        },
+    )
+    cnc = critique_geometry(topo, explicit_overhang, mode="engineering", process="cnc")
+    fdm_ambiguous = critique_geometry(topo, ambiguous_overhang, mode="engineering", process="fdm")
+    assert cnc["rules_applied"]["max_unsupported_overhang_from_vertical_deg"] is None
+    assert not any(f["rule"] == "max_unsupported_overhang" for f in cnc["findings"])
+    assert not any(f["rule"] == "max_unsupported_overhang" for f in fdm_ambiguous["findings"])
+
+
 def test_tapped_hole_at_tap_drill_diameter_is_not_flagged_nonstandard():
     """A hole recognized as a thread (tap-drill diameter) is intentionally a
     non-standard *final* diameter — flagging it 'non-standard hole' is a false

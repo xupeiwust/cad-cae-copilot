@@ -33,6 +33,7 @@ class DfMRulePack:
     min_wall_mm: float
     min_corner_radius_mm: float
     min_draft_angle_deg: float | None = None
+    max_unsupported_overhang_from_vertical_deg: float | None = None
     check_standard_holes: bool = True
     standard_hole_diameters_mm: tuple[float, ...] = _STANDARD_HOLE_DIAMETERS_MM
     notes: tuple[str, ...] = ()
@@ -76,10 +77,11 @@ _DFM_RULE_PACKS: dict[str, DfMRulePack] = {
         name="fdm",
         min_wall_mm=1.2,
         min_corner_radius_mm=1.0,
+        max_unsupported_overhang_from_vertical_deg=45.0,
         check_standard_holes=False,
         notes=(
-            "Assumes FDM/FFF printing. Does not check overhang angle, bridging, "
-            "support access, or layer orientation.",
+            "Assumes FDM/FFF printing. Uses explicit unsupported-overhang metadata "
+            "when present; bridging, support access, and layer orientation are not modeled.",
         ),
     ),
     "sla": DfMRulePack(
@@ -163,6 +165,17 @@ def _feature_draft_angle_deg(feature: dict[str, Any]) -> float | None:
     for key in ("draft_angle_deg", "draft_deg", "side_wall_draft_deg", "taper_angle_deg"):
         value = params.get(key)
         if isinstance(value, (int, float)) and float(value) >= 0:
+            return float(value)
+    return None
+
+
+def _feature_overhang_from_vertical_deg(feature: dict[str, Any]) -> float | None:
+    params = feature.get("parameters") if isinstance(feature, dict) else None
+    if not isinstance(params, dict):
+        return None
+    for key in ("overhang_angle_from_vertical_deg", "unsupported_overhang_from_vertical_deg"):
+        value = params.get(key)
+        if isinstance(value, (int, float)) and 0 <= float(value) <= 180:
             return float(value)
     return None
 
@@ -389,6 +402,11 @@ def critique_geometry(
         if isinstance(pack.min_draft_angle_deg, (int, float))
         else None
     )
+    max_overhang_from_vertical = (
+        float(pack.max_unsupported_overhang_from_vertical_deg)
+        if isinstance(pack.max_unsupported_overhang_from_vertical_deg, (int, float))
+        else None
+    )
     standard_holes = (
         pack.standard_hole_diameters_mm if pack.check_standard_holes else ()
     )
@@ -421,6 +439,7 @@ def critique_geometry(
                 "min_wall_mm": min_wall,
                 "min_corner_radius_mm": min_corner_radius,
                 "min_draft_angle_deg": min_draft_angle,
+                "max_unsupported_overhang_from_vertical_deg": max_overhang_from_vertical,
                 "check_standard_holes": pack.check_standard_holes,
                 "standard_hole_diameters_mm": list(standard_holes),
             },
@@ -602,6 +621,27 @@ def critique_geometry(
                     f"for {pack.name}, or document why straight walls are intentional.",
                 )
 
+        if max_overhang_from_vertical is not None:
+            for feat in features:
+                overhang = _feature_overhang_from_vertical_deg(feat)
+                if overhang is None or overhang <= max_overhang_from_vertical:
+                    continue
+                refs = feat.get("geometry_refs") if isinstance(feat.get("geometry_refs"), dict) else {}
+                counter = _add_finding(
+                    findings,
+                    counter,
+                    "medium",
+                    "manufacturing_rule",
+                    "max_unsupported_overhang",
+                    feat.get("name", "<unnamed>"),
+                    refs.get("body") if isinstance(refs, dict) else None,
+                    f"{feat.get('name', '<unnamed>')}: explicit unsupported overhang is "
+                    f"{overhang:.2f}deg from vertical; {pack.name} advisory limit is "
+                    f"{max_overhang_from_vertical:.1f}deg.",
+                    f"Reduce the unsupported overhang to {max_overhang_from_vertical:.1f}deg "
+                    "from vertical, add supports, or document the print orientation/support plan.",
+                )
+
         looks_like_bracket = any(
             "bracket" in (b.get("name") or "").lower()
             or "plate" in (b.get("name") or "").lower()
@@ -650,6 +690,7 @@ def critique_geometry(
             "min_wall_mm": min_wall,
             "min_corner_radius_mm": min_corner_radius,
             "min_draft_angle_deg": min_draft_angle,
+            "max_unsupported_overhang_from_vertical_deg": max_overhang_from_vertical,
             "check_standard_holes": pack.check_standard_holes,
         }
 
@@ -673,6 +714,7 @@ def critique_geometry(
             "min_wall_mm": min_wall,
             "min_corner_radius_mm": min_corner_radius,
             "min_draft_angle_deg": min_draft_angle,
+            "max_unsupported_overhang_from_vertical_deg": max_overhang_from_vertical,
             "check_standard_holes": pack.check_standard_holes,
             "standard_hole_diameters_mm": list(standard_holes),
         },

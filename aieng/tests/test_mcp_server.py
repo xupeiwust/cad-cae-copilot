@@ -85,6 +85,19 @@ def test_get_manifest_contains_format_version(tmp_path):
     assert "format_version" in manifest
 
 
+def test_get_manifest_reads_member_without_enumerating_package(tmp_path, monkeypatch):
+    pkg = tmp_path / "minimal.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "m1", "format_version": "0.1"}))
+
+    def fail_namelist(self):
+        raise AssertionError("namelist should not be needed for direct member reads")
+
+    monkeypatch.setattr(zipfile.ZipFile, "namelist", fail_namelist)
+
+    assert tool_get_manifest(pkg) == {"model_id": "m1", "format_version": "0.1"}
+
+
 # ---------------------------------------------------------------------------
 # get_feature
 # ---------------------------------------------------------------------------

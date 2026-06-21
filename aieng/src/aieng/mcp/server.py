@@ -38,23 +38,24 @@ class OperationForbidden(Exception):
 
 def _read_json(package_path: Path, member: str) -> Any:
     with zipfile.ZipFile(package_path) as zf:
-        if member not in set(zf.namelist()):
-            raise PackageNotReadable(f"{member} not found in package")
-        return json.loads(zf.read(member))
+        return json.loads(_read_member(zf, member))
 
 
 def _read_yaml(package_path: Path, member: str) -> Any:
     with zipfile.ZipFile(package_path) as zf:
-        if member not in set(zf.namelist()):
-            raise PackageNotReadable(f"{member} not found in package")
-        return yaml.safe_load(zf.read(member))
+        return yaml.safe_load(_read_member(zf, member))
 
 
 def _read_text(package_path: Path, member: str) -> str:
     with zipfile.ZipFile(package_path) as zf:
-        if member not in set(zf.namelist()):
-            raise PackageNotReadable(f"{member} not found in package")
-        return zf.read(member).decode("utf-8", errors="replace")
+        return _read_member(zf, member).decode("utf-8", errors="replace")
+
+
+def _read_member(zf: zipfile.ZipFile, member: str) -> bytes:
+    try:
+        return zf.read(member)
+    except KeyError as exc:
+        raise PackageNotReadable(f"{member} not found in package") from exc
 
 
 def _check_claim_policy(package_path: Path, operation: str) -> None:

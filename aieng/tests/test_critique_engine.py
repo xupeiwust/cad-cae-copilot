@@ -1,7 +1,7 @@
 """Tests for the deterministic critique engine shared with cad.critique."""
 from __future__ import annotations
 
-from aieng.converters.critique_engine import critique_geometry
+from aieng.converters.critique_engine import critique_geometry, resolve_rule_pack_key
 
 
 def _topo(*bodies):
@@ -19,6 +19,16 @@ def _feature_graph(*features):
 def _named_part(name, body_id):
     return {"id": f"feat_{body_id}", "type": "named_part", "name": name,
             "geometry_refs": {"body": body_id}}
+
+
+def _fillet_feature(radius_mm, *, feature_id="fillet_1", body_id="b1"):
+    return {
+        "id": feature_id,
+        "type": "fillet",
+        "name": "Fillet candidate",
+        "parameters": {"radius_mm": radius_mm},
+        "geometry_refs": {"body": body_id},
+    }
 
 
 def test_empty_model_skipped():
@@ -102,6 +112,31 @@ def test_nonstandard_hole_detected_with_core_recognizer_diameter_field():
     assert finding["severity"] == "low"
 
 
+def test_small_corner_radius_flagged_for_casting_rule_pack():
+    topo = _topo(_body("b1", "base_plate", [0, 0, 0, 80, 60, 6]))
+    fg = _feature_graph(
+        _named_part("base_plate", "b1"),
+        _fillet_feature(1.0, body_id="b1"),
+    )
+    result = critique_geometry(topo, fg, mode="engineering", process="casting")
+    finding = next(f for f in result["findings"] if f["rule"] == "min_corner_radius")
+    assert finding["severity"] == "medium"
+    assert finding["category"] == "manufacturing_rule"
+    assert "1.00mm" in finding["observation"]
+    assert "casting_aluminium minimum is 3.0mm" in finding["observation"]
+    assert finding["thresholds"]["min_corner_radius_mm"] == 3.0
+
+
+def test_corner_radius_rule_ignores_unmeasured_edge_breaks():
+    topo = _topo(_body("b1", "base_plate", [0, 0, 0, 80, 60, 6]))
+    fg = _feature_graph(
+        _named_part("base_plate", "b1"),
+        {"id": "ch1", "type": "chamfer", "name": "Chamfer", "parameters": {}},
+    )
+    result = critique_geometry(topo, fg, mode="engineering", process="casting")
+    assert not any(f["rule"] == "min_corner_radius" for f in result["findings"])
+
+
 def test_tapped_hole_at_tap_drill_diameter_is_not_flagged_nonstandard():
     """A hole recognized as a thread (tap-drill diameter) is intentionally a
     non-standard *final* diameter — flagging it 'non-standard hole' is a false
@@ -153,3 +188,11 @@ def test_rules_applied_returned():
     assert result["rules_applied"]["min_wall_mm"] == 3.0
     assert result["rules_applied"]["min_corner_radius_mm"] == 2.0
     assert 3.0 in result["rules_applied"]["standard_hole_diameters_mm"]
+
+
+def test_sheet_metal_aliases_resolve_to_sheet_metal_rule_pack():
+    assert resolve_rule_pack_key("brake forming") == "sheet_metal"
+    assert resolve_rule_pack_key("sheetmetal") == "sheet_metal"
+    result = critique_geometry(_topo(), _feature_graph(), process="laser cut sheet")
+    assert result["rules_applied"]["process_key"] == "sheet_metal"
+    assert result["rules_applied"]["process"] == "sheet_metal"

@@ -99,6 +99,11 @@ _DFM_RULE_PACK_ALIASES: dict[str, str] = {
     "milling": "cnc",
     "cnc_aluminum": "cnc",
     "cnc_aluminium": "cnc",
+    "brake_forming": "sheet_metal",
+    "formed_sheet": "sheet_metal",
+    "laser_cut_sheet": "sheet_metal",
+    "sheet": "sheet_metal",
+    "sheetmetal": "sheet_metal",
     "cast": "casting",
     "die_cast": "casting",
     "die_casting": "casting",
@@ -130,6 +135,23 @@ def resolve_rule_pack_key(process: str) -> str:
 def get_rule_pack(process: str) -> DfMRulePack:
     """Return the rule pack for a process name, falling back to CNC."""
     return _DFM_RULE_PACKS[resolve_rule_pack_key(process)]
+
+
+def _feature_corner_radius_mm(feature: dict[str, Any]) -> float | None:
+    params = feature.get("parameters") if isinstance(feature, dict) else None
+    if not isinstance(params, dict):
+        return None
+    if feature.get("type") == "fillet":
+        keys = ("fillet_radius_mm", "radius_mm", "radius")
+    elif feature.get("type") == "chamfer":
+        keys = ("chamfer_size_mm", "width_mm", "radius_mm", "radius")
+    else:
+        return None
+    for key in keys:
+        value = params.get(key)
+        if isinstance(value, (int, float)) and float(value) > 0:
+            return float(value)
+    return None
 
 
 def is_named_part_feature(feature: dict[str, Any]) -> bool:
@@ -519,6 +541,27 @@ def critique_geometry(
                             f"non-standard for {pack.name}; closest standard drill is {nearest:.1f}mm.",
                             f"Round the hole diameter to {nearest:.1f}mm to use an off-the-shelf drill.",
                         )
+
+        for feat in features:
+            if feat.get("type") not in _FINISHING_FEATURE_TYPES:
+                continue
+            radius = _feature_corner_radius_mm(feat)
+            if radius is None or radius >= min_corner_radius:
+                continue
+            refs = feat.get("geometry_refs") if isinstance(feat.get("geometry_refs"), dict) else {}
+            counter = _add_finding(
+                findings,
+                counter,
+                "medium" if process_key in {"casting", "sheet_metal"} else "low",
+                "manufacturing_rule",
+                "min_corner_radius",
+                feat.get("name", "<unnamed>"),
+                refs.get("body") if isinstance(refs, dict) else None,
+                f"{feat.get('name', '<unnamed>')}: corner radius proxy is {radius:.2f}mm; "
+                f"{pack.name} minimum is {min_corner_radius:.1f}mm.",
+                f"Increase the fillet/chamfer radius to at least {min_corner_radius:.1f}mm "
+                f"for {pack.name}, or document why the sharp edge is intentional.",
+            )
 
         looks_like_bracket = any(
             "bracket" in (b.get("name") or "").lower()

@@ -517,36 +517,49 @@ def recent_logs(settings: Settings, project_id: str, limit: int = 8) -> list[dic
     return items
 
 
+def _file_exists_and_size(path: Path | None) -> tuple[bool, int | None]:
+    if path is None:
+        return False, None
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return False, None
+    return True, stat_result.st_size
+
+
 def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
     project = get_project(settings, project_id)
     source_path = resolve_project_path(settings, project_id, project.get("source_step"))
     package_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
     viewer_path = resolve_project_path(settings, project_id, project.get("web_asset"))
     viewer_metadata_path = project_dir(settings, project_id) / "viewer" / "preview.json"
+    source_exists, source_size = _file_exists_and_size(source_path)
+    package_exists, package_size = _file_exists_and_size(package_path)
+    viewer_exists, viewer_size = _file_exists_and_size(viewer_path)
 
     summary: dict[str, Any] = {
         "project": project,
         "files": {
             "source_step": {
                 "path": project.get("source_step"),
-                "exists": bool(source_path and source_path.exists()),
-                "size": source_path.stat().st_size if source_path and source_path.exists() else None,
+                "exists": source_exists,
+                "size": source_size,
             },
             "aieng_file": {
                 "path": project.get("aieng_file"),
-                "exists": bool(package_path and package_path.exists()),
-                "size": package_path.stat().st_size if package_path and package_path.exists() else None,
+                "exists": package_exists,
+                "size": package_size,
             },
             "web_asset": {
                 "path": project.get("web_asset"),
-                "exists": bool(viewer_path and viewer_path.exists()),
-                "size": viewer_path.stat().st_size if viewer_path and viewer_path.exists() else None,
+                "exists": viewer_exists,
+                "size": viewer_size,
             },
         },
         "viewer": {
             "asset_format": project.get("web_asset_format"),
             "asset_path": project.get("web_asset"),
-            "asset_exists": bool(viewer_path and viewer_path.exists()),
+            "asset_exists": viewer_exists,
             "metadata": read_json(viewer_metadata_path, None),
         },
         "viewer_url": f"/assets/projects/{project_id}/{project['web_asset']}" if project.get("web_asset") else None,
@@ -601,7 +614,7 @@ def package_summary(settings: Settings, project_id: str) -> dict[str, Any]:
         "integration": runtime_status(settings),
         "recent_logs": recent_logs(settings, project_id),
     }
-    if package_path and package_path.exists():
+    if package_path and package_exists:
         try:
             _, _, provider = resolve_provider_bundle(settings)
             result = provider.package_summary_snapshot(package_path=package_path)
@@ -1153,4 +1166,3 @@ def _extract_frd_field_data(
                 sys.path.remove(str(aieng_src))
             except ValueError:
                 pass
-

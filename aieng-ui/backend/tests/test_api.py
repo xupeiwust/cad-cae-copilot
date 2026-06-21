@@ -3670,6 +3670,38 @@ def test_recent_logs_returns_newest_logs_with_metadata(tmp_path: Path) -> None:
     assert logs[0]["updated_at"].startswith("1970-01-01T00:33:20")
 
 
+def test_package_summary_reports_file_metadata(tmp_path: Path) -> None:
+    settings = _make_patch_settings(tmp_path)
+    project = save_project(settings, default_project("summary-files"))
+    project_id = project["id"]
+    root = project_dir(settings, project_id)
+    source = root / "source" / "part.step"
+    package = root / "packages" / "part.aieng"
+    viewer = root / "viewer" / "part.glb"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    package.parent.mkdir(parents=True, exist_ok=True)
+    viewer.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("STEP", encoding="utf-8")
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "summary-files"}))
+    viewer.write_bytes(b"glb")
+    project["source_step"] = "source/part.step"
+    project["aieng_file"] = "packages/part.aieng"
+    project["web_asset"] = "viewer/part.glb"
+    project["web_asset_format"] = "glb"
+    save_project(settings, project)
+
+    summary = package_summary(settings, project_id)
+
+    assert summary["files"]["source_step"]["exists"] is True
+    assert summary["files"]["source_step"]["size"] == source.stat().st_size
+    assert summary["files"]["aieng_file"]["exists"] is True
+    assert summary["files"]["aieng_file"]["size"] == package.stat().st_size
+    assert summary["files"]["web_asset"]["exists"] is True
+    assert summary["files"]["web_asset"]["size"] == viewer.stat().st_size
+    assert summary["viewer"]["asset_exists"] is True
+
+
 def test_convert_asset_reports_unavailable_honestly_without_provider(monkeypatch, tmp_path: Path) -> None:
     from app.main import convert_asset
     from app.services import platform_logic

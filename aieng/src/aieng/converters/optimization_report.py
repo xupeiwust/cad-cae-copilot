@@ -14,6 +14,7 @@ solely from on-disk artifacts, the report is reconstructable at any time.
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -90,7 +91,8 @@ def _replace_members(package_path: Path, members: dict[str, bytes]) -> None:
 
 
 def _sanitize_cid(cid: str) -> str:
-    return str(cid or "").replace("..", "").strip("/")
+    s = re.sub(r"[^A-Za-z0-9_.-]", "_", str(cid or ""))
+    return s.strip("._")
 
 
 def _candidate_rows(
@@ -309,14 +311,18 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
         "failed_candidates": failed,
         "feasibility_summary": feasibility_tally,
         "ranking": {
-            "best_candidate_id": ranking.get("best_candidate_id") if isinstance(ranking, dict) else None,
+            "best_candidate_id": (
+                _sanitize_cid(ranking.get("best_candidate_id"))
+                if isinstance(ranking, dict) and ranking.get("best_candidate_id") else None
+            ),
             "safe_to_accept": ranking.get("safe_to_accept") if isinstance(ranking, dict) else None,
             "next_action": ranking.get("next_action") if isinstance(ranking, dict) else None,
         },
         "recommendation": {
             "headline": recommendation.get("headline") if isinstance(recommendation, dict) else None,
             "recommended_candidate_id": (
-                recommendation.get("recommended_candidate_id") if isinstance(recommendation, dict) else None
+                _sanitize_cid(recommendation.get("recommended_candidate_id"))
+                if isinstance(recommendation, dict) and recommendation.get("recommended_candidate_id") else None
             ),
             "reason_codes": recommendation.get("reason_codes") if isinstance(recommendation, dict) else None,
             "advisory_only": True,
@@ -324,7 +330,8 @@ def build_optimization_report(package_path: str | Path) -> dict[str, Any]:
         "acceptance": {
             "status": acceptance.get("status") if isinstance(acceptance, dict) else None,
             "accepted_candidate_id": (
-                acceptance.get("accepted_candidate_id") if isinstance(acceptance, dict) else None
+                _sanitize_cid(acceptance.get("accepted_candidate_id"))
+                if isinstance(acceptance, dict) and acceptance.get("accepted_candidate_id") else None
             ),
             "promotion_mode": acceptance.get("promotion_mode") if isinstance(acceptance, dict) else None,
         },

@@ -131,6 +131,64 @@ def test_full_study_report(tmp_path: Path):
     assert _read(pkg, "geometry/shape_ir.json") == _BASELINE
 
 
+def test_report_sanitizes_candidate_ids_like_design_study_pipeline(tmp_path: Path):
+    raw_id = r"cand good\..\evil"
+    sanitized_id = "cand_good_.._evil"
+    members = {
+        "analysis/design_study_problem.json": _problem(),
+        "analysis/design_study_candidate_ranking.json": {
+            "format": "aieng.design_study.candidate_ranking.v0",
+            "status": "ranked",
+            "objective": {"sense": "minimize", "metric": "mass"},
+            "best_candidate_id": raw_id,
+            "safe_to_accept": True,
+            "next_action": "accept_candidate",
+            "candidates": [
+                {"rank": 1, "candidate_id": raw_id, "feasibility": "feasible",
+                 "confidence": "high", "score": 0.2,
+                 "recommendation": "accept_candidate", "metrics_used": {"mass_kg": 0.8},
+                 "constraint_violations": [], "objective_delta": {}, "reasons": []},
+            ],
+        },
+        "analysis/design_study_iterations.json": {
+            "format": "aieng.design_study_iterations",
+            "schema_version": "0.1",
+            "iterations": [
+                {"candidate_id": raw_id, "execution_status": "evaluation_complete"},
+            ],
+        },
+        "analysis/optimization_recommendation.json": {
+            "headline": "Recommend candidate",
+            "recommended_candidate_id": raw_id,
+            "reason_codes": ["advisory_recommendation"],
+        },
+        "analysis/design_study_acceptance.json": {
+            "status": "accepted",
+            "accepted_candidate_id": raw_id,
+            "promotion_mode": "derived_only",
+        },
+        f"candidates/{sanitized_id}/analysis/evaluation.json": {
+            "candidate_id": sanitized_id,
+            "evaluation_status": "complete",
+            "feasibility": "feasible",
+            "metrics": {"mass_kg": 0.8, "max_stress": 150.0},
+        },
+    }
+    pkg = _write_pkg(tmp_path, members)
+
+    res = build_optimization_report(pkg)
+    assert res["best_candidate_id"] == sanitized_id
+    assert res["accepted_candidate_id"] == sanitized_id
+
+    doc = _read(pkg, OPTIMIZATION_REPORT_PATH)
+    assert doc["ranking"]["best_candidate_id"] == sanitized_id
+    assert doc["recommendation"]["recommended_candidate_id"] == sanitized_id
+    assert doc["acceptance"]["accepted_candidate_id"] == sanitized_id
+    assert doc["candidates"][0]["candidate_id"] == sanitized_id
+    assert doc["candidates"][0]["metrics"]["max_stress"] == 150.0
+    assert raw_id not in {c["candidate_id"] for c in doc["candidates"]}
+
+
 def test_report_surfaces_shape_study(tmp_path: Path):
     members = _full_members()
     members["analysis/optimization_variables.json"] = {

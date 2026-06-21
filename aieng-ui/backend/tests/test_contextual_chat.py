@@ -9,7 +9,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.contextual_chat import build_context_block
+from app.contextual_chat import _read_member, build_context_block
 
 
 def _make_package(members: dict[str, bytes]) -> Path:
@@ -31,6 +31,19 @@ def test_no_package_returns_placeholder():
 def test_nonexistent_package_returns_placeholder():
     result = build_context_block(Path("/nonexistent/path.aieng"))
     assert "No project package" in result
+
+
+def test_read_member_does_not_enumerate_package(tmp_path, monkeypatch):
+    pkg = tmp_path / "context.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("manifest.json", b'{"model_id": "m1"}')
+
+    def fail_namelist(self):
+        raise AssertionError("namelist should not be needed for direct member reads")
+
+    monkeypatch.setattr(zipfile.ZipFile, "namelist", fail_namelist)
+
+    assert _read_member(pkg, "manifest.json") == b'{"model_id": "m1"}'
 
 
 def test_empty_package_shows_not_yet_run():

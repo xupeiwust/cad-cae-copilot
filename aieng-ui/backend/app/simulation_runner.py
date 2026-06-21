@@ -62,8 +62,7 @@ def check_simulation_tools() -> dict[str, Any]:
 def _read_member(package_path: Path, member: str) -> bytes | None:
     try:
         with zipfile.ZipFile(package_path, "r") as zf:
-            if member in zf.namelist():
-                return zf.read(member)
+            return zf.read(member)
     except Exception:
         pass
     return None

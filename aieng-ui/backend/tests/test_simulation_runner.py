@@ -45,6 +45,21 @@ def _make_project(settings: Settings, name: str, package: str) -> tuple[str, Pat
     return project_id, pkg_path
 
 
+def test_read_member_does_not_enumerate_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.simulation_runner import _read_member
+
+    pkg = tmp_path / "simulation.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("simulation/setup.yaml", b"analysis_type: linear_static\n")
+
+    def fail_namelist(self):
+        raise AssertionError("namelist should not be needed for direct member reads")
+
+    monkeypatch.setattr(zipfile.ZipFile, "namelist", fail_namelist)
+
+    assert _read_member(pkg, "simulation/setup.yaml") == b"analysis_type: linear_static\n"
+
+
 _TOPOLOGY: dict[str, Any] = {
     "entities": [
         {"id": "face_001", "type": "face", "surface_type": "plane",

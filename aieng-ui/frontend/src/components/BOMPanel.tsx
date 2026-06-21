@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { BOMData } from "../types/bom";
 
+type BOMExportFormat = "csv" | "json" | "xlsx";
+
 type BOMPanelProps = {
   projectId?: string | null;
   onNotice?: (title: string, detail: string) => void;
@@ -12,7 +14,7 @@ export function BOMPanel({ projectId, onNotice }: BOMPanelProps) {
   const [bom, setBom] = useState<BOMData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exportFormat, setExportFormat] = useState<"csv" | "json">("csv");
+  const [exportFormat, setExportFormat] = useState<BOMExportFormat>("csv");
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -82,11 +84,12 @@ export function BOMPanel({ projectId, onNotice }: BOMPanelProps) {
           </button>
           <select
             value={exportFormat}
-            onChange={(e) => setExportFormat(e.target.value as "csv" | "json")}
+            onChange={(e) => setExportFormat(e.target.value as BOMExportFormat)}
             style={{ fontSize: "11px", padding: "4px 8px" }}
           >
             <option value="csv">CSV</option>
             <option value="json">JSON</option>
+            <option value="xlsx">XLSX</option>
           </select>
           <button
             type="button"

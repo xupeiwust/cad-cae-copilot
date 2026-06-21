@@ -611,7 +611,7 @@ export const api = {
   // ── BOM ────────────────────────────────────────────────────────────────────
   generateBOM: (projectId: string, format?: string) =>
     request<BOMData>(`/api/projects/${projectId}/bom${format ? `?format=${encodeURIComponent(format)}` : ""}`),
-  exportBOM: async (projectId: string, format: "csv" | "json") => {
+  exportBOM: async (projectId: string, format: "csv" | "json" | "xlsx") => {
     const response = await fetch(`${API}/api/projects/${projectId}/bom?format=${encodeURIComponent(format)}`);
     if (!response.ok) {
       const text = await response.text();

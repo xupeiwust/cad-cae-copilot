@@ -5,6 +5,7 @@ material binding, and BOM generation.
 """
 from __future__ import annotations
 
+import base64
 import copy
 import csv
 import io
@@ -13,6 +14,7 @@ import math
 import zipfile
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as _xml_escape
 
 from aieng.standards import (
     DEEP_GROOVE_BALL_BEARING_PRESETS,
@@ -43,6 +45,118 @@ from aieng.standards import (
     washer,
 )
 from aieng.converters import shape_ir_patch as _shape_ir_patch
+
+
+_BOM_COLUMNS = (
+    "line_no", "part_name", "part_type", "material", "quantity",
+    "standard_part", "canonical_type", "designation", "source_library",
+)
+
+
+def _bom_line_items(bom: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for idx, item in enumerate(bom, start=1):
+        rows.append({
+            "line_no": idx,
+            "part_name": item.get("part_name", ""),
+            "part_type": item.get("part_type", ""),
+            "material": item.get("material", "") or "",
+            "quantity": item.get("quantity", 1),
+            "standard_part": bool(item.get("standard_part", False)),
+            "canonical_type": item.get("canonical_type", "") or "",
+            "designation": item.get("designation", "") or "",
+            "source_library": item.get("source_library", "") or "",
+        })
+    return rows
+
+
+def _excel_col(index: int) -> str:
+    col = ""
+    while index:
+        index, rem = divmod(index - 1, 26)
+        col = chr(65 + rem) + col
+    return col
+
+
+def _xlsx_cell(ref: str, value: Any) -> str:
+    if isinstance(value, bool):
+        text = "true" if value else "false"
+        return f'<c r="{ref}" t="inlineStr"><is><t>{text}</t></is></c>'
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f'<c r="{ref}"><v>{value}</v></c>'
+    text = _xml_escape(str(value or ""))
+    return f'<c r="{ref}" t="inlineStr"><is><t>{text}</t></is></c>'
+
+
+def _xlsx_row(row_idx: int, values: list[Any]) -> str:
+    cells = "".join(_xlsx_cell(f"{_excel_col(col_idx)}{row_idx}", value)
+                    for col_idx, value in enumerate(values, start=1))
+    return f'<row r="{row_idx}">{cells}</row>'
+
+
+def _bom_xlsx_bytes(
+    rows: list[dict[str, Any]],
+    *,
+    total_parts: int,
+    unique_parts: int,
+) -> bytes:
+    worksheet_rows = [
+        _xlsx_row(1, list(_BOM_COLUMNS)),
+        *[
+            _xlsx_row(idx + 2, [row.get(column, "") for column in _BOM_COLUMNS])
+            for idx, row in enumerate(rows)
+        ],
+        _xlsx_row(len(rows) + 4, ["total_parts", total_parts]),
+        _xlsx_row(len(rows) + 5, ["unique_parts", unique_parts]),
+        _xlsx_row(
+            len(rows) + 6,
+            ["limitations", "Best-effort semantic recognition; not a supplier BOM or validation claim."],
+        ),
+    ]
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData>"
+        + "".join(worksheet_rows)
+        + "</sheetData></worksheet>"
+    )
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="BOM" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="xl/workbook.xml"/></Relationships>'
+    )
+    workbook_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/></Relationships>'
+    )
+    content_types_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        "</Types>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", rels_xml)
+        zf.writestr("xl/workbook.xml", workbook_xml)
+        zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return buffer.getvalue()
 
 
 # ── part type registry ────────────────────────────────────────────────────────
@@ -646,29 +760,10 @@ def generate_bom(
         "limitations": "Best-effort semantic recognition; not a supplier BOM or validation claim.",
     }
 
-    # Flat, ERP-style line items with a stable column schema, shared by the CSV
-    # and JSON exports (#280). 1-based contiguous line numbers; standard-part-only
-    # fields default to empty so the schema is uniform across part types.
-    _BOM_COLUMNS = (
-        "line_no", "part_name", "part_type", "material", "quantity",
-        "standard_part", "canonical_type", "designation", "source_library",
-    )
-
-    def _line_items() -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for idx, item in enumerate(bom, start=1):
-            rows.append({
-                "line_no": idx,
-                "part_name": item.get("part_name", ""),
-                "part_type": item.get("part_type", ""),
-                "material": item.get("material", "") or "",
-                "quantity": item.get("quantity", 1),
-                "standard_part": bool(item.get("standard_part", False)),
-                "canonical_type": item.get("canonical_type", "") or "",
-                "designation": item.get("designation", "") or "",
-                "source_library": item.get("source_library", "") or "",
-            })
-        return rows
+    # Flat, ERP-style line items with a stable column schema, shared by the CSV,
+    # JSON, and XLSX exports (#280). 1-based contiguous line numbers; standard-
+    # part-only fields default to empty so the schema is uniform across part types.
+    line_items = _bom_line_items(bom)
 
     if fmt == "markdown":
         lines = [
@@ -686,17 +781,25 @@ def generate_bom(
         buffer = io.StringIO()
         writer = csv.DictWriter(buffer, fieldnames=list(_BOM_COLUMNS), lineterminator="\n")
         writer.writeheader()
-        for row in _line_items():
+        for row in line_items:
             writer.writerow({**row, "standard_part": "true" if row["standard_part"] else "false"})
         result["csv"] = buffer.getvalue()
     elif fmt == "json":
         result["json"] = json.dumps(
             {
-                "bill_of_materials": _line_items(),
+                "bill_of_materials": line_items,
                 "total_parts": total_parts,
                 "unique_parts": len(bom),
             },
             indent=2,
         )
+    elif fmt == "xlsx":
+        workbook = _bom_xlsx_bytes(
+            line_items,
+            total_parts=total_parts,
+            unique_parts=len(bom),
+        )
+        result["xlsx_base64"] = base64.b64encode(workbook).decode("ascii")
+        result["xlsx_content_type"] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     return result

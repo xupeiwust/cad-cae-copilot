@@ -174,6 +174,38 @@ def test_generate_bom_json_export_is_erp_line_items(tmp_path: Path) -> None:
     assert line["canonical_type"] == "washer"
 
 
+def test_generate_bom_xlsx_export_is_openxml_workbook(tmp_path: Path) -> None:
+    """XLSX export is a minimal OpenXML workbook over the same BOM line schema (#280)."""
+    import base64
+    import io
+    import zipfile
+    from app.standards_bridge import generate_bom
+
+    settings = _make_patch_settings(tmp_path)
+    pkg_path = tmp_path / "bom-xlsx.aieng"
+    _make_bom_package(pkg_path, [
+        {"id": "b1", "type": "standard_part", "name": "washer_M6",
+         "canonical_type": "washer", "designation": "M6", "source_library": "bd_warehouse", "parameters": {}},
+        {"id": "p1", "type": "named_part", "name": "base_plate", "parameters": {"material": "Steel-1045"}},
+    ])
+
+    result = generate_bom(settings, project_id=None, package_path=str(pkg_path), fmt="xlsx")
+    assert result["status"] == "ok"
+    assert result["xlsx_content_type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    workbook = base64.b64decode(result["xlsx_base64"], validate=True)
+
+    with zipfile.ZipFile(io.BytesIO(workbook)) as zf:
+        names = set(zf.namelist())
+        assert "[Content_Types].xml" in names
+        assert "xl/workbook.xml" in names
+        assert "xl/worksheets/sheet1.xml" in names
+        sheet = zf.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert "line_no" in sheet
+    assert "washer_M6" in sheet
+    assert "base_plate" in sheet
+    assert "total_parts" in sheet
+
+
 def test_to_bom_frontend_payload_maps_to_camelcase_shape() -> None:
     """The frontend BOMData shape (camelCase) is mapped from the snake_case BOM result."""
     from app.standards_bridge import to_bom_frontend_payload

@@ -1293,16 +1293,17 @@ def register_project_workflow_routes(
         """Return the project's Bill of Materials in the frontend ``BOMData`` shape.
 
         Backed by the shared ``generate_bom`` recognizer; the BOM panel renders
-        this and can also request stable backend CSV / ERP-style JSON exports.
+        this and can also request stable backend CSV / ERP-style JSON / XLSX exports.
         404 when the project has no ``.aieng`` package.
         """
+        import base64
         from datetime import datetime, timezone
         from fastapi.responses import Response
         from .. import standards_bridge
 
         fmt = str(format or "").strip().lower() or None
-        if fmt not in (None, "csv", "json"):
-            raise HTTPException(status_code=400, detail="Unsupported BOM format. Use csv or json.")
+        if fmt not in (None, "csv", "json", "xlsx"):
+            raise HTTPException(status_code=400, detail="Unsupported BOM format. Use csv, json, or xlsx.")
 
         result = standards_bridge.generate_bom(active_settings, project_id, None, fmt=fmt)
         if result.get("status") != "ok":
@@ -1320,6 +1321,19 @@ def register_project_workflow_routes(
                 content=result.get("json", "{}"),
                 media_type="application/json",
                 headers={"Content-Disposition": f'attachment; filename="bom-{project_id}.json"'},
+            )
+        if fmt == "xlsx":
+            try:
+                content = base64.b64decode(str(result.get("xlsx_base64") or ""), validate=True)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"BOM XLSX generation failed: {exc}") from exc
+            return Response(
+                content=content,
+                media_type=result.get(
+                    "xlsx_content_type",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+                headers={"Content-Disposition": f'attachment; filename="bom-{project_id}.xlsx"'},
             )
 
         generated_at = datetime.now(timezone.utc).isoformat()

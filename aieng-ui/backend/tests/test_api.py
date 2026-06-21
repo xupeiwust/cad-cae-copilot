@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import io
 import json
 import math
 import os
@@ -228,7 +229,17 @@ def test_bom_endpoint_returns_frontend_payload(tmp_path: Path) -> None:
     assert export["total_parts"] == 2
     assert any(r["part_name"] == "base_plate" for r in export["bill_of_materials"])
 
-    bad_resp = client.get(f"/api/projects/{project_id}/bom?format=xlsx")
+    xlsx_resp = client.get(f"/api/projects/{project_id}/bom?format=xlsx")
+    assert xlsx_resp.status_code == 200
+    assert xlsx_resp.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert xlsx_resp.headers["content-disposition"].endswith(f'bom-{project_id}.xlsx"')
+    assert xlsx_resp.content[:2] == b"PK"
+    with zipfile.ZipFile(io.BytesIO(xlsx_resp.content)) as zf:
+        assert "xl/worksheets/sheet1.xml" in zf.namelist()
+
+    bad_resp = client.get(f"/api/projects/{project_id}/bom?format=xml")
     assert bad_resp.status_code == 400
 
 

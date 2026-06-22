@@ -33,6 +33,25 @@ def _tool_metadata(tool_name: str) -> dict[str, Any] | None:
         return None
 
 
+def _normalize_blocked_reason_codes(value: Any) -> list[str] | None:
+    """Validate and deduplicate a blocked_reason_codes payload.
+
+    Returns a sorted list of unique string codes, or ``None`` if the payload
+    is not a list of strings.
+    """
+    if not isinstance(value, list):
+        return None
+    codes: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            return None
+        if item not in seen:
+            seen.add(item)
+            codes.append(item)
+    return codes
+
+
 def _tool_label(tool_name: str) -> str:
     """Human-readable label derived from a tool name.
 
@@ -127,6 +146,8 @@ def normalize_next_action(
     if isinstance(raw_blocked, str):
         blocked_reason = raw_blocked
 
+    blocked_reason_codes = _normalize_blocked_reason_codes(raw.get("blocked_reason_codes"))
+
     if not tool_name:
         available_now = False
         if not blocked_reason:
@@ -139,7 +160,7 @@ def normalize_next_action(
         "runs_solver": safety["runs_solver"] or raw.get("runs_solver") is True,
         "advances_claim": safety["advances_claim"] or raw.get("advances_claim") is True,
     }
-    return {
+    item: dict[str, Any] = {
         "id": raw.get("id") if isinstance(raw.get("id"), str) else _action_id(tool_name, input_dict),
         "label": label,
         "priority": priority,
@@ -151,6 +172,9 @@ def normalize_next_action(
         "blocked_reason": blocked_reason,
         **safety,
     }
+    if blocked_reason_codes is not None:
+        item["blocked_reason_codes"] = blocked_reason_codes
+    return item
 
 
 def normalize_next_actions(
@@ -192,6 +216,7 @@ def build_next_action(
     priority: str = "medium",
     available_now: bool = True,
     blocked_reason: str | None = None,
+    blocked_reason_codes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a standardized next_action item from explicit fields.
 
@@ -199,7 +224,8 @@ def build_next_action(
     produced item's input payload afterwards.
     """
     safety = _safety_flags(tool)
-    return {
+    normalized_codes = _normalize_blocked_reason_codes(blocked_reason_codes)
+    item: dict[str, Any] = {
         "id": _action_id(tool, input_dict),
         "label": label or _tool_label(tool),
         "priority": priority,
@@ -211,3 +237,6 @@ def build_next_action(
         "blocked_reason": blocked_reason,
         **safety,
     }
+    if normalized_codes is not None:
+        item["blocked_reason_codes"] = normalized_codes
+    return item

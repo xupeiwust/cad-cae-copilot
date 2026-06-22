@@ -207,8 +207,13 @@ def receipt_from_prepare_solver_run(result: dict[str, Any]) -> dict[str, Any]:
     """Build and attach a receipt for a ``cae.prepare_solver_run`` result."""
     if not isinstance(result, dict):
         return result
+    if result.get("ok") is False:
+        status = "error"
+    elif result.get("ready_to_run"):
+        status = "ok"
+    else:
+        status = "warning"
     ready = bool(result.get("ready_to_run"))
-    status = "ok" if ready else "warning"
     warnings = _normalize_warnings(result)
     planned = [_normalize_artifact(a, kind="planned_solver_output") for a in _as_list(result.get("planned_artifacts"))]
     stale = [_normalize_artifact(a, kind="stale") for a in _as_list(result.get("stale_artifacts"))]

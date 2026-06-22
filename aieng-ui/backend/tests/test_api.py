@@ -4319,6 +4319,17 @@ def test_prepare_solver_run_reports_missing_artifacts(tmp_path: Path) -> None:
 
     assert result["ok"] is True
     assert result["ready_to_run"] is False
+
+    # Receipt is additive and describes the non-mutating preflight outcome.
+    receipt = result.get("receipt")
+    assert receipt is not None
+    assert receipt["format"] == "aieng.operation_receipt.v0"
+    assert receipt["operation"] == "cae.prepare_solver_run"
+    assert receipt["status"] == "warning"
+    assert receipt["mutated"] is False
+    assert receipt["approval_required"] is True
+    assert receipt["approval_used"] is None
+
     preflight = result["preflight"]
     assert preflight["has_mesh"] is False
     assert preflight["has_solver_settings"] is False
@@ -4739,6 +4750,14 @@ def test_run_solver_ccx_unavailable_returns_error(tmp_path: Path) -> None:
     assert result["code"] == "solver_not_found"
     assert result["solver_execution_performed"] is False
     assert "ccx" in result["message"].lower()
+    receipt = result.get("receipt")
+    assert receipt is not None
+    assert receipt["operation"] == "cae.run_solver"
+    assert receipt["status"] == "error"
+    assert receipt["mutated"] is False
+    assert receipt["approval_required"] is True
+    assert receipt["approval_used"] is None
+    assert receipt["next_actions"] == []
 
 
 def test_run_solver_uses_aieng_ccx_cmd_env_var(tmp_path: Path, monkeypatch) -> None:
@@ -4846,6 +4865,21 @@ def test_run_solver_mocked_subprocess_success(tmp_path: Path) -> None:
     assert result["solver_execution_performed"] is True
     assert result["return_code"] == 0
     assert result["status"] == "completed"
+
+    # Receipt is attached as additive metadata and preserves all original fields.
+    receipt = result.get("receipt")
+    assert receipt is not None
+    assert receipt["format"] == "aieng.operation_receipt.v0"
+    assert receipt["operation"] == "cae.run_solver"
+    assert receipt["status"] == "ok"
+    assert receipt["mutated"] is True
+    assert receipt["approval_required"] is True
+    assert receipt["approval_used"] is True
+    assert any(a["path"].endswith("result.frd") for a in receipt["artifacts_written"])
+    assert any(a["tool"] == "cae.extract_solver_results" for a in receipt["next_actions"])
+    extract_action = next(a for a in receipt["next_actions"] if a["tool"] == "cae.extract_solver_results")
+    assert extract_action["input"]["project_id"] == project_id
+    assert extract_action["input"]["run_id"] == "run_001"
 
     # Verify subprocess args
     assert len(mock_run.call_args_list) == 1

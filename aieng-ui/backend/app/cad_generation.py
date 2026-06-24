@@ -1905,8 +1905,22 @@ _STANDARD_PART_SOURCE_HINTS = (
 )
 
 
+# Nouns that mark a MACHINED FEATURE which holds/relates to a standard part rather
+# than being the off-the-shelf part itself (e.g. "bearing_boss", "bearing_seat",
+# "gear_housing"). Matched as whole underscore/space tokens so "mounting_bolt" stays
+# a bolt. These must not collide with the standard-part nouns below.
+_MACHINED_FEATURE_NOUNS = frozenset(
+    {"boss", "seat", "housing", "saddle", "gusset", "web", "carrier", "support", "pad", "lug"}
+)
+
+
 def _canonical_standard_type_from_text(text: str) -> str | None:
     lower = text.lower()
+    # A label naming a machined feature describes geometry that HOLDS a standard part,
+    # not the part itself — do not classify it as a standard part. Token match (not
+    # substring) so e.g. "mounting_bolt_M6" is unaffected.
+    if {tok for tok in re.split(r"[^a-z0-9]+", lower) if tok} & _MACHINED_FEATURE_NOUNS:
+        return None
     checks = (
         ("washer", "washer"),
         ("nut", "nut"),
@@ -1977,7 +1991,12 @@ def _standard_part_metadata_for_body(
     metadata = {
         "standard_part": True,
         "canonical_type": canonical,
-        "designation": _designation_from_text(f"{name} {source_text}"),
+        # Designation comes from the part NAME only — scanning the whole source
+        # scraped unrelated M-numbers from comments (e.g. a tap-drill note) into a
+        # bogus designation. Real standard parts carry explicit metadata (handled
+        # above via _clean_standard_part_metadata). Underscores → spaces so the
+        # word-boundary match fires on names like "mounting_bolt_M6".
+        "designation": _designation_from_text(name.replace("_", " ")),
         "original_label": name,
         "object_label": name,
         "detection_method": "source_and_label_heuristic" if source_known else "label_heuristic",
@@ -2014,6 +2033,61 @@ def _standard_part_bom_summary(features: list[dict[str, Any]]) -> dict[str, Any]
         "source": "feature_graph_standard_part_detection",
         "limitations": "Best-effort semantic recognition; not a supplier BOM or validation claim.",
     }
+
+
+def _is_quarter_round_fillet(face: dict[str, Any]) -> bool:
+    """True if a cylinder face is a quarter-round edge fillet, not a hole/bore.
+
+    Adjacency-free signal (works on real OCC topology, which carries no
+    adjacent_entity_ids): a quarter-round fillet's cross-section perpendicular to
+    its axis spans ~1 radius, whereas a hole/bore spans ~2 radii (its diameter).
+    Used to keep edge fillets out of the bolt-pattern cylinder grouping.
+    """
+    if face.get("surface_type") != "cylinder":
+        return False
+    radius = face.get("radius")
+    bbox = face.get("bounding_box")
+    if not isinstance(radius, (int, float)) or radius <= 0:
+        return False
+    if not (isinstance(bbox, list) and len(bbox) == 6):
+        return False
+    dims = [abs(bbox[3] - bbox[0]), abs(bbox[4] - bbox[1]), abs(bbox[5] - bbox[2])]
+    axis = face.get("axis")
+    if isinstance(axis, list) and len(axis) == 3 and max(abs(float(a)) for a in axis) >= 0.5:
+        axis_idx = max(range(3), key=lambda i: abs(float(axis[i])))
+        cross = [d for i, d in enumerate(dims) if i != axis_idx]
+    else:
+        cross = sorted(dims)[:2]
+    # Quarter-round: both cross extents ~1 radius. A hole/bore spans ~2 radii and
+    # is intentionally NOT matched here.
+    return all(0.4 * radius <= c <= 1.6 * radius for c in cross)
+
+
+def _is_convex_outer_cylinder(face: dict[str, Any], body_bbox_by_id: dict[str, list[float]]) -> bool:
+    """True if a cylinder face is a boss/pin/shaft OUTER surface, not a hole.
+
+    A hole is concave — a small cylinder cut into a much larger body. A boss/pin is
+    convex — the body IS essentially that cylinder, so the body's cross-section
+    perpendicular to the cylinder axis is ~the cylinder diameter. Adjacency-free,
+    works on real OCC topology. Keeps boss/pin outer faces out of the bolt-pattern
+    grouping while leaving genuine holes (body cross-section >> diameter) untouched.
+    """
+    radius = face.get("radius")
+    bbox = body_bbox_by_id.get(str(face.get("body_id")))
+    if not isinstance(radius, (int, float)) or radius <= 0:
+        return False
+    if not (isinstance(bbox, list) and len(bbox) == 6):
+        return False
+    dims = [abs(bbox[3] - bbox[0]), abs(bbox[4] - bbox[1]), abs(bbox[5] - bbox[2])]
+    axis = face.get("axis")
+    if isinstance(axis, list) and len(axis) == 3 and max(abs(float(a)) for a in axis) >= 0.5:
+        axis_idx = max(range(3), key=lambda i: abs(float(axis[i])))
+        cross = [d for i, d in enumerate(dims) if i != axis_idx]
+    else:
+        cross = sorted(dims)[:2]
+    diameter = 2.0 * radius
+    # Body cross-section ~ the cylinder diameter -> the body is that cylinder (boss/pin).
+    return all(abs(c - diameter) <= 0.25 * diameter for c in cross)
 
 
 def _topology_to_feature_graph(
@@ -2092,14 +2166,30 @@ def _topology_to_feature_graph(
         core_graph = {}
         core_blend_faces = set()
 
+    # Body bounding boxes, so the bolt-pattern grouping can tell a concave hole from a
+    # convex boss/pin/shaft outer cylinder (whose body IS the cylinder).
+    _body_bbox: dict[str, list[float]] = {}
+    for _e in entities:
+        if _e.get("type") == "solid":
+            _bb = _e.get("bounding_box")
+            if isinstance(_bb, list) and len(_bb) == 6:
+                _body_bbox[str(_e.get("id"))] = _bb
+
     if run_mechanical_heuristics:
         # bolt pattern detection — group cylinders by radius (±8% tolerance).
-        # Skip faces the core recognizer already classified as edge blends so a
-        # filleted edge is not mislabeled a hole/bore pattern.
+        # Skip faces the core recognizer classified as edge blends, quarter-round fillet
+        # cylinders (cross-section signal), AND boss/pin/shaft OUTER cylinders (convex —
+        # the body is the cylinder). All three are adjacency-free because real OCC
+        # topology carries no adjacent_entity_ids, so the core recognizer's
+        # adjacency-gated detectors find nothing on a live build — without these checks
+        # edge fillets and boss outers become phantom hole patterns (dogfood findings,
+        # #297/#321 runtime gap).
         cylinders = [
             f for f in faces
             if f.get("surface_type") == "cylinder" and f.get("radius")
             and str(f.get("id")) not in core_blend_faces
+            and not _is_quarter_round_fillet(f)
+            and not _is_convex_outer_cylinder(f, _body_bbox)
         ]
         radius_groups: dict[float, list[str]] = {}
         for face in cylinders:
@@ -2237,6 +2327,32 @@ def _topology_to_feature_graph(
             used_face_ids.update(face_ids)
     except Exception:
         # Best-effort: do not fail CAD execution if heuristic merge fails.
+        pass
+
+    # Threads are ADDITIVE annotations on a tapped hole (a tap-drill diameter): they
+    # reference faces already claimed by a mounting_hole, so they bypass the dedup
+    # guard above and never consume faces. Surfacing them lets cad.critique recognize
+    # the tapped hole and stop advising "round to a standard drill" on a tap-drill
+    # diameter — advice that would destroy the thread (#323). Restricted to recognized
+    # mounting-hole faces so a large bore is never mislabeled a thread. Dogfood finding.
+    try:
+        mounting_hole_faces: set[str] = set()
+        for feature in features:
+            if feature.get("type") in {"mounting_hole", "mounting_hole_pattern"}:
+                refs = feature.get("geometry_refs") or {}
+                if isinstance(refs, dict):
+                    mounting_hole_faces.update(refs.get("faces") or [])
+        for core_feature in core_graph.get("features", []):
+            if core_feature.get("type") != "thread":
+                continue
+            refs = core_feature.get("geometry_refs") or {}
+            face_ids = set(refs.get("faces") or [])
+            if not (face_ids & mounting_hole_faces):
+                continue
+            feat_counter += 1
+            core_feature["id"] = f"feat_{feat_counter:03d}"
+            features.append(core_feature)
+    except Exception:
         pass
 
     feature_graph = {"format_version": "0.1.0", "features": features, "model_kind": resolved_kind}

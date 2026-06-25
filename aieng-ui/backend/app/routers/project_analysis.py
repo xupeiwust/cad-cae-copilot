@@ -150,6 +150,26 @@ def register_project_analysis_routes(app: FastAPI, *, active_settings: Any) -> N
 
         return review_support_packet.preview_review_support_packet(active_settings, project_id)
 
+    @app.get("/api/projects/{project_id}/report")
+    def get_project_engineering_report(project_id: str) -> Any:
+        """Return a self-contained, print-friendly Engineering Report HTML page.
+
+        Read-only aggregation of existing project/package evidence. Does not
+        run CAD, meshers, solvers, post-processing tools, or write artifacts.
+        """
+        from fastapi.responses import HTMLResponse
+
+        from .. import engineering_report
+
+        result = engineering_report.generate_engineering_report(active_settings, project_id)
+        return HTMLResponse(
+            content=result["html"],
+            media_type="text/html",
+            headers={
+                "Content-Disposition": f'inline; filename="engineering-report-{project_id}.html"',
+            },
+        )
+
     @app.post("/api/projects/{project_id}/review-support-packet/export")
     def post_review_support_packet_export(
         project_id: str, payload: Any = Body(default=None)

@@ -526,6 +526,44 @@ def register_aieng_tools(rt: Any, active_settings: Any, app_context: Any, _schem
             "preview": preview_result,
         }
 
+    def _tool_report_generate(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        from .. import engineering_report
+
+        project_id = str(inp.get("project_id") or "").strip()
+        if not project_id:
+            return {
+                "ok": False,
+                "tool": "report.generate",
+                "status": "error",
+                "code": "missing_project_id",
+                "message": "project_id is required.",
+            }
+        try:
+            result = engineering_report.generate_engineering_report(active_settings, project_id)
+        except HTTPException as exc:
+            return {
+                "ok": False,
+                "tool": "report.generate",
+                "status": "error",
+                "code": "missing_package" if exc.status_code == 404 else "report_error",
+                "message": str(exc.detail),
+            }
+        return {
+            "ok": True,
+            "tool": "report.generate",
+            "status": "completed",
+            "project_id": project_id,
+            "format": "html",
+            "html": result.get("html"),
+            "claim_advancement": result.get("report", {}).get("claim_advancement"),
+            "claim_boundary": result.get("report", {}).get("claim_boundary"),
+            "credibility_summary": result.get("credibility", {}).get("summary"),
+            "thumbnail_embedded": result.get("report", {}).get("thumbnail_embedded"),
+            "warnings": result.get("report", {}).get("warnings") or [],
+        }
+
     def _tool_aieng_write_completeness_report(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import aieng_bridge
         from pathlib import Path as _Path
@@ -1046,6 +1084,17 @@ def register_aieng_tools(rt: Any, active_settings: Any, app_context: Any, _schem
             "Assesses 19+ categories: geometry, topology, features, constraints, simulation setup, evidence, etc."
         ),
         input_schema=_schema("aieng.write_completeness_report"),
+    )
+    rt.register_tool(
+        "report.generate",
+        _tool_report_generate,
+        description=(
+            "Read-only: assemble a self-contained HTML engineering report from "
+            "existing project evidence (BOM, design targets, computed metrics, "
+            "solver evidence, credibility stamp, and limitations). Runs no CAD, "
+            "mesh, solver, post-processing, or package writes."
+        ),
+        input_schema=_schema("report.generate"),
     )
     rt.register_tool(
         "aieng.update_validation_status",

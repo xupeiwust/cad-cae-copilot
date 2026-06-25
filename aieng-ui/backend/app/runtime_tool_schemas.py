@@ -740,6 +740,24 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "aieng.validate": _project_id_schema(),
     "aieng.write_completeness_report": _project_id_schema(),
+    "report.generate": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "format": {
+                "type": "string",
+                "enum": ["html"],
+                "description": "Report format. Currently only self-contained HTML is supported.",
+            },
+        },
+        "additionalProperties": True,
+        "description": (
+            "Read-only engineering report export. Assembles existing project/package "
+            "evidence into self-contained HTML without running CAD, meshers, solvers, "
+            "post-processing tools, or writing artifacts."
+        ),
+    },
     "aieng.update_validation_status": {
         "type": "object",
         "required": ["project_id"],

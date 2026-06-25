@@ -8,6 +8,7 @@ post-processing tools, and it never writes back into the package.
 from __future__ import annotations
 
 import html
+import json
 import re
 import zipfile
 from pathlib import Path
@@ -37,6 +38,24 @@ def _read_package_member(pkg: Path, member: str) -> bytes | None:
         return None
 
 
+def _read_package_json(pkg: Path, member: str) -> Any | None:
+    raw = _read_package_member(pkg, member)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _list_package_members(pkg: Path) -> list[str]:
+    try:
+        with zipfile.ZipFile(pkg, "r") as zf:
+            return zf.namelist()
+    except Exception:
+        return []
+
+
 def _thumbnail_data_uri(pkg: Path) -> str | None:
     stl = _read_package_member(pkg, "geometry/preview.stl")
     if not stl:
@@ -64,6 +83,47 @@ def _bom_markdown(settings: Settings, project_id: str) -> tuple[str | None, list
     markdown = result.get("markdown")
     warnings = [str(item) for item in (result.get("warnings") or [])]
     return str(markdown) if markdown else None, warnings
+
+
+def _provenance(package_path: Path, result_evidence: dict[str, Any]) -> dict[str, Any]:
+    members = _list_package_members(package_path)
+    solver_run_paths = sorted(
+        path for path in members
+        if path.startswith("simulation/runs/") and path.endswith("/solver_run.json")
+    )
+    deck_paths = sorted(
+        path for path in members
+        if path.startswith("simulation/runs/") and path.endswith(".inp")
+    )
+    result_paths = sorted(
+        path for path in members
+        if path.startswith("simulation/runs/") and (path.endswith(".frd") or path.endswith(".dat"))
+    )
+    solver_runs: list[dict[str, Any]] = []
+    for path in solver_run_paths:
+        data = _read_package_json(package_path, path)
+        if not isinstance(data, dict):
+            data = {}
+        solver_runs.append({
+            "path": path,
+            "solver": data.get("solver") or data.get("solver_name") or data.get("software"),
+            "status": data.get("state") or data.get("status"),
+            "solved": data.get("solved"),
+            "return_code": data.get("return_code"),
+            "started_at": data.get("started_at"),
+            "finished_at": data.get("finished_at"),
+        })
+    computed_metrics = result_evidence.get("computed_metrics") if isinstance(result_evidence, dict) else None
+    document = computed_metrics.get("document") if isinstance(computed_metrics, dict) else None
+    metrics_source = document.get("metrics_source") if isinstance(document, dict) else None
+    return {
+        "package_path": str(package_path),
+        "solver_runs": solver_runs,
+        "deck_paths": deck_paths,
+        "result_paths": result_paths,
+        "computed_metrics_path": "results/computed_metrics.json" if "results/computed_metrics.json" in members else None,
+        "metrics_source": metrics_source if isinstance(metrics_source, dict) else {},
+    }
 
 
 def _credibility(settings: Settings, project_id: str, package_path: Path) -> dict[str, Any]:
@@ -272,11 +332,75 @@ def _key_results_html(result_evidence: dict[str, Any]) -> str:
     )
 
 
+def _provenance_html(provenance: dict[str, Any]) -> str:
+    solver_runs = provenance.get("solver_runs") if isinstance(provenance, dict) else []
+    deck_paths = provenance.get("deck_paths") if isinstance(provenance, dict) else []
+    result_paths = provenance.get("result_paths") if isinstance(provenance, dict) else []
+    metrics_source = provenance.get("metrics_source") if isinstance(provenance, dict) else {}
+    rows: list[str] = []
+    if isinstance(metrics_source, dict) and metrics_source:
+        for key, value in sorted(metrics_source.items()):
+            rows.append(
+                "<tr>"
+                f"<td>metrics_source.{html.escape(str(key))}</td>"
+                f"<td>{html.escape(str(value))}</td>"
+                "</tr>"
+            )
+    if provenance.get("computed_metrics_path"):
+        rows.append(
+            "<tr><td>computed_metrics</td>"
+            f"<td><code>{html.escape(str(provenance.get('computed_metrics_path')))}</code></td></tr>"
+        )
+    for path in deck_paths if isinstance(deck_paths, list) else []:
+        rows.append(f"<tr><td>solver_deck</td><td><code>{html.escape(str(path))}</code></td></tr>")
+    for path in result_paths if isinstance(result_paths, list) else []:
+        rows.append(f"<tr><td>solver_result</td><td><code>{html.escape(str(path))}</code></td></tr>")
+
+    out = ""
+    if rows:
+        out += (
+            "<div class=\"table-wrap\"><table><thead><tr><th>Item</th><th>Value</th>"
+            "</tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table></div>"
+        )
+    else:
+        out += "<p class=\"muted\">No solver deck, solver result, or computed-metrics provenance found.</p>"
+
+    if solver_runs:
+        run_rows: list[str] = []
+        for run in solver_runs if isinstance(solver_runs, list) else []:
+            if not isinstance(run, dict):
+                continue
+            run_rows.append(
+                "<tr>"
+                f"<td><code>{html.escape(str(run.get('path') or ''))}</code></td>"
+                f"<td>{html.escape(str(run.get('solver') or ''))}</td>"
+                f"<td>{html.escape(str(run.get('status') or ''))}</td>"
+                f"<td>{html.escape(str(run.get('solved') if run.get('solved') is not None else ''))}</td>"
+                f"<td>{html.escape(str(run.get('return_code') if run.get('return_code') is not None else ''))}</td>"
+                f"<td>{html.escape(str(run.get('started_at') or ''))}</td>"
+                f"<td>{html.escape(str(run.get('finished_at') or ''))}</td>"
+                "</tr>"
+            )
+        if run_rows:
+            out += (
+                "<h3>Solver Runs</h3><div class=\"table-wrap\"><table><thead><tr>"
+                "<th>Record</th><th>Solver</th><th>Status</th><th>Solved</th>"
+                "<th>Return code</th><th>Started</th><th>Finished</th>"
+                "</tr></thead><tbody>"
+                + "".join(run_rows)
+                + "</tbody></table></div>"
+            )
+    return out
+
+
 def _html_report(payload: dict[str, Any]) -> str:
     project = payload["project"]
     credibility = payload["credibility"]
     review_packet = payload["review_packet"]
     report = payload["report"]
+    provenance = payload.get("provenance") if isinstance(payload.get("provenance"), dict) else {}
     thumbnail_uri = report.get("thumbnail_data_uri")
     bom_markdown = report.get("bom_markdown")
     warnings = report.get("warnings") or []
@@ -384,6 +508,11 @@ def _html_report(payload: dict[str, Any]) -> str:
   </section>
 
   <section class="section">
+    <h2>Provenance</h2>
+    {_provenance_html(provenance)}
+  </section>
+
+  <section class="section">
     <h2>Evidence Coverage</h2>
     <p class="muted">Review packet section statuses: {html.escape(str(status_counts))}</p>
     {_review_sections_html(sections)}
@@ -414,6 +543,7 @@ def generate_engineering_report(settings: Settings, project_id: str) -> dict[str
     bom_markdown, bom_warnings = _bom_markdown(settings, project_id)
     review_packet = _review_packet(settings, project_id)
     credibility = _credibility(settings, project_id, package_path)
+    result_evidence = credibility.get("result_evidence") if isinstance(credibility, dict) else {}
     thumbnail_uri = _thumbnail_data_uri(package_path)
     warnings = list(bom_warnings)
     warnings.extend(str(item) for item in (review_packet.get("warnings") or []))
@@ -438,6 +568,7 @@ def generate_engineering_report(settings: Settings, project_id: str) -> dict[str
             "warnings": warnings,
         },
         "credibility": credibility,
+        "provenance": _provenance(package_path, result_evidence if isinstance(result_evidence, dict) else {}),
         "review_packet": review_packet,
     }
     payload["html"] = _html_report(payload)

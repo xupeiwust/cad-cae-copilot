@@ -75,6 +75,7 @@ def _write_report_package(pkg_path: Path) -> None:
     }
     metrics = {
         "schema_version": "0.1",
+        "metrics_source": {"tool": "frd_parser_v1", "software": "CalculiX"},
         "load_cases": [
             {
                 "load_case_id": "lc1",
@@ -102,7 +103,14 @@ def _write_report_package(pkg_path: Path) -> None:
         zf.writestr("task/design_targets.yaml", yaml.safe_dump(targets, sort_keys=False))
         zf.writestr("results/computed_metrics.json", json.dumps(metrics))
         zf.writestr("simulation/runs/run_001/solver_input.inp", "*HEADING\nreport fixture\n")
-        zf.writestr("simulation/runs/run_001/solver_run.json", json.dumps({"status": "completed", "return_code": 0}))
+        zf.writestr("simulation/runs/run_001/solver_run.json", json.dumps({
+            "solver": "CalculiX",
+            "status": "completed",
+            "solved": True,
+            "return_code": 0,
+            "started_at": "2026-06-25T10:01:00Z",
+            "finished_at": "2026-06-25T10:01:03Z",
+        }))
         zf.writestr("simulation/runs/run_001/result.frd", "")
 
 
@@ -128,11 +136,16 @@ def test_engineering_report_endpoint_returns_self_contained_html_read_only(tmp_p
     assert "Honesty Boundary" in html
     assert "does not certify design safety" in html
     assert "Credibility Stamp" in html
+    assert "Provenance" in html
     assert "<table>" in html
     assert "status-chip" in html
     assert "<pre>" not in html
     assert "max_von_mises_stress" in html
     assert "87.4" in html
+    assert "simulation/runs/run_001/solver_input.inp" in html
+    assert "simulation/runs/run_001/result.frd" in html
+    assert "CalculiX" in html
+    assert "Return code" in html
     assert "mounting_bolt_M6" in html
     assert "claim advancement" in html.lower()
 

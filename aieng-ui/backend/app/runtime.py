@@ -979,14 +979,21 @@ def reject_run(run_id: str) -> RunRecord | None:
     run.status = "rejected"
     run.pending_step_index = None
     run.errors.append(f"Run rejected — {tool_name} was not executed")
+    diagnostic = _tool_failure_diagnostic(
+        code="approval_rejected",
+        message=f"User rejected approval for {tool_name}",
+        tool_name=tool_name,
+        remediation="No action was executed. Review the pending step, adjust the plan if needed, and start a new run.",
+    )
     run.tool_errors.append(
         ToolError(
             code="approval_rejected",
-            message=f"User rejected approval for {tool_name}",
+            message=diagnostic["message"],
             tool_name=tool_name,
+            details=diagnostic,
         )
     )
-    _emit(run, "run_rejected", {"tool": tool_name, "errors": run.errors})
+    _emit(run, "run_rejected", {"tool": tool_name, "errors": run.errors, "diagnostics": [diagnostic]})
     store_run(run)
     return run
 

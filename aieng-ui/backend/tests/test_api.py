@@ -1136,6 +1136,10 @@ def test_runtime_reject_run_does_not_execute_tool(tmp_path: Path) -> None:
             assert any(e["type"] == "approval_rejected" for e in rejected["events"])
             assert any(e["type"] == "run_rejected" for e in rejected["events"])
             assert len(rejected["tool_errors"]) > 0
+            assert rejected["tool_errors"][0]["code"] == "approval_rejected"
+            assert rejected["tool_errors"][0]["details"]["remediation"]
+            run_rejected = next(e for e in rejected["events"] if e["type"] == "run_rejected")
+            assert run_rejected["payload"]["diagnostics"][0]["code"] == "approval_rejected"
         finally:
             _rt.build_plan = original_build
     finally:
@@ -1840,6 +1844,24 @@ def test_runtime_workflow_endpoint_executes_explicit_steps(tmp_path: Path) -> No
     assert data["status"] == "completed"
     assert [step["kind"] for step in data["plan"]] == ["llm", "artifact"]
     assert "must_not_persist" not in json.dumps(data)
+
+
+def test_runtime_missing_workflow_surfaces_structured_diagnostic(tmp_path: Path) -> None:
+    settings = _make_runtime_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/api/runtime/runs",
+        json={"message": "run missing workflow", "workflow_id": "does-not-exist"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "failed"
+    assert data["tool_errors"][0]["code"] == "workflow_not_found"
+    assert data["tool_errors"][0]["details"]["remediation"]
+    run_failed = next(event for event in data["events"] if event["type"] == "run_failed")
+    assert run_failed["payload"]["diagnostics"][0]["code"] == "workflow_not_found"
 
 
 def test_get_cae_preprocessing_summary_endpoint(tmp_path: Path) -> None:

@@ -105,8 +105,25 @@ def register_runtime_routes(app: FastAPI, *, active_settings: Any) -> None:
             workflows = {wf["id"]: wf for wf in agent_workbench.list_workflows()}
             workflow = workflows.get(str(data["workflow_id"]))
             if workflow is None:
+                workflow_id = str(data["workflow_id"])
+                message = f"workflow not found: {workflow_id}"
+                diagnostic = {
+                    "code": "workflow_not_found",
+                    "message": message,
+                    "remediation": "Call /api/runtime/workflows to list available workflow ids, then retry with a valid workflow_id.",
+                    "tool_name": None,
+                }
                 run.status = "failed"
-                run.errors.append(f"workflow not found: {data['workflow_id']}")
+                run.errors.append(message)
+                run.tool_errors.append(
+                    _rt.ToolError(
+                        code="workflow_not_found",
+                        message=message,
+                        tool_name=None,
+                        details=diagnostic,
+                    )
+                )
+                _rt._emit(run, "run_failed", {"errors": run.errors, "diagnostics": [diagnostic]})
                 _rt.store_run(run)
             else:
                 _rt.execute_run_with_plan(run, workflow.get("steps") or [], ctx)

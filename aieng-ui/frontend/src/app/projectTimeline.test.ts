@@ -191,4 +191,33 @@ describe("buildProjectTimeline", () => {
     expect(entry?.kind).toBe("failure");
     expect(entry?.detail).toBe("RuntimeError: ccx failed");
   });
+
+  test("surfaces structured rejection diagnostics as event detail", () => {
+    const run: RuntimeRun = {
+      ...baseRun,
+      status: "rejected",
+      events: [
+        {
+          id: "evt_rejected",
+          run_id: "run_001",
+          type: "run_rejected",
+          timestamp: "2026-06-25T10:00:04Z",
+          payload: {
+            tool: "cae.run_solver",
+            diagnostic: {
+              code: "approval_rejected",
+              message: "User rejected approval for cae.run_solver",
+              remediation: "No action was executed.",
+            },
+          },
+        },
+      ],
+    };
+
+    const timeline = buildProjectTimeline([run]);
+    const entry = timeline.entries.find((item) => item.id === "evt_rejected");
+
+    expect(entry?.kind).toBe("failure");
+    expect(entry?.detail).toBe("User rejected approval for cae.run_solver");
+  });
 });

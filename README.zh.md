@@ -39,6 +39,29 @@ build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
 
 </div>
 
+## 一眼看懂
+
+CAD/CAE Copilot 让支持 MCP 的 Agent 把工程规格转成可复现的 CAD/CAE 包。
+
+- **输入:** 明确的机械规格、尺寸、约束和后续修改。
+- **CAD 内核:** 真实 build123d / OpenCASCADE 几何体,不是假渲染器。
+- **输出:** STEP、STL、GLB、生成源码、缩略图、拓扑映射和 `.aieng` 包。
+- **可编辑性:** 命名零件、可编辑参数,以及拓扑映射成功时稳定的 `@face:*`
+  指针。
+- **验证:** 确定性 critique、几何检查、设计规则断言和 diff-aware edits。
+- **CAE 路径:** 材料、载荷、约束、网格、求解器 artifacts 和证据与 CAD 模型
+  放在一起。
+- **Agent 模型:** 你自带 MCP 客户端和模型访问权限;后端本身不需要 API key。
+
+```text
+engineering spec
+  -> MCP agent
+  -> build123d / OpenCASCADE CAD
+  -> named parts + topology pointers
+  -> critique / CAE setup / solver evidence
+  -> reproducible .aieng package
+```
+
 ## 这是什么? —— 架构与信息流
 
 一张图说清:一份自然语言工程规格,经由**你自己的 MCP Agent** 端到端驱动,变成

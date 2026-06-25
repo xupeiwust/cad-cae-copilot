@@ -39,6 +39,34 @@ which carries its own model access. The aieng backend itself needs no API key.
 
 </div>
 
+## At a glance
+
+CAD/CAE Copilot lets an MCP-capable agent turn an engineering specification into
+a reproducible CAD/CAE package.
+
+- **Input:** explicit mechanical specs, dimensions, constraints, and follow-up
+  edits.
+- **CAD kernel:** real build123d / OpenCASCADE geometry, not a mock renderer.
+- **Outputs:** STEP, STL, GLB, generated source, thumbnails, topology maps, and
+  `.aieng` packages.
+- **Editability:** named parts, editable parameters, and stable `@face:*`
+  pointers when topology mapping succeeds.
+- **Verification:** deterministic critique, geometry checks, design-rule
+  assertions, and diff-aware edits.
+- **CAE path:** material, loads, constraints, mesh, solver artifacts, and
+  evidence are kept beside the CAD model.
+- **Agent model:** bring your own MCP client and model access; the backend
+  itself does not require an API key.
+
+```text
+engineering spec
+  -> MCP agent
+  -> build123d / OpenCASCADE CAD
+  -> named parts + topology pointers
+  -> critique / CAE setup / solver evidence
+  -> reproducible .aieng package
+```
+
 ## What is this? — architecture & information flow
 
 In one picture: a natural-language engineering spec becomes optimized, verified

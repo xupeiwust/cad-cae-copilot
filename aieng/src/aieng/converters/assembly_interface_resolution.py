@@ -38,6 +38,7 @@ INTERFACE_RESOLUTION_PATH = "assembly/interface_resolution.json"
 ASSEMBLY_CONNECTION_GEOMETRY_PATH = "diagnostics/assembly_connection_geometry.json"
 ASSEMBLY_MESH_INTERFACE_DIAGNOSTICS_PATH = "diagnostics/assembly_mesh_interface_diagnostics.json"
 PACKAGE_TOPOLOGY_PATH = "geometry/topology_map.json"
+FEATURE_GRAPH_PATH = "graph/feature_graph.json"
 
 # Pre-solver interface-NSET quality thresholds (deterministic, conservative).
 # An interface that maps onto zero faces yields an EMPTY node set; one mapping
@@ -130,7 +131,7 @@ def _resolve_transform(transform: Any) -> tuple[list[list[float]], list[float], 
     """Return (R 3x3, t 3, ok, note). Identity + note when missing/invalid."""
     identity = [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
     if transform is None:
-        return identity, [0.0, 0.0, 0.0], False, "missing_transform"
+        return identity, [0.0, 0.0, 0.0], True, None
     if not isinstance(transform, dict):
         return identity, [0.0, 0.0, 0.0], False, "invalid_transform"
     t = transform.get("translation") or [0.0, 0.0, 0.0]
@@ -556,6 +557,49 @@ def _topo_index(topo_doc: Any) -> dict[str, dict[str, Any]]:
     return {e["id"]: e for e in _as_list(ents) if isinstance(e, dict) and e.get("id")}
 
 
+def _part_aliases(part: dict[str, Any]) -> set[str]:
+    aliases = {str(v) for v in (part.get("id"), part.get("name"), part.get("geometry_ref")) if v}
+    geom = part.get("geometry_ref")
+    if isinstance(geom, str) and geom:
+        try:
+            aliases.add(Path(geom).stem)
+        except Exception:
+            pass
+    return aliases
+
+
+def _feature_graph_body_ids(feature_graph: Any, aliases: set[str]) -> set[str]:
+    if not isinstance(feature_graph, dict):
+        return set()
+    out: set[str] = set()
+    for feat in _as_list(feature_graph.get("features")):
+        if not isinstance(feat, dict):
+            continue
+        if feat.get("type") != "named_part":
+            continue
+        names = {str(v) for v in (feat.get("name"), feat.get("id")) if v}
+        if not names.intersection(aliases):
+            continue
+        refs = feat.get("geometry_refs") if isinstance(feat.get("geometry_refs"), dict) else {}
+        body = refs.get("body")
+        if body:
+            out.add(str(body))
+        for ent in _as_list(refs.get("entities")):
+            if ent:
+                out.add(str(ent))
+    return out
+
+
+def _topology_named_body_ids(shared: dict[str, dict[str, Any]], aliases: set[str]) -> set[str]:
+    out: set[str] = set()
+    for eid, ent in shared.items():
+        if not isinstance(ent, dict) or ent.get("type") != "solid":
+            continue
+        if str(ent.get("name") or "") in aliases or str(eid) in aliases:
+            out.add(str(eid))
+    return out
+
+
 def build_topology_by_part(zf: zipfile.ZipFile, names: set[str],
                            assembly: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
     """Build part_id -> {entity_id: entity}. Preference: explicit part topology_ref ->
@@ -567,6 +611,7 @@ def build_topology_by_part(zf: zipfile.ZipFile, names: set[str],
             return None
 
     shared = _topo_index(_read(PACKAGE_TOPOLOGY_PATH))
+    feature_graph = _read(FEATURE_GRAPH_PATH)
     out: dict[str, dict[str, dict[str, Any]]] = {}
     for part in _as_list(assembly.get("parts")):
         if not isinstance(part, dict) or not part.get("id"):
@@ -581,11 +626,19 @@ def build_topology_by_part(zf: zipfile.ZipFile, names: set[str],
                 if idx:
                     break
         if not idx and shared:
-            # shared single-package topology: filter by body_id == part id/name when present,
-            # else expose the whole shared map (refs are globally unique).
+            # Shared single-package topology. Live build123d Compounds often label
+            # parts as feature_graph named_part entries while topology faces carry
+            # kernel body ids (body_001, ...). Resolve that label -> body id before
+            # scoping; fall back to legacy global refs only when no mapping exists.
+            aliases = _part_aliases(part)
+            mapped_body_ids = (
+                _feature_graph_body_ids(feature_graph, aliases)
+                or _topology_named_body_ids(shared, aliases)
+            )
+            body_ids = mapped_body_ids or aliases
             scoped = {eid: e for eid, e in shared.items()
-                      if e.get("body_id") in {pid, part.get("name")}}
-            idx = scoped or shared
+                      if str(eid) in body_ids or str(e.get("body_id") or "") in body_ids}
+            idx = scoped if mapped_body_ids else (scoped or shared)
         if idx:
             out[pid] = idx
     return out

@@ -11,6 +11,7 @@ from pathlib import Path
 from aieng.converters.assembly_interface_resolution import (
     ASSEMBLY_CONNECTION_GEOMETRY_PATH,
     INTERFACE_RESOLUTION_PATH,
+    build_topology_by_part,
     resolve_and_validate_assembly_geometry,
     resolve_assembly_interfaces,
     resolve_interface,
@@ -89,10 +90,12 @@ def test_partial_resolution():
     assert rec["unresolved_refs"] == ["ghost"] and rec["resolved_entity_count"] == 1
 
 
-def test_missing_transform_noted():
+def test_missing_transform_defaults_to_identity():
     iface = {"id": "if_a", "part_id": "a", "topology_refs": {"face_ids": ["a_top"]}}
     rec = resolve_interface(iface, _topology()["a"], None)
-    assert rec["transform_applied"] is False and rec["transform_note"] == "missing_transform"
+    assert rec["transform_applied"] is True
+    assert rec["transform_note"] is None
+    assert rec["world"]["centroid"] == rec["local"]["centroid"]
 
 
 # ── connection geometry validation ───────────────────────────────────────────
@@ -247,3 +250,58 @@ def test_shared_package_topology_fallback(tmp_path: Path):
                     json.dumps({"format_version": "0.1.0", "entities": [a, b]}))
     result = resolve_and_validate_assembly_geometry(pkg)
     assert result["resolution_summary"]["resolved"] == 2
+
+
+def test_shared_topology_scopes_named_part_via_feature_graph_body_ref(tmp_path: Path):
+    """Compound children can be named parts while topology faces use body_00N ids."""
+    asm = {
+        "format": "aieng.assembly_ir",
+        "unit": "mm",
+        "parts": [
+            {"id": "base_plate", "role": "design_part", "geometry_ref": "base_plate"},
+            {"id": "load_wall", "role": "reference_part", "geometry_ref": "load_wall"},
+        ],
+        "interfaces": [
+            {"id": "if_base", "part_id": "base_plate", "semantic_role": "mounting_face",
+             "topology_refs": {"face_ids": ["face_003"]}},
+        ],
+        "connections": [],
+    }
+    topology = {
+        "format_version": "0.1.0",
+        "entities": [
+            {"id": "body_001", "type": "solid", "bounding_box": [0, 0, 0, 10, 10, 2]},
+            {"id": "face_003", "type": "face", "body_id": "body_001",
+             "bounding_box": [0, 0, 2, 10, 10, 2], "normal": [0, 0, 1], "area": 100.0},
+            {"id": "body_002", "type": "solid", "bounding_box": [0, 0, 2, 10, 2, 12]},
+            {"id": "face_015", "type": "face", "body_id": "body_002",
+             "bounding_box": [0, 0, 2, 10, 2, 12], "normal": [0, -1, 0], "area": 100.0},
+        ],
+    }
+    feature_graph = {
+        "features": [
+            {"id": "feat_body_001", "type": "named_part", "name": "base_plate",
+             "geometry_refs": {"body": "body_001"}},
+            {"id": "feat_body_002", "type": "named_part", "name": "load_wall",
+             "geometry_refs": {"body": "body_002"}},
+        ]
+    }
+    pkg = tmp_path / "compound_named_parts.aieng"
+    with zipfile.ZipFile(pkg, "w") as zf:
+        zf.writestr("assembly/assembly_ir.json", json.dumps(asm))
+        zf.writestr("geometry/topology_map.json", json.dumps(topology))
+        zf.writestr("graph/feature_graph.json", json.dumps(feature_graph))
+
+    with zipfile.ZipFile(pkg) as zf:
+        topo_by_part = build_topology_by_part(zf, set(zf.namelist()), asm)
+
+    assert "face_003" in topo_by_part["base_plate"]
+    assert "face_015" not in topo_by_part["base_plate"]
+
+    result = resolve_and_validate_assembly_geometry(pkg)
+    assert result["resolution_summary"]["resolved"] == 1
+    with zipfile.ZipFile(pkg) as zf:
+        resolution = json.loads(zf.read(INTERFACE_RESOLUTION_PATH))
+    rec = resolution["interfaces"]["if_base"]
+    assert rec["resolution_status"] == "resolved"
+    assert rec["transform_applied"] is True

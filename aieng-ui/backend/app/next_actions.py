@@ -147,6 +147,7 @@ def normalize_next_action(
         blocked_reason = raw_blocked
 
     blocked_reason_codes = _normalize_blocked_reason_codes(raw.get("blocked_reason_codes"))
+    resolves_blocked_reason_codes = _normalize_blocked_reason_codes(raw.get("resolves_blocked_reason_codes"))
 
     if not tool_name:
         available_now = False
@@ -174,6 +175,8 @@ def normalize_next_action(
     }
     if blocked_reason_codes is not None:
         item["blocked_reason_codes"] = blocked_reason_codes
+    if resolves_blocked_reason_codes is not None:
+        item["resolves_blocked_reason_codes"] = resolves_blocked_reason_codes
     return item
 
 
@@ -217,6 +220,7 @@ def build_next_action(
     available_now: bool = True,
     blocked_reason: str | None = None,
     blocked_reason_codes: list[str] | None = None,
+    resolves_blocked_reason_codes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a standardized next_action item from explicit fields.
 
@@ -225,6 +229,7 @@ def build_next_action(
     """
     safety = _safety_flags(tool)
     normalized_codes = _normalize_blocked_reason_codes(blocked_reason_codes)
+    normalized_resolves = _normalize_blocked_reason_codes(resolves_blocked_reason_codes)
     item: dict[str, Any] = {
         "id": _action_id(tool, input_dict),
         "label": label or _tool_label(tool),
@@ -239,4 +244,6 @@ def build_next_action(
     }
     if normalized_codes is not None:
         item["blocked_reason_codes"] = normalized_codes
+    if normalized_resolves is not None:
+        item["resolves_blocked_reason_codes"] = normalized_resolves
     return item

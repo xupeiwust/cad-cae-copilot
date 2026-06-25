@@ -4424,6 +4424,55 @@ def test_prepare_solver_run_blocked_reason_codes_are_stable(tmp_path: Path) -> N
     assert result["preflight"]["missing_items"]
 
 
+def test_prepare_solver_run_next_actions_resolve_blocker_codes(tmp_path: Path) -> None:
+    """Repair recommendations identify which stable blocked_reason_codes they address."""
+    from unittest.mock import patch
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("preflight-code-remediation"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "preflight.aieng"
+    _make_preflight_package(pkg_path, mesh=False, solver_settings=False, load_case=False, input_deck=False)
+    project["aieng_file"] = "preflight.aieng"
+    save_project(settings, project)
+
+    with patch("app.main.shutil.which", return_value=None):
+        resp = client.post("/api/runtime/runs", json={
+            "message": "prepare solver run",
+            "project_id": project_id,
+            "tool_input": {"project_id": project_id, "run_id": "run_001", "load_case_id": "load_case_001"},
+        })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    actions = result["next_actions"]
+
+    mesh_action = next(a for a in actions if a["tool"] == "cae.write_mesh_handoff")
+    settings_action = next(
+        a for a in actions
+        if a["tool"] == "cae.apply_setup_patch"
+        and "simulation/solver_settings.json" in json.dumps(a["input"])
+    )
+    deck_action = next(a for a in actions if a["tool"] == "cae.generate_solver_input")
+    solver_env_action = next(a for a in actions if a["tool"] == "")
+
+    assert mesh_action["resolves_blocked_reason_codes"] == ["missing_mesh"]
+    assert set(settings_action["resolves_blocked_reason_codes"]) == {"missing_analysis_type", "missing_solver"}
+    assert deck_action["resolves_blocked_reason_codes"] == ["deck_not_prepared"]
+    assert solver_env_action["resolves_blocked_reason_codes"] == ["solver_unavailable"]
+    assert set(result["blocked_reason_codes"]) >= {
+        "missing_mesh",
+        "missing_analysis_type",
+        "missing_solver",
+        "deck_not_prepared",
+        "solver_unavailable",
+    }
+
+
 def test_prepare_solver_run_accepts_legacy_top_level_mesh(tmp_path: Path) -> None:
     """Back-compat: legacy packages with simulation/mesh.inp still satisfy mesh readiness."""
     from unittest.mock import patch

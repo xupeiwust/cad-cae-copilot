@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from typing import Any
@@ -22,7 +23,7 @@ def _split_ccx_cmd(command: str, *, platform: str | None = None) -> list[str]:
     """Split an operator-provided ccx command into subprocess argv."""
     import shlex
 
-    platform = platform or os.name
+    platform = platform or ("nt" if re.match(r"^[A-Za-z]:\\", command.strip()) else os.name)
     parts = shlex.split(command, posix=platform != "nt")
     if platform == "nt":
         parts = [

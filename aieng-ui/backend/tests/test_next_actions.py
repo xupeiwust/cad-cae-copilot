@@ -202,6 +202,19 @@ def test_normalize_next_action_preserves_blocked_reason_codes() -> None:
     assert action["blocked_reason_codes"] == ["missing_mesh", "approval_required"]
 
 
+def test_normalize_next_action_preserves_resolved_blocker_codes() -> None:
+    action = normalize_next_action(
+        {
+            "tool": "cae.generate_solver_input",
+            "input": {"project_id": "p1", "run_id": "run_001"},
+            "reason": "Generate the missing input deck.",
+            "resolves_blocked_reason_codes": ["deck_not_prepared", "missing_mesh"],
+        },
+        source="preflight",
+    )
+    assert action["resolves_blocked_reason_codes"] == ["deck_not_prepared", "missing_mesh"]
+
+
 def test_build_next_action_blocked_reason_codes() -> None:
     action = build_next_action(
         "cae.run_solver",
@@ -212,3 +225,13 @@ def test_build_next_action_blocked_reason_codes() -> None:
         blocked_reason_codes=["deck_not_prepared", "approval_required"],
     )
     assert action["blocked_reason_codes"] == ["deck_not_prepared", "approval_required"]
+
+
+def test_build_next_action_resolved_blocker_codes() -> None:
+    action = build_next_action(
+        "cae.apply_setup_patch",
+        {"project_id": "p1"},
+        "Add solver settings.",
+        resolves_blocked_reason_codes=["missing_analysis_type", "missing_solver"],
+    )
+    assert action["resolves_blocked_reason_codes"] == ["missing_analysis_type", "missing_solver"]

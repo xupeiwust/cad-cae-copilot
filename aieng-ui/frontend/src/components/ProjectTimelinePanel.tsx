@@ -90,6 +90,9 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
                         <strong>{nextActionTitle(action)}</strong>
                         {action.blockedReason ? <em>Blocked: {action.blockedReason}</em> : null}
                         {action.blockedReasonCodes.length ? <small>{action.blockedReasonCodes.join(", ")}</small> : null}
+                        {action.resolvesBlockedReasonCodes.length ? (
+                          <small>resolves {action.resolvesBlockedReasonCodes.join(", ")}</small>
+                        ) : null}
                         {action.safetyFlags.length ? <small>{action.safetyFlags.join(" · ")}</small> : null}
                       </span>
                     ))}

@@ -14,6 +14,7 @@ export type TimelineNextAction = {
   availableNow: boolean | null;
   blockedReason: string | null;
   blockedReasonCodes: string[];
+  resolvesBlockedReasonCodes: string[];
   safetyFlags: string[];
 };
 
@@ -78,6 +79,7 @@ function describeNextAction(item: unknown): TimelineNextAction | null {
       availableNow: null,
       blockedReason: null,
       blockedReasonCodes: [],
+      resolvesBlockedReasonCodes: [],
       safetyFlags: [],
     };
   }
@@ -105,6 +107,7 @@ function describeNextAction(item: unknown): TimelineNextAction | null {
     availableNow: tool ? availableNow : false,
     blockedReason: blockedReason ?? (!tool ? asString(record.reason) : null),
     blockedReasonCodes: asStringArray(record.blocked_reason_codes),
+    resolvesBlockedReasonCodes: asStringArray(record.resolves_blocked_reason_codes),
     safetyFlags,
   };
 }
@@ -116,6 +119,7 @@ function nextActionKey(action: TimelineNextAction): string {
     action.availableNow,
     action.blockedReason,
     action.blockedReasonCodes,
+    action.resolvesBlockedReasonCodes,
     action.safetyFlags,
   ]);
 }

@@ -457,6 +457,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                     "No mesh files found in package. Write a mesh handoff contract "
                     "or import a meshed CalculiX deck before generating solver input."
                 ),
+                "resolves_blocked_reason_codes": [_blocked_reason_codes.MISSING_MESH],
             })
         if not preflight["has_solver_settings"]:
             recs.append({
@@ -473,6 +474,10 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                     "Missing solver settings. Create simulation/solver_settings.json "
                     "with solver target and analysis_type."
                 ),
+                "resolves_blocked_reason_codes": [
+                    _blocked_reason_codes.MISSING_ANALYSIS_TYPE,
+                    _blocked_reason_codes.MISSING_SOLVER,
+                ],
             })
         if not preflight["has_load_case"]:
             recs.append({
@@ -495,6 +500,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                     }],
                 },
                 "reason": f"Missing load case file simulation/load_cases/{load_case_id}.json.",
+                "resolves_blocked_reason_codes": [_blocked_reason_codes.MISSING_LOADS],
             })
         if not preflight["has_input_deck"]:
             recs.append({
@@ -504,12 +510,14 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                     "Missing solver input deck; generate it once mesh, solver settings, "
                     "material, boundary conditions and loads are present."
                 ),
+                "resolves_blocked_reason_codes": [_blocked_reason_codes.DECK_NOT_PREPARED],
             })
         if not preflight["ccx_available"]:
             recs.append({
                 "tool": None,
                 "action": "Install CalculiX and ensure ccx is on PATH, or set AIENG_CCX_CMD.",
                 "reason": "CalculiX command not found.",
+                "resolves_blocked_reason_codes": [_blocked_reason_codes.SOLVER_UNAVAILABLE],
             })
         if ready_to_run:
             recs.append({
@@ -688,6 +696,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                     "Re-run AI preprocessing to rebind loads/BCs, or use cae.apply_setup_patch "
                     "to update face IDs manually."
                 ),
+                "resolves_blocked_reason_codes": [_blocked_reason_codes.STALE_TOPOLOGY_REFERENCE],
             })
 
         preflight["blocked_reason_codes"] = _blocked_reason_codes.codes_for_preflight(preflight)

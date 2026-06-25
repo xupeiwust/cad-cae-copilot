@@ -89,6 +89,7 @@ describe("buildProjectTimeline", () => {
                   available_now: false,
                   blocked_reason: "Approval is required.",
                   blocked_reason_codes: ["approval_required"],
+                  resolves_blocked_reason_codes: ["deck_not_prepared"],
                   requires_approval: true,
                   mutates_package: true,
                   runs_solver: true,
@@ -117,6 +118,7 @@ describe("buildProjectTimeline", () => {
         availableNow: false,
         blockedReason: "Approval is required.",
         blockedReasonCodes: ["approval_required"],
+        resolvesBlockedReasonCodes: ["deck_not_prepared"],
         safetyFlags: ["requires approval", "runs solver", "mutates package"],
       }),
     ]);

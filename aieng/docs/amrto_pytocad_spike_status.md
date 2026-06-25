@@ -1,89 +1,102 @@
-# AMRTO / PYTOCAD spike — status & blocker (#149)
+# AMRTO / PYTOCAD spike status (#149)
 
-Follow-up to [`amrto_pytocad_evaluation.md`](amrto_pytocad_evaluation.md) (which
-concluded *"go, but only as a follow-up spike"*). That desk evaluation stands;
-this note records the **executable** spike outcome and a go/no-go.
+Follow-up to [`amrto_pytocad_evaluation.md`](amrto_pytocad_evaluation.md), which
+concluded "go, but only as a follow-up spike." This note records the executable
+spike evidence and the current go/no-go decision.
 
-> **Honesty note.** The external AMRTO/PYTOCAD Zenodo package was **not run** as
-> part of this note — see the blocker below. No `.3dm`/NURBS output was produced;
-> nothing here claims mesh-derived NURBS is production CAD.
+> Honesty note: no `.json` or `.3dm` reconstruction artifact was produced by this
+> run. Nothing here claims mesh-derived NURBS/freeform output is production CAD.
 
-## Verdict: **defer full integration — external run is a maintainer task, not runnable in this environment**
+## Verdict: no-go for integration now; conditional-go for a maintainer rerun
 
-The spike's core acceptance (download + run the Zenodo package, feed an AIENG
-mesh, produce `.json`/`.3dm`) requires an environment this work did not have. The
-AIENG **input side is structurally ready**; the **external toolchain run** and the
-**`.3dm`→Shape-IR conversion layer** are the open work, and both are gated on a
-maintainer-run of third-party research code.
+The AIENG-side input bridge is ready, but the published AMRTO/PYTOCAD package is
+not yet a reliable dependency for the product path. The package was downloaded
+and inspected, but the authors' example could not be executed in the current
+environment because the pinned Python stack rejects the available interpreter.
 
-## 1. Authors' example run — **blocked (documented)**
+Full integration remains deferred. A future attempt should use an isolated
+Python 3.8/3.10-style environment on Windows, preserve the third-party toolchain
+outside the AIENG runtime, and only proceed to #204 if the external run produces
+useful artifacts reproducibly.
 
-Could not be executed here:
-- **No network fetch** of the Zenodo archive (offline build/CI-like environment).
-- **No `.3dm` / rhino3dm runtime**, and no Windows `GMCG_revision.exe` (the
-  generalized-motorcycle-graph quadrangulation step the README requires) — so the
-  package is **not fully cross-platform** even where it can be fetched.
-- Heavy native deps (`VTK 9.3.0`, `Open3D 0.17.0`) plus **old pins** (`numba
-  0.56`, `numpy 1.22.2`) that conflict with AIENG's newer NumPy/SciPy stack — a
-  separate isolated environment is required (see eval §3).
+## Evidence collected
 
-**To unblock:** a maintainer runs the Zenodo package on a machine with network +
-the pinned isolated env (+ Windows for the GMCG exe), then shares the example
-output and logs. The integration analysis can resume from there.
+- Source inspected: Zenodo record `10.5281/zenodo.14381998`, version v3,
+  published 2024-12-11.
+- Downloaded package: `CODE_AMRTO.zip`, 238,573,730 bytes, md5 published by
+  Zenodo as `f8e184854cb109282bd00a26e29c50c7`.
+- Not downloaded: `MODEL_AMRTO.zip` (about 1.6 GB). It is not required for the
+  first code/package install check.
+- Extracted package contents included `Readme.txt`, `requirements.txt`,
+  `PYTOCAD_simple.py`, `PYTOCAD_complete.py`, `json2on.exe`, `on2json.exe`, and
+  Windows executables under `Instant-Meshes and GMCG_revision/`, including
+  `GMCG_revision.exe`.
+- The code package also includes example tri/quad OBJ inputs under
+  `data/output_tri` and `data/output_quad`.
 
-## 2. AIENG mesh input — **attempted at the AIENG boundary; ready, with one gap**
+## Authors' example run
 
-What AIENG produces today as the candidate input (confirmed in code):
-- `topology_optimization` writeback emits `extruded_region` (2D B-Rep),
-  `density_voxels`, or a **`smooth_mesh_proxy`** (triangle mesh) — and Shape IR
-  recognises the surface-mesh kinds `{surface_mesh, smooth_mesh_proxy, mesh_proxy,
-  triangle_mesh}` (`shape_ir.py` `_SURFACE_MESH_KINDS`).
-- PYTOCAD expects exactly a **surface triangle mesh** as its starting point
-  (eval §4.1), so the AIENG output *kind* is the right input.
+Status: blocked, documented.
 
-**Gap:** there is no neutral **mesh-file exporter** (e.g. OBJ/PLY/STL) for the
-`smooth_mesh_proxy` on `main` today — the proxy is an in-package Shape-IR/runtime
-mesh, not yet written to a standalone file PYTOCAD can read. That small, fully
-in-repo exporter is the cheapest concrete enabler and is the recommended first
-implementation slice (it needs no external package and is unit-testable).
+The README expects a Windows-style checkout at `D:\CODE_AMRTO`, Python 3.8,
+installation from `requirements.txt`, generated sparse quadrilateral layouts
+from `GMCG_revision.exe`, then a `PYTOCAD.py` run to produce `.json` and `.3dm`.
 
-## 3. `.json` / `.3dm` output — **not produced (blocked upstream)**
+The current machine provides Python 3.11.5. Creating a clean Python 3.11 venv and
+running `pip install -r requirements.txt` failed before the example could run:
 
-Blocked by §1 (the package did not run). Even given output, the `.3dm`/JSON
-NURBS-patch → AIENG Shape-IR conversion layer **does not exist** and is non-trivial
-(eval §4.2): NURBS patches → analytic/OCC faces → stitched solid B-Rep, or a
-freeform-evidence path. This conversion is the larger half of #204.
+```text
+RuntimeError: Cannot install on Python version 3.11.5; only versions >=3.7,<3.11 are supported.
+```
 
-## 4. Dependency / install experience — **documented**
+The immediate blocker is `numba==0.56.0`, which does not support Python 3.11.
+The package also relies on heavy native dependencies (`open3d`, `vtk`, `vispy`)
+and Windows executables/path assumptions, so it should not be co-installed into
+AIENG's normal runtime or CI environment.
 
-From the published `requirements.txt` (eval §3): `geomdl 5.3.1`, `joblib`,
-`matplotlib 3.5.1`, `numba 0.56.0`, `numpy 1.22.2`, `open3d 0.17.0`, `pyinstrument`,
-`scipy 1.13.1`, `vispy 0.14.2`, `vtk 9.3.0`, plus a Windows `GMCG_revision.exe`.
-Expected install reality:
-- **Isolated env required** — the `numpy 1.22 / numba 0.56` pins are incompatible
-  with AIENG's current stack; do not co-install.
-- **Heavy native wheels** (VTK, Open3D) complicate Linux CI and Windows deploy.
-- **Windows-only step** (`GMCG_revision.exe`) blocks a clean Linux-only run.
-- Net: a dedicated, throwaway environment per platform; not a casual `pip install`.
+## AIENG mesh input attempt
 
-## 5. Go / no-go
+Status: input bridge ready; external ingestion blocked before execution.
 
-**No-go for integration now; conditional-go for a maintainer-run spike, in this order:**
-1. ✅ **DONE — In-repo (no external dep):** a tested neutral-mesh **OBJ** exporter
-   for the AIENG `smooth_mesh_proxy` now ships in
-   [`aieng/src/aieng/converters/mesh_obj_export.py`](../src/aieng/converters/mesh_obj_export.py)
-   (`mesh_to_obj` / `topology_result_mesh_obj` / `write_topology_result_mesh_obj`).
-   The 3D smooth-mesh `writeback_to_shape_ir` now auto-emits
-   `geometry/topology_result_mesh.obj` alongside the Shape IR, so the AIENG input
-   is **file-ready** for PYTOCAD. Unit-tested (`aieng/tests/test_mesh_obj_export.py`),
-   no Zenodo dependency. Reconstructed/lossy mesh, not production CAD.
-2. **Maintainer-run:** run the Zenodo PYTOCAD package in an isolated pinned env
-   (+ Windows GMCG exe) on its own example, then on the AIENG OBJ; capture
-   `.json`/`.3dm` + logs.
-3. **Only if (2) succeeds reliably:** build the `.3dm`/JSON → Shape-IR conversion
-   layer (the bulk of #204), gated so mesh-derived NURBS is recorded as
-   reconstructed/lossy evidence — **never** as production CAD.
+AIENG now emits a neutral OBJ file for topology smooth-mesh output:
+`geometry/topology_result_mesh.obj`. The implementation lives in
+[`aieng/src/aieng/converters/mesh_obj_export.py`](../src/aieng/converters/mesh_obj_export.py)
+and is covered by `aieng/tests/test_mesh_obj_export.py`. This gives PYTOCAD a
+file-level surface mesh input without adding Zenodo dependencies to AIENG.
 
-## Honesty / non-goals
-- No production integration; the external package was not run here.
-- Mesh-derived NURBS output is reconstructed/lossy, **not production CAD**.
+The Zenodo package was not able to ingest that OBJ in this run because dependency
+installation failed before `PYTOCAD_simple.py` or `PYTOCAD_complete.py` could be
+executed. That is an external-toolchain blocker, not an AIENG exporter blocker.
+
+## Output status
+
+No new `.json` or `.3dm` output was produced by this run.
+
+Even if a future rerun produces `.json` or `.3dm`, the conversion layer into
+AIENG Shape IR does not exist yet. That larger follow-up belongs to #204 and must
+preserve an explicit reconstructed/lossy/non-production boundary until OCC/STEP
+validation proves otherwise.
+
+## Go / no-go recommendation
+
+No-go for product integration now.
+
+Conditional-go only for a bounded maintainer rerun:
+
+1. Create an isolated environment compatible with the published pins.
+2. Place or patch the package so the hardcoded `D:\CODE_AMRTO` assumptions are
+   satisfied without affecting the AIENG repo.
+3. Run the authors' bundled example and capture logs plus generated `.json` /
+   `.3dm` artifacts.
+4. Feed `geometry/topology_result_mesh.obj` from an AIENG topology result through
+   the same path, or record the exact failure point.
+5. If both runs succeed, re-open #204 as a narrow Shape-IR reconstruction design
+   task with provenance, confidence, and validation gates.
+
+## Product boundary
+
+- Keep AMRTO/PYTOCAD out of the main CAD/CAE runtime for now.
+- Do not block alpha release, packaging, Docker, or golden-path CAE reliability
+  on this research track.
+- Do not claim STEP/B-Rep, editable CAD, or production NURBS output without
+  successful OCC validation and explicit artifact provenance.

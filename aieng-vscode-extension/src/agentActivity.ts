@@ -1,12 +1,15 @@
 import { EventSource } from "eventsource";
 import * as vscode from "vscode";
 
+import {
+  projectActivityFromEvent,
+  projectIdFromEvent,
+  type ProjectActivityDiagnostic,
+  type ProjectActivityEvent,
+} from "./agentActivityModel";
 import { backendUrl } from "./livePreview";
 
-type AgentActivityEvent = {
-  type?: unknown;
-  project_id?: unknown;
-};
+export { projectActivityFromEvent, projectIdFromEvent, type ProjectActivityEvent };
 
 export class AgentActivitySubscriber implements vscode.Disposable {
   private source: EventSource | undefined;
@@ -34,6 +37,9 @@ export class AgentActivitySubscriber implements vscode.Disposable {
       source.onmessage = (message) => {
         const event = projectActivityFromEvent(message.data);
         if (!event || !autoOpenPreviewEnabled()) return;
+        if (event.diagnostic) {
+          vscode.window.setStatusBarMessage(`AIENG: ${formatDiagnostic(event.diagnostic)}`, 7000);
+        }
         void Promise.resolve(this.onProjectActivity(event)).catch((error) => {
           console.warn("AIENG: Could not auto-open live preview from agent activity.", error);
         });
@@ -55,25 +61,7 @@ function autoOpenPreviewEnabled(): boolean {
   return vscode.workspace.getConfiguration("aieng").get<boolean>("autoOpenPreviewOnActivity", true);
 }
 
-export function projectIdFromEvent(data: unknown): string | undefined {
-  return projectActivityFromEvent(data)?.projectId;
-}
-
-export type ProjectActivityEvent = {
-  type: string;
-  projectId: string;
-};
-
-export function projectActivityFromEvent(data: unknown): ProjectActivityEvent | undefined {
-  if (typeof data !== "string") return undefined;
-  try {
-    const event = JSON.parse(data) as AgentActivityEvent;
-    if (typeof event.project_id !== "string" || !event.project_id.trim()) return undefined;
-    return {
-      type: typeof event.type === "string" ? event.type : "",
-      projectId: event.project_id.trim(),
-    };
-  } catch {
-    return undefined;
-  }
+function formatDiagnostic(diagnostic: ProjectActivityDiagnostic): string {
+  const message = diagnostic.remediation || diagnostic.message;
+  return `${diagnostic.code}: ${message}`;
 }

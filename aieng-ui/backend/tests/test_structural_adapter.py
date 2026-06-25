@@ -63,6 +63,7 @@ def _write_structural_package(
     with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps({"model_id": "structural-test", "resources": {}}))
         if mesh:
+            zf.writestr("simulation/mesh/mesh.inp", "*NODE\n1,0,0,0\n*ELEMENT, TYPE=C3D4, ELSET=EALL\n")
             zf.writestr("simulation/mesh/mesh_metadata.json", json.dumps({"elements": 10, "nodes": 20}))
         if solver_settings:
             zf.writestr("simulation/solver_settings.json", json.dumps({"solver": "CalculiX"}))
@@ -288,6 +289,7 @@ def _write_close_loop_package(
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps({"model_id": "close-loop-test", "resources": {}}))
+        zf.writestr("simulation/mesh/mesh.inp", "*NODE\n1,0,0,0\n*ELEMENT, TYPE=C3D4, ELSET=EALL\n")
         zf.writestr("simulation/mesh/mesh_metadata.json", json.dumps({"elements": 10, "nodes": 20}))
         zf.writestr("simulation/solver_settings.json", json.dumps({"solver": "CalculiX"}))
         zf.writestr(

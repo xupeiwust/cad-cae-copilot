@@ -191,18 +191,19 @@ def test_get_mesh_preview_unavailable() -> None:
 
 
 def test_get_mesh_preview_available() -> None:
-    from app.simulation_runner import get_mesh_preview
+    from app.simulation_runner import CANONICAL_MESH_INP_PATH, get_mesh_preview
 
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "mesh.aieng"
         pkg.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("manifest.json", "{}")
-            zf.writestr("simulation/mesh.inp", _TWO_TET_MESH_INP)
+            zf.writestr(CANONICAL_MESH_INP_PATH, _TWO_TET_MESH_INP)
             zf.writestr("simulation/setup.yaml", yaml.dump(_SETUP_YAML))
         result = get_mesh_preview(pkg)
 
     assert result["available"] is True
+    assert result["mesh_path"] == CANONICAL_MESH_INP_PATH
     assert result["node_count"] == 5
     assert result["element_count"] == 2
     assert result["element_type"] == "C3D4"
@@ -786,6 +787,8 @@ def test_mesh_preview_endpoint_no_mesh(tmp_path: Path) -> None:
 
 
 def test_mesh_preview_endpoint_with_mesh(tmp_path: Path) -> None:
+    from app.simulation_runner import LEGACY_MESH_INP_PATH
+
     settings = _make_settings(tmp_path)
     app = create_app(settings)
     client = TestClient(app)
@@ -793,12 +796,13 @@ def test_mesh_preview_endpoint_with_mesh(tmp_path: Path) -> None:
     project_id, pkg_path = _make_project(settings, "mesh-preview", "mesh_preview.aieng")
     _build_test_package(pkg_path)
     with zipfile.ZipFile(pkg_path, "a", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("simulation/mesh.inp", _TWO_TET_MESH_INP)
+        zf.writestr(LEGACY_MESH_INP_PATH, _TWO_TET_MESH_INP)
 
     resp = client.get(f"/api/projects/{project_id}/mesh-preview")
     assert resp.status_code == 200
     data = resp.json()
     assert data["available"] is True
+    assert data["mesh_path"] == LEGACY_MESH_INP_PATH
     assert data["node_count"] == 5
     assert data["element_count"] == 2
     assert data["element_type"] == "C3D4"
@@ -860,6 +864,8 @@ def test_compute_mesh_quality_non_tet_is_unknown() -> None:
 
 
 def test_mesh_diagnostics_endpoint_with_mesh(tmp_path: Path) -> None:
+    from app.simulation_runner import CANONICAL_MESH_INP_PATH
+
     settings = _make_settings(tmp_path)
     app = create_app(settings)
     client = TestClient(app)
@@ -867,12 +873,13 @@ def test_mesh_diagnostics_endpoint_with_mesh(tmp_path: Path) -> None:
     project_id, pkg_path = _make_project(settings, "mesh-diag", "mesh_diag.aieng")
     _build_test_package(pkg_path)
     with zipfile.ZipFile(pkg_path, "a", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("simulation/mesh.inp", _TWO_TET_MESH_INP)
+        zf.writestr(CANONICAL_MESH_INP_PATH, _TWO_TET_MESH_INP)
 
     resp = client.get(f"/api/projects/{project_id}/mesh-diagnostics")
     assert resp.status_code == 200
     data = resp.json()
     assert data["available"] is True
+    assert data["mesh_path"] == CANONICAL_MESH_INP_PATH
     assert data["verdict"] in {"ok", "warning", "fail"}
     assert data["tet_count"] == 2
 
@@ -949,6 +956,8 @@ def test_compute_set_coverage_no_mappings_is_unknown() -> None:
 
 
 def test_mesh_diagnostics_endpoint_flags_broken_set_mapping(tmp_path: Path) -> None:
+    from app.simulation_runner import CANONICAL_MESH_INP_PATH
+
     settings = _make_settings(tmp_path)
     app = create_app(settings)
     client = TestClient(app)
@@ -963,7 +972,7 @@ def test_mesh_diagnostics_endpoint_flags_broken_set_mapping(tmp_path: Path) -> N
     ]}
     cae_mapping = {"mappings": [{"cae_entity": "load_1", "face_ids": ["f_far"]}]}
     with zipfile.ZipFile(pkg_path, "a", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("simulation/mesh.inp", _TWO_TET_MESH_INP)
+        zf.writestr(CANONICAL_MESH_INP_PATH, _TWO_TET_MESH_INP)
         zf.writestr("geometry/topology_map.json", json.dumps(topology))
         zf.writestr("simulation/cae_mapping.json", json.dumps(cae_mapping))
 
@@ -1259,6 +1268,8 @@ def _build_real_step_package(pkg_path: Path) -> None:
 def test_generate_mesh_for_package_meshes_real_box(tmp_path: Path) -> None:
     pytest.importorskip("gmsh")
     from app.simulation_runner import (
+        CANONICAL_MESH_INP_PATH,
+        MESH_METADATA_PATH,
         generate_mesh_for_package,
         get_mesh_preview,
         _read_member,
@@ -1274,17 +1285,17 @@ def test_generate_mesh_for_package_meshes_real_box(tmp_path: Path) -> None:
     assert result["element_count"] > 0
     assert result["element_type"] == "C3D4"
     assert result["target_size_mm"] == 8.0
-    assert "simulation/mesh.inp" in result["written_artifacts"]
-    assert "simulation/mesh/mesh_metadata.json" in result["written_artifacts"]
+    assert CANONICAL_MESH_INP_PATH in result["written_artifacts"]
+    assert MESH_METADATA_PATH in result["written_artifacts"]
 
     # Both artifacts are actually in the package.
     with zipfile.ZipFile(pkg, "r") as zf:
         names = zf.namelist()
-        assert "simulation/mesh.inp" in names
-        assert "simulation/mesh/mesh_metadata.json" in names
+        assert CANONICAL_MESH_INP_PATH in names
+        assert MESH_METADATA_PATH in names
         # has_mesh preflight scans the simulation/mesh/ prefix.
         assert any(n.startswith("simulation/mesh/") for n in names)
-        metadata = json.loads(zf.read("simulation/mesh/mesh_metadata.json"))
+        metadata = json.loads(zf.read(MESH_METADATA_PATH))
         assert metadata["node_count"] == result["node_count"]
         assert metadata["element_count"] == result["element_count"]
         assert metadata["generator"] == "gmsh"
@@ -1292,6 +1303,7 @@ def test_generate_mesh_for_package_meshes_real_box(tmp_path: Path) -> None:
     # The persisted mesh.inp lights up the existing mesh-preview reader.
     preview = get_mesh_preview(pkg)
     assert preview["available"] is True
+    assert preview["mesh_path"] == CANONICAL_MESH_INP_PATH
     assert preview["element_count"] == result["element_count"]
 
 
@@ -1338,6 +1350,8 @@ def test_cae_generate_mesh_tool_registered(tmp_path: Path) -> None:
 
 
 def test_cae_generate_mesh_tool_meshes_via_invoke(tmp_path: Path) -> None:
+    from app.simulation_runner import CANONICAL_MESH_INP_PATH, MESH_METADATA_PATH
+
     pytest.importorskip("gmsh")
     pytest.importorskip("build123d")
     settings = _make_settings(tmp_path)
@@ -1360,8 +1374,8 @@ def test_cae_generate_mesh_tool_meshes_via_invoke(tmp_path: Path) -> None:
 
     with zipfile.ZipFile(pkg_path, "r") as zf:
         names = zf.namelist()
-        assert "simulation/mesh.inp" in names
-        assert "simulation/mesh/mesh_metadata.json" in names
+        assert CANONICAL_MESH_INP_PATH in names
+        assert MESH_METADATA_PATH in names
 
 
 # ── source solver deck synthesis (close the decoupled MCP solve loop) ─────────
@@ -1452,6 +1466,8 @@ def test_synthesized_deck_mesh_section_survives_deck_generator_extraction() -> N
 
 def _build_meshed_setup_package(pkg_path: Path) -> None:
     """A package with a mesh + setup + cae_mapping but NO imported source deck."""
+    from app.simulation_runner import CANONICAL_MESH_INP_PATH
+
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps({"schema_version": "0.1", "model_id": "src-deck-test"}))
@@ -1459,11 +1475,16 @@ def _build_meshed_setup_package(pkg_path: Path) -> None:
         zf.writestr("geometry/generated.step", _FAKE_STEP)
         zf.writestr("simulation/setup.yaml", yaml.dump(_SETUP_YAML))
         zf.writestr("simulation/cae_mapping.json", json.dumps(_CAE_MAPPING))
-        zf.writestr("simulation/mesh.inp", _MINIMAL_MESH_INP)
+        zf.writestr(CANONICAL_MESH_INP_PATH, _MINIMAL_MESH_INP)
 
 
 def test_ensure_source_deck_from_mesh_synthesizes_and_is_idempotent(tmp_path: Path) -> None:
-    from app.simulation_runner import ensure_source_deck_from_mesh, SOURCE_SOLVER_DECK_PATH, _read_member
+    from app.simulation_runner import (
+        CANONICAL_MESH_INP_PATH,
+        SOURCE_SOLVER_DECK_PATH,
+        _read_member,
+        ensure_source_deck_from_mesh,
+    )
 
     pkg = tmp_path / "meshed.aieng"
     _build_meshed_setup_package(pkg)
@@ -1471,6 +1492,7 @@ def test_ensure_source_deck_from_mesh_synthesizes_and_is_idempotent(tmp_path: Pa
     result = ensure_source_deck_from_mesh(pkg)
     assert result["created"] is True
     assert result["status"] == "synthesized"
+    assert result["mesh_path"] == CANONICAL_MESH_INP_PATH
     # node 5 -> cylinder face_003 (FEAT_HOLE_001); node 4 -> top face_002 (FEAT_BASE_001_L)
     assert set(result["nset_names"]) == {"FEAT_HOLE_001", "FEAT_BASE_001_L"}
 

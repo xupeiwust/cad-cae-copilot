@@ -1343,7 +1343,7 @@ def register_project_workflow_routes(
     def mesh_preview_endpoint(project_id: str) -> dict[str, Any]:
         """Return surface wireframe + element stats for the project's FE mesh.
 
-        Reads ``simulation/mesh.inp`` from the .aieng package (written by the
+        Reads the package mesh deck from the .aieng package (written by the
         solver runner). Returns ``{available: false}`` when no mesh exists so the
         viewer can degrade cleanly.
         """
@@ -1363,7 +1363,7 @@ def register_project_workflow_routes(
     def mesh_diagnostics_endpoint(project_id: str) -> dict[str, Any]:
         """Return an element-quality verdict for the project's FE mesh (#279).
 
-        Reads ``simulation/mesh.inp`` and reports degenerate / sliver / high-aspect
+        Reads the package mesh deck and reports degenerate / sliver / high-aspect
         tetrahedra with an ok/warning/fail verdict. ``{available: false}`` when no
         mesh exists. Honest boundary: heuristic tet quality, not a Jacobian measure.
         """

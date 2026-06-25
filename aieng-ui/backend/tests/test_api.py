@@ -4298,6 +4298,7 @@ def _make_preflight_package(pkg_path: Path, *, mesh: bool = True, solver_setting
     with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps({"model_id": "preflight-test", "resources": {}}))
         if mesh:
+            zf.writestr("simulation/mesh/mesh.inp", "*NODE\n1,0,0,0\n*ELEMENT, TYPE=C3D4, ELSET=EALL\n")
             zf.writestr("simulation/mesh/mesh_metadata.json", json.dumps({"elements": 4000, "nodes": 800}))
         if solver_settings:
             zf.writestr("simulation/solver_settings.json", json.dumps({"solver": "CalculiX", "n_cpus": 4}))
@@ -4421,6 +4422,38 @@ def test_prepare_solver_run_blocked_reason_codes_are_stable(tmp_path: Path) -> N
     # Human-readable fields are still present.
     assert run_action["blocked_reason"]
     assert result["preflight"]["missing_items"]
+
+
+def test_prepare_solver_run_accepts_legacy_top_level_mesh(tmp_path: Path) -> None:
+    """Back-compat: legacy packages with simulation/mesh.inp still satisfy mesh readiness."""
+    from unittest.mock import patch
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("preflight-legacy-mesh"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "preflight.aieng"
+    _make_preflight_package(pkg_path, mesh=False, solver_settings=True, load_case=True, input_deck=True)
+    with zipfile.ZipFile(pkg_path, "a", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("simulation/mesh.inp", "*NODE\n1,0,0,0\n*ELEMENT, TYPE=C3D4, ELSET=EALL\n")
+    project["aieng_file"] = "preflight.aieng"
+    save_project(settings, project)
+
+    with patch("app.runtime_tool_registry.resolve_ccx_command", return_value=(["ccx"], "found")):
+        resp = client.post("/api/runtime/runs", json={
+            "message": "prepare solver run",
+            "project_id": project_id,
+            "tool_input": {"project_id": project_id},
+        })
+
+    assert resp.status_code == 200
+    preflight = resp.json()["tool_results"][0]["output"]["preflight"]
+    assert preflight["has_mesh"] is True
+    assert preflight["mesh_artifact_path"] == "simulation/mesh.inp"
 
 
 def test_prepare_solver_run_ready_to_run_false_when_ccx_unavailable(tmp_path: Path) -> None:

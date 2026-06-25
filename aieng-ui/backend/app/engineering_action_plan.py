@@ -300,7 +300,7 @@ def _action_for_intent(intent: str) -> dict[str, Any] | None:
             "endpoint": "MCP cae.generate_mesh -> cae.prepare_solver_run",
             "tool_chain": ["cae.generate_mesh", "cae.prepare_solver_run"],
             "approval_tier": "gate",
-            "writes": ["simulation/mesh.inp", "simulation/mesh/mesh_metadata.json"],
+            "writes": ["simulation/mesh/mesh.inp", "simulation/mesh/mesh_metadata.json"],
             "external_tools": ["Gmsh"],
         },
         "set_target": {

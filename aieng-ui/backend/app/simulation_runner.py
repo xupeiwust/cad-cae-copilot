@@ -68,6 +68,20 @@ def _read_member(package_path: Path, member: str) -> bytes | None:
     return None
 
 
+CANONICAL_MESH_INP_PATH = "simulation/mesh/mesh.inp"
+LEGACY_MESH_INP_PATH = "simulation/mesh.inp"
+MESH_METADATA_PATH = "simulation/mesh/mesh_metadata.json"
+
+
+def _read_mesh_inp_member(package_path: Path) -> tuple[bytes | None, str | None]:
+    """Read the package mesh deck, preferring the canonical directory layout."""
+    for member in (CANONICAL_MESH_INP_PATH, LEGACY_MESH_INP_PATH):
+        raw = _read_member(package_path, member)
+        if raw:
+            return raw, member
+    return None, None
+
+
 def _extract_step(package_path: Path, work_dir: Path) -> Path | None:
     """Extract the geometry STEP file to work_dir. Returns path or None."""
     for candidate in ("geometry/generated.step", "geometry/model.step", "geometry/part.step"):
@@ -94,7 +108,7 @@ def _write_results_to_package(
     if frd_bytes:
         files["simulation/result.frd"] = frd_bytes
     if mesh_inp_bytes:
-        files["simulation/mesh.inp"] = mesh_inp_bytes
+        files[CANONICAL_MESH_INP_PATH] = mesh_inp_bytes
 
     tmp = package_path.with_suffix(".tmp.aieng")
     try:
@@ -339,14 +353,14 @@ def _read_mesh_target_size_mm(package_path: Path) -> float | None:
 
 
 def get_mesh_preview(package_path: Path) -> dict[str, Any]:
-    """Read ``simulation/mesh.inp`` and return surface wireframe + element stats.
+    """Read the package mesh deck and return surface wireframe + element stats.
 
     The result is intentionally compact: a list of surface vertex coordinates and
     zero-based edge index pairs.  When ``mesh.inp`` is absent the response is
     ``{"available": False}`` so the UI can degrade cleanly.
     """
     package_path = Path(package_path)
-    inp_bytes = _read_member(package_path, "simulation/mesh.inp")
+    inp_bytes, mesh_path = _read_mesh_inp_member(package_path)
     if not inp_bytes:
         return {"available": False}
 
@@ -361,6 +375,7 @@ def get_mesh_preview(package_path: Path) -> dict[str, Any]:
     if not elements:
         return {
             "available": True,
+            "mesh_path": mesh_path,
             "node_count": len(nodes),
             "element_count": 0,
             "element_type": None,
@@ -382,6 +397,7 @@ def get_mesh_preview(package_path: Path) -> dict[str, Any]:
 
     return {
         "available": True,
+        "mesh_path": mesh_path,
         "node_count": node_count,
         "element_count": element_count,
         "element_type": element_type,
@@ -531,13 +547,13 @@ def compute_mesh_quality(
 
 
 def get_mesh_quality_diagnostics(package_path: Path) -> dict[str, Any]:
-    """Read ``simulation/mesh.inp`` and return an element-quality verdict.
+    """Read the package mesh deck and return an element-quality verdict.
 
     ``{"available": False}`` when no mesh is present so callers can degrade
     cleanly (mirrors :func:`get_mesh_preview`).
     """
     package_path = Path(package_path)
-    inp_bytes = _read_member(package_path, "simulation/mesh.inp")
+    inp_bytes, mesh_path = _read_mesh_inp_member(package_path)
     if not inp_bytes:
         return {"available": False}
 
@@ -549,6 +565,7 @@ def get_mesh_quality_diagnostics(package_path: Path) -> dict[str, Any]:
 
     diagnostics = compute_mesh_quality(nodes, elements)
     diagnostics["available"] = True
+    diagnostics["mesh_path"] = mesh_path
     diagnostics["node_count"] = len(nodes)
     diagnostics["element_type"] = elements[0]["type"] if elements else None
 
@@ -593,12 +610,9 @@ def generate_mesh_for_package(
 
     Writes two artifacts into the ``.aieng`` package:
 
-    - ``simulation/mesh.inp`` — the CalculiX-format mesh deck (``*NODE`` /
-      ``*ELEMENT``), which lights up the existing mesh-preview, mesh-quality, and
-      mesh-convergence readers (all of which read this path).
-    - ``simulation/mesh/mesh_metadata.json`` — mesh stats + quality verdict, which
-      flips the ``has_mesh`` preflight check (it scans the ``simulation/mesh/``
-      prefix).
+    - ``simulation/mesh/mesh.inp`` — the CalculiX-format mesh deck (``*NODE`` /
+      ``*ELEMENT``).
+    - ``simulation/mesh/mesh_metadata.json`` — mesh stats + quality verdict.
 
     This produces **only the FE mesh** — it does not build NSETs, bind boundary
     conditions/loads, assemble a solver deck, or run a solver. Those remain the
@@ -681,8 +695,8 @@ def generate_mesh_for_package(
     _write_members_to_package(
         package_path,
         {
-            "simulation/mesh.inp": mesh_bytes,
-            "simulation/mesh/mesh_metadata.json": json.dumps(metadata, indent=2).encode(),
+            CANONICAL_MESH_INP_PATH: mesh_bytes,
+            MESH_METADATA_PATH: json.dumps(metadata, indent=2).encode(),
         },
     )
 
@@ -695,8 +709,8 @@ def generate_mesh_for_package(
         "quality_verdict": quality.get("verdict"),
         "quality": quality,
         "written_artifacts": [
-            "simulation/mesh.inp",
-            "simulation/mesh/mesh_metadata.json",
+            CANONICAL_MESH_INP_PATH,
+            MESH_METADATA_PATH,
         ],
     }
 
@@ -708,7 +722,7 @@ def generate_mesh_for_package(
 # NSETs *by name* (the cae_mapping cae_entity). A bare Gmsh mesh names surfaces
 # SURF{tag}, not the cae_entity NSETs, so an imported source deck was required and
 # a freshly-meshed model could not solve via MCP. These helpers synthesize that
-# source deck from simulation/mesh.inp + topology + cae_mapping, using the same
+# source deck from the persisted mesh + topology + cae_mapping, using the same
 # geometric face->node binding (_build_nsets) the legacy one-shot path uses.
 
 SOURCE_SOLVER_DECK_PATH = "simulation/cae_imports/source_solver_deck.inp"
@@ -826,7 +840,7 @@ def ensure_source_deck_from_mesh(package_path: Path) -> dict[str, Any]:
 
     No-op (``status=exists``) when a source deck is already present — an
     explicitly imported deck always wins. Returns ``status=no_mesh`` when there is
-    no ``simulation/mesh.inp`` to build from. On success writes the source deck and
+    no package mesh deck to build from. On success writes the source deck and
     returns the NSET names it bound (and any that caught no nodes). Never runs a
     solver; safe to call before ``cae.generate_solver_input``.
     """
@@ -834,7 +848,7 @@ def ensure_source_deck_from_mesh(package_path: Path) -> dict[str, Any]:
     if _read_member(package_path, SOURCE_SOLVER_DECK_PATH):
         return {"created": False, "status": "exists"}
 
-    mesh_bytes = _read_member(package_path, "simulation/mesh.inp")
+    mesh_bytes, mesh_path = _read_mesh_inp_member(package_path)
     if not mesh_bytes:
         return {"created": False, "status": "no_mesh"}
 
@@ -846,9 +860,9 @@ def ensure_source_deck_from_mesh(package_path: Path) -> dict[str, Any]:
     topology: dict[str, Any] = json.loads(topo_raw) if topo_raw else {}
 
     with tempfile.TemporaryDirectory(prefix="aieng_source_deck_") as tmp_str:
-        mesh_path = Path(tmp_str) / "mesh.inp"
-        mesh_path.write_bytes(mesh_bytes)
-        nodes = _parse_inp_nodes(mesh_path)
+        tmp_mesh_path = Path(tmp_str) / "mesh.inp"
+        tmp_mesh_path.write_bytes(mesh_bytes)
+        nodes = _parse_inp_nodes(tmp_mesh_path)
 
     nsets = (
         _build_nsets(nodes, topology, cae_mapping)
@@ -864,6 +878,7 @@ def ensure_source_deck_from_mesh(package_path: Path) -> dict[str, Any]:
         "created": True,
         "status": "synthesized",
         "source_deck_path": SOURCE_SOLVER_DECK_PATH,
+        "mesh_path": mesh_path,
         "nset_names": [n for n in nsets if nsets[n]],
         "empty_nsets": empty_nsets,
     }
@@ -1732,7 +1747,11 @@ def _run_simulation_core(
 
         # ── Write artifacts atomically ────────────────────────────────────────
         mesh_inp_bytes = mesh_inp.read_bytes()
-        written = ["simulation/solver_log.txt", "simulation/results_summary.json", "simulation/mesh.inp"]
+        written = [
+            "simulation/solver_log.txt",
+            "simulation/results_summary.json",
+            CANONICAL_MESH_INP_PATH,
+        ]
         if frd_bytes:
             written.append("simulation/result.frd")
         _write_results_to_package(package_path, solver_log, frd_bytes, results_summary, mesh_inp_bytes)

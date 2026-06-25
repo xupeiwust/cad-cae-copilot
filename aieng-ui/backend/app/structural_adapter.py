@@ -99,7 +99,11 @@ def structural_capabilities() -> list[ExternalToolCapability]:
             expensive=True,
             requires_approval=True,
             input_artifacts=["cad/source.FCStd", "geometry/source.step"],
-            output_artifacts=["mesh/structural.msh", "simulation/mesh/mesh_metadata.json"],
+            output_artifacts=[
+                "mesh/structural.msh",
+                "simulation/mesh/mesh.inp",
+                "simulation/mesh/mesh_metadata.json",
+            ],
             stale_artifacts_on_success=list(_STALE_ON_MESH_REGEN),
             claim_advancement="none",
         ),
@@ -285,7 +289,16 @@ def prepare_structural_run_preview(
             "claim_boundary": _CLAIM_BOUNDARY_PREFLIGHT_NOTE,
         }
 
-    has_mesh = any(name.startswith("simulation/mesh/") for name in names)
+    mesh_artifact_path = next(
+        (
+            candidate
+            for candidate in ("simulation/mesh/mesh.inp", "simulation/mesh.inp")
+            if candidate in names
+        ),
+        None,
+    )
+    has_mesh = mesh_artifact_path is not None
+    has_mesh_metadata = "simulation/mesh/mesh_metadata.json" in names
     has_solver_settings = "simulation/solver_settings.json" in names
     has_load_case = f"simulation/load_cases/{load_case_id}.json" in names
 
@@ -301,7 +314,7 @@ def prepare_structural_run_preview(
 
     missing_items: list[str] = []
     if not has_mesh:
-        missing_items.append("simulation/mesh/ (no mesh files found in package)")
+        missing_items.append("simulation/mesh/mesh.inp (no mesh deck found in package)")
     if not has_solver_settings:
         missing_items.append("simulation/solver_settings.json")
     if not has_load_case:
@@ -380,6 +393,8 @@ def prepare_structural_run_preview(
         "input_deck_artifact": input_deck_artifact,
         "preflight": {
             "has_mesh": has_mesh,
+            "mesh_artifact_path": mesh_artifact_path,
+            "has_mesh_metadata": has_mesh_metadata,
             "has_solver_settings": has_solver_settings,
             "has_load_case": has_load_case,
             "has_input_deck": has_input_deck,

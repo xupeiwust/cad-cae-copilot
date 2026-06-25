@@ -577,7 +577,16 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                 "message": f"Failed to read package: {exc}",
             }
 
-        has_mesh = any(n.startswith("simulation/mesh/") for n in names)
+        mesh_artifact_path = next(
+            (
+                candidate
+                for candidate in ("simulation/mesh/mesh.inp", "simulation/mesh.inp")
+                if candidate in names
+            ),
+            None,
+        )
+        has_mesh = mesh_artifact_path is not None
+        has_mesh_metadata = "simulation/mesh/mesh_metadata.json" in names
         has_solver_settings = "simulation/solver_settings.json" in names
         has_load_case = f"simulation/load_cases/{load_case_id}.json" in names
 
@@ -598,7 +607,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
 
         missing_items: list[str] = []
         if not has_mesh:
-            missing_items.append("simulation/mesh/ (no mesh files found in package)")
+            missing_items.append("simulation/mesh/mesh.inp (no mesh deck found in package)")
         if not has_solver_settings:
             missing_items.append("simulation/solver_settings.json")
         if not has_load_case:
@@ -642,6 +651,8 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
 
         preflight = {
             "has_mesh": has_mesh,
+            "mesh_artifact_path": mesh_artifact_path,
+            "has_mesh_metadata": has_mesh_metadata,
             "has_solver_settings": has_solver_settings,
             "has_load_case": has_load_case,
             "has_input_deck": has_input_deck,
@@ -757,7 +768,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             }
 
         # Close the decoupled solve loop: if the package has a Gmsh mesh
-        # (simulation/mesh.inp, e.g. from cae.generate_mesh) but no imported
+        # (simulation/mesh/mesh.inp, e.g. from cae.generate_mesh) but no imported
         # source solver deck, synthesize one (mesh + *SOLID SECTION + named NSETs)
         # so the deck generator can bind loads/BCs. An imported deck always wins.
         source_deck_synthesis: dict[str, Any] | None = None
@@ -1642,7 +1653,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         _tool_cae_generate_mesh,
         description=(
             "Mesh the project's STEP geometry in-process with Gmsh and persist the FE mesh "
-            "(simulation/mesh.inp + simulation/mesh/mesh_metadata.json) into the .aieng package, "
+            "(simulation/mesh/mesh.inp + simulation/mesh/mesh_metadata.json) into the .aieng package, "
             "satisfying the has_mesh preflight and lighting up mesh preview/quality/convergence. "
             "Produces ONLY the mesh — it does not bind loads/BCs, assemble a solver deck, or run a "
             "solver. Degrades honestly when Gmsh is unavailable or the package has no STEP. "

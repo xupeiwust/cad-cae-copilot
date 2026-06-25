@@ -1674,7 +1674,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["project_id"],
         "description": (
             "Mesh the project's STEP geometry in-process with Gmsh and persist the FE mesh "
-            "(simulation/mesh.inp + simulation/mesh/mesh_metadata.json) into the .aieng package. "
+            "(simulation/mesh/mesh.inp + simulation/mesh/mesh_metadata.json) into the .aieng package. "
             "Produces only the mesh — does not bind loads/BCs, assemble a solver deck, or run a solver. "
             "Typical input: {project_id, mesh_size_mm: 2.5}."
         ),

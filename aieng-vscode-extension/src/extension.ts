@@ -252,7 +252,7 @@ async function copyNextActionHandoff(): Promise<void> {
   const picked = await vscode.window.showQuickPick(
     actions.map((action) => ({
       label: `${action.availableNow ? "$(check)" : "$(error)"} ${action.label}`,
-      description: action.tool,
+      description: action.tool || "advisory only",
       detail: formatActionDetail(action),
       action,
     })),

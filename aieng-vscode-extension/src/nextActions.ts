@@ -31,22 +31,25 @@ function asStringArray(value: unknown): string[] {
 
 function normalizeAction(raw: Record<string, unknown>): NextAction | undefined {
   const tool = typeof raw.tool === "string" ? raw.tool : "";
-  if (!tool) return undefined;
-  const label = typeof raw.label === "string" && raw.label.trim() ? raw.label : tool;
+  const reason = typeof raw.reason === "string" && raw.reason.trim() ? raw.reason : undefined;
   const blockedReason = typeof raw.blocked_reason === "string" && raw.blocked_reason.trim()
     ? raw.blocked_reason
     : undefined;
+  const label = typeof raw.label === "string" && raw.label.trim()
+    ? raw.label
+    : (tool || reason || blockedReason);
+  if (!label) return undefined;
   // Honest default: available unless explicitly false or carrying a blocked reason.
-  const availableNow = raw.available_now === false ? false : !blockedReason && raw.available_now !== false;
+  const availableNow = raw.available_now === false || !tool ? false : !blockedReason && raw.available_now !== false;
   return {
-    id: typeof raw.id === "string" ? raw.id : tool,
+    id: typeof raw.id === "string" ? raw.id : (tool || label),
     label,
     tool,
     input: asRecord(raw.input) ?? {},
     priority: typeof raw.priority === "string" || typeof raw.priority === "number" ? raw.priority : undefined,
-    reason: typeof raw.reason === "string" ? raw.reason : undefined,
+    reason,
     availableNow,
-    blockedReason,
+    blockedReason: blockedReason ?? (!tool ? reason : undefined),
     blockedReasonCodes: asStringArray(raw.blocked_reason_codes),
     requiresApproval: raw.requires_approval === true,
     mutatesPackage: raw.mutates_package === true,
@@ -103,12 +106,20 @@ export function formatActionDetail(action: NextAction): string {
   }
   const flags = safetyFlagWords(action);
   if (flags.length) parts.push(flags.join(" · "));
-  parts.push(action.tool);
+  if (action.tool) parts.push(action.tool);
+  else parts.push("advisory only");
   return parts.join("  ·  ");
 }
 
 /** A copy-paste invoke-tool JSON body for the action. Never executed here. */
 export function toToolCallSnippet(action: NextAction): string {
+  if (!action.tool) {
+    return JSON.stringify({
+      advisory: action.label,
+      blocked_reason: action.blockedReason ?? action.reason ?? "Action cannot be executed automatically.",
+      blocked_reason_codes: action.blockedReasonCodes,
+    }, null, 2);
+  }
   return JSON.stringify({ tool: action.tool, input: action.input }, null, 2);
 }
 
@@ -116,7 +127,7 @@ export function toToolCallSnippet(action: NextAction): string {
 export function toHandoffPrompt(action: NextAction): string {
   const lines: string[] = [];
   lines.push(`Suggested next action: ${action.label}`);
-  lines.push(`Tool: ${action.tool}`);
+  lines.push(action.tool ? `Tool: ${action.tool}` : "Tool: none; advisory only.");
   if (Object.keys(action.input).length) {
     lines.push(`Input: ${JSON.stringify(action.input)}`);
   }

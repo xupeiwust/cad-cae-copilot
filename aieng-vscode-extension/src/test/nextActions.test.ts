@@ -73,6 +73,25 @@ describe("parseNextActions", () => {
     assert.equal(actions[0].availableNow, true);
     assert.deepEqual(actions[0].blockedReasonCodes, []);
   });
+
+  it("preserves tool-less blocked advisory actions", () => {
+    const actions = parseNextActions({
+      next_actions: [
+        {
+          label: "Install CalculiX and add ccx to PATH",
+          reason: "Solver executable is missing.",
+          blocked_reason_codes: ["solver_missing"],
+        },
+      ],
+    });
+
+    assert.equal(actions.length, 1);
+    assert.equal(actions[0].id, "Install CalculiX and add ccx to PATH");
+    assert.equal(actions[0].tool, "");
+    assert.equal(actions[0].availableNow, false);
+    assert.equal(actions[0].blockedReason, "Solver executable is missing.");
+    assert.deepEqual(actions[0].blockedReasonCodes, ["solver_missing"]);
+  });
 });
 
 describe("formatActionDetail (safety flags preserved in display text)", () => {
@@ -92,6 +111,15 @@ describe("formatActionDetail (safety flags preserved in display text)", () => {
     assert.match(detail, /[Aa]vailable/);
     assert.match(detail, /mutates/i);
   });
+
+  it("labels tool-less advisory actions instead of showing a blank tool", () => {
+    const [advisory] = parseNextActions({
+      next_actions: [{ label: "Install CalculiX", reason: "Solver executable is missing." }],
+    });
+    const detail = formatActionDetail(advisory);
+
+    assert.match(detail, /advisory only/);
+  });
 });
 
 describe("toToolCallSnippet", () => {
@@ -101,6 +129,17 @@ describe("toToolCallSnippet", () => {
     const parsed = JSON.parse(snippet);
     assert.equal(parsed.tool, "cae.apply_setup_patch");
     assert.deepEqual(parsed.input, { project_id: "p1" });
+  });
+
+  it("emits an advisory payload rather than an empty tool call for tool-less actions", () => {
+    const [advisory] = parseNextActions({
+      next_actions: [{ label: "Install CalculiX", reason: "Solver executable is missing." }],
+    });
+    const parsed = JSON.parse(toToolCallSnippet(advisory));
+
+    assert.equal(parsed.tool, undefined);
+    assert.equal(parsed.advisory, "Install CalculiX");
+    assert.equal(parsed.blocked_reason, "Solver executable is missing.");
   });
 });
 
@@ -120,5 +159,15 @@ describe("toHandoffPrompt", () => {
     const prompt = toHandoffPrompt(add).toLowerCase();
     // copy-only handoff: never an executed/ran claim
     assert.ok(!/\b(executed|has run|already ran)\b/.test(prompt));
+  });
+
+  it("states that tool-less actions are advisory only", () => {
+    const [advisory] = parseNextActions({
+      next_actions: [{ label: "Install CalculiX", reason: "Solver executable is missing." }],
+    });
+    const prompt = toHandoffPrompt(advisory);
+
+    assert.match(prompt, /Tool: none; advisory only\./);
+    assert.match(prompt, /BLOCKED/);
   });
 });

@@ -89,6 +89,12 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
                   <time dateTime={entry.timestamp}>{fmtTime(entry.timestamp)}</time>
                 </div>
                 {entry.detail ? <p>{entry.detail}</p> : null}
+                {entry.diagnostic ? (
+                  <div className="project-timeline-diagnostic" title={entry.diagnostic.message}>
+                    <small>{entry.diagnostic.code}</small>
+                    {entry.diagnostic.remediation ? <p>{entry.diagnostic.remediation}</p> : null}
+                  </div>
+                ) : null}
                 {entry.artifacts.length ? (
                   <div className="project-timeline-chips" aria-label="Artifacts">
                     {entry.artifacts.slice(0, 4).map((artifact) => (

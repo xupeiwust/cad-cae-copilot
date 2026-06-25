@@ -190,6 +190,11 @@ describe("buildProjectTimeline", () => {
 
     expect(entry?.kind).toBe("failure");
     expect(entry?.detail).toBe("RuntimeError: ccx failed");
+    expect(entry?.diagnostic).toEqual(expect.objectContaining({
+      code: "tool_execution_error",
+      remediation: "Inspect the solver log.",
+      toolName: "cae.run_solver",
+    }));
   });
 
   test("surfaces structured rejection diagnostics as event detail", () => {
@@ -219,5 +224,10 @@ describe("buildProjectTimeline", () => {
 
     expect(entry?.kind).toBe("failure");
     expect(entry?.detail).toBe("User rejected approval for cae.run_solver");
+    expect(entry?.diagnostic).toEqual(expect.objectContaining({
+      code: "approval_rejected",
+      remediation: "No action was executed.",
+      toolName: "cae.run_solver",
+    }));
   });
 });

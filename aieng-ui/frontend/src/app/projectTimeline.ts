@@ -15,6 +15,13 @@ export type BlockedReasonCodeDetail = {
   recommendedAction: string;
 };
 
+export type TimelineDiagnostic = {
+  code: string;
+  message: string;
+  remediation: string | null;
+  toolName: string | null;
+};
+
 export type TimelineNextAction = {
   label: string;
   tool: string | null;
@@ -34,6 +41,7 @@ export type ProjectTimelineEntry = {
   status: string;
   title: string;
   detail?: string | null;
+  diagnostic?: TimelineDiagnostic | null;
   artifacts: string[];
   nextActions: TimelineNextAction[];
   sourceRunId: string;
@@ -199,6 +207,21 @@ function eventDetail(event: RuntimeEvent): string | null {
     ?? asString(payload.error);
 }
 
+function eventDiagnostic(event: RuntimeEvent): TimelineDiagnostic | null {
+  const payload = asRecord(event.payload);
+  const diagnostic = payload ? asRecord(payload.diagnostic) : null;
+  if (!diagnostic) return null;
+  const code = asString(diagnostic.code) ?? asString(payload?.code);
+  const message = asString(diagnostic.message) ?? asString(payload?.message) ?? asString(payload?.error);
+  if (!code && !message) return null;
+  return {
+    code: code ?? "diagnostic",
+    message: message ?? code ?? "Diagnostic",
+    remediation: asString(diagnostic.remediation) ?? asString(payload?.remediation),
+    toolName: asString(diagnostic.tool_name) ?? asString(diagnostic.toolName) ?? asString(payload?.tool_name) ?? asString(payload?.tool),
+  };
+}
+
 function eventKind(event: RuntimeEvent): ProjectTimelineEntryKind {
   if (event.type.includes("approval")) return "approval";
   if (event.type.includes("failed") || event.type.includes("rejected") || event.type.includes("cancelled")) return "failure";
@@ -225,6 +248,7 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
       status: run.status,
       title: run.message || run.summary || "Runtime run",
       detail: run.summary,
+      diagnostic: null,
       artifacts: [],
       nextActions: [],
       sourceRunId: run.run_id,
@@ -240,6 +264,7 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         status: event.type,
         title: eventTitle(event),
         detail: eventDetail(event),
+        diagnostic: eventDiagnostic(event),
         artifacts,
         nextActions: collectNextActions(payload),
         sourceRunId: run.run_id,
@@ -266,6 +291,7 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         status: result.status,
         title: resultTitle(result),
         detail: receipt ? asString(receipt.summary) ?? asString(receipt.status) : null,
+        diagnostic: null,
         artifacts: Array.from(new Set(artifacts)),
         nextActions,
         sourceRunId: run.run_id,

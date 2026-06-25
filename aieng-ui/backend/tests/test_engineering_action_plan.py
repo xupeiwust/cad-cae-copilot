@@ -73,6 +73,19 @@ def test_refine_mesh_extracts_mesh_size() -> None:
     assert plan["intent"] == "refine_mesh"
     assert plan["extracted_inputs"]["mesh_size_mm"] == 1.25
     assert plan["execution_policy"]["approval_tier"] == "gate"
+    assert plan["execution_policy"]["must_not_auto_execute_external_tools"] is True
+    assert plan["action"]["tool_chain"] == ["cae.generate_mesh", "cae.prepare_solver_run"]
+    assert "run-simulation-stream" not in plan["action"]["endpoint"]
+
+
+def test_simulation_plan_uses_mcp_first_solver_chain() -> None:
+    plan = classify_engineering_message("run the simulation")
+
+    assert plan["intent"] == "simulate"
+    assert plan["action"]["id"] == "cae.simulate"
+    assert plan["action"]["endpoint"] == "MCP cae.prepare_solver_run -> cae.run_solver"
+    assert plan["action"]["tool_chain"] == ["cae.prepare_solver_run", "cae.run_solver"]
+    assert "run-simulation-stream" not in json.dumps(plan["action"])
 
 
 def test_action_plan_returns_independent_action_copy() -> None:

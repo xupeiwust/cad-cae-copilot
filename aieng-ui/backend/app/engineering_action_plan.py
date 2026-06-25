@@ -142,7 +142,7 @@ def classify_engineering_message(
         "action": action,
         "execution_policy": {
             "candidate_only": True,
-            "must_not_auto_execute_external_tools": intent in {"simulate"},
+            "must_not_auto_execute_external_tools": intent in {"simulate", "refine_mesh"},
             "approval_tier": action.get("approval_tier") if action else "auto",
         },
     }
@@ -278,10 +278,15 @@ def _action_for_intent(intent: str) -> dict[str, Any] | None:
         },
         "simulate": {
             "id": "cae.simulate",
-            "endpoint": "POST /api/projects/{project_id}/run-simulation-stream",
+            "endpoint": "MCP cae.prepare_solver_run -> cae.run_solver",
+            "tool_chain": ["cae.prepare_solver_run", "cae.run_solver"],
             "approval_tier": "gate",
-            "writes": ["simulation/solver_log.txt", "simulation/results_summary.json", "simulation/mesh.inp", "simulation/result.frd"],
-            "external_tools": ["Gmsh", "CalculiX"],
+            "writes": [
+                "simulation/runs/{run_id}/solver_run.json",
+                "simulation/runs/{run_id}/solver_log.txt",
+                "simulation/runs/{run_id}/outputs/result.frd",
+            ],
+            "external_tools": ["CalculiX"],
         },
         "change_material": {
             "id": "cae.change_material",
@@ -292,10 +297,11 @@ def _action_for_intent(intent: str) -> dict[str, Any] | None:
         },
         "refine_mesh": {
             "id": "cae.refine_mesh",
-            "endpoint": "POST /api/projects/{project_id}/run-simulation-stream",
+            "endpoint": "MCP cae.generate_mesh -> cae.prepare_solver_run",
+            "tool_chain": ["cae.generate_mesh", "cae.prepare_solver_run"],
             "approval_tier": "gate",
-            "writes": ["simulation/solver_log.txt", "simulation/results_summary.json", "simulation/mesh.inp", "simulation/result.frd"],
-            "external_tools": ["Gmsh", "CalculiX"],
+            "writes": ["simulation/mesh.inp", "simulation/mesh/mesh_metadata.json"],
+            "external_tools": ["Gmsh"],
         },
         "set_target": {
             "id": "targets.set_from_chat",

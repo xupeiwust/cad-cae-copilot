@@ -5,6 +5,7 @@ import { api } from "../api";
 import { NoticeCenter } from "../components/common";
 import { PointerProvider } from "../components/PointerText";
 import { PendingApprovals } from "../components/PendingApprovals";
+import { ProjectTimelinePanel } from "../components/ProjectTimelinePanel";
 import { SessionsSidebar } from "../components/SessionsSidebar";
 import { ViewerPane } from "../components/ViewerPane";
 import { MaterialLibraryPanel } from "../components/MaterialLibraryPanel";
@@ -160,6 +161,8 @@ export function AppChrome({ app }: AppChromeProps) {
             )}
             onResolve={app.resolveApproval}
           />
+
+          <ProjectTimelinePanel timeline={app.projectTimeline} />
 
           <EditDiffPanel editDiff={app.editDiff} />
 

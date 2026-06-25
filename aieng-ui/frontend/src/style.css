@@ -11244,3 +11244,155 @@ textarea:focus,
 .convergence-legend-safe {
   color: #bbf7d0;
 }
+
+/* Project timeline */
+.project-timeline-card {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.58);
+  margin: 10px 12px;
+  padding: 12px;
+}
+
+.project-timeline-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.project-timeline-head strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.project-timeline-head span,
+.project-timeline-foot {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.project-timeline-ok,
+.project-timeline-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.project-timeline-ok {
+  color: #bbf7d0;
+}
+
+.project-timeline-warning {
+  color: #fde68a;
+}
+
+.project-timeline-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.project-timeline-entry {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.32);
+}
+
+.project-timeline-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+}
+
+.timeline-entry-approval .project-timeline-icon {
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.timeline-entry-artifact .project-timeline-icon {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.timeline-entry-failure .project-timeline-icon {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.14);
+}
+
+.project-timeline-body {
+  min-width: 0;
+}
+
+.project-timeline-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-timeline-row strong {
+  color: #e5e7eb;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.project-timeline-row time {
+  color: #64748b;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.project-timeline-body p {
+  margin: 4px 0 0;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.project-timeline-chips,
+.project-timeline-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.project-timeline-chips code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #bae6fd;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 6px;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
+.project-timeline-next span {
+  color: #ddd6fe;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.18);
+  border-radius: 6px;
+  padding: 2px 5px;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.project-timeline-foot {
+  margin-top: 9px;
+  line-height: 1.35;
+}

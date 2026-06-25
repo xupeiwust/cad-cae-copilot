@@ -29,6 +29,7 @@ build123d / OpenCASCADE 几何体,导出 STEP/STL/GLB,命名零件,
 [CAD 示例](#工业-cad-示例) ·
 [基准测试](#定量基准测试) ·
 [为什么选 aieng](#为什么选-aieng--超越-text-to-cad) ·
+[一条提示词安装](docs/one-prompt-agent-setup.md) ·
 [MCP 设置](aieng-ui/backend/MCP_SETUP.md) ·
 [Agent 指南](AGENTS.md)
 
@@ -105,6 +106,11 @@ verify the final geometry, and run the deterministic engineering critique.
 docker pull ghcr.io/armpro24-blip/aieng-workbench:latest
 docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data ghcr.io/armpro24-blip/aieng-workbench:latest
 ```
+
+如需让 Agent 引导首次启动,请把
+[one-prompt setup](docs/one-prompt-agent-setup.md) 粘贴到支持 MCP 的客户端中。
+它会先检查 Docker、后端健康、MCP endpoint、onboarding 调用和审批入口,
+再进入可选的 CAD smoke。
 
 alpha 镜像会在 Docker smoke 通过后从 `main` 发布到 GHCR
 (`latest` + 不可变的 `sha-<commit>` 标签)。这是 alpha 范围能力,

@@ -29,6 +29,7 @@ which carries its own model access. The aieng backend itself needs no API key.
 [CAD Examples](#industrial-cad-examples) ·
 [Benchmarks](#quantitative-benchmarking) ·
 [Why aieng](#why-aieng--beyond-text-to-cad) ·
+[One-prompt setup](docs/one-prompt-agent-setup.md) ·
 [MCP Setup](aieng-ui/backend/MCP_SETUP.md) ·
 [Agent Guide](AGENTS.md)
 
@@ -115,6 +116,11 @@ dependencies, and CalculiX into one container.
 docker pull ghcr.io/armpro24-blip/aieng-workbench:latest
 docker run --rm -it -p 8000:8000 -p 8765:8765 -v aieng-data:/data ghcr.io/armpro24-blip/aieng-workbench:latest
 ```
+
+For an agent-guided first run, paste the
+[one-prompt setup](docs/one-prompt-agent-setup.md) into your MCP-capable client.
+It checks Docker, backend health, MCP endpoint visibility, onboarding calls, and
+approval-surface readiness before any optional CAD smoke.
 
 The alpha image is published to GHCR from `main` after the Docker smoke passes
 (`latest` + an immutable `sha-<commit>` tag). Alpha-scoped, not

@@ -565,7 +565,7 @@ scope.
 
 ## Notes
 
-- Private repo. No secrets are committed; runtime data (`data/projects/`),
+- Public repo. No secrets are committed; runtime data (`data/projects/`),
   virtual environments, `node_modules`, and embedded conda envs are gitignored.
 - If your CAD env is not named `aieng311`, edit the `-n aieng311` argument in
   the MCP configs or point `command` directly at your interpreter — see

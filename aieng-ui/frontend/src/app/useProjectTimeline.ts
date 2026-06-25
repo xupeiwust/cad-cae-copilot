@@ -8,10 +8,11 @@ import { buildProjectTimeline, type ProjectTimeline } from "./projectTimeline";
 type UseProjectTimelineArgs = {
   selectedId: string | null;
   geometryVersion?: string | null;
+  refreshKey?: number;
   limit?: number;
 };
 
-export function useProjectTimeline({ selectedId, geometryVersion = null, limit = 8 }: UseProjectTimelineArgs) {
+export function useProjectTimeline({ selectedId, geometryVersion = null, refreshKey = 0, limit = 8 }: UseProjectTimelineArgs) {
   const [timeline, setTimeline] = useState<ProjectTimeline>(() => buildProjectTimeline([]));
 
   useEffect(() => {
@@ -55,7 +56,7 @@ export function useProjectTimeline({ selectedId, geometryVersion = null, limit =
     return () => {
       cancelled = true;
     };
-  }, [selectedId, geometryVersion, limit]);
+  }, [selectedId, geometryVersion, refreshKey, limit]);
 
   return { projectTimeline: timeline };
 }

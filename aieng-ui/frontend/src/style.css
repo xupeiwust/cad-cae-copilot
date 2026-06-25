@@ -11402,6 +11402,42 @@ textarea:focus,
   color: #fecaca;
 }
 
+.project-timeline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.project-timeline-actions button,
+.project-timeline-snapshot-restore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  background: rgba(14, 165, 233, 0.12);
+  color: #e0f2fe;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.project-timeline-actions button:hover,
+.project-timeline-snapshot-restore:hover {
+  border-color: rgba(186, 230, 253, 0.6);
+  background: rgba(14, 165, 233, 0.2);
+}
+
+.project-timeline-actions .ghost-button {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(127, 29, 29, 0.16);
+}
+
 .project-timeline-chips,
 .project-timeline-snapshots,
 .project-timeline-next {

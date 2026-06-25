@@ -184,7 +184,12 @@ export function AppChrome({ app }: AppChromeProps) {
             onResolve={app.resolveApproval}
           />
 
-          <ProjectTimelinePanel timeline={app.projectTimeline} />
+          <ProjectTimelinePanel
+            timeline={app.projectTimeline}
+            onRestoreSnapshot={app.restoreCadSnapshot}
+            onApproveRun={app.approveTimelineRun}
+            onRejectRun={app.rejectTimelineRun}
+          />
 
           <EditDiffPanel editDiff={app.editDiff} />
 

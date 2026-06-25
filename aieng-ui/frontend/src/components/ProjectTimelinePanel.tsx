@@ -4,6 +4,9 @@ import type { ProjectTimeline, ProjectTimelineEntry, ProjectTimelineEntryKind, T
 
 type ProjectTimelinePanelProps = {
   timeline: ProjectTimeline | null;
+  onRestoreSnapshot?(snapshotId: string): void;
+  onApproveRun?(runId: string): void;
+  onRejectRun?(runId: string): void;
 };
 
 const KIND_ICON: Record<ProjectTimelineEntryKind, typeof Activity> = {
@@ -62,7 +65,12 @@ function snapshotMeta(snapshot: TimelineSnapshot): string {
   return parts.join(" · ");
 }
 
-export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
+export function ProjectTimelinePanel({
+  timeline,
+  onRestoreSnapshot,
+  onApproveRun,
+  onRejectRun,
+}: ProjectTimelinePanelProps) {
   if (!timeline || timeline.entries.length === 0) return null;
   const visible = timeline.entries.slice(0, 12);
 
@@ -124,6 +132,25 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
                     {entry.diagnostic.remediation ? <p>{entry.diagnostic.remediation}</p> : null}
                   </div>
                 ) : null}
+                {entry.actionableApproval && entry.sourceRunId !== "activity" && (onApproveRun || onRejectRun) ? (
+                  <div className="project-timeline-actions" aria-label="Runtime approval actions">
+                    {onApproveRun ? (
+                      <button type="button" onClick={() => onApproveRun(entry.sourceRunId)} title="Approve this runtime step">
+                        Approve
+                      </button>
+                    ) : null}
+                    {onRejectRun ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => onRejectRun(entry.sourceRunId)}
+                        title="Deny this runtime step"
+                      >
+                        Deny
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {entry.snapshots.length ? (
                   <div className="project-timeline-snapshots" aria-label="CAD snapshots">
                     {entry.snapshots.slice(0, 4).map((snapshot) => (
@@ -131,6 +158,16 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
                         <strong>{snapshot.restored ? `Restored ${snapshot.id}` : snapshot.id}</strong>
                         {snapshotMeta(snapshot) ? <small>{snapshotMeta(snapshot)}</small> : null}
                         {snapshot.namedParts.length ? <em>{snapshot.namedParts.slice(0, 4).join(", ")}</em> : null}
+                        {!snapshot.restored && onRestoreSnapshot ? (
+                          <button
+                            type="button"
+                            className="project-timeline-snapshot-restore"
+                            onClick={() => onRestoreSnapshot(snapshot.id)}
+                            title="Start an approval-gated restore for this CAD snapshot"
+                          >
+                            Restore
+                          </button>
+                        ) : null}
                       </span>
                     ))}
                   </div>

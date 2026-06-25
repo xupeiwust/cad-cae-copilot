@@ -314,6 +314,38 @@ describe("buildProjectTimeline", () => {
     expect(timeline.unstructuredFailureCount).toBe(0);
   });
 
+  test("marks only active awaiting approval events as actionable", () => {
+    const timeline = buildProjectTimeline([
+      {
+        ...baseRun,
+        run_id: "waiting",
+        status: "awaiting_approval",
+        events: [{
+          id: "evt_waiting",
+          run_id: "waiting",
+          type: "approval_required",
+          timestamp: "2026-06-25T10:00:02Z",
+          payload: { tool: "cad.restore_snapshot" },
+        }],
+      },
+      {
+        ...baseRun,
+        run_id: "completed",
+        status: "completed",
+        events: [{
+          id: "evt_done",
+          run_id: "completed",
+          type: "approval_required",
+          timestamp: "2026-06-25T10:00:01Z",
+          payload: { tool: "cad.restore_snapshot" },
+        }],
+      },
+    ]);
+
+    expect(timeline.entries.find((entry) => entry.id === "evt_waiting")?.actionableApproval).toBe(true);
+    expect(timeline.entries.find((entry) => entry.id === "evt_done")?.actionableApproval).toBe(false);
+  });
+
   test("uses tool result errors as fallback failure detail", () => {
     const run: RuntimeRun = {
       ...baseRun,

@@ -12,6 +12,7 @@ import type {
   FieldOverlayConfig,
   RuntimeConfigSnapshot,
   SolverFieldDescriptor,
+  WorkflowStep,
 } from "../types";
 import { useAgentActivityStream } from "./useAgentActivityStream";
 import { requestedProjectId } from "./embed";
@@ -122,6 +123,7 @@ export function useWorkbenchApp() {
   });
 
   const geometryVersion = projects.find((item) => item.id === selectedId)?.updated_at ?? null;
+  const [timelineRefreshKey, setTimelineRefreshKey] = useState(0);
 
   const { optimizationStudy, surrogateProposals } = useOptimizationStudy({ selectedId, geometryVersion });
   const { editDiff } = useEditDiff({ selectedId, geometryVersion });
@@ -129,7 +131,7 @@ export function useWorkbenchApp() {
   const { sizingSweepReport } = useSizingSweepReport({ selectedId, geometryVersion });
   const { meshConvergenceReport } = useMeshConvergenceReport({ selectedId, geometryVersion });
   const { caeSetupOverlay } = useCaeSetupOverlay({ selectedId, geometryVersion });
-  const { projectTimeline } = useProjectTimeline({ selectedId, geometryVersion });
+  const { projectTimeline } = useProjectTimeline({ selectedId, geometryVersion, refreshKey: timelineRefreshKey });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
   const rawViewerUrl = cadPreviewUrl ?? summary?.viewer_url ?? fallbackViewerUrl;
@@ -318,6 +320,90 @@ export function useWorkbenchApp() {
     });
   }
 
+  async function restoreCadSnapshot(snapshotId: string) {
+    if (!selectedId) {
+      setNotice({
+        tone: "info",
+        title: "Select a project first",
+        detail: "Choose a project before restoring a CAD snapshot.",
+      });
+      return;
+    }
+    const confirmed = window.confirm(
+      `Restore CAD snapshot ${snapshotId}?\n\nThis starts an approval-gated restore. The current state is not auto-snapshotted before restore.`,
+    );
+    if (!confirmed) return;
+
+    const steps: WorkflowStep[] = [{
+      id: "cad.restore_snapshot",
+      kind: "tool",
+      tool_name: "cad.restore_snapshot",
+      description: `Restore CAD snapshot ${snapshotId}`,
+      input: { project_id: selectedId, snapshot_id: snapshotId },
+      status: "pending",
+      approval_required: true,
+    }];
+    try {
+      const run = await api.startRun(
+        `Restore CAD snapshot ${snapshotId}`,
+        selectedId,
+        null,
+        { workflow_id: "cad_snapshot_restore", steps },
+      );
+      setTimelineRefreshKey((value) => value + 1);
+      setNotice({
+        tone: run.status === "awaiting_approval" ? "info" : run.status === "completed" ? "success" : "error",
+        title: run.status === "awaiting_approval" ? "Restore approval required" : `Restore ${run.status}`,
+        detail: run.status === "awaiting_approval"
+          ? "Review the approval entry in the project timeline, then approve to restore."
+          : run.summary || run.errors?.join("; ") || `Runtime run ${run.run_id}`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        title: "Restore request failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function approveTimelineRun(runId: string) {
+    try {
+      const run = await api.approveRun(runId);
+      setTimelineRefreshKey((value) => value + 1);
+      if (selectedId) await refreshProjects(selectedId, runtime);
+      setNotice({
+        tone: run.status === "completed" ? "success" : run.status === "failed" ? "error" : "info",
+        title: `Runtime run ${run.status}`,
+        detail: run.summary || run.errors?.join("; ") || runId,
+      });
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        title: "Approval failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function rejectTimelineRun(runId: string) {
+    try {
+      const run = await api.rejectRun(runId);
+      setTimelineRefreshKey((value) => value + 1);
+      setNotice({
+        tone: "info",
+        title: "Runtime approval denied",
+        detail: run.summary || run.errors?.join("; ") || runId,
+      });
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        title: "Reject failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // Selected post-processing result field (canonical names from resultFields catalog;
   // "" = no field overlay / plain geometry). Default to the most-used field.
   const [selectedCaeField, setSelectedCaeField] = useState("von_mises");
@@ -426,6 +512,9 @@ export function useWorkbenchApp() {
     refreshProjects,
     runWorkbenchImportFlow,
     runDesignStudyCandidates,
+    restoreCadSnapshot,
+    approveTimelineRun,
+    rejectTimelineRun,
     runtimeReady,
     runtimeProvider,
     liveSyncStatus,

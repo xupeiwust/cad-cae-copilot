@@ -57,6 +57,7 @@ export type ProjectTimelineEntry = {
   artifacts: string[];
   nextActions: TimelineNextAction[];
   sourceRunId: string;
+  actionableApproval?: boolean;
 };
 
 export type ProjectTimeline = {
@@ -394,6 +395,7 @@ export function buildProjectTimeline(runs: RuntimeRun[], activityEvents: AgentAc
         artifacts,
         nextActions: collectNextActions(payload),
         sourceRunId: run.run_id,
+        actionableApproval: event.type === "approval_required" && run.status === "awaiting_approval",
       });
     }
 

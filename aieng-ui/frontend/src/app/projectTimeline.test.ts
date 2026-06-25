@@ -230,4 +230,64 @@ describe("buildProjectTimeline", () => {
       toolName: "cae.run_solver",
     }));
   });
+
+  test("uses tool result errors as fallback failure detail", () => {
+    const run: RuntimeRun = {
+      ...baseRun,
+      status: "failed",
+      tool_results: [
+        {
+          id: "tool_error",
+          status: "error",
+          error: "RuntimeError: legacy failure",
+        },
+      ],
+    };
+
+    const timeline = buildProjectTimeline([run]);
+    const entry = timeline.entries.find((item) => item.id === "run_001:result:tool_error");
+
+    expect(entry?.kind).toBe("failure");
+    expect(entry?.detail).toBe("RuntimeError: legacy failure");
+    expect(entry?.diagnostic).toEqual(expect.objectContaining({
+      code: "tool_error",
+      message: "RuntimeError: legacy failure",
+    }));
+  });
+
+  test("matches tool_errors details onto error result entries", () => {
+    const run: RuntimeRun = {
+      ...baseRun,
+      status: "failed",
+      tool_results: [
+        {
+          id: "tool_error",
+          status: "error",
+          error: "ValueError: bad input",
+        },
+      ],
+      tool_errors: [
+        {
+          code: "tool_execution_error",
+          message: "ValueError: bad input",
+          tool_name: "cad.execute_build123d",
+          details: {
+            code: "tool_execution_error",
+            message: "ValueError: bad input",
+            remediation: "Fix the generated script and retry.",
+            tool_name: "cad.execute_build123d",
+          },
+        },
+      ],
+    };
+
+    const timeline = buildProjectTimeline([run]);
+    const entry = timeline.entries.find((item) => item.id === "run_001:result:tool_error");
+
+    expect(entry?.diagnostic).toEqual(expect.objectContaining({
+      code: "tool_execution_error",
+      remediation: "Fix the generated script and retry.",
+      toolName: "cad.execute_build123d",
+    }));
+  });
 });

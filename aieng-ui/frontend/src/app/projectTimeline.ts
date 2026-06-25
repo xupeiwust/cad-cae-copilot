@@ -1,4 +1,4 @@
-import type { RuntimeEvent, RuntimeRun, RuntimeToolResult } from "../types";
+import type { RuntimeEvent, RuntimeRun, RuntimeToolError, RuntimeToolResult } from "../types";
 
 export type ProjectTimelineEntryKind =
   | "run"
@@ -222,6 +222,19 @@ function eventDiagnostic(event: RuntimeEvent): TimelineDiagnostic | null {
   };
 }
 
+function diagnosticFromToolError(error: RuntimeToolError | undefined, fallbackMessage: string | null): TimelineDiagnostic | null {
+  const details = asRecord(error?.details);
+  const code = asString(details?.code) ?? error?.code ?? (fallbackMessage ? "tool_error" : null);
+  const message = asString(details?.message) ?? error?.message ?? fallbackMessage;
+  if (!code && !message) return null;
+  return {
+    code: code ?? "tool_error",
+    message: message ?? code ?? "Tool error",
+    remediation: asString(details?.remediation),
+    toolName: asString(details?.tool_name) ?? asString(details?.toolName) ?? error?.tool_name ?? null,
+  };
+}
+
 function eventKind(event: RuntimeEvent): ProjectTimelineEntryKind {
   if (event.type.includes("approval")) return "approval";
   if (event.type.includes("failed") || event.type.includes("rejected") || event.type.includes("cancelled")) return "failure";
@@ -274,6 +287,11 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
     for (const result of run.tool_results ?? []) {
       const receipt = receiptFromResult(result);
       const output = asRecord(result.output);
+      const matchedError = run.tool_errors.find((error) => (
+        error.message === result.error
+        || (typeof result.error === "string" && error.message.includes(result.error))
+      ));
+      const fallbackError = asString(result.error);
       if (result.output !== undefined && output === null) warningCount += 1;
       const artifacts = [
         ...collectArtifacts(output),
@@ -290,8 +308,8 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         kind: artifacts.length ? "artifact" : result.status === "error" ? "failure" : "tool",
         status: result.status,
         title: resultTitle(result),
-        detail: receipt ? asString(receipt.summary) ?? asString(receipt.status) : null,
-        diagnostic: null,
+        detail: receipt ? asString(receipt.summary) ?? asString(receipt.status) : fallbackError,
+        diagnostic: diagnosticFromToolError(matchedError, fallbackError),
         artifacts: Array.from(new Set(artifacts)),
         nextActions,
         sourceRunId: run.run_id,

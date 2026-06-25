@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import agent_activity
+from app import runtime as _rt
 from app.app_factory import create_app
 from app.config import Settings
 
@@ -119,8 +120,57 @@ def test_invoke_tool_unknown_tool_emits_events(tmp_path: Path) -> None:
     types = [e["type"] for e in events]
     assert "tool_started" in types
     assert "tool_completed" in types
+    assert "tool_failed" in types
     completed = next(e for e in events if e["type"] == "tool_completed")
     assert completed["status"] == "error"
+    failed = next(e for e in events if e["type"] == "tool_failed")
+    assert failed["code"] == "tool_not_found"
+    assert failed["diagnostic"]["tool_name"] == "no.such.tool"
+    assert failed["diagnostic"]["remediation"]
+
+
+def test_invoke_tool_error_result_emits_structured_tool_failed(tmp_path: Path) -> None:
+    def fail_tool(inp: dict, ctx: dict) -> dict:
+        return {
+            "status": "error",
+            "code": "fixture_failed",
+            "message": "Fixture failed in a readable way.",
+            "remediation": "Change the fixture input and retry.",
+        }
+
+    _rt.register_tool("test.fixture_fail", fail_tool)
+    try:
+        settings = _make_settings(tmp_path)
+        client = TestClient(create_app(settings))
+        project_id = _make_project(settings, "activity-failure")
+        q = agent_activity.subscribe()
+
+        resp = client.post(
+            "/api/agent/invoke-tool",
+            json={"tool": "test.fixture_fail", "input": {"project_id": project_id}},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["code"] == "fixture_failed"
+        events = []
+        while not q.empty():
+            events.append(q.get_nowait())
+        failed = next(e for e in events if e["type"] == "tool_failed")
+        assert failed["project_id"] == project_id
+        assert failed["tool"] == "test.fixture_fail"
+        assert failed["code"] == "fixture_failed"
+        assert failed["message"] == "Fixture failed in a readable way."
+        assert failed["remediation"] == "Change the fixture input and retry."
+        assert failed["diagnostic"] == {
+            "code": "fixture_failed",
+            "message": "Fixture failed in a readable way.",
+            "remediation": "Change the fixture input and retry.",
+            "tool_name": "test.fixture_fail",
+        }
+        recent = agent_activity.recent(project_id)
+        assert any(e.get("type") == "tool_failed" and e.get("code") == "fixture_failed" for e in recent)
+    finally:
+        _rt._REGISTRY.pop("test.fixture_fail", None)
 
 
 def test_invoke_tool_read_only_tool(tmp_path: Path) -> None:

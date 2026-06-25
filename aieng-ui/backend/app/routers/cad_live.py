@@ -66,6 +66,42 @@ def register_cad_live_routes(
             )
             return
 
+    def _agent_tool_failure_diagnostic(tool: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Normalize an invoke-tool failure for activity/timeline consumers."""
+        raw_diagnostic = result.get("diagnostic")
+        if isinstance(raw_diagnostic, dict):
+            diagnostic = dict(raw_diagnostic)
+        else:
+            diagnostic = {}
+        code = str(diagnostic.get("code") or result.get("code") or "tool_error")
+        message = str(
+            diagnostic.get("message")
+            or result.get("message")
+            or result.get("error")
+            or f"{tool} failed."
+        )
+        remediation = diagnostic.get("remediation") or result.get("remediation")
+        if not remediation:
+            remediation = "Review the tool input and the returned error details before retrying."
+        diagnostic.update({
+            "code": code,
+            "message": message,
+            "remediation": str(remediation),
+            "tool_name": str(diagnostic.get("tool_name") or tool),
+        })
+        return diagnostic
+
+    def _agent_tool_failure_payload(tool: str, result: dict[str, Any]) -> dict[str, Any]:
+        diagnostic = _agent_tool_failure_diagnostic(tool, result)
+        return {
+            "tool": tool,
+            "error": diagnostic["message"],
+            "code": diagnostic["code"],
+            "message": diagnostic["message"],
+            "remediation": diagnostic.get("remediation"),
+            "diagnostic": diagnostic,
+        }
+
     @app.post("/api/projects/{project_id}/generate-cad")
     def generate_cad_endpoint(
         project_id: str,
@@ -262,6 +298,13 @@ def register_cad_live_routes(
             "topology_summary": result.get("topology_summary") if isinstance(result, dict) else None,
             "message": result.get("message") if isinstance(result, dict) else None,
         })
+        if isinstance(result, dict) and status == "error":
+            agent_activity.publish({
+                "type": "tool_failed",
+                "call_id": call_id,
+                "project_id": project_id,
+                **_agent_tool_failure_payload(tool, result),
+            })
         project_change_tools = {
             "cad.execute_build123d",
             "cad.refine",

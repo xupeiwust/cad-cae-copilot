@@ -126,6 +126,22 @@ The alpha image is published to GHCR from `main` after the Docker smoke passes
 (`latest` + an immutable `sha-<commit>` tag). Alpha-scoped, not
 production-certified.
 
+### What a successful first run looks like
+
+After the first successful CAD smoke, you should be able to verify:
+
+- the workbench viewer shows a generated model,
+- STEP/STL/GLB or preview artifacts were written,
+- generated source and metadata are preserved in the project package,
+- named parts and editable parameters are present when the model exposes them,
+- stable topology references such as `@face:*` are available when topology
+  mapping succeeds,
+- deterministic critique or geometry checks report findings honestly,
+- and the `.aieng` package contains reproducible artifacts and provenance.
+
+CAE setup, mesh generation, and solver execution are separate approval-gated
+steps. A readiness or preflight report does not mean the solver has run.
+
 **Contributor path — build locally from source** (Docker Compose or manual,
 for developing the image or running an unmerged branch):
 

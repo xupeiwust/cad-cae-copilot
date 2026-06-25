@@ -116,6 +116,21 @@ alpha 镜像会在 Docker smoke 通过后从 `main` 发布到 GHCR
 (`latest` + 不可变的 `sha-<commit>` 标签)。这是 alpha 范围能力,
 不是生产认证。
 
+### 首次成功运行后应该看到什么
+
+第一次 CAD smoke 成功后,你应该能验证:
+
+- 工作台查看器中出现生成的模型,
+- STEP/STL/GLB 或 preview artifacts 已写入,
+- 生成源码和元数据保存在项目包中,
+- 当模型暴露这些信息时,能看到命名零件和可编辑参数,
+- 当拓扑映射成功时,能看到稳定的 `@face:*` 引用,
+- 确定性 critique 或几何检查会如实报告发现,
+- `.aieng` 包中包含可复现 artifacts 和 provenance。
+
+CAE setup、mesh generation 和 solver execution 是单独的审批门步骤。
+readiness 或 preflight 报告不代表 solver 已经运行。
+
 **贡献者路径 —— 从源码本地构建**(Docker Compose 或手动方式,用于开发镜像
 或运行未合并分支):
 

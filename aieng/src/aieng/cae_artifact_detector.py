@@ -26,6 +26,7 @@ CAE_ARTIFACT_PATHS: tuple[str, ...] = (
     # Solver settings (scaffold / handoff)
     "simulation/solver_settings.json",
     # Results / external solver-output integration
+    "simulation/results_summary.json",
     "results/evidence_index.json",
     "results/result_summary.json",
     "results/field_regions.json",
@@ -56,6 +57,7 @@ _MESH_PATHS: set[str] = {
 
 # Paths that indicate result presence (external solver-output integration)
 _RESULT_PATHS: set[str] = {
+    "simulation/results_summary.json",
     "results/evidence_index.json",
     "results/result_summary.json",
     "results/field_regions.json",

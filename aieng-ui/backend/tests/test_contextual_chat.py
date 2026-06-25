@@ -123,6 +123,42 @@ def test_simulation_success_results_included():
         pkg.unlink(missing_ok=True)
 
 
+def test_canonical_result_summary_preferred_over_legacy_results():
+    canonical = {
+        "status": {"mode": "cae_result"},
+        "computed_values": {
+            "extrema_computed": True,
+            "source": "results/computed_metrics.json",
+            "max_von_mises_stress": {"value": 111.25, "unit": "MPa"},
+            "max_displacement": {"value": 0.321, "unit": "mm"},
+        },
+        "result_contract": {
+            "claim_tier": "imported_computed_metrics",
+            "solver_execution_evidence": False,
+            "metrics_source": "results/computed_metrics.json",
+        },
+    }
+    legacy = {
+        "status": "success",
+        "von_mises_max_mpa": 999.0,
+        "displacement_max_mm": 9.99,
+    }
+    pkg = _make_package({
+        "results/result_summary.json": json.dumps(canonical).encode(),
+        "simulation/results_summary.json": json.dumps(legacy).encode(),
+    })
+    try:
+        result = build_context_block(pkg)
+        assert "IMPORTED METRICS" in result
+        assert "111.2 MPa" in result or "111.3 MPa" in result
+        assert "0.321 mm" in result
+        assert "results/computed_metrics.json" in result
+        assert "999.0" not in result
+        assert "do not by themselves prove AIENG solver execution" in result
+    finally:
+        pkg.unlink(missing_ok=True)
+
+
 def test_simulation_solver_error_shown():
     summary = {"status": "solver_error", "returncode": 1}
     pkg = _make_package({"simulation/results_summary.json": json.dumps(summary).encode()})

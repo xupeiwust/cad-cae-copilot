@@ -216,6 +216,103 @@ class TestGenerateCaeResultSummary:
         assert result["computed_values"]["max_von_mises_stress"]["value"] == 187.4
         assert result["computed_values"]["max_displacement"]["value"] == 0.82
         assert result["computed_values"]["minimum_safety_factor"]["value"] == 1.33
+        assert result["result_contract"]["claim_tier"] == "imported_computed_metrics"
+        assert result["result_contract"]["solver_execution_evidence"] is False
+
+    def test_legacy_rest_result_summary_normalizes_as_compatibility_metrics(self, tmp_path: Path) -> None:
+        legacy = json.dumps({
+            "status": "success",
+            "solver": "CalculiX",
+            "von_mises_max_mpa": 212.5,
+            "displacement_max_mm": 0.44,
+        })
+        pkg = _build_package(tmp_path, {"simulation/results_summary.json": legacy.encode()})
+
+        result = generate_cae_result_summary(pkg)
+
+        assert result["status"]["mode"] == "cae_result"
+        assert result["computed_values"]["extrema_computed"] is True
+        assert result["computed_values"]["source"] == "simulation/results_summary.json"
+        assert result["computed_values"]["computed_by"] == "legacy_rest_simulation_runner"
+        assert result["computed_values"]["max_von_mises_stress"]["value"] == 212.5
+        assert result["computed_values"]["max_von_mises_stress"]["unit"] == "MPa"
+        assert result["computed_values"]["max_displacement"]["value"] == 0.44
+        contract = result["result_contract"]
+        assert contract["claim_tier"] == "legacy_rest_result"
+        assert contract["solver_execution_evidence"] is False
+        assert contract["legacy_rest_summary_path"] == "simulation/results_summary.json"
+        assert "simulation/results_summary.json" in contract["source_artifacts"]
+
+    def test_completed_solver_run_is_executed_solver_result_contract(self, tmp_path: Path) -> None:
+        run = json.dumps({
+            "run_id": "run_001",
+            "state": "completed",
+            "solved": True,
+            "solver": "CalculiX",
+            "input_files": ["simulation/runs/run_001/solver_input.inp"],
+            "output_files": ["simulation/runs/run_001/outputs/result.frd"],
+        })
+        metrics = json.dumps({
+            "load_cases": [
+                {
+                    "id": "lc1",
+                    "metrics": {
+                        "max_displacement": {"value": 0.12, "unit": "mm"},
+                    },
+                }
+            ],
+        })
+        pkg = _build_package(
+            tmp_path,
+            {
+                "simulation/runs/run_001/solver_run.json": run.encode(),
+                "results/computed_metrics.json": metrics.encode(),
+            },
+        )
+
+        contract = generate_cae_result_summary(pkg)["result_contract"]
+
+        assert contract["claim_tier"] == "executed_solver_result"
+        assert contract["solver_execution_evidence"] is True
+        assert contract["completed_solver_run_ids"] == ["run_001"]
+        assert "simulation/runs/run_001/solver_run.json" in contract["source_artifacts"]
+
+    def test_computed_metrics_take_priority_over_legacy_rest_summary(self, tmp_path: Path) -> None:
+        metrics = json.dumps({
+            "metrics_source": {"tool": "frd_parser"},
+            "load_cases": [
+                {
+                    "id": "lc1",
+                    "metrics": {
+                        "max_von_mises_stress": {"value": 155.0, "unit": "MPa"},
+                    },
+                }
+            ],
+        })
+        legacy = json.dumps({
+            "status": "success",
+            "von_mises_max_mpa": 999.0,
+        })
+        pkg = _build_package(
+            tmp_path,
+            {
+                "results/computed_metrics.json": metrics.encode(),
+                "simulation/results_summary.json": legacy.encode(),
+            },
+        )
+
+        result = generate_cae_result_summary(pkg)
+
+        assert result["computed_values"]["source"] == "results/computed_metrics.json"
+        assert result["computed_values"]["max_von_mises_stress"]["value"] == 155.0
+        assert result["result_contract"]["claim_tier"] == "imported_computed_metrics"
+
+    def test_missing_result_contract_is_unknown(self, tmp_path: Path) -> None:
+        result = generate_cae_result_summary(_build_package(tmp_path, {}))
+
+        assert result["result_contract"]["claim_tier"] == "missing_or_unknown"
+        assert result["result_contract"]["solver_execution_evidence"] is False
+        assert result["result_contract"]["metrics_source"] is None
 
     def test_computed_metrics_attach_to_matching_load_case(self, tmp_path: Path) -> None:
         lc = json.dumps({"id": "lc1", "name": "Force", "type": "force"})

@@ -32,6 +32,7 @@ __all__ = [
     "FIELD_SUMMARY_DISPLACEMENT_PATH",
     "FIELD_SUMMARY_STRESS_PATH",
     "FIELD_SUMMARIES_DIR",
+    "LEGACY_REST_RESULT_SUMMARY_PATH",
     "generate_cae_result_summary",
     "generate_evidence_index",
     "generate_postprocessing_markdown",
@@ -47,6 +48,7 @@ RESULTS_DIR = "results/"
 FIELD_SUMMARY_DISPLACEMENT_PATH = "results/fields/displacement.summary.json"
 FIELD_SUMMARY_STRESS_PATH = "results/fields/stress.summary.json"
 FIELD_SUMMARIES_DIR = "results/fields/"
+LEGACY_REST_RESULT_SUMMARY_PATH = "simulation/results_summary.json"
 
 # Artifact path → (kind, role, supports)
 _EVIDENCE_CATALOG: dict[str, tuple[str, str, list[str]]] = {
@@ -76,6 +78,7 @@ _EVIDENCE_CATALOG: dict[str, tuple[str, str, list[str]]] = {
     ]),
     "results/field_regions.json": ("field", "field_region_clusters", ["regional_field_reasoning", "hotspot_triage"]),
     "results/field_summary.json": ("field", "field_region_summary", ["llm_orientation", "regional_field_reasoning"]),
+    LEGACY_REST_RESULT_SUMMARY_PATH: ("result", "legacy_rest_result_summary", ["compatibility", "post_processing"]),
     "task/design_targets.yaml": ("task", "design_targets", ["target_compliance_assessment", "design_review"]),
     # Compact field summary artifacts (persisted evidence, no full arrays)
     "results/fields/displacement.summary.json": ("field", "cae_field_summary", ["displacement_extrema", "field_evidence", "audit"]),
@@ -104,7 +107,7 @@ def generate_cae_result_summary(package_path: str | Path) -> dict[str, Any]:
     # Build artifact lists
     mesh_files = [p for p in ("simulation/mesh/mesh_metadata.json", "simulation/mesh/model.vtk", "simulation/mesh/model.vtu") if artifacts.get(p)]
     field_files = [p for p in ("results/fields/displacement.vtu", "results/fields/von_mises_stress.vtu", "results/fields/safety_factor.vtu") if artifacts.get(p)]
-    result_summary_files = [p for p in ("results/result_summary.json",) if artifacts.get(p)]
+    result_summary_files = [p for p in (RESULT_SUMMARY_PATH, LEGACY_REST_RESULT_SUMMARY_PATH) if artifacts.get(p)]
     evidence_files = [p for p in ("results/evidence_index.json",) if artifacts.get(p)]
     validation_files = [p for p in ("validation/status.yaml",) if artifacts.get(p)]
     setup_files = [p for p in (
@@ -122,6 +125,8 @@ def generate_cae_result_summary(package_path: str | Path) -> dict[str, Any]:
     solver_settings = None
     load_cases: list[dict[str, Any]] = []
     computed_metrics = None
+    legacy_rest_summary = None
+    solver_runs: list[dict[str, Any]] = []
     with zipfile.ZipFile(path, "r") as zf:
         namelist = set(zf.namelist())
         solver_metadata = _read_solver_metadata(zf)
@@ -129,6 +134,10 @@ def generate_cae_result_summary(package_path: str | Path) -> dict[str, Any]:
         solver_settings = _read_solver_settings(zf)
         load_cases = _read_load_cases(zf)
         computed_metrics = _read_computed_metrics(zf)
+        legacy_rest_summary = _read_legacy_rest_result_summary(zf)
+        if computed_metrics is None:
+            computed_metrics = _legacy_rest_summary_to_computed_metrics(legacy_rest_summary)
+        solver_runs = _read_solver_runs(zf)
         design_targets = _read_design_targets(zf)
 
     # Artifact presence used by the Phase 35 PR 2 design-target evaluator to
@@ -144,6 +153,12 @@ def generate_cae_result_summary(package_path: str | Path) -> dict[str, Any]:
 
     # Build computed_values block
     computed_values = _build_computed_values(computed_metrics, load_cases)
+    result_contract = _build_result_contract(
+        namelist=namelist,
+        computed_values=computed_values,
+        solver_runs=solver_runs,
+        legacy_rest_summary=legacy_rest_summary,
+    )
     targets = _compare_design_targets(design_targets, computed_values)
     design_target_comparisons = _build_design_target_comparisons(
         design_targets, computed_values, artifact_presence
@@ -179,6 +194,7 @@ def generate_cae_result_summary(package_path: str | Path) -> dict[str, Any]:
             "software": solver_metadata.get("software") if solver_metadata else None,
             "source_files": solver_metadata.get("source_files", []) if solver_metadata else [],
         },
+        "result_contract": result_contract,
         "status": {
             "mode": mode,
             "has_cae_setup": detection["has_cae_setup"],
@@ -960,6 +976,164 @@ def _read_computed_metrics(zf: zipfile.ZipFile) -> dict[str, Any] | None:
     }
 
 
+def _read_legacy_rest_result_summary(zf: zipfile.ZipFile) -> dict[str, Any] | None:
+    """Read the legacy REST all-in-one result summary, when present.
+
+    This compatibility artifact is not the canonical MCP solver-run evidence. It
+    can contribute normalized scalar metrics, but it must remain visibly marked
+    as a legacy source.
+    """
+    raw = _read_json_from_zip(zf, LEGACY_REST_RESULT_SUMMARY_PATH)
+    if not isinstance(raw, dict):
+        return None
+    return {
+        "source_artifact": LEGACY_REST_RESULT_SUMMARY_PATH,
+        "status": raw.get("status") or "unknown",
+        "solver": raw.get("solver") or raw.get("solver_name") or "legacy_rest_simulation_runner",
+        "load_case_id": raw.get("load_case_id") or "legacy_rest",
+        "max_von_mises_stress_mpa": raw.get("von_mises_max_mpa"),
+        "max_displacement_mm": raw.get("displacement_max_mm"),
+        "minimum_safety_factor": raw.get("minimum_safety_factor"),
+        "raw": raw,
+    }
+
+
+def _legacy_rest_summary_to_computed_metrics(
+    legacy: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Convert legacy REST scalar fields to the computed-metrics shape.
+
+    The conversion is deliberately conservative: only successful legacy results
+    with explicit numeric values become metrics, and the source stays
+    ``legacy_rest_result_summary`` so downstream consumers do not confuse it with
+    MCP ``cae.run_solver`` evidence.
+    """
+    if not legacy or legacy.get("status") != "success":
+        return None
+
+    metrics: dict[str, dict[str, Any]] = {}
+    stress = legacy.get("max_von_mises_stress_mpa")
+    if isinstance(stress, NUMERIC_TYPES_COMPAT):
+        metrics["max_von_mises_stress"] = {
+            "value": float(stress),
+            "unit": "MPa",
+            "source_artifact": LEGACY_REST_RESULT_SUMMARY_PATH,
+        }
+    displacement = legacy.get("max_displacement_mm")
+    if isinstance(displacement, NUMERIC_TYPES_COMPAT):
+        metrics["max_displacement"] = {
+            "value": float(displacement),
+            "unit": "mm",
+            "source_artifact": LEGACY_REST_RESULT_SUMMARY_PATH,
+        }
+    safety_factor = legacy.get("minimum_safety_factor")
+    if isinstance(safety_factor, NUMERIC_TYPES_COMPAT):
+        metrics["minimum_safety_factor"] = {
+            "value": float(safety_factor),
+            "unit": None,
+            "source_artifact": LEGACY_REST_RESULT_SUMMARY_PATH,
+        }
+    if not metrics:
+        return None
+
+    return {
+        "schema_version": FRD_COMPUTED_METRICS_SCHEMA,
+        "metrics_source": {
+            "tool": "legacy_rest_simulation_runner",
+            "software": legacy.get("solver"),
+            "source_files": [LEGACY_REST_RESULT_SUMMARY_PATH],
+        },
+        "load_cases": [
+            {
+                "id": legacy.get("load_case_id") or "legacy_rest",
+                "metrics": metrics,
+                "source_artifact": LEGACY_REST_RESULT_SUMMARY_PATH,
+            }
+        ],
+        "warnings": [
+            "Metrics normalized from legacy simulation/results_summary.json; "
+            "this is not MCP cae.run_solver execution evidence."
+        ],
+    }
+
+
+def _read_solver_runs(zf: zipfile.ZipFile) -> list[dict[str, Any]]:
+    """Read solver-run metadata artifacts under simulation/runs/*."""
+    runs: list[dict[str, Any]] = []
+    for name in sorted(zf.namelist()):
+        if not (name.startswith("simulation/runs/") and name.endswith("/solver_run.json")):
+            continue
+        data = _read_json_from_zip(zf, name)
+        if not isinstance(data, dict):
+            continue
+        run = dict(data)
+        run["source_artifact"] = name
+        runs.append(run)
+    return runs
+
+
+def _solver_run_completed(run: dict[str, Any]) -> bool:
+    status = str(run.get("state") or run.get("status") or "").lower()
+    return status == "completed" and run.get("solved") is True
+
+
+def _build_result_contract(
+    *,
+    namelist: set[str],
+    computed_values: dict[str, Any],
+    solver_runs: list[dict[str, Any]],
+    legacy_rest_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the normalized solver-result contract block.
+
+    Claim tiers are intentionally plain strings so readers can make honest UI
+    choices without inferring too much from artifact presence.
+    """
+    completed_runs = [run for run in solver_runs if _solver_run_completed(run)]
+    source_artifacts: list[str] = []
+    if RESULT_SUMMARY_PATH in namelist:
+        source_artifacts.append(RESULT_SUMMARY_PATH)
+    if computed_values.get("source"):
+        source_artifacts.append(str(computed_values["source"]))
+    if legacy_rest_summary:
+        source_artifacts.append(LEGACY_REST_RESULT_SUMMARY_PATH)
+    source_artifacts.extend(run["source_artifact"] for run in solver_runs if run.get("source_artifact"))
+
+    metrics_source = computed_values.get("source")
+    if completed_runs:
+        claim_tier = "executed_solver_result"
+        reason = "Completed solver_run.json evidence is present."
+    elif computed_values.get("extrema_computed") and metrics_source != LEGACY_REST_RESULT_SUMMARY_PATH:
+        claim_tier = "imported_computed_metrics"
+        reason = "Computed metrics exist, but no completed solver_run.json evidence is present."
+    elif legacy_rest_summary and legacy_rest_summary.get("status") == "success":
+        claim_tier = "legacy_rest_result"
+        reason = "Only legacy REST simulation/results_summary.json success metadata is present."
+    elif computed_values.get("extrema_computed"):
+        claim_tier = "imported_computed_metrics"
+        reason = "Computed metrics exist, but no completed solver_run.json evidence is present."
+    else:
+        claim_tier = "missing_or_unknown"
+        reason = "No completed solver-run evidence or normalized metrics were found."
+
+    return {
+        "schema_version": "0.1",
+        "canonical_summary_path": RESULT_SUMMARY_PATH,
+        "legacy_rest_summary_path": (
+            LEGACY_REST_RESULT_SUMMARY_PATH if legacy_rest_summary else None
+        ),
+        "claim_tier": claim_tier,
+        "solver_execution_evidence": bool(completed_runs),
+        "completed_solver_run_ids": [
+            str(run.get("run_id") or Path(str(run.get("source_artifact"))).parent.name)
+            for run in completed_runs
+        ],
+        "metrics_source": metrics_source,
+        "source_artifacts": sorted(set(source_artifacts)),
+        "reason": reason,
+    }
+
+
 def _read_design_targets(zf: zipfile.ZipFile) -> dict[str, Any] | None:
     """Read task/design_targets.yaml. Return None when absent or malformed."""
     path = "task/design_targets.yaml"
@@ -1433,11 +1607,15 @@ def _build_computed_values(
             "minimum_safety_factor": None,
         }
 
+    metrics_source = computed_metrics.get("metrics_source", {})
+    source_files = metrics_source.get("source_files") if isinstance(metrics_source, dict) else None
+    source = source_files[0] if isinstance(source_files, list) and source_files else "results/computed_metrics.json"
+
     return {
         "extrema_computed": True,
-        "source": "results/computed_metrics.json",
-        "computed_by": computed_metrics.get("metrics_source", {}).get("tool") or "external_postprocessor",
-        "metrics_source": computed_metrics.get("metrics_source", {}),
+        "source": source,
+        "computed_by": (metrics_source.get("tool") if isinstance(metrics_source, dict) else None) or "external_postprocessor",
+        "metrics_source": metrics_source,
         "by_load_case": by_load_case,
         "max_displacement": top_metrics.get("max_displacement"),
         "max_von_mises_stress": top_metrics.get("max_von_mises_stress"),

@@ -101,10 +101,10 @@ Agents must never make claims that exceed the available evidence.
 
 | Claim | Required Evidence | What to Say If Missing |
 |-------|-------------------|------------------------|
-| "Solver executed" | `solver_run.json` exists with `solver_execution_performed=true` and matching `run_id` | "No solver execution metadata found." |
+| "Solver executed" | `results/result_summary.json#result_contract.solver_execution_evidence=true`, backed by completed `simulation/runs/*/solver_run.json` metadata | "No solver execution metadata found." |
 | "Converged" | Reliable convergence evidence (e.g. residual history, energy norm) in solver output | `converged=null`; state: "Convergence status is unknown." |
 | "Physical correctness" | Independent validation run, mesh convergence study, experimental correlation | Never claim this. State: "Physical correctness has not been validated." |
-| "Max stress is X" | `computed_metrics.json` with `max_von_mises_stress.value`, `unit`, `location` | "No computed metrics available." |
+| "Max stress is X" | `results/result_summary.json#computed_values.max_von_mises_stress` with value, unit, and `computed_values.source` | "No computed metrics available." |
 | "Setup is complete" | `preprocessing_summary.json` with `ready_for_solver=true` | List `missing_items` from preprocessing summary. |
 
 ### Stale Evidence Rule

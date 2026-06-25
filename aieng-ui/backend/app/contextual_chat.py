@@ -87,6 +87,49 @@ def _format_pointer_block(
         parts.append(f"    ⚠️  {w}")
 
 
+def _append_canonical_result_summary(parts: list[str], summary: dict[str, Any]) -> bool:
+    """Append normalized CAE result context from results/result_summary.json.
+
+    Returns True when a canonical summary was usable. The legacy REST summary
+    formatter remains as a compatibility fallback for old packages.
+    """
+    computed = summary.get("computed_values") or {}
+    contract = summary.get("result_contract") or {}
+    if not isinstance(computed, dict) or not isinstance(contract, dict):
+        return False
+
+    if computed.get("extrema_computed"):
+        tier = str(contract.get("claim_tier") or "imported_computed_metrics")
+        if contract.get("solver_execution_evidence") is True:
+            label = "SOLVER RESULT"
+        elif tier == "legacy_rest_result":
+            label = "LEGACY REST RESULT"
+        else:
+            label = "IMPORTED METRICS"
+
+        sim_line = f"Simulation: {label}"
+        vm = computed.get("max_von_mises_stress")
+        if isinstance(vm, dict) and vm.get("value") is not None:
+            sim_line += f" — sigma_max={float(vm['value']):.1f} {vm.get('unit') or 'MPa'}"
+        ux = computed.get("max_displacement")
+        if isinstance(ux, dict) and ux.get("value") is not None:
+            sim_line += f", u_max={float(ux['value']):.3f} {ux.get('unit') or 'mm'}"
+        parts.append(sim_line)
+
+        source = computed.get("source") or contract.get("metrics_source")
+        if source:
+            parts.append(f"  Source: {source}; claim_tier={tier}")
+        if not contract.get("solver_execution_evidence"):
+            parts.append("  Note: scalar metrics do not by themselves prove AIENG solver execution.")
+        return True
+
+    status = summary.get("status") or {}
+    if isinstance(status, dict) and status.get("mode") in {"cae_setup", "cad_only"}:
+        parts.append("Simulation: not yet run")
+        return True
+    return False
+
+
 # ── Context block builder ─────────────────────────────────────────────────────
 
 def build_context_block(package_path: Path | None) -> str:
@@ -174,8 +217,19 @@ def build_context_block(package_path: Path | None) -> str:
         except Exception:
             parts.append("FEA Setup: setup.yaml present (parse error)")
 
-    # Simulation results + verdict
-    results_raw = _read_member(package_path, "simulation/results_summary.json")
+    # Simulation results + verdict. Prefer the normalized package-level summary;
+    # fall back to the legacy REST summary for older packages.
+    canonical_results_raw = _read_member(package_path, "results/result_summary.json")
+    canonical_used = False
+    if canonical_results_raw:
+        try:
+            canonical = json.loads(canonical_results_raw)
+            if isinstance(canonical, dict):
+                canonical_used = _append_canonical_result_summary(parts, canonical)
+        except Exception:
+            parts.append("Simulation: result summary present (parse error)")
+
+    results_raw = None if canonical_used else _read_member(package_path, "simulation/results_summary.json")
     if results_raw:
         try:
             results = json.loads(results_raw)
@@ -223,7 +277,7 @@ def build_context_block(package_path: Path | None) -> str:
                 parts.append("Simulation: not yet run")
         except Exception:
             parts.append("Simulation: results present (parse error)")
-    else:
+    elif not canonical_used:
         parts.append("Simulation: not yet run")
 
     # Design targets

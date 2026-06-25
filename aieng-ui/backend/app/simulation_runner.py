@@ -1108,6 +1108,7 @@ def _source_deck_input_hash(package_path: Path) -> str:
         _PARSED_BCS_PATH,
         _PARSED_LOADS_PATH,
         "simulation/setup.yaml",
+        _TOPOLOGY_PATH,
     ):
         data = _read_member(package_path, member)
         if data:
@@ -1151,7 +1152,12 @@ def ensure_source_deck_from_mesh(package_path: Path) -> dict[str, Any]:
         except json.JSONDecodeError:
             prior_hash = None
         if prior_hash == input_hash:
-            return {"created": False, "status": "exists", "reason": "up_to_date"}
+            return {
+                "created": False,
+                "status": "exists",
+                "reason": "up_to_date",
+                "input_hash": input_hash,
+            }
         # else: inputs changed -> fall through and re-synthesize.
 
     setup_raw = _read_member(package_path, "simulation/setup.yaml")
@@ -1199,6 +1205,7 @@ def ensure_source_deck_from_mesh(package_path: Path) -> dict[str, Any]:
         "empty_nset_faces": empty_nset_faces,
         "derived_entities": normalization["derived_entities"],
         "loads_promoted": normalization["loads_promoted"],
+        "input_hash": input_hash,
     }
 
 

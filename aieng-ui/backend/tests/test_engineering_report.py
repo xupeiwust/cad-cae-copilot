@@ -128,6 +128,9 @@ def test_engineering_report_endpoint_returns_self_contained_html_read_only(tmp_p
     assert "Honesty Boundary" in html
     assert "does not certify design safety" in html
     assert "Credibility Stamp" in html
+    assert "<table>" in html
+    assert "status-chip" in html
+    assert "<pre>" not in html
     assert "max_von_mises_stress" in html
     assert "87.4" in html
     assert "mounting_bolt_M6" in html

@@ -8,6 +8,7 @@ post-processing tools, and it never writes back into the package.
 from __future__ import annotations
 
 import html
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -99,16 +100,176 @@ def _status_counts(sections: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
-def _html_block(markdown: str | None) -> str:
+def _inline_markdown(text: str) -> str:
+    escaped = html.escape(text)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
+    return escaped
+
+
+def _table_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_table_separator(line: str) -> bool:
+    cells = _table_cells(line)
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
+
+
+def _render_table(lines: list[str], start: int) -> tuple[str, int]:
+    headers = _table_cells(lines[start])
+    index = start + 1
+    if index >= len(lines) or not _is_table_separator(lines[index]):
+        return f"<p>{_inline_markdown(lines[start])}</p>", start + 1
+    index += 1
+    rows: list[list[str]] = []
+    while index < len(lines) and lines[index].strip().startswith("|"):
+        rows.append(_table_cells(lines[index]))
+        index += 1
+    head = "".join(f"<th>{_inline_markdown(cell)}</th>" for cell in headers)
+    body_rows = []
+    for row in rows:
+        padded = row + [""] * max(0, len(headers) - len(row))
+        body_rows.append("<tr>" + "".join(f"<td>{_inline_markdown(cell)}</td>" for cell in padded[:len(headers)]) + "</tr>")
+    return (
+        "<div class=\"table-wrap\"><table><thead><tr>"
+        + head
+        + "</tr></thead><tbody>"
+        + "".join(body_rows)
+        + "</tbody></table></div>",
+        index,
+    )
+
+
+def _render_markdown_subset(markdown: str | None) -> str:
     if not markdown:
         return "<p class=\"muted\">No data available.</p>"
-    return f"<pre>{html.escape(markdown.strip())}</pre>"
+    lines = markdown.strip().splitlines()
+    blocks: list[str] = []
+    paragraph: list[str] = []
+    bullets: list[str] = []
+    index = 0
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        if paragraph:
+            blocks.append(f"<p>{_inline_markdown(' '.join(part.strip() for part in paragraph))}</p>")
+            paragraph = []
+
+    def flush_bullets() -> None:
+        nonlocal bullets
+        if bullets:
+            blocks.append("<ul>" + "".join(f"<li>{_inline_markdown(item)}</li>" for item in bullets) + "</ul>")
+            bullets = []
+
+    while index < len(lines):
+        raw = lines[index]
+        stripped = raw.strip()
+        if not stripped:
+            flush_paragraph()
+            flush_bullets()
+            index += 1
+            continue
+        if stripped.startswith("|"):
+            flush_paragraph()
+            flush_bullets()
+            table_html, index = _render_table(lines, index)
+            blocks.append(table_html)
+            continue
+        if stripped.startswith("- "):
+            flush_paragraph()
+            bullets.append(stripped[2:].strip())
+            index += 1
+            continue
+        if stripped.startswith("> "):
+            flush_paragraph()
+            flush_bullets()
+            blocks.append(f"<blockquote>{_inline_markdown(stripped[2:].strip())}</blockquote>")
+            index += 1
+            continue
+        if stripped.startswith("### "):
+            flush_paragraph()
+            flush_bullets()
+            blocks.append(f"<h4>{_inline_markdown(stripped[4:].strip())}</h4>")
+            index += 1
+            continue
+        if stripped.startswith("## "):
+            flush_paragraph()
+            flush_bullets()
+            blocks.append(f"<h3>{_inline_markdown(stripped[3:].strip())}</h3>")
+            index += 1
+            continue
+        paragraph.append(stripped)
+        index += 1
+
+    flush_paragraph()
+    flush_bullets()
+    return "\n".join(blocks)
+
+
+def _section_status_class(status: str) -> str:
+    if status == "included":
+        return "status-included"
+    if status == "missing":
+        return "status-missing"
+    if status == "error":
+        return "status-error"
+    return "status-partial"
+
+
+def _review_sections_html(sections: list[dict[str, Any]]) -> str:
+    if not sections:
+        return "<p class=\"muted\">No review packet sections available.</p>"
+    cards: list[str] = []
+    for section in sections:
+        status = str(section.get("status") or "unknown")
+        title = html.escape(str(section.get("title") or section.get("id") or "Section"))
+        body = _render_markdown_subset(str(section.get("body_md") or ""))
+        cards.append(
+            "<article class=\"evidence-section\">"
+            f"<div class=\"evidence-head\"><h3>{title}</h3>"
+            f"<span class=\"status-chip {_section_status_class(status)}\">{html.escape(status)}</span></div>"
+            f"{body}</article>"
+        )
+    return "\n".join(cards)
 
 
 def _html_list(items: list[str]) -> str:
     if not items:
         return "<p class=\"muted\">None recorded.</p>"
     return "<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in items) + "</ul>"
+
+
+def _key_results_html(result_evidence: dict[str, Any]) -> str:
+    key_results = result_evidence.get("key_results") if isinstance(result_evidence, dict) else None
+    if not isinstance(key_results, dict):
+        return "<p class=\"muted\">No computed result evidence available.</p>"
+    rows: list[str] = []
+    for label, metric in key_results.items():
+        if not isinstance(metric, dict):
+            continue
+        value = metric.get("value")
+        unit = metric.get("unit")
+        source_metric = metric.get("metric") or label
+        load_case = metric.get("load_case_id") or ""
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(label))}</td>"
+            f"<td>{html.escape(str(value))}</td>"
+            f"<td>{html.escape(str(unit or ''))}</td>"
+            f"<td>{html.escape(str(source_metric))}</td>"
+            f"<td>{html.escape(str(load_case))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return "<p class=\"muted\">No headline result scalars found in computed metrics.</p>"
+    return (
+        "<div class=\"table-wrap\"><table><thead><tr>"
+        "<th>Result</th><th>Value</th><th>Unit</th><th>Metric source</th><th>Load case</th>"
+        "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
+    )
 
 
 def _html_report(payload: dict[str, Any]) -> str:
@@ -121,9 +282,9 @@ def _html_report(payload: dict[str, Any]) -> str:
     warnings = report.get("warnings") or []
     missing = credibility.get("missing_evidence") or []
     credibility_summary = credibility.get("summary") or {}
+    result_evidence = credibility.get("result_evidence") if isinstance(credibility, dict) else {}
     sections = review_packet.get("sections") or []
     status_counts = _status_counts(sections)
-    review_markdown = review_packet.get("preview_markdown") or ""
 
     thumbnail_html = (
         f"<img class=\"thumbnail\" src=\"{html.escape(thumbnail_uri)}\" alt=\"Geometry thumbnail\" />"
@@ -161,7 +322,20 @@ def _html_report(payload: dict[str, Any]) -> str:
     .metric {{ border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; background: #f8fafc; }}
     .metric span {{ display: block; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }}
     .metric strong {{ display: block; margin-top: 4px; font-size: 16px; color: #0f172a; }}
-    pre {{ white-space: pre-wrap; overflow-wrap: anywhere; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.45; }}
+    .table-wrap {{ width: 100%; overflow-x: auto; margin: 10px 0; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+    th, td {{ border: 1px solid #e2e8f0; padding: 7px 8px; text-align: left; vertical-align: top; }}
+    th {{ background: #f8fafc; color: #334155; }}
+    code {{ color: #0f766e; background: #ecfeff; border: 1px solid #cffafe; border-radius: 4px; padding: 1px 4px; }}
+    blockquote {{ margin: 10px 0; padding: 8px 12px; border-left: 4px solid #f59e0b; background: #fffbeb; color: #92400e; }}
+    .evidence-section {{ border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin: 10px 0; background: #fbfdff; }}
+    .evidence-head {{ display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }}
+    .evidence-head h3 {{ margin: 0; font-size: 15px; }}
+    .status-chip {{ border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; }}
+    .status-included {{ color: #166534; background: #dcfce7; }}
+    .status-partial {{ color: #854d0e; background: #fef9c3; }}
+    .status-missing {{ color: #475569; background: #e2e8f0; }}
+    .status-error {{ color: #991b1b; background: #fee2e2; }}
     ul {{ padding-left: 20px; }}
     .muted {{ color: #64748b; }}
     @media (max-width: 760px) {{ header, .grid {{ grid-template-columns: 1fr; }} main {{ padding: 20px 14px 32px; }} }}
@@ -201,13 +375,18 @@ def _html_report(payload: dict[str, Any]) -> str:
 
   <section class="section">
     <h2>Bill of Materials</h2>
-    {_html_block(bom_markdown)}
+    {_render_markdown_subset(bom_markdown)}
+  </section>
+
+  <section class="section">
+    <h2>Key Results</h2>
+    {_key_results_html(result_evidence if isinstance(result_evidence, dict) else {})}
   </section>
 
   <section class="section">
     <h2>Evidence Coverage</h2>
     <p class="muted">Review packet section statuses: {html.escape(str(status_counts))}</p>
-    {_html_block(review_markdown)}
+    {_review_sections_html(sections)}
   </section>
 
   <section class="section">

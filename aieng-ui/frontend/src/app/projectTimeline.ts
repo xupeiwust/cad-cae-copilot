@@ -4,6 +4,7 @@ export type ProjectTimelineEntryKind =
   | "run"
   | "approval"
   | "tool"
+  | "snapshot"
   | "artifact"
   | "next_action"
   | "failure";
@@ -20,6 +21,15 @@ export type TimelineDiagnostic = {
   message: string;
   remediation: string | null;
   toolName: string | null;
+};
+
+export type TimelineSnapshot = {
+  id: string;
+  createdAt: string | null;
+  toolName: string | null;
+  partCount: number | null;
+  namedParts: string[];
+  restored: boolean;
 };
 
 export type TimelineNextAction = {
@@ -42,6 +52,7 @@ export type ProjectTimelineEntry = {
   title: string;
   detail?: string | null;
   diagnostic?: TimelineDiagnostic | null;
+  snapshots: TimelineSnapshot[];
   artifacts: string[];
   nextActions: TimelineNextAction[];
   sourceRunId: string;
@@ -52,6 +63,7 @@ export type ProjectTimeline = {
   runCount: number;
   warningCount: number;
   diagnosticCount: number;
+  snapshotCount: number;
   unstructuredFailureCount: number;
 };
 
@@ -67,6 +79,10 @@ function asString(value: unknown): string | null {
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function asCodeDetails(value: unknown): BlockedReasonCodeDetail[] {
@@ -103,6 +119,53 @@ function collectArtifacts(value: unknown): string[] {
     if (Array.isArray(raw)) raw.forEach(pushPath);
   }
   return Array.from(new Set(out));
+}
+
+function snapshotFromRecord(item: unknown, restored: boolean): TimelineSnapshot | null {
+  const record = asRecord(item);
+  const id = record ? asString(record.snapshot_id) ?? asString(record.id) : null;
+  if (!record || !id) return null;
+  return {
+    id,
+    createdAt: asString(record.created_at) ?? asString(record.createdAt),
+    toolName: asString(record.tool_name) ?? asString(record.toolName),
+    partCount: asNumber(record.part_count) ?? asNumber(record.partCount),
+    namedParts: asStringArray(record.named_parts).slice(0, 8),
+    restored,
+  };
+}
+
+function collectSnapshots(value: unknown): TimelineSnapshot[] {
+  const record = asRecord(value);
+  if (!record) return [];
+  const out: TimelineSnapshot[] = [];
+  const seen = new Set<string>();
+  const push = (snapshot: TimelineSnapshot | null) => {
+    if (!snapshot) return;
+    const key = `${snapshot.restored ? "restored" : "available"}:${snapshot.id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(snapshot);
+  };
+
+  const snapshots = record.snapshots;
+  if (Array.isArray(snapshots)) {
+    snapshots.forEach((item) => push(snapshotFromRecord(item, false)));
+  }
+
+  const restoredFrom = asString(record.restored_from) ?? asString(record.restoredFrom);
+  if (restoredFrom) {
+    push({
+      id: restoredFrom,
+      createdAt: null,
+      toolName: asString(record.tool_name) ?? asString(record.toolName),
+      partCount: asNumber(record.part_count) ?? asNumber(record.partCount),
+      namedParts: asStringArray(record.named_parts).slice(0, 8),
+      restored: true,
+    });
+  }
+
+  return out;
 }
 
 function describeNextAction(item: unknown): TimelineNextAction | null {
@@ -251,11 +314,18 @@ function resultTitle(result: RuntimeToolResult): string {
   return `${name}: ${result.status}`;
 }
 
+function resultDetail(output: Record<string, unknown> | null, receipt: Record<string, unknown> | null, fallbackError: string | null): string | null {
+  return receipt
+    ? asString(receipt.summary) ?? asString(receipt.status)
+    : asString(output?.message) ?? fallbackError;
+}
+
 export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
   const entries: ProjectTimelineEntry[] = [];
   let warningCount = 0;
   let diagnosticCount = 0;
   let unstructuredFailureCount = 0;
+  const snapshotIds = new Set<string>();
 
   for (const run of runs) {
     entries.push({
@@ -266,6 +336,7 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
       title: run.message || run.summary || "Runtime run",
       detail: run.summary,
       diagnostic: null,
+      snapshots: [],
       artifacts: [],
       nextActions: [],
       sourceRunId: run.run_id,
@@ -286,6 +357,7 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         title: eventTitle(event),
         detail: eventDetail(event),
         diagnostic,
+        snapshots: [],
         artifacts,
         nextActions: collectNextActions(payload),
         sourceRunId: run.run_id,
@@ -306,11 +378,13 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         ...collectArtifacts(receipt),
         ...collectArtifacts(result),
       ];
+      const snapshots = collectSnapshots(output);
+      snapshots.forEach((snapshot) => snapshotIds.add(snapshot.id));
       const nextActions = [
         ...collectNextActions(output),
         ...collectNextActions(receipt),
       ];
-      const kind = artifacts.length ? "artifact" : result.status === "error" ? "failure" : "tool";
+      const kind = snapshots.length ? "snapshot" : artifacts.length ? "artifact" : result.status === "error" ? "failure" : "tool";
       const diagnostic = diagnosticFromToolError(matchedError, fallbackError);
       if (diagnostic) diagnosticCount += 1;
       if (kind === "failure" && !diagnostic) unstructuredFailureCount += 1;
@@ -320,8 +394,9 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         kind,
         status: result.status,
         title: resultTitle(result),
-        detail: receipt ? asString(receipt.summary) ?? asString(receipt.status) : fallbackError,
+        detail: resultDetail(output, receipt, fallbackError),
         diagnostic,
+        snapshots,
         artifacts: Array.from(new Set(artifacts)),
         nextActions,
         sourceRunId: run.run_id,
@@ -330,5 +405,5 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
   }
 
   entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  return { entries, runCount: runs.length, warningCount, diagnosticCount, unstructuredFailureCount };
+  return { entries, runCount: runs.length, warningCount, diagnosticCount, snapshotCount: snapshotIds.size, unstructuredFailureCount };
 }

@@ -25,6 +25,7 @@ describe("buildProjectTimeline", () => {
     expect(timeline.runCount).toBe(0);
     expect(timeline.warningCount).toBe(0);
     expect(timeline.diagnosticCount).toBe(0);
+    expect(timeline.snapshotCount).toBe(0);
     expect(timeline.unstructuredFailureCount).toBe(0);
   });
 
@@ -162,6 +163,81 @@ describe("buildProjectTimeline", () => {
 
     expect(timeline.warningCount).toBe(1);
     expect(timeline.entries.some((entry) => entry.title.includes("tool_bad"))).toBe(true);
+  });
+
+  test("surfaces CAD snapshot list and restore results as read-only timeline entries", () => {
+    const run: RuntimeRun = {
+      ...baseRun,
+      tool_results: [
+        {
+          id: "cad.list_snapshots",
+          status: "success",
+          output: {
+            status: "ok",
+            count: 2,
+            message: "Restore any of these with cad.restore_snapshot { snapshot_id } (approval-gated).",
+            snapshots: [
+              {
+                snapshot_id: "snap_0002",
+                created_at: "2026-06-25T10:05:00Z",
+                tool_name: "cad.replace_part",
+                part_count: 3,
+                named_parts: ["bracket", "rib", "boss"],
+              },
+              {
+                snapshot_id: "snap_0001",
+                created_at: "2026-06-25T10:01:00Z",
+                tool_name: "cad.execute_build123d",
+                part_count: 2,
+                named_parts: ["bracket", "rib"],
+              },
+            ],
+          },
+        },
+        {
+          id: "cad.restore_snapshot",
+          status: "success",
+          output: {
+            status: "ok",
+            restored_from: "snap_0001",
+            part_count: 2,
+            named_parts: ["bracket", "rib"],
+            message: "Restored snapshot 'snap_0001'.",
+          },
+        },
+      ],
+    };
+
+    const timeline = buildProjectTimeline([run]);
+    const listEntry = timeline.entries.find((entry) => entry.id === "run_001:result:cad.list_snapshots");
+    const restoreEntry = timeline.entries.find((entry) => entry.id === "run_001:result:cad.restore_snapshot");
+
+    expect(timeline.snapshotCount).toBe(2);
+    expect(listEntry?.kind).toBe("snapshot");
+    expect(listEntry?.detail).toBe("Restore any of these with cad.restore_snapshot { snapshot_id } (approval-gated).");
+    expect(listEntry?.snapshots).toEqual([
+      expect.objectContaining({
+        id: "snap_0002",
+        createdAt: "2026-06-25T10:05:00Z",
+        toolName: "cad.replace_part",
+        partCount: 3,
+        namedParts: ["bracket", "rib", "boss"],
+        restored: false,
+      }),
+      expect.objectContaining({
+        id: "snap_0001",
+        restored: false,
+      }),
+    ]);
+    expect(restoreEntry?.kind).toBe("snapshot");
+    expect(restoreEntry?.snapshots).toEqual([
+      expect.objectContaining({
+        id: "snap_0001",
+        partCount: 2,
+        namedParts: ["bracket", "rib"],
+        restored: true,
+      }),
+    ]);
   });
 
   test("surfaces structured tool failure diagnostics as event detail", () => {

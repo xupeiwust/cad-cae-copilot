@@ -1,6 +1,6 @@
-import { Activity, AlertTriangle, CheckCircle2, Clock3, FileText, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, FileText, History, ShieldCheck } from "lucide-react";
 
-import type { ProjectTimeline, ProjectTimelineEntry, ProjectTimelineEntryKind, TimelineNextAction } from "../app/projectTimeline";
+import type { ProjectTimeline, ProjectTimelineEntry, ProjectTimelineEntryKind, TimelineNextAction, TimelineSnapshot } from "../app/projectTimeline";
 
 type ProjectTimelinePanelProps = {
   timeline: ProjectTimeline | null;
@@ -10,6 +10,7 @@ const KIND_ICON: Record<ProjectTimelineEntryKind, typeof Activity> = {
   run: Clock3,
   approval: ShieldCheck,
   tool: Activity,
+  snapshot: History,
   artifact: FileText,
   next_action: Activity,
   failure: AlertTriangle,
@@ -24,6 +25,7 @@ function fmtTime(value: string): string {
 function tone(entry: ProjectTimelineEntry): string {
   if (entry.kind === "failure") return "timeline-entry-failure";
   if (entry.kind === "approval") return "timeline-entry-approval";
+  if (entry.kind === "snapshot") return "timeline-entry-snapshot";
   if (entry.kind === "artifact") return "timeline-entry-artifact";
   return "timeline-entry-neutral";
 }
@@ -49,6 +51,15 @@ function codeTitle(details: TimelineNextAction["blockedReasonCodeDetails"]): str
     .filter(Boolean)
     .join(" ");
   return text || undefined;
+}
+
+function snapshotMeta(snapshot: TimelineSnapshot): string {
+  const parts = [
+    snapshot.toolName,
+    snapshot.partCount === null ? null : `${snapshot.partCount} part${snapshot.partCount === 1 ? "" : "s"}`,
+    snapshot.createdAt ? fmtTime(snapshot.createdAt) : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
@@ -77,6 +88,11 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
             <CheckCircle2 className="h-3.5 w-3.5" />
             {timeline.diagnosticCount} diagnostic{timeline.diagnosticCount === 1 ? "" : "s"}
           </span>
+        ) : timeline.snapshotCount ? (
+          <span className="project-timeline-ok">
+            <History className="h-3.5 w-3.5" />
+            {timeline.snapshotCount} snapshot{timeline.snapshotCount === 1 ? "" : "s"}
+          </span>
         ) : (
           <span className="project-timeline-ok">
             <CheckCircle2 className="h-3.5 w-3.5" />
@@ -103,6 +119,17 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
                   <div className="project-timeline-diagnostic" title={entry.diagnostic.message}>
                     <small>{entry.diagnostic.code}</small>
                     {entry.diagnostic.remediation ? <p>{entry.diagnostic.remediation}</p> : null}
+                  </div>
+                ) : null}
+                {entry.snapshots.length ? (
+                  <div className="project-timeline-snapshots" aria-label="CAD snapshots">
+                    {entry.snapshots.slice(0, 4).map((snapshot) => (
+                      <span key={`${snapshot.restored ? "restored" : "available"}:${snapshot.id}`}>
+                        <strong>{snapshot.restored ? `Restored ${snapshot.id}` : snapshot.id}</strong>
+                        {snapshotMeta(snapshot) ? <small>{snapshotMeta(snapshot)}</small> : null}
+                        {snapshot.namedParts.length ? <em>{snapshot.namedParts.slice(0, 4).join(", ")}</em> : null}
+                      </span>
+                    ))}
                   </div>
                 ) : null}
                 {entry.artifacts.length ? (

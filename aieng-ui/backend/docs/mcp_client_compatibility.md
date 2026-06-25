@@ -75,10 +75,15 @@ On the target client, after wiring the config from `MCP_SETUP.md`:
    It confirms an MCP config references `aieng-workbench`, the backend is reachable
    (if a URL is given), and the tool set is non-empty — with fix hints. A clean
    `OK`/`WARN` (exit 0) means the server side is wired before you test the client.
-1. Ask the client to **list the aieng-workbench tools** → expect the canonical
-   names (`aieng.agent_readme`, `aieng.list_projects`, `cad.execute_build123d`,
-   `cae.prepare_solver_run`, …) and a non-zero tool count.
-2. Call `aieng.agent_readme` → expect the onboarding text + `version_surface`.
+1. Ask the client to **list the aieng-workbench tools** → expect the wire names
+   exposed by that client and a non-zero tool count. On the packaged HTTP/SSE
+   path, the observed wire names use underscores, for example
+   `aieng_agent_readme`, `aieng_list_projects`, `cad_execute_build123d`, and
+   `cae_prepare_solver_run`. Dotted names such as `aieng.agent_readme` may appear
+   in human-facing guides as family labels, but they are not the HTTP/SSE wire
+   names in the current packaged image.
+2. Call the onboarding tool (`aieng_agent_readme` on the HTTP/SSE path) → expect
+   the onboarding text + `version_surface`.
 3. Trigger an approval-gated call (e.g. a `cad.execute_build123d` plan) → expect
    the client's approval surface to fire (client-managed), or the managed/blocked
    behavior for those modes.

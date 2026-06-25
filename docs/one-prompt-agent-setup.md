@@ -59,11 +59,14 @@ Steps:
    http://localhost:8765/sse
 7. Configure or remind me how to configure my MCP client to connect to that SSE
    endpoint.
-8. Through MCP, call:
-   aieng.agent_readme
-   aieng.list_projects
+8. Through MCP, call the exact tool names exposed by your client. On the
+   packaged HTTP/SSE path these are usually underscore wire names:
+   aieng_agent_readme
+   aieng_list_projects
    and, if a project exists:
-   aieng.agent_context { project_id }
+   aieng_agent_context { project_id }
+   Some docs group tools with dotted family names such as aieng.agent_readme;
+   use the names shown by your client when making the actual call.
 9. Report the result as:
    - backend health
    - MCP endpoint health
@@ -90,8 +93,9 @@ A successful setup should show:
 
 - Workbench UI reachable at `http://localhost:8000/app/`.
 - MCP-over-HTTP/SSE reachable at `http://localhost:8765/sse`.
-- MCP tools visible to the connected agent, including `aieng.agent_readme`,
-  `aieng.list_projects`, and `cad.execute_build123d`.
+- MCP tools visible to the connected agent, including `aieng_agent_readme`,
+  `aieng_list_projects`, and `cad_execute_build123d` on the HTTP/SSE wire path
+  (or the equivalent names displayed by the client).
 - Managed approval enabled for the packaged viewer path.
 - Projects and `.aieng` packages stored under the `aieng-data` Docker volume.
 

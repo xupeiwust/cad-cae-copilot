@@ -24,6 +24,8 @@ describe("buildProjectTimeline", () => {
     expect(timeline.entries).toEqual([]);
     expect(timeline.runCount).toBe(0);
     expect(timeline.warningCount).toBe(0);
+    expect(timeline.diagnosticCount).toBe(0);
+    expect(timeline.unstructuredFailureCount).toBe(0);
   });
 
   test("collects approval events, receipt artifacts, and advisory next actions", () => {
@@ -195,6 +197,8 @@ describe("buildProjectTimeline", () => {
       remediation: "Inspect the solver log.",
       toolName: "cae.run_solver",
     }));
+    expect(timeline.diagnosticCount).toBe(1);
+    expect(timeline.unstructuredFailureCount).toBe(0);
   });
 
   test("surfaces structured rejection diagnostics as event detail", () => {
@@ -229,6 +233,8 @@ describe("buildProjectTimeline", () => {
       remediation: "No action was executed.",
       toolName: "cae.run_solver",
     }));
+    expect(timeline.diagnosticCount).toBe(1);
+    expect(timeline.unstructuredFailureCount).toBe(0);
   });
 
   test("uses tool result errors as fallback failure detail", () => {
@@ -253,6 +259,8 @@ describe("buildProjectTimeline", () => {
       code: "tool_error",
       message: "RuntimeError: legacy failure",
     }));
+    expect(timeline.diagnosticCount).toBe(1);
+    expect(timeline.unstructuredFailureCount).toBe(0);
   });
 
   test("matches tool_errors details onto error result entries", () => {
@@ -289,5 +297,34 @@ describe("buildProjectTimeline", () => {
       remediation: "Fix the generated script and retry.",
       toolName: "cad.execute_build123d",
     }));
+    expect(timeline.diagnosticCount).toBe(1);
+    expect(timeline.unstructuredFailureCount).toBe(0);
+  });
+
+  test("counts failure entries without diagnostic payloads", () => {
+    const run: RuntimeRun = {
+      ...baseRun,
+      status: "failed",
+      events: [
+        {
+          id: "evt_failed",
+          run_id: "run_001",
+          type: "run_failed",
+          timestamp: "2026-06-25T10:00:05Z",
+          payload: {},
+        },
+      ],
+      tool_results: [
+        {
+          id: "tool_error",
+          status: "error",
+        },
+      ],
+    };
+
+    const timeline = buildProjectTimeline([run]);
+
+    expect(timeline.diagnosticCount).toBe(0);
+    expect(timeline.unstructuredFailureCount).toBe(2);
   });
 });

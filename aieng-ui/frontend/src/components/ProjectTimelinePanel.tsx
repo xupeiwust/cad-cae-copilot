@@ -67,6 +67,16 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
             <AlertTriangle className="h-3.5 w-3.5" />
             {timeline.warningCount} malformed receipt
           </span>
+        ) : timeline.unstructuredFailureCount ? (
+          <span className="project-timeline-warning">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {timeline.unstructuredFailureCount} unstructured failure
+          </span>
+        ) : timeline.diagnosticCount ? (
+          <span className="project-timeline-ok">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {timeline.diagnosticCount} diagnostic{timeline.diagnosticCount === 1 ? "" : "s"}
+          </span>
         ) : (
           <span className="project-timeline-ok">
             <CheckCircle2 className="h-3.5 w-3.5" />

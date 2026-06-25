@@ -51,6 +51,8 @@ export type ProjectTimeline = {
   entries: ProjectTimelineEntry[];
   runCount: number;
   warningCount: number;
+  diagnosticCount: number;
+  unstructuredFailureCount: number;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -252,6 +254,8 @@ function resultTitle(result: RuntimeToolResult): string {
 export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
   const entries: ProjectTimelineEntry[] = [];
   let warningCount = 0;
+  let diagnosticCount = 0;
+  let unstructuredFailureCount = 0;
 
   for (const run of runs) {
     entries.push({
@@ -270,14 +274,18 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
     for (const event of run.events ?? []) {
       const payload = asRecord(event.payload);
       const artifacts = collectArtifacts(payload);
+      const kind = eventKind(event);
+      const diagnostic = eventDiagnostic(event);
+      if (diagnostic) diagnosticCount += 1;
+      if (kind === "failure" && !diagnostic) unstructuredFailureCount += 1;
       entries.push({
         id: event.id || `${run.run_id}:${event.type}:${event.timestamp}`,
         timestamp: event.timestamp || run.created_at,
-        kind: eventKind(event),
+        kind,
         status: event.type,
         title: eventTitle(event),
         detail: eventDetail(event),
-        diagnostic: eventDiagnostic(event),
+        diagnostic,
         artifacts,
         nextActions: collectNextActions(payload),
         sourceRunId: run.run_id,
@@ -302,14 +310,18 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         ...collectNextActions(output),
         ...collectNextActions(receipt),
       ];
+      const kind = artifacts.length ? "artifact" : result.status === "error" ? "failure" : "tool";
+      const diagnostic = diagnosticFromToolError(matchedError, fallbackError);
+      if (diagnostic) diagnosticCount += 1;
+      if (kind === "failure" && !diagnostic) unstructuredFailureCount += 1;
       entries.push({
         id: `${run.run_id}:result:${result.id}`,
         timestamp: run.created_at,
-        kind: artifacts.length ? "artifact" : result.status === "error" ? "failure" : "tool",
+        kind,
         status: result.status,
         title: resultTitle(result),
         detail: receipt ? asString(receipt.summary) ?? asString(receipt.status) : fallbackError,
-        diagnostic: diagnosticFromToolError(matchedError, fallbackError),
+        diagnostic,
         artifacts: Array.from(new Set(artifacts)),
         nextActions,
         sourceRunId: run.run_id,
@@ -318,5 +330,5 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
   }
 
   entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  return { entries, runCount: runs.length, warningCount };
+  return { entries, runCount: runs.length, warningCount, diagnosticCount, unstructuredFailureCount };
 }

@@ -16,6 +16,7 @@ import json
 import re
 from typing import Any
 
+from . import blocked_reason_codes as _blocked_reason_codes
 from . import runtime as _runtime
 
 # Tools that execute an external solver.
@@ -175,8 +176,12 @@ def normalize_next_action(
     }
     if blocked_reason_codes is not None:
         item["blocked_reason_codes"] = blocked_reason_codes
+        item["blocked_reason_code_details"] = _blocked_reason_codes.details_for_codes(blocked_reason_codes)
     if resolves_blocked_reason_codes is not None:
         item["resolves_blocked_reason_codes"] = resolves_blocked_reason_codes
+        item["resolves_blocked_reason_code_details"] = _blocked_reason_codes.details_for_codes(
+            resolves_blocked_reason_codes
+        )
     return item
 
 
@@ -244,6 +249,8 @@ def build_next_action(
     }
     if normalized_codes is not None:
         item["blocked_reason_codes"] = normalized_codes
+        item["blocked_reason_code_details"] = _blocked_reason_codes.details_for_codes(normalized_codes)
     if normalized_resolves is not None:
         item["resolves_blocked_reason_codes"] = normalized_resolves
+        item["resolves_blocked_reason_code_details"] = _blocked_reason_codes.details_for_codes(normalized_resolves)
     return item

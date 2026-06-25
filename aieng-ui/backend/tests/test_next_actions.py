@@ -200,6 +200,11 @@ def test_normalize_next_action_preserves_blocked_reason_codes() -> None:
         source="preflight",
     )
     assert action["blocked_reason_codes"] == ["missing_mesh", "approval_required"]
+    assert [item["code"] for item in action["blocked_reason_code_details"]] == [
+        "missing_mesh",
+        "approval_required",
+    ]
+    assert action["blocked_reason_code_details"][0]["recommended_action"]
 
 
 def test_normalize_next_action_preserves_resolved_blocker_codes() -> None:
@@ -213,6 +218,10 @@ def test_normalize_next_action_preserves_resolved_blocker_codes() -> None:
         source="preflight",
     )
     assert action["resolves_blocked_reason_codes"] == ["deck_not_prepared", "missing_mesh"]
+    assert [item["code"] for item in action["resolves_blocked_reason_code_details"]] == [
+        "deck_not_prepared",
+        "missing_mesh",
+    ]
 
 
 def test_build_next_action_blocked_reason_codes() -> None:
@@ -225,6 +234,10 @@ def test_build_next_action_blocked_reason_codes() -> None:
         blocked_reason_codes=["deck_not_prepared", "approval_required"],
     )
     assert action["blocked_reason_codes"] == ["deck_not_prepared", "approval_required"]
+    assert [item["code"] for item in action["blocked_reason_code_details"]] == [
+        "deck_not_prepared",
+        "approval_required",
+    ]
 
 
 def test_build_next_action_resolved_blocker_codes() -> None:
@@ -235,3 +248,7 @@ def test_build_next_action_resolved_blocker_codes() -> None:
         resolves_blocked_reason_codes=["missing_analysis_type", "missing_solver"],
     )
     assert action["resolves_blocked_reason_codes"] == ["missing_analysis_type", "missing_solver"]
+    assert [item["code"] for item in action["resolves_blocked_reason_code_details"]] == [
+        "missing_analysis_type",
+        "missing_solver",
+    ]

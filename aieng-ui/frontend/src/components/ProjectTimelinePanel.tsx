@@ -38,6 +38,19 @@ function nextActionTitle(action: TimelineNextAction): string {
   return action.tool ? `${action.tool}: ${action.label}` : action.label;
 }
 
+function codeText(details: TimelineNextAction["blockedReasonCodeDetails"], codes: string[]): string {
+  const byCode = new Map(details.map((item) => [item.code, item]));
+  return codes.map((code) => byCode.get(code)?.label || code).join(", ");
+}
+
+function codeTitle(details: TimelineNextAction["blockedReasonCodeDetails"]): string | undefined {
+  const text = details
+    .map((item) => item.recommendedAction || item.description)
+    .filter(Boolean)
+    .join(" ");
+  return text || undefined;
+}
+
 export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
   if (!timeline || timeline.runCount === 0) return null;
   const visible = timeline.entries.slice(0, 12);
@@ -89,9 +102,15 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
                       <span key={`${action.tool ?? "advisory"}:${action.label}:${index}`} className={nextActionTone(action)}>
                         <strong>{nextActionTitle(action)}</strong>
                         {action.blockedReason ? <em>Blocked: {action.blockedReason}</em> : null}
-                        {action.blockedReasonCodes.length ? <small>{action.blockedReasonCodes.join(", ")}</small> : null}
+                        {action.blockedReasonCodes.length ? (
+                          <small title={codeTitle(action.blockedReasonCodeDetails)}>
+                            {codeText(action.blockedReasonCodeDetails, action.blockedReasonCodes)}
+                          </small>
+                        ) : null}
                         {action.resolvesBlockedReasonCodes.length ? (
-                          <small>resolves {action.resolvesBlockedReasonCodes.join(", ")}</small>
+                          <small title={codeTitle(action.resolvesBlockedReasonCodeDetails)}>
+                            resolves {codeText(action.resolvesBlockedReasonCodeDetails, action.resolvesBlockedReasonCodes)}
+                          </small>
                         ) : null}
                         {action.safetyFlags.length ? <small>{action.safetyFlags.join(" · ")}</small> : null}
                       </span>

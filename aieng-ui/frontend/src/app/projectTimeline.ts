@@ -8,13 +8,22 @@ export type ProjectTimelineEntryKind =
   | "next_action"
   | "failure";
 
+export type BlockedReasonCodeDetail = {
+  code: string;
+  label: string;
+  description: string;
+  recommendedAction: string;
+};
+
 export type TimelineNextAction = {
   label: string;
   tool: string | null;
   availableNow: boolean | null;
   blockedReason: string | null;
   blockedReasonCodes: string[];
+  blockedReasonCodeDetails: BlockedReasonCodeDetail[];
   resolvesBlockedReasonCodes: string[];
+  resolvesBlockedReasonCodeDetails: BlockedReasonCodeDetail[];
   safetyFlags: string[];
 };
 
@@ -50,6 +59,21 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
 }
 
+function asCodeDetails(value: unknown): BlockedReasonCodeDetail[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = asRecord(item);
+    const code = record ? asString(record.code) : null;
+    if (!record || !code) return [];
+    return [{
+      code,
+      label: asString(record.label) ?? code,
+      description: asString(record.description) ?? "",
+      recommendedAction: asString(record.recommended_action) ?? asString(record.recommendedAction) ?? "",
+    }];
+  });
+}
+
 function collectArtifacts(value: unknown): string[] {
   const out: string[] = [];
   const pushPath = (item: unknown) => {
@@ -79,7 +103,9 @@ function describeNextAction(item: unknown): TimelineNextAction | null {
       availableNow: null,
       blockedReason: null,
       blockedReasonCodes: [],
+      blockedReasonCodeDetails: [],
       resolvesBlockedReasonCodes: [],
+      resolvesBlockedReasonCodeDetails: [],
       safetyFlags: [],
     };
   }
@@ -107,7 +133,9 @@ function describeNextAction(item: unknown): TimelineNextAction | null {
     availableNow: tool ? availableNow : false,
     blockedReason: blockedReason ?? (!tool ? asString(record.reason) : null),
     blockedReasonCodes: asStringArray(record.blocked_reason_codes),
+    blockedReasonCodeDetails: asCodeDetails(record.blocked_reason_code_details),
     resolvesBlockedReasonCodes: asStringArray(record.resolves_blocked_reason_codes),
+    resolvesBlockedReasonCodeDetails: asCodeDetails(record.resolves_blocked_reason_code_details),
     safetyFlags,
   };
 }
@@ -119,7 +147,9 @@ function nextActionKey(action: TimelineNextAction): string {
     action.availableNow,
     action.blockedReason,
     action.blockedReasonCodes,
+    action.blockedReasonCodeDetails,
     action.resolvesBlockedReasonCodes,
+    action.resolvesBlockedReasonCodeDetails,
     action.safetyFlags,
   ]);
 }

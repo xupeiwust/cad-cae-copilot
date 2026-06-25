@@ -89,7 +89,19 @@ describe("buildProjectTimeline", () => {
                   available_now: false,
                   blocked_reason: "Approval is required.",
                   blocked_reason_codes: ["approval_required"],
+                  blocked_reason_code_details: [{
+                    code: "approval_required",
+                    label: "Approval required",
+                    description: "Human approval is required.",
+                    recommended_action: "Approve after reviewing the planned solver run.",
+                  }],
                   resolves_blocked_reason_codes: ["deck_not_prepared"],
+                  resolves_blocked_reason_code_details: [{
+                    code: "deck_not_prepared",
+                    label: "Solver deck not prepared",
+                    description: "The solver input deck is missing.",
+                    recommended_action: "Generate solver input.",
+                  }],
                   requires_approval: true,
                   mutates_package: true,
                   runs_solver: true,
@@ -118,7 +130,15 @@ describe("buildProjectTimeline", () => {
         availableNow: false,
         blockedReason: "Approval is required.",
         blockedReasonCodes: ["approval_required"],
+        blockedReasonCodeDetails: [expect.objectContaining({
+          code: "approval_required",
+          recommendedAction: "Approve after reviewing the planned solver run.",
+        })],
         resolvesBlockedReasonCodes: ["deck_not_prepared"],
+        resolvesBlockedReasonCodeDetails: [expect.objectContaining({
+          code: "deck_not_prepared",
+          label: "Solver deck not prepared",
+        })],
         safetyFlags: ["requires approval", "runs solver", "mutates package"],
       }),
     ]);

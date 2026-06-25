@@ -4410,6 +4410,13 @@ def test_prepare_solver_run_blocked_reason_codes_are_stable(tmp_path: Path) -> N
     assert "missing_loads" in codes
     assert "deck_not_prepared" in codes
     assert "solver_unavailable" in codes
+    detail_codes = {item["code"] for item in result["blocked_reason_code_details"]}
+    assert codes == detail_codes
+    assert result["preflight"]["blocked_reason_code_details"] == result["blocked_reason_code_details"]
+    assert any(
+        item["code"] == "solver_unavailable" and "AIENG_CCX_CMD" in item["recommended_action"]
+        for item in result["blocked_reason_code_details"]
+    )
 
     # The blocked cae.run_solver action carries approval + technical codes.
     run_action = next(a for a in result["next_actions"] if a["tool"] == "cae.run_solver")
@@ -4418,6 +4425,7 @@ def test_prepare_solver_run_blocked_reason_codes_are_stable(tmp_path: Path) -> N
     assert "approval_required" in action_codes
     assert "missing_mesh" in action_codes
     assert "deck_not_prepared" in action_codes
+    assert {item["code"] for item in run_action["blocked_reason_code_details"]} == action_codes
 
     # Human-readable fields are still present.
     assert run_action["blocked_reason"]
@@ -4461,9 +4469,11 @@ def test_prepare_solver_run_next_actions_resolve_blocker_codes(tmp_path: Path) -
     solver_env_action = next(a for a in actions if a["tool"] == "")
 
     assert mesh_action["resolves_blocked_reason_codes"] == ["missing_mesh"]
+    assert mesh_action["resolves_blocked_reason_code_details"][0]["label"] == "Missing mesh"
     assert set(settings_action["resolves_blocked_reason_codes"]) == {"missing_analysis_type", "missing_solver"}
     assert deck_action["resolves_blocked_reason_codes"] == ["deck_not_prepared"]
     assert solver_env_action["resolves_blocked_reason_codes"] == ["solver_unavailable"]
+    assert solver_env_action["resolves_blocked_reason_code_details"][0]["recommended_action"]
     assert set(result["blocked_reason_codes"]) >= {
         "missing_mesh",
         "missing_analysis_type",

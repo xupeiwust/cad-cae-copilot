@@ -700,6 +700,9 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             })
 
         preflight["blocked_reason_codes"] = _blocked_reason_codes.codes_for_preflight(preflight)
+        preflight["blocked_reason_code_details"] = _blocked_reason_codes.details_for_codes(
+            preflight["blocked_reason_codes"]
+        )
 
         next_actions_raw: list[dict[str, Any]] = list(recommendations)
         if not ready_to_run:
@@ -737,6 +740,7 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "planned_artifacts": planned_artifacts,
             "warnings": warnings,
             "blocked_reason_codes": preflight["blocked_reason_codes"],
+            "blocked_reason_code_details": preflight["blocked_reason_code_details"],
             "recommended_next_calls": recommendations,
             "next_actions": next_actions,
         }

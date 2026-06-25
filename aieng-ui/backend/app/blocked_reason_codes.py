@@ -7,7 +7,7 @@ to auto-run the solver.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 MISSING_ANALYSIS_TYPE = "missing_analysis_type"
 MISSING_MATERIAL = "missing_material"
@@ -21,6 +21,64 @@ TARGET_NOT_FOUND = "target_not_found"
 DECK_NOT_PREPARED = "deck_not_prepared"
 APPROVAL_REQUIRED = "approval_required"
 
+_CODE_DETAILS: dict[str, dict[str, str]] = {
+    MISSING_ANALYSIS_TYPE: {
+        "label": "Missing analysis type",
+        "description": "The CAE setup does not declare the analysis type to prepare.",
+        "recommended_action": "Create or update simulation/solver_settings.json with an analysis_type such as linear_static.",
+    },
+    MISSING_MATERIAL: {
+        "label": "Missing material",
+        "description": "A required material assignment is absent or cannot be resolved.",
+        "recommended_action": "Assign material properties before preparing solver input or making engineering claims.",
+    },
+    MISSING_LOADS: {
+        "label": "Missing loads",
+        "description": "No load case was found for the requested simulation run.",
+        "recommended_action": "Create a simulation/load_cases/<load_case_id>.json file with at least one load.",
+    },
+    MISSING_CONSTRAINTS: {
+        "label": "Missing constraints",
+        "description": "The setup does not define supports or boundary constraints.",
+        "recommended_action": "Add constraints or supports before generating a solver deck.",
+    },
+    MISSING_MESH: {
+        "label": "Missing mesh",
+        "description": "No mesh deck was found in the package.",
+        "recommended_action": "Write a mesh handoff contract, import a meshed CalculiX deck, or generate a mesh artifact.",
+    },
+    MISSING_SOLVER: {
+        "label": "Missing solver target",
+        "description": "The solver target is not declared in the CAE setup.",
+        "recommended_action": "Set solver to CalculiX in simulation/solver_settings.json.",
+    },
+    SOLVER_UNAVAILABLE: {
+        "label": "Solver unavailable",
+        "description": "The configured CalculiX executable cannot be found.",
+        "recommended_action": "Install CalculiX, ensure ccx is on PATH, or set AIENG_CCX_CMD.",
+    },
+    STALE_TOPOLOGY_REFERENCE: {
+        "label": "Stale topology reference",
+        "description": "CAE face references no longer match the current geometry topology.",
+        "recommended_action": "Re-run AI preprocessing to rebind loads and boundary conditions, or patch face IDs manually.",
+    },
+    TARGET_NOT_FOUND: {
+        "label": "Target not found",
+        "description": "A referenced part, face, artifact, or other target could not be matched.",
+        "recommended_action": "Correct the target reference before running the requested operation.",
+    },
+    DECK_NOT_PREPARED: {
+        "label": "Solver deck not prepared",
+        "description": "The CalculiX input deck for this run is missing.",
+        "recommended_action": "Run cae.generate_solver_input after mesh, solver settings, loads, constraints, and material are ready.",
+    },
+    APPROVAL_REQUIRED: {
+        "label": "Approval required",
+        "description": "The requested action crosses an approval-gated engineering boundary.",
+        "recommended_action": "Review the planned action and approve it explicitly before execution.",
+    },
+}
+
 # Inputs surfaced by simulation_readiness.CORE_INPUTS map cleanly to a code.
 _MISSING_INPUT_CODES: dict[str, str] = {
     "analysis_type": MISSING_ANALYSIS_TYPE,
@@ -30,6 +88,31 @@ _MISSING_INPUT_CODES: dict[str, str] = {
     "mesh": MISSING_MESH,
     "solver": MISSING_SOLVER,
 }
+
+
+def detail_for_code(code: str) -> dict[str, str]:
+    """Return stable human-readable metadata for a blocked reason code."""
+    detail = _CODE_DETAILS.get(code)
+    if detail is None:
+        return {
+            "code": code,
+            "label": code.replace("_", " ").capitalize(),
+            "description": "Unrecognized blocker code.",
+            "recommended_action": "Inspect the human-readable blocked_reason and tool output.",
+        }
+    return {"code": code, **detail}
+
+
+def details_for_codes(codes: Iterable[str]) -> list[dict[str, str]]:
+    """Return deduplicated code details in the same order as ``codes``."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for code in codes:
+        if not isinstance(code, str) or not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(detail_for_code(code))
+    return out
 
 
 def codes_for_readiness_report(report: dict[str, Any]) -> list[str]:

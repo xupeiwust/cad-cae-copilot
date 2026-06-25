@@ -227,6 +227,29 @@ def register_cad_live_routes(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @app.get("/api/agent-activity/recent")
+    def recent_agent_activity(
+        project_id: str | None = None,
+        limit: int = 50,
+        since_ts: float | None = None,
+    ) -> dict[str, Any]:
+        """Return buffered live activity without publishing a new activity event."""
+        from .. import agent_activity
+
+        events = agent_activity.recent(project_id, limit=limit, since_ts=since_ts)
+        latest_ts = None
+        if events:
+            try:
+                latest_ts = max(float(event.get("ts") or 0.0) for event in events)
+            except Exception:
+                latest_ts = None
+        return {
+            "project_id": project_id,
+            "count": len(events),
+            "events": events,
+            "latest_ts": latest_ts,
+        }
+
     @app.post("/api/agent/invoke-tool")
     def agent_invoke_tool(payload: dict[str, Any] = Body(default=None)) -> dict[str, Any]:
         """Run a runtime tool on behalf of an external agent and publish activity.

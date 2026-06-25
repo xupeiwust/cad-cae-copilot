@@ -284,6 +284,7 @@ def test_activity_stream_route_registered(tmp_path: Path) -> None:
     app = create_app(settings)
     paths = {r.path for r in app.routes}
     assert "/api/agent-activity/stream" in paths
+    assert "/api/agent-activity/recent" in paths
 
 
 def test_invoke_tool_route_registered(tmp_path: Path) -> None:
@@ -347,3 +348,21 @@ def test_recent_activity_tool_returns_buffered_events(tmp_path: Path) -> None:
     assert body["count"] >= 1
     assert any(e.get("type") == "build_progress" for e in body["events"])
     assert "latest_ts" in body
+
+
+def test_recent_activity_endpoint_is_read_only_and_project_scoped(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    agent_activity.publish({"type": "tool_failed", "project_id": "p1", "ts": 1.0, "code": "bad_input"})
+    agent_activity.publish({"type": "tool_completed", "project_id": "p2", "ts": 2.0, "status": "ok"})
+
+    resp = client.get("/api/agent-activity/recent", params={"project_id": "p1", "limit": 10})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project_id"] == "p1"
+    assert body["count"] == 1
+    assert body["events"][0]["type"] == "tool_failed"
+    assert body["events"][0]["code"] == "bad_input"
+    assert body["latest_ts"] == 1.0
+    assert [event["type"] for event in agent_activity.recent()] == ["tool_failed", "tool_completed"]

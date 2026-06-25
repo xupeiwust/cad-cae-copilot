@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
+import type { AgentActivityEvent } from "../appUtils";
 import type { RuntimeRun } from "../types";
 import { buildProjectTimeline, type ProjectTimeline } from "./projectTimeline";
 
@@ -38,7 +39,14 @@ export function useProjectTimeline({ selectedId, geometryVersion = null, limit =
             // A missing historical run should not block the workbench.
           }
         }
-        if (!cancelled) setTimeline(buildProjectTimeline(runs));
+        let activityEvents: AgentActivityEvent[] = [];
+        try {
+          const recent = await api.getRecentActivity(selectedId, 50);
+          activityEvents = Array.isArray(recent.events) ? recent.events : [];
+        } catch {
+          activityEvents = [];
+        }
+        if (!cancelled) setTimeline(buildProjectTimeline(runs, activityEvents));
       } catch {
         if (!cancelled) setTimeline(buildProjectTimeline([]));
       }

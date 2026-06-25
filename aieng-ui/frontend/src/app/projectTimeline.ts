@@ -1,4 +1,5 @@
 import type { RuntimeEvent, RuntimeRun, RuntimeToolError, RuntimeToolResult } from "../types";
+import type { AgentActivityEvent } from "../appUtils";
 
 export type ProjectTimelineEntryKind =
   | "run"
@@ -61,6 +62,7 @@ export type ProjectTimelineEntry = {
 export type ProjectTimeline = {
   entries: ProjectTimelineEntry[];
   runCount: number;
+  activityCount: number;
   warningCount: number;
   diagnosticCount: number;
   snapshotCount: number;
@@ -300,6 +302,37 @@ function diagnosticFromToolError(error: RuntimeToolError | undefined, fallbackMe
   };
 }
 
+function activityTimestamp(event: AgentActivityEvent): string {
+  const rawTs = typeof event.ts === "number" && Number.isFinite(event.ts) ? event.ts : null;
+  return rawTs === null ? new Date().toISOString() : new Date(rawTs * 1000).toISOString();
+}
+
+function activityTitle(event: AgentActivityEvent): string {
+  const label = event.tool || event.source || event.type;
+  return `${event.type.replaceAll("_", " ")}: ${label}`;
+}
+
+function activityDiagnostic(event: AgentActivityEvent): TimelineDiagnostic | null {
+  const diagnostic = asRecord(event.diagnostic);
+  const code = asString(diagnostic?.code) ?? asString(event.code);
+  const message = asString(diagnostic?.message) ?? asString(event.message) ?? asString(event.error);
+  if (!code && !message) return null;
+  return {
+    code: code ?? "activity_error",
+    message: message ?? code ?? "Activity error",
+    remediation: asString(diagnostic?.remediation) ?? asString(event.remediation),
+    toolName: asString(diagnostic?.tool_name) ?? asString(diagnostic?.toolName) ?? event.tool ?? null,
+  };
+}
+
+function activityKind(event: AgentActivityEvent): ProjectTimelineEntryKind {
+  if (event.type === "tool_failed" || event.status === "error") return "failure";
+  if (event.type.includes("approval")) return "approval";
+  if (event.type.includes("artifact")) return "artifact";
+  if (event.type.includes("tool")) return "tool";
+  return "run";
+}
+
 function eventKind(event: RuntimeEvent): ProjectTimelineEntryKind {
   if (event.type.includes("approval")) return "approval";
   if (event.type.includes("failed") || event.type.includes("rejected") || event.type.includes("cancelled")) return "failure";
@@ -320,7 +353,7 @@ function resultDetail(output: Record<string, unknown> | null, receipt: Record<st
     : asString(output?.message) ?? fallbackError;
 }
 
-export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
+export function buildProjectTimeline(runs: RuntimeRun[], activityEvents: AgentActivityEvent[] = []): ProjectTimeline {
   const entries: ProjectTimelineEntry[] = [];
   let warningCount = 0;
   let diagnosticCount = 0;
@@ -404,6 +437,35 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
     }
   }
 
+  for (const event of activityEvents) {
+    const timestamp = activityTimestamp(event);
+    const kind = activityKind(event);
+    const diagnostic = activityDiagnostic(event);
+    if (diagnostic) diagnosticCount += 1;
+    if (kind === "failure" && !diagnostic) unstructuredFailureCount += 1;
+    entries.push({
+      id: `activity:${event.call_id ?? event.type}:${event.type}:${timestamp}`,
+      timestamp,
+      kind,
+      status: event.status || event.type,
+      title: activityTitle(event),
+      detail: diagnostic?.message ?? event.message ?? event.error ?? null,
+      diagnostic,
+      snapshots: [],
+      artifacts: collectArtifacts(event),
+      nextActions: collectNextActions(event),
+      sourceRunId: "activity",
+    });
+  }
+
   entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  return { entries, runCount: runs.length, warningCount, diagnosticCount, snapshotCount: snapshotIds.size, unstructuredFailureCount };
+  return {
+    entries,
+    runCount: runs.length,
+    activityCount: activityEvents.length,
+    warningCount,
+    diagnosticCount,
+    snapshotCount: snapshotIds.size,
+    unstructuredFailureCount,
+  };
 }

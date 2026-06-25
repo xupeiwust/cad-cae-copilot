@@ -63,7 +63,7 @@ function snapshotMeta(snapshot: TimelineSnapshot): string {
 }
 
 export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
-  if (!timeline || timeline.runCount === 0) return null;
+  if (!timeline || timeline.entries.length === 0) return null;
   const visible = timeline.entries.slice(0, 12);
 
   return (
@@ -71,7 +71,10 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
       <div className="project-timeline-head">
         <div>
           <strong>Project timeline</strong>
-          <span>{timeline.runCount} runtime run{timeline.runCount === 1 ? "" : "s"}</span>
+          <span>
+            {timeline.runCount} runtime run{timeline.runCount === 1 ? "" : "s"}
+            {timeline.activityCount ? ` · ${timeline.activityCount} live event${timeline.activityCount === 1 ? "" : "s"}` : ""}
+          </span>
         </div>
         {timeline.warningCount ? (
           <span className="project-timeline-warning">

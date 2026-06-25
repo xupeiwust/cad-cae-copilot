@@ -4,6 +4,7 @@ import type { AgentPlan, AgentRunResponse, ArtifactDiffResponse, ArtifactRespons
 import type { Material, MaterialComparison, MaterialProperties } from "./types/materials";
 import type { BOMData } from "./types/bom";
 import type { InsertResult, StandardPartCategory, StandardPartSpec } from "./types/standards";
+import type { AgentActivityEvent } from "./appUtils";
 import { resolveApiBase } from "./apiBase";
 
 // Production serves the SPA and API from the same backend origin. Keep the
@@ -46,6 +47,13 @@ export type PersistedAgentEvent = {
   content?: string | null;
   payload?: Record<string, unknown> | null;
   created_at: string;
+};
+
+export type RecentActivityResponse = {
+  project_id?: string | null;
+  count: number;
+  events: AgentActivityEvent[];
+  latest_ts?: number | null;
 };
 
 async function request<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
@@ -419,6 +427,13 @@ export const api = {
     }),
   getRun: (runId: string) => request<RuntimeRun>(`/api/runtime/runs/${runId}`),
   getRunEvents: (runId: string) => request<RuntimeEvent[]>(`/api/runtime/runs/${runId}/events`),
+  getRecentActivity: (projectId?: string | null, limit = 50, sinceTs?: number | null) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    params.set("limit", String(limit));
+    if (typeof sinceTs === "number" && Number.isFinite(sinceTs)) params.set("since_ts", String(sinceTs));
+    return request<RecentActivityResponse>(`/api/agent-activity/recent?${params.toString()}`);
+  },
   approveRun: (runId: string) =>
     request<RuntimeRun>(`/api/runtime/runs/${runId}/approve`, { method: "POST" }),
   rejectRun: (runId: string) =>

@@ -315,6 +315,7 @@ export function applyCadProgressEvent(
 
 export type AgentActivityEvent = {
   type: string;            // connected | tool_* | project_changed | viewer_asset_changed | autopilot_update | chat_*
+  ts?: number;
   call_id?: string;
   tool?: string;
   project_id?: string | null;
@@ -329,6 +330,10 @@ export type AgentActivityEvent = {
   phase?: string;          // building | writing
   elapsed_s?: number;
   status?: string;
+  code?: string | null;
+  error?: string | null;
+  remediation?: string | null;
+  diagnostic?: Record<string, unknown> | null;
   preview_url?: string | null;
   preview_format?: string | null;
   topology_summary?: { face_count?: number; feature_count?: number } | null;

@@ -23,6 +23,7 @@ describe("buildProjectTimeline", () => {
 
     expect(timeline.entries).toEqual([]);
     expect(timeline.runCount).toBe(0);
+    expect(timeline.activityCount).toBe(0);
     expect(timeline.warningCount).toBe(0);
     expect(timeline.diagnosticCount).toBe(0);
     expect(timeline.snapshotCount).toBe(0);
@@ -402,5 +403,45 @@ describe("buildProjectTimeline", () => {
 
     expect(timeline.diagnosticCount).toBe(0);
     expect(timeline.unstructuredFailureCount).toBe(2);
+  });
+
+  test("merges live activity failures into the project timeline", () => {
+    const timeline = buildProjectTimeline([], [
+      {
+        type: "tool_failed",
+        ts: 1782396000,
+        call_id: "call_1",
+        tool: "cae.run_solver",
+        project_id: "project_1",
+        code: "solver_failed",
+        message: "CalculiX returned a non-zero exit code.",
+        remediation: "Open solver.log and fix the deck before retrying.",
+        diagnostic: {
+          code: "solver_failed",
+          message: "CalculiX returned a non-zero exit code.",
+          remediation: "Open solver.log and fix the deck before retrying.",
+          tool_name: "cae.run_solver",
+        },
+      },
+    ]);
+
+    expect(timeline.runCount).toBe(0);
+    expect(timeline.activityCount).toBe(1);
+    expect(timeline.entries).toHaveLength(1);
+    expect(timeline.entries[0]).toEqual(expect.objectContaining({
+      id: "activity:call_1:tool_failed:2026-06-25T14:00:00.000Z",
+      kind: "failure",
+      status: "tool_failed",
+      title: "tool failed: cae.run_solver",
+      detail: "CalculiX returned a non-zero exit code.",
+      sourceRunId: "activity",
+    }));
+    expect(timeline.entries[0].diagnostic).toEqual(expect.objectContaining({
+      code: "solver_failed",
+      remediation: "Open solver.log and fix the deck before retrying.",
+      toolName: "cae.run_solver",
+    }));
+    expect(timeline.diagnosticCount).toBe(1);
+    expect(timeline.unstructuredFailureCount).toBe(0);
   });
 });

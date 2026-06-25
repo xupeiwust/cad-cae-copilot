@@ -11383,13 +11383,60 @@ textarea:focus,
 }
 
 .project-timeline-next span {
+  display: grid;
+  gap: 2px;
   color: #ddd6fe;
   background: rgba(139, 92, 246, 0.12);
   border: 1px solid rgba(167, 139, 250, 0.18);
   border-radius: 6px;
-  padding: 2px 5px;
+  padding: 3px 6px;
   font-size: 10px;
   overflow-wrap: anywhere;
+}
+
+.project-timeline-next strong,
+.project-timeline-next em,
+.project-timeline-next small {
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.project-timeline-next strong {
+  color: #ede9fe;
+  font-weight: 600;
+}
+
+.project-timeline-next em {
+  color: #fecaca;
+}
+
+.project-timeline-next small {
+  color: #c4b5fd;
+}
+
+.project-timeline-next .project-timeline-next-available {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(74, 222, 128, 0.18);
+}
+
+.project-timeline-next .project-timeline-next-available strong {
+  color: #dcfce7;
+}
+
+.project-timeline-next .project-timeline-next-blocked {
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+.project-timeline-next .project-timeline-next-blocked strong {
+  color: #fee2e2;
+}
+
+.project-timeline-next .project-timeline-next-blocked small {
+  color: #fca5a5;
 }
 
 .project-timeline-foot {

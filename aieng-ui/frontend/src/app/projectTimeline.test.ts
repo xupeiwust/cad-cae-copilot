@@ -60,7 +60,66 @@ describe("buildProjectTimeline", () => {
 
     expect(timeline.entries.some((entry) => entry.kind === "approval")).toBe(true);
     expect(timeline.entries.some((entry) => entry.artifacts.includes("simulation/runs/run_001/solver_input.inp"))).toBe(true);
-    expect(timeline.entries.some((entry) => entry.nextActions.includes("cae.run_solver: Run the prepared deck after approval"))).toBe(true);
+    expect(timeline.entries.some((entry) => entry.nextActions.some((action) => (
+      action.tool === "cae.run_solver"
+      && action.label === "Run the prepared deck after approval"
+    )))).toBe(true);
+  });
+
+  test("preserves blocked reasons, reason codes, and safety flags on next actions", () => {
+    const run: RuntimeRun = {
+      ...baseRun,
+      tool_results: [
+        {
+          id: "tool_1",
+          status: "success",
+          output: {
+            receipt: {
+              operation: "cae.prepare_solver_run",
+              status: "blocked",
+              next_actions: [
+                {
+                  label: "Install CalculiX and add ccx to PATH",
+                  reason: "Solver executable is missing.",
+                  blocked_reason_codes: ["solver_missing"],
+                },
+                {
+                  tool: "cae.run_solver",
+                  label: "Run the prepared deck",
+                  available_now: false,
+                  blocked_reason: "Approval is required.",
+                  blocked_reason_codes: ["approval_required"],
+                  requires_approval: true,
+                  mutates_package: true,
+                  runs_solver: true,
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+
+    const timeline = buildProjectTimeline([run]);
+    const entry = timeline.entries.find((item) => item.id === "run_001:result:tool_1");
+
+    expect(entry?.nextActions).toEqual([
+      expect.objectContaining({
+        tool: null,
+        label: "Install CalculiX and add ccx to PATH",
+        availableNow: false,
+        blockedReason: "Solver executable is missing.",
+        blockedReasonCodes: ["solver_missing"],
+      }),
+      expect.objectContaining({
+        tool: "cae.run_solver",
+        label: "Run the prepared deck",
+        availableNow: false,
+        blockedReason: "Approval is required.",
+        blockedReasonCodes: ["approval_required"],
+        safetyFlags: ["requires approval", "runs solver", "mutates package"],
+      }),
+    ]);
   });
 
   test("malformed non-object tool output is surfaced as a warning without throwing", () => {

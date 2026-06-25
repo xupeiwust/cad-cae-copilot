@@ -1,6 +1,6 @@
 import { Activity, AlertTriangle, CheckCircle2, Clock3, FileText, ShieldCheck } from "lucide-react";
 
-import type { ProjectTimeline, ProjectTimelineEntry, ProjectTimelineEntryKind } from "../app/projectTimeline";
+import type { ProjectTimeline, ProjectTimelineEntry, ProjectTimelineEntryKind, TimelineNextAction } from "../app/projectTimeline";
 
 type ProjectTimelinePanelProps = {
   timeline: ProjectTimeline | null;
@@ -26,6 +26,16 @@ function tone(entry: ProjectTimelineEntry): string {
   if (entry.kind === "approval") return "timeline-entry-approval";
   if (entry.kind === "artifact") return "timeline-entry-artifact";
   return "timeline-entry-neutral";
+}
+
+function nextActionTone(action: TimelineNextAction): string {
+  if (action.availableNow === false) return "project-timeline-next-blocked";
+  if (action.availableNow === true) return "project-timeline-next-available";
+  return "project-timeline-next-neutral";
+}
+
+function nextActionTitle(action: TimelineNextAction): string {
+  return action.tool ? `${action.tool}: ${action.label}` : action.label;
 }
 
 export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
@@ -75,8 +85,13 @@ export function ProjectTimelinePanel({ timeline }: ProjectTimelinePanelProps) {
                 ) : null}
                 {entry.nextActions.length ? (
                   <div className="project-timeline-next" aria-label="Advisory next actions">
-                    {entry.nextActions.slice(0, 3).map((action) => (
-                      <span key={action}>{action}</span>
+                    {entry.nextActions.slice(0, 3).map((action, index) => (
+                      <span key={`${action.tool ?? "advisory"}:${action.label}:${index}`} className={nextActionTone(action)}>
+                        <strong>{nextActionTitle(action)}</strong>
+                        {action.blockedReason ? <em>Blocked: {action.blockedReason}</em> : null}
+                        {action.blockedReasonCodes.length ? <small>{action.blockedReasonCodes.join(", ")}</small> : null}
+                        {action.safetyFlags.length ? <small>{action.safetyFlags.join(" · ")}</small> : null}
+                      </span>
                     ))}
                   </div>
                 ) : null}

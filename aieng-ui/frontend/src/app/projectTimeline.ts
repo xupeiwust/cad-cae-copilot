@@ -8,6 +8,15 @@ export type ProjectTimelineEntryKind =
   | "next_action"
   | "failure";
 
+export type TimelineNextAction = {
+  label: string;
+  tool: string | null;
+  availableNow: boolean | null;
+  blockedReason: string | null;
+  blockedReasonCodes: string[];
+  safetyFlags: string[];
+};
+
 export type ProjectTimelineEntry = {
   id: string;
   timestamp: string;
@@ -16,7 +25,7 @@ export type ProjectTimelineEntry = {
   title: string;
   detail?: string | null;
   artifacts: string[];
-  nextActions: string[];
+  nextActions: TimelineNextAction[];
   sourceRunId: string;
 };
 
@@ -34,6 +43,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
 }
 
 function collectArtifacts(value: unknown): string[] {
@@ -57,30 +70,76 @@ function collectArtifacts(value: unknown): string[] {
   return Array.from(new Set(out));
 }
 
-function describeNextAction(item: unknown): string | null {
-  if (typeof item === "string" && item.trim()) return item;
+function describeNextAction(item: unknown): TimelineNextAction | null {
+  if (typeof item === "string" && item.trim()) {
+    return {
+      label: item,
+      tool: null,
+      availableNow: null,
+      blockedReason: null,
+      blockedReasonCodes: [],
+      safetyFlags: [],
+    };
+  }
   const record = asRecord(item);
   if (!record) return null;
   const tool = asString(record.tool) ?? asString(record.name) ?? asString(record.reference);
-  const label = asString(record.label) ?? asString(record.summary) ?? asString(record.description);
-  if (tool && label) return `${tool}: ${label}`;
-  return tool ?? label;
+  const label = asString(record.label)
+    ?? asString(record.summary)
+    ?? asString(record.description)
+    ?? asString(record.reason)
+    ?? asString(record.action)
+    ?? tool;
+  if (!label) return null;
+  const blockedReason = asString(record.blocked_reason);
+  const rawAvailable = record.available_now;
+  const availableNow = typeof rawAvailable === "boolean" ? rawAvailable : (blockedReason ? false : null);
+  const safetyFlags: string[] = [];
+  if (record.requires_approval === true) safetyFlags.push("requires approval");
+  if (record.runs_solver === true) safetyFlags.push("runs solver");
+  if (record.mutates_package === true) safetyFlags.push("mutates package");
+  if (record.advances_claim === true) safetyFlags.push("advances claim");
+  return {
+    label,
+    tool,
+    availableNow: tool ? availableNow : false,
+    blockedReason: blockedReason ?? (!tool ? asString(record.reason) : null),
+    blockedReasonCodes: asStringArray(record.blocked_reason_codes),
+    safetyFlags,
+  };
 }
 
-function collectNextActions(value: unknown): string[] {
+function nextActionKey(action: TimelineNextAction): string {
+  return JSON.stringify([
+    action.tool,
+    action.label,
+    action.availableNow,
+    action.blockedReason,
+    action.blockedReasonCodes,
+    action.safetyFlags,
+  ]);
+}
+
+function collectNextActions(value: unknown): TimelineNextAction[] {
   const record = asRecord(value);
   if (!record) return [];
-  const out: string[] = [];
+  const out: TimelineNextAction[] = [];
+  const seen = new Set<string>();
   for (const key of ["next_actions", "recommended_next_actions", "recommended_next_calls"]) {
     const raw = record[key];
     if (Array.isArray(raw)) {
       for (const item of raw) {
-        const text = describeNextAction(item);
-        if (text) out.push(text);
+        const action = describeNextAction(item);
+        if (!action) continue;
+        const actionKey = nextActionKey(action);
+        if (!seen.has(actionKey)) {
+          seen.add(actionKey);
+          out.push(action);
+        }
       }
     }
   }
-  return Array.from(new Set(out));
+  return out;
 }
 
 function receiptFromResult(result: RuntimeToolResult): Record<string, unknown> | null {
@@ -164,7 +223,7 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         title: resultTitle(result),
         detail: receipt ? asString(receipt.summary) ?? asString(receipt.status) : null,
         artifacts: Array.from(new Set(artifacts)),
-        nextActions: Array.from(new Set(nextActions)),
+        nextActions,
         sourceRunId: run.run_id,
       });
     }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Settings, Database, Puzzle, List } from "lucide-react";
+import { Settings, Database, Puzzle, List, FileText } from "lucide-react";
 
 import { api } from "../api";
 import { NoticeCenter } from "../components/common";
@@ -49,6 +49,19 @@ export function AppChrome({ app }: AppChromeProps) {
       ]
         .filter(Boolean)
         .join(" ");
+  const reportUrl = app.selectedId ? api.projectReportUrl(app.selectedId) : null;
+
+  function openEngineeringReport() {
+    if (!reportUrl) {
+      app.setNotice({
+        tone: "info",
+        title: "Select a project first",
+        detail: "Choose a project before opening the engineering report.",
+      });
+      return;
+    }
+    window.open(reportUrl, "_blank", "noopener,noreferrer");
+  }
 
   return (
     <PointerProvider value={app.pointerContextValue}>
@@ -95,6 +108,15 @@ export function AppChrome({ app }: AppChromeProps) {
                 title="BOM"
               >
                 <List className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="app-topbar-btn"
+                onClick={openEngineeringReport}
+                disabled={!reportUrl}
+                title="Open engineering report"
+              >
+                <FileText className="h-4 w-4" />
               </button>
               <button
                 type="button"

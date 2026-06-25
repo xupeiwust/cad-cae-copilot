@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { test, expect, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { AppChrome } from "./AppChrome";
@@ -44,7 +44,7 @@ vi.mock("../components/settings/RuntimeSettingsDrawer", () => ({
   RuntimeSettingsDrawer: () => null,
 }));
 
-function createMockApp(): Parameters<typeof AppChrome>[0]["app"] {
+function createMockApp(overrides: Partial<Parameters<typeof AppChrome>[0]["app"]> = {}): Parameters<typeof AppChrome>[0]["app"] {
   return {
     pointerContextValue: {},
     notice: null,
@@ -106,6 +106,7 @@ function createMockApp(): Parameters<typeof AppChrome>[0]["app"] {
     setGlobalSettingsOpen: vi.fn(),
     optimizationStudy: null,
     optimizationConvergence: null,
+    ...overrides,
   } as unknown as Parameters<typeof AppChrome>[0]["app"];
 }
 
@@ -133,7 +134,28 @@ test("embedded VS Code workbench omits the project sidebar", () => {
   expect(normalMain?.classList.contains("embed-main")).toBe(false);
 });
 
+test("topbar report button opens the read-only engineering report", () => {
+  const open = vi.spyOn(window, "open").mockImplementation(() => null);
+  const { container } = render(<AppChrome app={createMockApp({
+    selectedId: "project 42",
+    selectedProject: {
+      id: "project 42",
+      name: "Bracket",
+      status: "ready",
+      created_at: "2026-06-25T10:00:00Z",
+      updated_at: "2026-06-25T10:00:00Z",
+    },
+  })} />);
+
+  const button = container.querySelector('button[title="Open engineering report"]') as HTMLButtonElement | null;
+  expect(button).not.toBeNull();
+  expect(button?.disabled).toBe(false);
+  fireEvent.click(button!);
+  expect(open).toHaveBeenCalledWith("/api/projects/project%2042/report", "_blank", "noopener,noreferrer");
+});
+
 beforeEach(() => {
   // Reset URL between tests so embed state is deterministic
   window.history.replaceState({}, "", "/");
+  vi.restoreAllMocks();
 });

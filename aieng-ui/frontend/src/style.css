@@ -9719,6 +9719,17 @@ textarea:focus,
   color: var(--text-primary);
 }
 
+.app-topbar-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.app-topbar-btn:disabled:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
 .app-topbar-btn.active {
   background: var(--accent-soft, rgba(217, 119, 6, 0.12));
   border-color: var(--accent, #d97706);

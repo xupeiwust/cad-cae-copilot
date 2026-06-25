@@ -619,4 +619,5 @@ export const api = {
     }
     return response.blob();
   },
+  projectReportUrl: (projectId: string) => `${API}/api/projects/${encodeURIComponent(projectId)}/report`,
 };

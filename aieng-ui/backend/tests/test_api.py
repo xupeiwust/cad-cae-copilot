@@ -2238,6 +2238,48 @@ def test_create_file_accepts_payload_key_as_content_alias() -> None:
     assert doc["id"] == "load_case_001"
 
 
+def test_cae_setup_patch_can_create_canonical_setup_yaml(tmp_path: Path) -> None:
+    """The patch tool can write the canonical setup.yaml path recommended by preflight."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("patch-setup-yaml"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "patch-test.aieng"
+    _make_setup_package(pkg_path)
+    project["aieng_file"] = "patch-test.aieng"
+    save_project(settings, project)
+
+    setup = {
+        "analysis_type": "static_structural",
+        "boundary_conditions": [{"id": "bc_001", "target_feature": "fixed_base", "type": "fixed"}],
+        "loads": [{"id": "load_001", "target_feature": "load_top", "type": "force", "value_n": 500.0}],
+    }
+    resp = client.post("/api/runtime/runs", json={
+        "message": "apply cae setup patch",
+        "project_id": project_id,
+        "tool_input": {
+            "project_id": project_id,
+            "patches": [{
+                "path": "simulation/setup.yaml",
+                "action_type": "create_file",
+                "content": setup,
+            }],
+        },
+    })
+    assert resp.status_code == 200
+    result = resp.json()["tool_results"][0]["output"]
+    assert result["status"] == "ok"
+    assert "simulation/setup.yaml" in {d["path"] for d in result["artifact_diffs"]}
+    with zipfile.ZipFile(pkg_path) as zf:
+        written = json.loads(zf.read("simulation/setup.yaml"))
+    assert written["loads"][0]["target_feature"] == "load_top"
+
+
 def test_cae_setup_patch_rejects_unknown_face_ids_in_cae_mapping(tmp_path: Path) -> None:
     """cae.apply_setup_patch rejects cae_mapping.json patches that reference
     face IDs absent from the current topology."""

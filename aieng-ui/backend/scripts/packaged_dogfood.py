@@ -130,15 +130,25 @@ async def _managed_cad_mutation(mcp_url: str) -> dict[str, Any]:
 
 
 def _face_pointer(context: dict[str, Any]) -> str | None:
+    pointers = _face_pointers(context)
+    return pointers[0] if pointers else None
+
+
+def _face_pointers(context: dict[str, Any]) -> list[str]:
     digest = (context.get("brep_graph") or {}).get("digest", "")
-    return next(
-        (
-            line.split()[1]
-            for line in digest.splitlines()
-            if line.startswith("- @face:")
-        ),
-        None,
-    )
+    pointers: list[str] = []
+    for line in digest.splitlines():
+        if line.startswith("- @face:"):
+            parts = line.split()
+            if len(parts) > 1:
+                pointers.append(parts[1])
+    return pointers
+
+
+def _face_id(pointer: str) -> str:
+    if not pointer.startswith("@face:"):
+        raise ValueError(f"expected @face pointer, got: {pointer}")
+    return pointer[len("@face:"):]
 
 
 def _pointer_in_context(context: dict[str, Any], pointer: str) -> bool:
@@ -146,8 +156,100 @@ def _pointer_in_context(context: dict[str, Any], pointer: str) -> bool:
     return any(line.startswith(f"- {pointer} ") for line in digest.splitlines())
 
 
+def _m1_cae_setup_patches(load_pointer: str, fixed_pointer: str) -> list[dict[str, Any]]:
+    """Canonical M1 linear-static setup patches for a 500N aluminium bracket smoke."""
+    load_face = _face_id(load_pointer)
+    fixed_face = _face_id(fixed_pointer)
+    return [
+        {
+            "action_type": "create_file",
+            "path": "simulation/solver_settings.json",
+            "content": {"solver": "CalculiX", "analysis_type": "linear_static"},
+        },
+        {
+            "action_type": "create_file",
+            "path": "simulation/cae_imports/parsed_materials.json",
+            "content": {
+                "materials": [
+                    {
+                        "name": "Al6061-T6",
+                        "youngs_modulus_pa": 69e9,
+                        "poisson_ratio": 0.33,
+                        "density_kg_m3": 2700,
+                        "yield_strength_pa": 276e6,
+                    }
+                ]
+            },
+        },
+        {
+            "action_type": "create_file",
+            "path": "simulation/setup.yaml",
+            "content": {
+                "schema_version": "0.1",
+                "ai_generated": True,
+                "analysis_type": "static_structural",
+                "material_name": "Al6061-T6",
+                "boundary_conditions": [
+                    {
+                        "id": "bc_fixed_base",
+                        "type": "fixed",
+                        "target_feature": "fixed_base",
+                        "reason": "M1 dogfood fixed support face",
+                    }
+                ],
+                "loads": [
+                    {
+                        "id": "load_500n",
+                        "type": "force",
+                        "target_feature": "load_top",
+                        "value_n": 500.0,
+                        "direction": [0.0, 0.0, -1.0],
+                        "reason": "M1 dogfood 500N downward load",
+                    }
+                ],
+                "mesh": {"target_size_mm": 8.0},
+                "assumptions": [
+                    "Face selections are dogfood smoke targets, not certified engineering setup.",
+                ],
+            },
+        },
+        {
+            "action_type": "create_file",
+            "path": "simulation/cae_mapping.json",
+            "content": {
+                "schema_version": "0.1",
+                "ai_generated": True,
+                "mappings": [
+                    {
+                        "cae_entity": "FIXED_BASE",
+                        "maps_to": {
+                            "feature_id": "fixed_base",
+                            "role": "fixed_support",
+                            "target_pointers": [fixed_pointer],
+                        },
+                        "face_ids": [fixed_face],
+                    },
+                    {
+                        "cae_entity": "LOAD_TOP",
+                        "maps_to": {
+                            "feature_id": "load_top",
+                            "role": "load_application",
+                            "target_pointers": [load_pointer],
+                        },
+                        "face_ids": [load_face],
+                    },
+                ],
+            },
+        },
+    ]
+
+
 async def _client_managed_flow(
-    mcp_url: str, backend_url: str, viewer_face_pointer: str | None
+    mcp_url: str,
+    backend_url: str,
+    viewer_face_pointer: str | None,
+    *,
+    run_solver: bool = False,
 ) -> dict[str, Any]:
     async with sse_client(mcp_url) as (read, write):
         async with ClientSession(read, write) as session:
@@ -215,6 +317,7 @@ async def _client_managed_flow(
             discovered_face_pointer = _face_pointer(context)
             if not discovered_face_pointer:
                 raise RuntimeError("agent context did not expose a face pointer")
+            discovered_face_pointers = _face_pointers(context)
             if viewer_face_pointer and not _pointer_in_context(
                 context, viewer_face_pointer
             ):
@@ -222,30 +325,26 @@ async def _client_managed_flow(
                     f"viewer face pointer does not exist in the new project: {viewer_face_pointer}"
                 )
             handoff_face_pointer = viewer_face_pointer or discovered_face_pointer
-            pointer_handoff = _result_json(
+            fixed_face_pointer = next(
+                (p for p in discovered_face_pointers if p != handoff_face_pointer),
+                discovered_face_pointer,
+            )
+            cae_setup = _result_json(
                 await session.call_tool(
                     "cae_apply_setup_patch",
                     {
                         "project_id": project_id,
-                        "patches": [
-                            {
-                                "action_type": "create_file",
-                                "path": "simulation/load_cases/load_case_001.json",
-                                "content": {
-                                    "id": "load_case_001",
-                                    "loads": [
-                                        {
-                                            "id": "load_001",
-                                            "type": "force",
-                                            "target": handoff_face_pointer,
-                                            "dof": 2,
-                                            "value": 500.0,
-                                        }
-                                    ],
-                                },
-                            }
-                        ],
+                        "patches": _m1_cae_setup_patches(
+                            load_pointer=handoff_face_pointer,
+                            fixed_pointer=fixed_face_pointer,
+                        ),
                     },
+                )
+            )
+            mesh = _result_json(
+                await session.call_tool(
+                    "cae_generate_mesh",
+                    {"project_id": project_id, "mesh_size_mm": 8.0},
                 )
             )
             preflight = _result_json(
@@ -260,6 +359,46 @@ async def _client_managed_flow(
                     },
                 )
             )
+            solver_input = _result_json(
+                await session.call_tool(
+                    "cae_generate_solver_input",
+                    {"project_id": project_id, "run_id": "run_001", "overwrite": True},
+                )
+            )
+            post_input_preflight = _result_json(
+                await session.call_tool(
+                    "cae_prepare_solver_run",
+                    {
+                        "project_id": project_id,
+                        "run_id": "run_001",
+                        "load_case_id": "load_case_001",
+                        "extract_results": True,
+                        "refresh_summary": True,
+                    },
+                )
+            )
+            solver_run = None
+            extracted_results = None
+            field_regions = None
+            if run_solver:
+                solver_run = _result_json(
+                    await session.call_tool(
+                        "cae_run_solver",
+                        {"project_id": project_id, "run_id": "run_001"},
+                    )
+                )
+                extracted_results = _result_json(
+                    await session.call_tool(
+                        "cae_extract_solver_results",
+                        {"project_id": project_id, "run_id": "run_001"},
+                    )
+                )
+                field_regions = _result_json(
+                    await session.call_tool(
+                        "cae_extract_field_regions",
+                        {"project_id": project_id, "run_id": "run_001"},
+                    )
+                )
 
     summary = _get_json(f"{backend_url}/api/projects/{project_id}")
     project = summary.get("project") or summary
@@ -288,16 +427,38 @@ async def _client_managed_flow(
         "web_asset_http_status": asset_status,
         "web_asset_bytes": asset_bytes,
         "discovered_face_pointer": discovered_face_pointer,
+        "discovered_face_pointers": discovered_face_pointers,
         "viewer_face_pointer": viewer_face_pointer,
         "viewer_face_pointer_verified": bool(
             viewer_face_pointer and _pointer_in_context(context, viewer_face_pointer)
         ),
         "pointer_handed_back_to_agent": handoff_face_pointer,
-        "pointer_handoff_status": pointer_handoff.get("status"),
+        "fixed_face_pointer": fixed_face_pointer,
+        "cae_setup_status": cae_setup.get("status"),
+        "cae_setup_changed_artifacts": [
+            item.get("path") for item in (cae_setup.get("changed_artifacts") or [])
+        ],
+        "cae_mesh_status": mesh.get("status"),
+        "cae_mesh_node_count": mesh.get("node_count"),
+        "cae_mesh_element_count": mesh.get("element_count"),
         "face_count": context.get("brep_graph", {}).get("face_count"),
         "cae_ready_to_run": preflight.get("ready_to_run"),
         "cae_missing_items": preflight.get("preflight", {}).get("missing_items"),
         "cae_recommended_next_calls": preflight.get("recommended_next_calls"),
+        "cae_solver_input_status": solver_input.get("status"),
+        "cae_solver_input_path": solver_input.get("out_path"),
+        "cae_source_deck_synthesis": solver_input.get("source_deck_synthesis"),
+        "cae_post_input_ready_to_run": post_input_preflight.get("ready_to_run"),
+        "cae_post_input_missing_items": (post_input_preflight.get("preflight") or {}).get("missing_items"),
+        "solver_run_requested": run_solver,
+        "solver_run": solver_run,
+        "extracted_results": extracted_results,
+        "field_regions": field_regions,
+        "honesty": {
+            "solver_executed": bool(solver_run and solver_run.get("status") == "completed"),
+            "solver_execution_is_opt_in": True,
+            "engineering_certification_claimed": False,
+        },
     }
 
 
@@ -313,7 +474,10 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.client_mcp_url:
         result["client_managed_flow"] = await _client_managed_flow(
-            args.client_mcp_url, args.backend_url, args.face_pointer
+            args.client_mcp_url,
+            args.backend_url,
+            args.face_pointer,
+            run_solver=args.run_solver,
         )
     return result
 
@@ -330,6 +494,11 @@ def main() -> int:
     parser.add_argument(
         "--face-pointer",
         help="Pointer copied from the full viewer and pasted back into the agent flow.",
+    )
+    parser.add_argument(
+        "--run-solver",
+        action="store_true",
+        help="Opt in to approval-gated cae.run_solver plus result/field extraction.",
     )
     parser.add_argument("--output")
     args = parser.parse_args()

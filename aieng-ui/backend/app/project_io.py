@@ -485,7 +485,12 @@ def _parse_calculix_input_deck(text: str) -> dict[str, Any]:
 
 _ALLOWED_PATCH_PREFIXES = ("simulation/cae_imports/", "simulation/load_cases/")
 _ALLOWED_PATCH_EXACT = frozenset(
-    {"simulation/solver_settings.json", "simulation/cae_mapping.json", "graph/constraints.json"}
+    {
+        "simulation/setup.yaml",
+        "simulation/solver_settings.json",
+        "simulation/cae_mapping.json",
+        "graph/constraints.json",
+    }
 )
 _SUPPORTED_PATCH_OPERATIONS = frozenset(
     {"create_file", "replace_json", "merge_object", "append_array_item"}

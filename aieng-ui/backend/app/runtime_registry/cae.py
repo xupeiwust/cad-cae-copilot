@@ -369,9 +369,9 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
                     "code": "forbidden_path",
                     "message": (
                         f"Patch {i}: path {path!r} is not in the allowed patch locations. "
-                        "Only simulation/cae_imports/, simulation/load_cases/, "
-                        "simulation/solver_settings.json, simulation/cae_mapping.json, "
-                        "and graph/constraints.json are writable."
+                        "Only simulation/setup.yaml, simulation/cae_imports/, "
+                        "simulation/load_cases/, simulation/solver_settings.json, "
+                        "simulation/cae_mapping.json, and graph/constraints.json are writable."
                     ),
                 }
             if action not in _SUPPORTED_PATCH_OPERATIONS:

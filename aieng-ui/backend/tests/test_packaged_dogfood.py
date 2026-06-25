@@ -62,8 +62,47 @@ def test_face_pointer_reads_first_brep_face() -> None:
     }
 
     assert packaged_dogfood._face_pointer(context) == "@face:face_013"
+    assert packaged_dogfood._face_pointers(context) == ["@face:face_013", "@face:face_014"]
+    assert packaged_dogfood._face_id("@face:face_013") == "face_013"
     assert packaged_dogfood._pointer_in_context(context, "@face:face_013") is True
     assert packaged_dogfood._pointer_in_context(context, "@face:face_999") is False
+
+
+def test_m1_cae_setup_patches_use_canonical_setup_and_mapping() -> None:
+    packaged_dogfood = _load_module()
+
+    patches = packaged_dogfood._m1_cae_setup_patches(
+        load_pointer="@face:face_013",
+        fixed_pointer="@face:face_003",
+    )
+    by_path = {patch["path"]: patch for patch in patches}
+
+    assert "simulation/setup.yaml" in by_path
+    assert "simulation/cae_mapping.json" in by_path
+    assert "simulation/solver_settings.json" in by_path
+    assert "simulation/cae_imports/parsed_materials.json" in by_path
+
+    setup = by_path["simulation/setup.yaml"]["content"]
+    assert setup["loads"][0]["target_feature"] == "load_top"
+    assert setup["loads"][0]["value_n"] == 500.0
+    assert setup["boundary_conditions"][0]["target_feature"] == "fixed_base"
+
+    mapping = by_path["simulation/cae_mapping.json"]["content"]
+    load_map = next(m for m in mapping["mappings"] if m["cae_entity"] == "LOAD_TOP")
+    fixed_map = next(m for m in mapping["mappings"] if m["cae_entity"] == "FIXED_BASE")
+    assert load_map["face_ids"] == ["face_013"]
+    assert fixed_map["face_ids"] == ["face_003"]
+    assert load_map["maps_to"]["target_pointers"] == ["@face:face_013"]
+
+
+def test_m1_cae_setup_rejects_non_face_pointer() -> None:
+    packaged_dogfood = _load_module()
+
+    with pytest.raises(ValueError, match="expected @face pointer"):
+        packaged_dogfood._m1_cae_setup_patches(
+            load_pointer="face_013",
+            fixed_pointer="@face:face_003",
+        )
 
 
 def test_backend_fetches_only_allow_http_schemes() -> None:

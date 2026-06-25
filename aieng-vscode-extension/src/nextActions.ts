@@ -13,6 +13,7 @@ export type NextAction = {
   availableNow: boolean;
   blockedReason?: string;
   blockedReasonCodes: string[];
+  resolvesBlockedReasonCodes: string[];
   requiresApproval: boolean;
   mutatesPackage: boolean;
   runsSolver: boolean;
@@ -51,6 +52,7 @@ function normalizeAction(raw: Record<string, unknown>): NextAction | undefined {
     availableNow,
     blockedReason: blockedReason ?? (!tool ? reason : undefined),
     blockedReasonCodes: asStringArray(raw.blocked_reason_codes),
+    resolvesBlockedReasonCodes: asStringArray(raw.resolves_blocked_reason_codes),
     requiresApproval: raw.requires_approval === true,
     mutatesPackage: raw.mutates_package === true,
     runsSolver: raw.runs_solver === true,
@@ -104,6 +106,9 @@ export function formatActionDetail(action: NextAction): string {
     if (action.blockedReasonCodes.length) blocked += ` [${action.blockedReasonCodes.join(", ")}]`;
     parts.push(blocked);
   }
+  if (action.resolvesBlockedReasonCodes.length) {
+    parts.push(`resolves ${action.resolvesBlockedReasonCodes.join(", ")}`);
+  }
   const flags = safetyFlagWords(action);
   if (flags.length) parts.push(flags.join(" · "));
   if (action.tool) parts.push(action.tool);
@@ -118,9 +123,14 @@ export function toToolCallSnippet(action: NextAction): string {
       advisory: action.label,
       blocked_reason: action.blockedReason ?? action.reason ?? "Action cannot be executed automatically.",
       blocked_reason_codes: action.blockedReasonCodes,
+      resolves_blocked_reason_codes: action.resolvesBlockedReasonCodes,
     }, null, 2);
   }
-  return JSON.stringify({ tool: action.tool, input: action.input }, null, 2);
+  return JSON.stringify({
+    tool: action.tool,
+    input: action.input,
+    resolves_blocked_reason_codes: action.resolvesBlockedReasonCodes,
+  }, null, 2);
 }
 
 /** A natural-language handoff prompt that preserves safety + blocked status. */
@@ -137,6 +147,9 @@ export function toHandoffPrompt(action: NextAction): string {
     const reason = action.blockedReason ?? "blocked";
     const codes = action.blockedReasonCodes.length ? ` (codes: ${action.blockedReasonCodes.join(", ")})` : "";
     lines.push(`Status: BLOCKED — ${reason}${codes}. Resolve this before attempting the action.`);
+  }
+  if (action.resolvesBlockedReasonCodes.length) {
+    lines.push(`Resolves blockers: ${action.resolvesBlockedReasonCodes.join(", ")}.`);
   }
   const flags = safetyFlagWords(action);
   if (flags.length) lines.push(`Safety: ${flags.join("; ")}.`);

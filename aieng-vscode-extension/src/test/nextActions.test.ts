@@ -19,6 +19,7 @@ const READY_RESPONSE = {
       input: { project_id: "p1" },
       priority: "high",
       available_now: true,
+      resolves_blocked_reason_codes: ["missing_material"],
       requires_approval: false,
       mutates_package: true,
       runs_solver: false,
@@ -54,6 +55,7 @@ describe("parseNextActions", () => {
     const [add, run] = actions;
     assert.equal(add.tool, "cae.apply_setup_patch");
     assert.equal(add.availableNow, true);
+    assert.deepEqual(add.resolvesBlockedReasonCodes, ["missing_material"]);
     assert.equal(add.mutatesPackage, true);
     assert.equal(run.availableNow, false);
     assert.equal(run.blockedReason, "Required inputs are missing.");
@@ -81,6 +83,7 @@ describe("parseNextActions", () => {
           label: "Install CalculiX and add ccx to PATH",
           reason: "Solver executable is missing.",
           blocked_reason_codes: ["solver_missing"],
+          resolves_blocked_reason_codes: ["solver_unavailable"],
         },
       ],
     });
@@ -91,6 +94,7 @@ describe("parseNextActions", () => {
     assert.equal(actions[0].availableNow, false);
     assert.equal(actions[0].blockedReason, "Solver executable is missing.");
     assert.deepEqual(actions[0].blockedReasonCodes, ["solver_missing"]);
+    assert.deepEqual(actions[0].resolvesBlockedReasonCodes, ["solver_unavailable"]);
   });
 });
 
@@ -110,6 +114,7 @@ describe("formatActionDetail (safety flags preserved in display text)", () => {
     const detail = formatActionDetail(add);
     assert.match(detail, /[Aa]vailable/);
     assert.match(detail, /mutates/i);
+    assert.match(detail, /resolves missing_material/);
   });
 
   it("labels tool-less advisory actions instead of showing a blank tool", () => {
@@ -129,17 +134,23 @@ describe("toToolCallSnippet", () => {
     const parsed = JSON.parse(snippet);
     assert.equal(parsed.tool, "cae.apply_setup_patch");
     assert.deepEqual(parsed.input, { project_id: "p1" });
+    assert.deepEqual(parsed.resolves_blocked_reason_codes, ["missing_material"]);
   });
 
   it("emits an advisory payload rather than an empty tool call for tool-less actions", () => {
     const [advisory] = parseNextActions({
-      next_actions: [{ label: "Install CalculiX", reason: "Solver executable is missing." }],
+      next_actions: [{
+        label: "Install CalculiX",
+        reason: "Solver executable is missing.",
+        resolves_blocked_reason_codes: ["solver_unavailable"],
+      }],
     });
     const parsed = JSON.parse(toToolCallSnippet(advisory));
 
     assert.equal(parsed.tool, undefined);
     assert.equal(parsed.advisory, "Install CalculiX");
     assert.equal(parsed.blocked_reason, "Solver executable is missing.");
+    assert.deepEqual(parsed.resolves_blocked_reason_codes, ["solver_unavailable"]);
   });
 });
 
@@ -169,5 +180,12 @@ describe("toHandoffPrompt", () => {
 
     assert.match(prompt, /Tool: none; advisory only\./);
     assert.match(prompt, /BLOCKED/);
+  });
+
+  it("includes blocker codes that the action resolves", () => {
+    const [add] = parseNextActions(READY_RESPONSE);
+    const prompt = toHandoffPrompt(add);
+
+    assert.match(prompt, /Resolves blockers: missing_material\./);
   });
 });

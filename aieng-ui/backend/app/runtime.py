@@ -601,6 +601,34 @@ def _emit(run: RunRecord, event_type: str, payload: Any = None) -> RuntimeEvent:
     return ev
 
 
+def _tool_failure_diagnostic(
+    *,
+    code: str,
+    message: str,
+    tool_name: str,
+    remediation: str,
+) -> dict[str, Any]:
+    """Build the public structured error envelope for runtime tool failures."""
+    return {
+        "code": code,
+        "message": message,
+        "remediation": remediation,
+        "tool_name": tool_name,
+    }
+
+
+def _tool_failure_payload(tool_name: str, diagnostic: dict[str, Any]) -> dict[str, Any]:
+    """Return a backwards-compatible tool_failed event payload."""
+    return {
+        "tool": tool_name,
+        "error": diagnostic["message"],
+        "code": diagnostic["code"],
+        "message": diagnostic["message"],
+        "remediation": diagnostic.get("remediation"),
+        "diagnostic": diagnostic,
+    }
+
+
 # ── shared step executor ───────────────────────────────────────────────────────
 
 def _execute_steps(
@@ -704,14 +732,28 @@ def _execute_steps(
 
         if tool_def is None:
             err = f"tool not registered: {tool_name}"
+            diagnostic = _tool_failure_diagnostic(
+                code="tool_not_registered",
+                message=err,
+                tool_name=tool_name,
+                remediation=(
+                    "Check that the workbench backend is current and that the requested "
+                    "tool name exists in /api/runtime/tools."
+                ),
+            )
             run.tool_results.append(ToolResult(id=tc.id, status="error", error=err))
             run.tool_errors.append(
-                ToolError(code="tool_not_registered", message=err, tool_name=tool_name)
+                ToolError(
+                    code="tool_not_registered",
+                    message=err,
+                    tool_name=tool_name,
+                    details=diagnostic,
+                )
             )
             run.errors.append(err)
-            _emit(run, "tool_failed", {"tool": tool_name, "error": err})
+            _emit(run, "tool_failed", _tool_failure_payload(tool_name, diagnostic))
             run.status = "failed"
-            _emit(run, "run_failed", {"errors": run.errors})
+            _emit(run, "run_failed", {"errors": run.errors, "diagnostics": [diagnostic]})
             return
 
         _emit(run, "tool_started", {"tool": tool_name})
@@ -729,18 +771,28 @@ def _execute_steps(
             _emit(run, "tool_succeeded", {"tool": tool_name, "artifact_count": len(artifacts)})
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
+            diagnostic = _tool_failure_diagnostic(
+                code="tool_execution_error",
+                message=err,
+                tool_name=tool_name,
+                remediation=(
+                    "Inspect the tool input and the tool-specific output/logs; retry only "
+                    "after correcting the reported precondition or implementation error."
+                ),
+            )
             run.tool_results.append(ToolResult(id=tc.id, status="error", error=err))
             run.tool_errors.append(
                 ToolError(
                     code="tool_execution_error",
                     message=err,
                     tool_name=tool_name,
+                    details=diagnostic,
                 )
             )
             run.errors.append(err)
-            _emit(run, "tool_failed", {"tool": tool_name, "error": err})
+            _emit(run, "tool_failed", _tool_failure_payload(tool_name, diagnostic))
             run.status = "failed"
-            _emit(run, "run_failed", {"errors": run.errors})
+            _emit(run, "run_failed", {"errors": run.errors, "diagnostics": [diagnostic]})
             return
 
 

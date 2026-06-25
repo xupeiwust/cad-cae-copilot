@@ -939,6 +939,12 @@ def test_runtime_run_failed_tool_produces_error_event(tmp_path: Path) -> None:
         assert "run_failed" in event_types
         failed_ev = next(e for e in result.events if e.type == "tool_failed")
         assert failed_ev.payload["tool"] == "test.boom"
+        assert failed_ev.payload["error"] == result.errors[0]
+        assert failed_ev.payload["code"] == "tool_execution_error"
+        assert failed_ev.payload["message"] == result.errors[0]
+        assert failed_ev.payload["diagnostic"]["code"] == "tool_execution_error"
+        assert failed_ev.payload["diagnostic"]["remediation"]
+        assert result.tool_errors[0].details["code"] == "tool_execution_error"
     finally:
         _rt._REGISTRY.pop("test.boom", None)
         _rt._STORE.pop("test002", None)
@@ -4018,6 +4024,10 @@ def test_aieng_convert_bridge_exception_produces_tool_failed(monkeypatch, tmp_pa
     event_types = [e["type"] for e in data["events"]]
     assert "tool_failed" in event_types
     assert "run_failed" in event_types
+    failed_event = next(e for e in data["events"] if e["type"] == "tool_failed")
+    assert failed_event["payload"]["code"] == "tool_execution_error"
+    assert failed_event["payload"]["diagnostic"]["remediation"]
+    assert data["tool_errors"][0]["details"]["code"] == "tool_execution_error"
 
 
 def test_runtime_plan_selects_convert_intent(tmp_path: Path) -> None:

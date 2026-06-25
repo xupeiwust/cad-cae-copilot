@@ -161,4 +161,34 @@ describe("buildProjectTimeline", () => {
     expect(timeline.warningCount).toBe(1);
     expect(timeline.entries.some((entry) => entry.title.includes("tool_bad"))).toBe(true);
   });
+
+  test("surfaces structured tool failure diagnostics as event detail", () => {
+    const run: RuntimeRun = {
+      ...baseRun,
+      status: "failed",
+      events: [
+        {
+          id: "evt_failed",
+          run_id: "run_001",
+          type: "tool_failed",
+          timestamp: "2026-06-25T10:00:03Z",
+          payload: {
+            tool: "cae.run_solver",
+            error: "RuntimeError: ccx failed",
+            diagnostic: {
+              code: "tool_execution_error",
+              message: "RuntimeError: ccx failed",
+              remediation: "Inspect the solver log.",
+            },
+          },
+        },
+      ],
+    };
+
+    const timeline = buildProjectTimeline([run]);
+    const entry = timeline.entries.find((item) => item.id === "evt_failed");
+
+    expect(entry?.kind).toBe("failure");
+    expect(entry?.detail).toBe("RuntimeError: ccx failed");
+  });
 });

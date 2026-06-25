@@ -189,6 +189,16 @@ function eventTitle(event: RuntimeEvent): string {
   return event.type.replaceAll("_", " ");
 }
 
+function eventDetail(event: RuntimeEvent): string | null {
+  const payload = asRecord(event.payload);
+  if (!payload) return null;
+  const diagnostic = asRecord(payload.diagnostic);
+  return asString(diagnostic?.message)
+    ?? asString(payload.message)
+    ?? asString(payload.reason)
+    ?? asString(payload.error);
+}
+
 function eventKind(event: RuntimeEvent): ProjectTimelineEntryKind {
   if (event.type.includes("approval")) return "approval";
   if (event.type.includes("failed") || event.type.includes("rejected") || event.type.includes("cancelled")) return "failure";
@@ -229,7 +239,7 @@ export function buildProjectTimeline(runs: RuntimeRun[]): ProjectTimeline {
         kind: eventKind(event),
         status: event.type,
         title: eventTitle(event),
-        detail: payload ? asString(payload.message) ?? asString(payload.reason) : null,
+        detail: eventDetail(event),
         artifacts,
         nextActions: collectNextActions(payload),
         sourceRunId: run.run_id,

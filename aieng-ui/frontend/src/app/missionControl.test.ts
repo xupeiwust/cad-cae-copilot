@@ -1,0 +1,174 @@
+import { describe, expect, it } from "vitest";
+
+import { buildMissionControl } from "./missionControl";
+import type { PendingApproval } from "./pendingApprovals";
+import type { ProjectTimeline } from "./projectTimeline";
+import type { ProjectRecord, ProjectSummary } from "../types";
+
+const project: ProjectRecord = {
+  id: "p1",
+  name: "Bracket",
+  status: "ready",
+  created_at: "2026-06-26T00:00:00Z",
+  updated_at: "2026-06-26T00:00:00Z",
+  aieng_file: "/tmp/bracket.aieng",
+  web_asset: "/assets/bracket.glb",
+  web_asset_format: "glb",
+};
+
+function summary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
+  return {
+    project,
+    members: [
+      "manifest.json",
+      "geometry/topology_map.json",
+      "graph/feature_graph.json",
+      "provenance/tool_trace.json",
+    ],
+    manifest: { name: "Bracket" },
+    feature_graph: { features: [] },
+    topology: { faces: [] },
+    validation: null,
+    viewer: null,
+    ai_summary: null,
+    derived: {},
+    ...overrides,
+  };
+}
+
+function emptyTimeline(overrides: Partial<ProjectTimeline> = {}): ProjectTimeline {
+  return {
+    entries: [],
+    runCount: 0,
+    activityCount: 0,
+    warningCount: 0,
+    diagnosticCount: 0,
+    snapshotCount: 0,
+    unstructuredFailureCount: 0,
+    ...overrides,
+  };
+}
+
+function build(overrides: Partial<Parameters<typeof buildMissionControl>[0]> = {}) {
+  return buildMissionControl({
+    selectedProject: project,
+    summary: summary(),
+    pendingApprovals: [],
+    projectTimeline: emptyTimeline(),
+    simulationReadiness: null,
+    meshDiagnostics: null,
+    meshConvergenceReport: null,
+    ...overrides,
+  });
+}
+
+describe("buildMissionControl", () => {
+  it("surfaces empty project state without claiming evidence", () => {
+    const model = buildMissionControl({
+      selectedProject: null,
+      summary: null,
+      pendingApprovals: [],
+      projectTimeline: null,
+      simulationReadiness: null,
+      meshDiagnostics: null,
+      meshConvergenceReport: null,
+    });
+
+    expect(model.packageStatus).toBe("missing");
+    expect(model.headline).toContain(".aieng");
+    expect(model.nextAction.label).toBe("Create or open a project");
+    expect(model.evidenceNotes.join(" ")).toContain("No result evidence");
+  });
+
+  it("treats a CAD-only package as package/CAD evidence but missing CAE setup", () => {
+    const model = build();
+
+    expect(model.packageName).toBe("bracket.aieng");
+    expect(model.cards.find((card) => card.key === "package")?.status).toBe("ready");
+    expect(model.cards.find((card) => card.key === "cad")?.status).toBe("ready");
+    expect(model.cards.find((card) => card.key === "cae")?.status).toBe("missing");
+    expect(model.nextAction.label).toBe("Define CAE setup");
+    expect(model.nextAction.draft).toContain("Do not run the solver");
+  });
+
+  it("blocks on missing required CAE inputs", () => {
+    const model = build({
+      summary: summary({
+        members: ["manifest.json", "task/design_targets.yaml"],
+        cae: {
+          present: true,
+          constraints_count: 0,
+          constraint_types: {},
+          materials_count: 0,
+          boundary_conditions_count: 0,
+          loads_count: 0,
+          evidence_count: 0,
+          result_evidence_count: 0,
+          results_available: false,
+          available_fields: [],
+          simulation_targets: [],
+          protected_regions: [],
+          materials: [],
+          boundary_conditions: [],
+          loads: [],
+          evidence: [],
+        },
+      }),
+      simulationReadiness: {
+        setup_source: "package",
+        ready_for_solver: false,
+        missing_required_inputs: ["material", "loads"],
+      },
+    });
+
+    expect(model.cards.find((card) => card.key === "cae")?.status).toBe("blocked");
+    expect(model.nextAction.label).toBe("Fill required CAE inputs");
+    expect(model.nextAction.detail).toContain("material");
+    expect(model.cards.find((card) => card.key === "cae")?.meta).toBe("design targets present");
+  });
+
+  it("shows approval gates as the next safest action", () => {
+    const approval: PendingApproval = {
+      permissionId: "perm1",
+      toolName: "cae.run_solver",
+      projectId: "p1",
+      explanation: "Run CalculiX",
+      codePreview: null,
+    };
+    const model = build({ pendingApprovals: [approval] });
+
+    expect(model.cards.find((card) => card.key === "approval")?.status).toBe("blocked");
+    expect(model.nextAction.label).toBe("Review pending approval");
+    expect(model.nextAction.draft).toBeNull();
+  });
+
+  it("does not present solver result evidence as claim advancement", () => {
+    const model = build({
+      summary: summary({
+        members: ["manifest.json", "results/evidence_index.json", "results/result_summary.json"],
+        cae: {
+          present: true,
+          constraints_count: 1,
+          constraint_types: {},
+          materials_count: 1,
+          boundary_conditions_count: 1,
+          loads_count: 1,
+          evidence_count: 1,
+          result_evidence_count: 1,
+          results_available: true,
+          available_fields: ["von_mises"],
+          simulation_targets: [],
+          protected_regions: [],
+          materials: [],
+          boundary_conditions: [],
+          loads: [],
+          evidence: [],
+        },
+      }),
+    });
+
+    expect(model.cards.find((card) => card.key === "results")?.status).toBe("ready");
+    expect(model.cards.find((card) => card.key === "results")?.meta).toBe("claims not auto-advanced");
+    expect(model.nextAction.draft).toContain("Do not advance claims automatically");
+  });
+});

@@ -33,6 +33,8 @@ import { useSizingSweepReport } from "./useSizingSweepReport";
 import { useMeshConvergenceReport } from "./useMeshConvergenceReport";
 import { useCaeSetupOverlay } from "./useCaeSetupOverlay";
 import { useProjectTimeline } from "./useProjectTimeline";
+import { useSimulationReadiness } from "./useSimulationReadiness";
+import { useMeshDiagnostics } from "./useMeshDiagnostics";
 
 export function useWorkbenchApp() {
   const {
@@ -134,6 +136,8 @@ export function useWorkbenchApp() {
   const { meshConvergenceReport } = useMeshConvergenceReport({ selectedId, geometryVersion });
   const { caeSetupOverlay } = useCaeSetupOverlay({ selectedId, geometryVersion });
   const { projectTimeline } = useProjectTimeline({ selectedId, geometryVersion, refreshKey: timelineRefreshKey });
+  const { simulationReadiness } = useSimulationReadiness({ selectedId, geometryVersion });
+  const { meshDiagnostics } = useMeshDiagnostics({ selectedId, geometryVersion });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
   const rawViewerUrl = cadPreviewUrl ?? summary?.viewer_url ?? fallbackViewerUrl;
@@ -501,6 +505,7 @@ export function useWorkbenchApp() {
     setNotice,
     setRuntimeNotice,
     selectedProject,
+    summary,
     sidebarCollapsed,
     setSidebarCollapsed,
     setSettingsOpen,
@@ -575,5 +580,7 @@ export function useWorkbenchApp() {
     meshConvergenceReport,
     projectTimeline,
     caeSetupOverlay,
+    simulationReadiness,
+    meshDiagnostics,
   };
 }

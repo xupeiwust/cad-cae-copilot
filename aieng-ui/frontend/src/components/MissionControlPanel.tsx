@@ -1,0 +1,93 @@
+import { AlertTriangle, CheckCircle2, Clipboard, PackageCheck, ShieldCheck } from "lucide-react";
+
+import type { MissionControlModel, MissionControlStatus } from "../app/missionControl";
+
+type MissionControlPanelProps = {
+  model: MissionControlModel;
+  onCopyDraft?: (draft: string) => void;
+};
+
+const STATUS_LABEL: Record<MissionControlStatus, string> = {
+  ready: "ready",
+  missing: "missing",
+  blocked: "blocked",
+  unknown: "unknown",
+};
+
+function statusIcon(status: MissionControlStatus) {
+  if (status === "ready") return <CheckCircle2 className="h-4 w-4" aria-hidden="true" />;
+  if (status === "blocked") return <AlertTriangle className="h-4 w-4" aria-hidden="true" />;
+  return <ShieldCheck className="h-4 w-4" aria-hidden="true" />;
+}
+
+export function MissionControlPanel({ model, onCopyDraft }: MissionControlPanelProps) {
+  return (
+    <section className="mission-control-card" aria-label="Mission Control">
+      <div className="mission-control-head">
+        <div className="mission-control-title">
+          <PackageCheck className="h-4 w-4" aria-hidden="true" />
+          <div>
+            <strong>Mission Control</strong>
+            <span>{model.projectName}</span>
+          </div>
+        </div>
+        <span className={`mission-status mission-status-${model.packageStatus}`}>
+          {STATUS_LABEL[model.packageStatus]}
+        </span>
+      </div>
+
+      <div className="mission-package">
+        <div>
+          <span>.aieng evidence package</span>
+          <strong>{model.packageName}</strong>
+        </div>
+        <p>{model.packageDetail}</p>
+      </div>
+
+      <div className="mission-headline">
+        <strong>{model.headline}</strong>
+        <span>Package evidence, runtime state, and approvals stay separate.</span>
+      </div>
+
+      <div className="mission-grid">
+        {model.cards.map((card) => (
+          <article key={card.key} className={`mission-tile mission-tile-${card.status}`}>
+            <div className="mission-tile-head">
+              <span>{statusIcon(card.status)}</span>
+              <strong>{card.label}</strong>
+              <em>{STATUS_LABEL[card.status]}</em>
+            </div>
+            <p>{card.detail}</p>
+            {card.meta ? <small>{card.meta}</small> : null}
+          </article>
+        ))}
+      </div>
+
+      <div className="mission-action">
+        <div>
+          <span>Next safe action</span>
+          <strong>{model.nextAction.label}</strong>
+          <p>{model.nextAction.detail}</p>
+        </div>
+        {model.nextAction.draft ? (
+          <button
+            type="button"
+            className="mission-copy"
+            onClick={() => onCopyDraft?.(model.nextAction.draft as string)}
+            disabled={!onCopyDraft}
+            title="Copy bounded agent prompt"
+          >
+            <Clipboard className="h-4 w-4" aria-hidden="true" />
+            <span>Copy prompt</span>
+          </button>
+        ) : null}
+      </div>
+
+      <div className="mission-notes">
+        {model.evidenceNotes.map((note) => (
+          <span key={note}>{note}</span>
+        ))}
+      </div>
+    </section>
+  );
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Settings, Database, Puzzle, List, FileText, Terminal } from "lucide-react";
 
 import { api } from "../api";
@@ -16,10 +16,12 @@ import { OptimizationPanel } from "../components/OptimizationPanel";
 import { EditDiffPanel } from "../components/EditDiffPanel";
 import { SizingSweepPanel } from "../components/SizingSweepPanel";
 import { MeshConvergencePanel } from "../components/MeshConvergencePanel";
+import { MissionControlPanel } from "../components/MissionControlPanel";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
 import { isEmbedMode } from "./embed";
 import { useBrowserStorageState } from "./useBrowserStorageState";
+import { buildMissionControl } from "./missionControl";
 import type { useWorkbenchApp } from "./useWorkbenchApp";
 
 type LibraryTab = "materials" | "standards" | "bom";
@@ -58,6 +60,30 @@ export function AppChrome({ app }: AppChromeProps) {
         .filter(Boolean)
         .join(" ");
   const reportUrl = app.selectedId ? api.projectReportUrl(app.selectedId) : null;
+  const projectApprovals = useMemo(
+    () => app.pendingApprovals.filter((item) => !item.projectId || item.projectId === app.selectedId),
+    [app.pendingApprovals, app.selectedId],
+  );
+  const missionControl = useMemo(
+    () => buildMissionControl({
+      selectedProject: app.selectedProject,
+      summary: app.summary,
+      pendingApprovals: projectApprovals,
+      projectTimeline: app.projectTimeline,
+      simulationReadiness: app.simulationReadiness,
+      meshDiagnostics: app.meshDiagnostics,
+      meshConvergenceReport: app.meshConvergenceReport,
+    }),
+    [
+      app.selectedProject,
+      app.summary,
+      projectApprovals,
+      app.projectTimeline,
+      app.simulationReadiness,
+      app.meshDiagnostics,
+      app.meshConvergenceReport,
+    ],
+  );
 
   // Read+Handoff: a drafted /command becomes a copy-able chip in the notice
   // (the GUI never executes — the user runs it with their connected agent).
@@ -210,9 +236,7 @@ export function AppChrome({ app }: AppChromeProps) {
           />
 
           <PendingApprovals
-            approvals={app.pendingApprovals.filter(
-              (item) => !item.projectId || item.projectId === app.selectedId,
-            )}
+            approvals={projectApprovals}
             onResolve={app.resolveApproval}
           />
 
@@ -228,6 +252,13 @@ export function AppChrome({ app }: AppChromeProps) {
             is invisible (and does not block the viewer) in the common case.
           */}
           <aside className="workspace-inspector" aria-label="Project inspector">
+            {!embed && (
+              <MissionControlPanel
+                model={missionControl}
+                onCopyDraft={app.copyPointerText}
+              />
+            )}
+
             <ProjectTimelinePanel
               timeline={app.projectTimeline}
               onRestoreSnapshot={app.restoreCadSnapshot}

@@ -59,6 +59,92 @@ def _fidelity_brief(topology_map: dict[str, Any], feature_graph: dict[str, Any])
     }
 
 
+def _standard_fastener_plan_from_feature_graph(feature_graph: dict[str, Any] | None) -> dict[str, Any]:
+    """Return advisory hole-to-fastener plans for design_review.
+
+    This is intentionally read-only. It does not insert hardware, update BOM
+    artifacts, or claim that a bolt exists in the CAD package.
+    """
+    if not isinstance(feature_graph, dict):
+        return {
+            "status": "unavailable",
+            "reason": "feature_graph_missing",
+            "advisory_only": True,
+            "mutates_geometry": False,
+            "plan_count": 0,
+            "matched_count": 0,
+        }
+
+    features = feature_graph.get("features")
+    if not isinstance(features, list):
+        return {
+            "status": "unavailable",
+            "reason": "feature_graph_has_no_features",
+            "advisory_only": True,
+            "mutates_geometry": False,
+            "plan_count": 0,
+            "matched_count": 0,
+        }
+
+    try:
+        from aieng.standards import plan_fasteners_for_features
+
+        raw_plans = plan_fasteners_for_features(features)
+    except Exception as exc:  # noqa: BLE001 - advisory evidence must not break review
+        return {
+            "status": "unavailable",
+            "reason": "planner_failed",
+            "message": f"{exc}",
+            "advisory_only": True,
+            "mutates_geometry": False,
+            "plan_count": 0,
+            "matched_count": 0,
+        }
+
+    plans: list[dict[str, Any]] = []
+    for plan in raw_plans[:20]:
+        entry = {
+            "feature_id": plan.get("feature_id"),
+            "feature_type": plan.get("feature_type"),
+            "status": plan.get("status"),
+            "mode": plan.get("mode"),
+            "reasons": list(plan.get("reasons") or []),
+        }
+        if isinstance(plan.get("fastener_spec"), dict):
+            entry["fastener_spec"] = dict(plan["fastener_spec"])
+        if isinstance(plan.get("candidates"), list):
+            entry["candidates"] = list(plan["candidates"])
+        if isinstance(plan.get("observed"), dict):
+            entry["observed"] = dict(plan["observed"])
+        plans.append(entry)
+
+    matched_count = sum(1 for plan in raw_plans if plan.get("status") == "matched")
+    return {
+        "status": "ok",
+        "advisory_only": True,
+        "mutates_geometry": False,
+        "plan_count": len(raw_plans),
+        "matched_count": matched_count,
+        "omitted_count": max(0, len(raw_plans) - len(plans)),
+        "plans": plans,
+        "next_action": (
+            "Review matched hole features and, if desired, call the approval-gated "
+            "cad.insert_fasteners flow; this plan does not insert hardware or update BOM."
+        ),
+    }
+
+
+def _compact_standard_fastener_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": plan.get("status"),
+        "reason": plan.get("reason"),
+        "advisory_only": True,
+        "mutates_geometry": False,
+        "plan_count": int(plan.get("plan_count") or 0),
+        "matched_count": int(plan.get("matched_count") or 0),
+    }
+
+
 # ── AGENTS.md resolution (single source of truth for build123d capabilities) ──
 
 def _resolve_agents_md_path() -> Path | None:
@@ -8584,6 +8670,7 @@ def design_review(
 
     # Load topology + feature graph once for the structural + parameter signals.
     geometry_report: dict[str, Any] = {}
+    feature_graph: dict[str, Any] | None = None
     parameter_index: list[dict[str, Any]] | None = None
     try:
         project = get_project(settings, project_id)
@@ -8597,12 +8684,14 @@ def design_review(
                 if "graph/feature_graph.json" in names:
                     from .agent_autopilot.parameter_binding import build_parameter_index
 
-                    fg = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
-                    parameter_index = build_parameter_index(fg)
+                    feature_graph = json.loads(zf.read("graph/feature_graph.json").decode("utf-8"))
+                    parameter_index = build_parameter_index(feature_graph)
     except Exception:
         # Critique already succeeded; degrade to critique-only findings rather
         # than fail the whole review on a structural-signal read error.
         geometry_report = {}
+
+    standard_fastener_plan = _standard_fastener_plan_from_feature_graph(feature_graph)
 
     findings = (
         list(crit.get("findings") or [])
@@ -8689,8 +8778,15 @@ def design_review(
             "spatial_issues": spatial_issues,
             "spatial_summary": spatial_summary,
             "modeling_fidelity": {"level": fidelity_level, "score": fidelity.get("score")},
+            "standard_fastener_matches": standard_fastener_plan.get("matched_count", 0),
+            "standard_fastener_plan_count": standard_fastener_plan.get("plan_count", 0),
         },
         "actions": actions,
+        "standard_fastener_plan": (
+            standard_fastener_plan
+            if detail != "compact"
+            else _compact_standard_fastener_plan(standard_fastener_plan)
+        ),
         "fidelity": fidelity,
         "recommendation": recommendation,
         "message": (

@@ -3446,6 +3446,58 @@ def test_design_review_merges_critique_and_respects_detail(tmp_path: Path) -> No
     assert "actions" in compact and "recommendation" in compact
 
 
+def test_design_review_surfaces_advisory_standard_fastener_plan(tmp_path: Path) -> None:
+    from app import cad_generation as cg
+    from app.main import project_dir, save_project
+    from app.project_io import get_project
+
+    settings = _make_settings(tmp_path)
+    pid = _make_project(settings, "review-fastener-plan")
+    project = get_project(settings, pid)
+    pkg_path = project_dir(settings, pid) / "fastener_plan.aieng"
+    feature_graph = {
+        "features": [
+            {"id": "base", "type": "named_part", "name": "base_plate"},
+            {
+                "id": "hole_m6",
+                "type": "mounting_hole",
+                "name": "M6 clearance",
+                "hole_metadata": {
+                    "diameter_mm": 6.6,
+                    "depth_mm": 8.0,
+                    "hole_depth_kind": "through",
+                    "through": True,
+                },
+            },
+        ]
+    }
+    with zipfile.ZipFile(pkg_path, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+        zf.writestr("graph/feature_graph.json", json.dumps(feature_graph))
+    project["aieng_file"] = "fastener_plan.aieng"
+    save_project(settings, project)
+
+    fake_crit = {
+        "status": "ok",
+        "verdict": "passes",
+        "findings": [],
+        "fidelity": {"level": "designed", "score": 90, "findings": []},
+    }
+    with patch.object(cg, "critique", return_value=fake_crit):
+        full = cg.design_review(settings, pid, {})
+        compact = cg.design_review(settings, pid, {"response_detail": "compact"})
+
+    plan = full["standard_fastener_plan"]
+    assert plan["advisory_only"] is True
+    assert plan["mutates_geometry"] is False
+    assert plan["matched_count"] == 1
+    assert plan["plans"][0]["feature_id"] == "hole_m6"
+    assert plan["plans"][0]["fastener_spec"]["designation"] == "M6"
+    assert full["summary"]["standard_fastener_matches"] == 1
+    assert compact["standard_fastener_plan"]["matched_count"] == 1
+    assert "plans" not in compact["standard_fastener_plan"]
+
+
 def test_design_review_propagates_critique_error(tmp_path: Path) -> None:
     from app import cad_generation as cg
 

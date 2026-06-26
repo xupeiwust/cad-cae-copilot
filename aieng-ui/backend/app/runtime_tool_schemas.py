@@ -408,6 +408,21 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "inputs with needs_user_input. Run opt.writeback_to_shape_ir (method=contour) first."
         ),
     },
+    "opt.design_study_summary": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+            "project_id": {"type": "string"},
+        },
+        "additionalProperties": False,
+        "description": (
+            "Read-only design-study artifact envelope for external agents. Reports "
+            "whether ranking, recommendation, optimization report, surrogate proposals, "
+            "and convergence artifacts exist, with per-artifact unavailable reasons. "
+            "Does NOT validate, execute, evaluate, rank, accept, run CAE, or modify "
+            "the baseline; artifact presence does not mean a candidate was accepted."
+        ),
+    },
     "opt.propose_candidates": {
         "type": "object",
         "required": ["project_id"],

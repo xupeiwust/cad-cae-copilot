@@ -5,8 +5,10 @@ Extracted from runtime_tool_registry.py to keep domain logic focused.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
+import zipfile
 
 from ..legacy_app_symbols import sync_main_symbols
 
@@ -295,6 +297,72 @@ def register_opt_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "needs_user_input. Run opt.writeback_to_shape_ir (method=contour) first."
         ),
         input_schema=_schema("opt.topology_to_sizing"),
+    )
+
+    def _tool_opt_design_study_summary(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        """Read-only design-study artifact envelope for external agents."""
+        from ..project_io import get_project, resolve_project_path
+
+        pid = str(inp.get("project_id") or "").strip()
+        if not pid:
+            return {"status": "error", "code": "bad_input", "message": "project_id is required"}
+        project = get_project(active_settings, pid)
+        pkg = resolve_project_path(active_settings, pid, project.get("aieng_file"))
+
+        artifact_paths = {
+            "ranking": "analysis/design_study_candidate_ranking.json",
+            "recommendation": "analysis/optimization_recommendation.json",
+            "report": "diagnostics/optimization_report.json",
+            "surrogate": "analysis/design_study_surrogate_proposals.json",
+            "convergence": "analysis/optimization_iterations.json",
+        }
+
+        def _artifact(path: str) -> dict[str, Any]:
+            if pkg is None or not pkg.exists():
+                return {"path": path, "available": False, "reason": "package_not_found"}
+            try:
+                with zipfile.ZipFile(pkg, "r") as zf:
+                    if path not in zf.namelist():
+                        return {"path": path, "available": False, "reason": "missing"}
+                    raw = json.loads(zf.read(path).decode("utf-8"))
+            except Exception as exc:  # noqa: BLE001 - summary should degrade per artifact
+                return {
+                    "path": path,
+                    "available": False,
+                    "reason": "read_failed",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            return {"path": path, "available": True, "report": raw}
+
+        artifacts = {key: _artifact(path) for key, path in artifact_paths.items()}
+        available = {key: value for key, value in artifacts.items() if value.get("available")}
+        return {
+            "status": "ok",
+            "tool": "opt.design_study_summary",
+            "project_id": pid,
+            "available": bool(available),
+            "artifacts": artifacts,
+            "available_artifacts": sorted(available),
+            "claim_advancement": "none",
+            "honesty": (
+                "Read-only artifact envelope. Presence of ranking/recommendation "
+                "does not mean a candidate was accepted or the baseline was changed."
+            ),
+        }
+
+    rt.register_tool(
+        "opt.design_study_summary",
+        _tool_opt_design_study_summary,
+        description=(
+            "Read-only design-study artifact envelope for external agents. Reports "
+            "the availability of ranking, recommendation, optimization report, "
+            "surrogate proposal, and convergence artifacts with per-artifact reasons. "
+            "Does NOT validate, execute, evaluate, rank, accept, run CAE, or modify "
+            "the baseline; artifact presence does not mean a candidate was accepted."
+        ),
+        input_schema=_schema("opt.design_study_summary"),
+        requires_approval=False,
+        read_only=True,
     )
 
     def _tool_opt_run_assembly_topology_optimization(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:

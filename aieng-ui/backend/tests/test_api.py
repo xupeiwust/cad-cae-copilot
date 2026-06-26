@@ -13281,6 +13281,43 @@ def test_design_study_summary_endpoint_returns_readonly_artifact_envelope(tmp_pa
     assert "does not mean a candidate was accepted" in data["honesty"]
 
 
+def test_opt_design_study_summary_tool_returns_readonly_artifact_envelope(tmp_path: Path) -> None:
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("design-study-summary-tool"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "summary-tool.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    ranking = {
+        "format": "aieng.design_study_candidate_ranking",
+        "best_candidate_id": "c1",
+    }
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "design-study-summary-tool"}))
+        zf.writestr("analysis/design_study_candidate_ranking.json", json.dumps(ranking))
+    project["aieng_file"] = "summary-tool.aieng"
+    save_project(settings, project)
+
+    resp = client.post(
+        "/api/agent/invoke-tool",
+        json={"tool": "opt.design_study_summary", "input": {"project_id": project_id}},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["tool"] == "opt.design_study_summary"
+    assert data["available"] is True
+    assert data["available_artifacts"] == ["ranking"]
+    assert data["artifacts"]["ranking"]["report"]["best_candidate_id"] == "c1"
+    assert data["artifacts"]["recommendation"]["available"] is False
+    assert data["claim_advancement"] == "none"
+    assert "does not mean a candidate was accepted" in data["honesty"]
+
+
 def test_design_study_validate_endpoint(tmp_path: Path) -> None:
     """POST /design-study/validate validates the problem + candidate patches and writes
     diagnostics — contract + validation only, no patch applied, baseline untouched."""

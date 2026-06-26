@@ -113,6 +113,25 @@ def test_verify_case_fails_when_outside_tolerance() -> None:
     )
     assert disp_metric["verdict"] == "fail"
     assert stress_metric["verdict"] == "pass"
+    assert disp_metric["gating"] is True
+    assert stress_metric["gating"] is False
+
+
+def test_verify_case_keeps_non_gating_stress_informational() -> None:
+    ref = REFERENCE_CASES["tension_rod"]
+    computed = _make_computed_metrics(
+        max_displacement=ref["metrics"]["max_displacement"]["value"] * 1.02,
+        max_von_mises_stress=ref["metrics"]["max_von_mises_stress"]["value"] * 2.0,
+    )
+    result = verify_case("tension_rod", computed)
+
+    assert result["verdict"] == "pass"
+    stress_metric = next(
+        m for m in result["metrics"] if m["metric"] == "max_von_mises_stress"
+    )
+    assert stress_metric["verdict"] == "fail"
+    assert stress_metric["gating"] is False
+    assert "Informational" in stress_metric["message"]
 
 
 def test_verify_case_computes_deviation_percent() -> None:

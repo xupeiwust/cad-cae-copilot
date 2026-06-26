@@ -63,6 +63,10 @@
                 "computed": {"type": ["number", "null"]},
                 "deviation_percent": {"type": ["number", "null"]},
                 "tolerance_percent": {"type": "number"},
+                "gating": {
+                  "type": "boolean",
+                  "description": "Whether this metric contributes to the case pass/fail verdict. Non-gating metrics remain reported for transparency."
+                },
                 "verdict": {
                   "type": "string",
                   "enum": ["pass", "fail", "skipped"]

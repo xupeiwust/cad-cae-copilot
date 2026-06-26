@@ -14,6 +14,14 @@ documented tolerance band."
 
 Never: "certified" or "validated to NAFEMS standards".
 
+Some metrics are **reported but non-gating**. In particular, max von Mises stress
+in these coarse C3D8 fixtures can be dominated by clamped-end concentrations,
+point-load singularity, or bending-stress under-resolution. Those stress values
+remain in the V&V report with their deviation, but they do not decide the case
+pass/fail verdict unless explicitly marked as gating in
+`REFERENCE_CASES`. The current automated gate is based on the more robust
+displacement, modal-frequency, and buckling-factor checks.
+
 ---
 
 ## Mesh convergence study

@@ -19,8 +19,8 @@
   "surfaces": {
     "artifact_schemas": {
       "policy": "unstable",
-      "sha256": "da998e48205906ffef91ce4d58562c2294ed84c8ced269f96cb6e1ae4b2abbcd",
-      "version": "0.1.0-alpha.2"
+      "sha256": "caaf6572a885f44c62405f58df2a2ff4d37efef0c07cbf62be104a94fd56100e",
+      "version": "0.1.0-alpha.3"
     },
     "mcp_tool_surface": {
       "policy": "unstable",

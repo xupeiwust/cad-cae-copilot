@@ -43,6 +43,13 @@ export function meshDiagnosticsSummary(
   if (broken) issues.push(`${broken} broken elem`);
   if (degenerate) issues.push(`${degenerate} degenerate elem`);
   if (poor) issues.push(`${poor} poor elem`);
+  if (poor && typeof diagnostics.max_aspect_ratio === "number") {
+    const maxAspect = Number.isInteger(diagnostics.max_aspect_ratio)
+      ? diagnostics.max_aspect_ratio.toFixed(0)
+      : diagnostics.max_aspect_ratio.toFixed(1);
+    const worst = diagnostics.worst_element_id;
+    issues.push(`max aspect ${maxAspect}${typeof worst === "number" ? ` @ elem ${worst}` : ""}`);
+  }
   if (empty) issues.push(`${empty} empty set`);
   if (unresolved) issues.push(`${unresolved} unresolved set`);
   if (sparse) issues.push(`${sparse} sparse set`);

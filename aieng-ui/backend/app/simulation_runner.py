@@ -535,9 +535,16 @@ def compute_mesh_quality(
             "poor_element_count": 0,
             "broken_element_count": 0,
             "degenerate_element_ids": [],
+            "poor_element_ids": [],
+            "broken_element_ids": [],
             "max_aspect_ratio": None,
             "mean_aspect_ratio": None,
             "worst_element_id": None,
+            "findings": [{
+                "severity": "info",
+                "code": "quality_not_computed",
+                "message": "No supported tetrahedral elements found; mesh quality was not computed.",
+            }],
         })
         return base
 
@@ -571,16 +578,66 @@ def compute_mesh_quality(
     else:
         verdict = "ok"
 
+    findings: list[dict[str, Any]] = []
+    if broken_ids:
+        findings.append({
+            "severity": "error",
+            "code": "broken_element_connectivity",
+            "count": len(broken_ids),
+            "element_ids": broken_ids[:10],
+            "message": (
+                "One or more tetrahedral elements reference missing nodes; the mesh "
+                "handoff is unsafe until connectivity is fixed."
+            ),
+        })
+    if degenerate_ids:
+        findings.append({
+            "severity": "error",
+            "code": "degenerate_tetrahedra",
+            "count": len(degenerate_ids),
+            "element_ids": degenerate_ids[:10],
+            "threshold": _DEGENERATE_VOL_RATIO,
+            "message": (
+                "Collapsed or near-flat tetrahedra detected by normalized volume; "
+                "rerun meshing or repair geometry before solving."
+            ),
+        })
+    if poor_ids:
+        findings.append({
+            "severity": "warning",
+            "code": "poor_tetrahedra",
+            "count": len(poor_ids),
+            "element_ids": poor_ids[:10],
+            "thresholds": {
+                "poor_volume_ratio": _POOR_VOL_RATIO,
+                "poor_aspect_ratio": _POOR_ASPECT_RATIO,
+            },
+            "max_aspect_ratio": round(max(aspects), 4) if aspects else None,
+            "worst_element_id": worst_id,
+            "message": (
+                "Sliver or high-aspect tetrahedra detected; treat solver results as "
+                "mesh-sensitive until the mesh is refined or regenerated."
+            ),
+        })
+    if not findings:
+        findings.append({
+            "severity": "info",
+            "code": "tet_quality_ok",
+            "message": "Supported tetrahedral elements passed the heuristic quality checks.",
+        })
+
     base.update({
         "verdict": verdict,
         "degenerate_element_count": len(degenerate_ids),
         "poor_element_count": len(poor_ids),
         "broken_element_count": len(broken_ids),
         "degenerate_element_ids": degenerate_ids[:50],
+        "poor_element_ids": poor_ids[:50],
         "broken_element_ids": broken_ids[:50],
         "max_aspect_ratio": round(max(aspects), 4) if aspects else None,
         "mean_aspect_ratio": round(sum(aspects) / len(aspects), 4) if aspects else None,
         "worst_element_id": worst_id,
+        "findings": findings,
     })
     return base
 

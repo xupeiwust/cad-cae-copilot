@@ -142,6 +142,16 @@ _TWO_TET_MESH_INP = """\
 2, 2, 3, 4, 5
 """
 
+_HIGH_ASPECT_TET_MESH_INP = """\
+*Node
+1, 0.0, 0.0, 0.0
+2, 100.0, 0.0, 0.0
+3, 0.0, 1.0, 0.0
+4, 0.0, 0.0, 1.0
+*Element, type=C3D4, ELSET=EALL
+11, 1, 2, 3, 4
+"""
+
 
 def test_parse_inp_elements_c3d4() -> None:
     from app.simulation_runner import _parse_inp_elements
@@ -838,6 +848,29 @@ def test_compute_mesh_quality_degenerate_tet_fails() -> None:
     assert q["verdict"] == "fail"
     assert q["degenerate_element_count"] == 1
     assert 7 in q["degenerate_element_ids"]
+    assert q["findings"][0]["code"] == "degenerate_tetrahedra"
+
+
+def test_compute_mesh_quality_high_aspect_tet_warns_with_actionable_finding() -> None:
+    from app.simulation_runner import compute_mesh_quality
+
+    nodes = {
+        1: (0.0, 0.0, 0.0),
+        2: (100.0, 0.0, 0.0),
+        3: (0.0, 1.0, 0.0),
+        4: (0.0, 0.0, 1.0),
+    }
+    elements = [{"id": 11, "type": "C3D4", "nodes": [1, 2, 3, 4]}]
+
+    q = compute_mesh_quality(nodes, elements)
+    assert q["verdict"] == "warning"
+    assert q["poor_element_count"] == 1
+    assert q["poor_element_ids"] == [11]
+    assert q["max_aspect_ratio"] > q["thresholds"]["poor_aspect_ratio"]
+    finding = q["findings"][0]
+    assert finding["code"] == "poor_tetrahedra"
+    assert finding["worst_element_id"] == 11
+    assert "mesh-sensitive" in finding["message"]
 
 
 def test_compute_mesh_quality_missing_node_is_broken() -> None:
@@ -849,6 +882,7 @@ def test_compute_mesh_quality_missing_node_is_broken() -> None:
     q = compute_mesh_quality(nodes, elements)
     assert q["verdict"] == "fail"
     assert q["broken_element_count"] == 1
+    assert q["findings"][0]["code"] == "broken_element_connectivity"
 
 
 def test_compute_mesh_quality_non_tet_is_unknown() -> None:
@@ -861,6 +895,7 @@ def test_compute_mesh_quality_non_tet_is_unknown() -> None:
     assert q["verdict"] == "unknown"
     assert q["tet_count"] == 0
     assert "C3D8" in q["unsupported_element_types"]
+    assert q["findings"][0]["code"] == "quality_not_computed"
 
 
 def test_mesh_diagnostics_endpoint_with_mesh(tmp_path: Path) -> None:
@@ -882,6 +917,29 @@ def test_mesh_diagnostics_endpoint_with_mesh(tmp_path: Path) -> None:
     assert data["mesh_path"] == CANONICAL_MESH_INP_PATH
     assert data["verdict"] in {"ok", "warning", "fail"}
     assert data["tet_count"] == 2
+    assert data["findings"]
+
+
+def test_mesh_diagnostics_endpoint_exposes_poor_element_finding(tmp_path: Path) -> None:
+    from app.simulation_runner import CANONICAL_MESH_INP_PATH
+
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project_id, pkg_path = _make_project(settings, "mesh-diag-poor", "mesh_diag_poor.aieng")
+    _build_test_package(pkg_path)
+    with zipfile.ZipFile(pkg_path, "a", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(CANONICAL_MESH_INP_PATH, _HIGH_ASPECT_TET_MESH_INP)
+
+    resp = client.get(f"/api/projects/{project_id}/mesh-diagnostics")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is True
+    assert data["verdict"] == "warning"
+    assert data["poor_element_ids"] == [11]
+    assert data["findings"][0]["code"] == "poor_tetrahedra"
+    assert data["findings"][0]["worst_element_id"] == 11
 
 
 def test_mesh_diagnostics_endpoint_no_mesh(tmp_path: Path) -> None:

@@ -899,6 +899,23 @@ export type MeshDiagnosticsResponse = {
   degenerate_element_count?: number;
   poor_element_count?: number;
   broken_element_count?: number;
+  degenerate_element_ids?: number[];
+  poor_element_ids?: number[];
+  broken_element_ids?: number[];
+  max_aspect_ratio?: number | null;
+  mean_aspect_ratio?: number | null;
+  worst_element_id?: number | null;
+  findings?: {
+    severity?: string;
+    code?: string;
+    count?: number;
+    element_ids?: number[];
+    threshold?: number;
+    thresholds?: Record<string, number>;
+    max_aspect_ratio?: number | null;
+    worst_element_id?: number | null;
+    message?: string;
+  }[];
   set_coverage?: {
     verdict?: string | null;
     set_count?: number;

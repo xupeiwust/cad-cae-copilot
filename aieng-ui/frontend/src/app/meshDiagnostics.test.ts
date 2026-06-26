@@ -71,4 +71,18 @@ describe("meshDiagnosticsSummary", () => {
     expect(summary?.label).toBe("mesh warn");
     expect(summary?.detail).toContain("1 sparse set");
   });
+
+  it("surfaces high aspect ratio context for poor elements", () => {
+    const summary = meshDiagnosticsSummary(
+      report({
+        overall_verdict: "warning",
+        poor_element_count: 1,
+        max_aspect_ratio: 18.25,
+        worst_element_id: 11,
+      }),
+    );
+    expect(summary?.label).toBe("mesh warn");
+    expect(summary?.detail).toContain("1 poor elem");
+    expect(summary?.detail).toContain("max aspect 18.3 @ elem 11");
+  });
 });

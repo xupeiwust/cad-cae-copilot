@@ -1402,9 +1402,64 @@ def test_cae_generate_mesh_tool_registered(tmp_path: Path) -> None:
     tools = {t["name"]: t for t in client.get("/api/runtime/tools").json()}
 
     assert "cae.generate_mesh" in tools
+    assert "cae.mesh_diagnostics" in tools
     # Meshing is non-destructive geometry compute (like generate_solver_input):
     # no approval gate; only cae.run_solver is approval-gated.
     assert tools["cae.generate_mesh"]["requires_approval"] is False
+    assert tools["cae.mesh_diagnostics"]["requires_approval"] is False
+    assert tools["cae.mesh_diagnostics"]["read_only"] is True
+
+
+def test_cae_mesh_diagnostics_tool_reports_existing_mesh(tmp_path: Path) -> None:
+    from app.simulation_runner import CANONICAL_MESH_INP_PATH
+
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=True)
+
+    project_id, pkg_path = _make_project(settings, "mesh-diag-tool", "mesh_diag_tool.aieng")
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"schema_version": "0.1"}))
+        zf.writestr(CANONICAL_MESH_INP_PATH, _HIGH_ASPECT_TET_MESH_INP)
+
+    resp = client.post(
+        "/api/agent/invoke-tool",
+        json={"tool": "cae.mesh_diagnostics", "input": {"project_id": project_id}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tool"] == "cae.mesh_diagnostics"
+    assert data["ok"] is True
+    assert data["status"] == "warning"
+    assert data["claim_advancement"] == "none"
+    assert data["project_id"] == project_id
+    assert data["available"] is True
+    assert data["poor_element_ids"] == [11]
+    assert data["findings"][0]["code"] == "poor_tetrahedra"
+
+
+def test_cae_mesh_diagnostics_tool_handles_missing_mesh(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app, raise_server_exceptions=True)
+
+    project_id, pkg_path = _make_project(
+        settings, "mesh-diag-tool-empty", "mesh_diag_tool_empty.aieng"
+    )
+    _build_test_package(pkg_path)
+
+    resp = client.post(
+        "/api/agent/invoke-tool",
+        json={"tool": "cae.mesh_diagnostics", "input": {"project_id": project_id}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tool"] == "cae.mesh_diagnostics"
+    assert data["ok"] is False
+    assert data["status"] == "missing_mesh"
+    assert data["claim_advancement"] == "none"
+    assert data["available"] is False
 
 
 def test_cae_generate_mesh_tool_meshes_via_invoke(tmp_path: Path) -> None:

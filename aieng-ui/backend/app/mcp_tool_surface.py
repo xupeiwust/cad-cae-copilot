@@ -48,6 +48,7 @@ ESSENTIAL_MCP_TOOLS: frozenset[str] = frozenset({
     # CAE setup / solve / results
     "cae.apply_setup_patch",
     "cae.generate_mesh",
+    "cae.mesh_diagnostics",
     "cae.prepare_solver_run",
     "cae.generate_solver_input",
     "cae.run_solver",

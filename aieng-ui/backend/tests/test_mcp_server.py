@@ -865,6 +865,7 @@ def test_compact_tool_surface_keeps_onboarding_and_cad_cae_tools() -> None:
         "ai_preprocessing_run_ai_preprocessing",
         "cae_apply_setup_patch",
         "cae_generate_mesh",
+        "cae_mesh_diagnostics",
         "cae_prepare_solver_run",
         "cae_generate_solver_input",
         "cae_run_solver",

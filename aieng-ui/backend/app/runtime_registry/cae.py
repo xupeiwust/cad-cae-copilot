@@ -1801,6 +1801,62 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "artifacts": artifacts,
         }
 
+    def _tool_cae_mesh_diagnostics(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from pathlib import Path as _Path
+        from .. import simulation_runner
+
+        package_path_str: str | None = inp.get("packagePath") or inp.get("package_path")
+        project_id: str | None = inp.get("project_id")
+
+        if not package_path_str and project_id:
+            proj = get_project(active_settings, project_id)
+            pkg = resolve_project_path(active_settings, project_id, proj.get("aieng_file"))
+            if pkg is not None and pkg.exists():
+                package_path_str = str(pkg)
+
+        if not package_path_str:
+            return {
+                "ok": False,
+                "tool": "cae.mesh_diagnostics",
+                "status": "error",
+                "code": "missing_package_path",
+                "message": "Pass project_id for the active project or package_path/packagePath.",
+                "claim_advancement": "none",
+            }
+
+        package_path = _Path(package_path_str)
+        if not package_path.exists():
+            return {
+                "ok": False,
+                "tool": "cae.mesh_diagnostics",
+                "status": "error",
+                "code": "file_not_found",
+                "message": f"Package not found: {package_path_str}",
+                "package_path": str(package_path),
+                "claim_advancement": "none",
+            }
+
+        diagnostics = simulation_runner.get_mesh_quality_diagnostics(package_path)
+        available = bool(diagnostics.get("available"))
+        overall = diagnostics.get("overall_verdict") or diagnostics.get("verdict")
+        status = "ok" if available else "missing_mesh"
+        if overall == "fail":
+            status = "fail"
+        elif overall == "warning":
+            status = "warning"
+        elif overall == "unknown" and available:
+            status = "unknown"
+
+        return {
+            "ok": available and overall != "fail",
+            "tool": "cae.mesh_diagnostics",
+            "status": status,
+            "project_id": project_id,
+            "package_path": str(package_path),
+            "claim_advancement": "none",
+            **diagnostics,
+        }
+
     def _tool_cae_write_mesh_handoff(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import aieng_bridge
         from pathlib import Path as _Path
@@ -2124,6 +2180,19 @@ def register_cae_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             "Typical input: {project_id, mesh_size_mm: 2.5}."
         ),
         input_schema=_schema("cae.generate_mesh"),
+    )
+    rt.register_tool(
+        "cae.mesh_diagnostics",
+        _tool_cae_mesh_diagnostics,
+        read_only=True,
+        description=(
+            "Read-only pre-solver mesh handoff diagnostics for the project's existing FE mesh. "
+            "Reports tetrahedral quality findings, high-aspect/degenerate/broken elements, "
+            "and CAE surface-set coverage without running Gmsh, assembling a deck, running "
+            "ccx, writing artifacts, or advancing claims. Call after cae.generate_mesh and "
+            "before cae.prepare_solver_run / cae.run_solver."
+        ),
+        input_schema=_schema("cae.mesh_diagnostics"),
     )
     rt.register_tool(
         "cae.write_mesh_handoff",

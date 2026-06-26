@@ -1733,6 +1733,25 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "additionalProperties": True,
     },
+    "cae.mesh_diagnostics": {
+        "type": "object",
+        "description": (
+            "Read-only pre-solver mesh handoff diagnostics for an existing package mesh. "
+            "Reports tetrahedral quality findings and CAE surface-set coverage. Does not "
+            "run Gmsh/ccx, assemble a deck, write artifacts, or advance claims."
+        ),
+        "properties": {
+            "project_id": {
+                "type": "string",
+                "description": "Workbench project ID. Preferred for active projects.",
+            },
+            "package_path": {
+                "type": "string",
+                "description": "Optional explicit .aieng package path when no project_id is available.",
+            },
+        },
+        "additionalProperties": True,
+    },
     "cae.write_mesh_handoff": {
         "type": "object",
         "required": ["project_id"],

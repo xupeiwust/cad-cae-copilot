@@ -550,7 +550,11 @@ def test_run_simulation_full_mock(tmp_path: Path) -> None:
          patch("app.simulation_runner._find_ccx", return_value="/usr/bin/ccx"), \
          patch("app.simulation_runner._mesh_with_gmsh", side_effect=_fake_mesh), \
          patch("app.simulation_runner._run_calculix", side_effect=_fake_calculix), \
-         patch("app.simulation_runner._extract_metrics", return_value=_MOCK_FRD_METRICS):
+         patch("app.simulation_runner._extract_metrics", return_value=_MOCK_FRD_METRICS), \
+         patch(
+             "app.simulation_runner._build_calculix_deck",
+             side_effect=AssertionError("REST solve must use the core deck generator"),
+         ):
         resp = client.post(
             f"/api/projects/{project_id}/run-simulation",
             json={"confirmed": True},

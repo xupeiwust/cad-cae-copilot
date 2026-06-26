@@ -1688,6 +1688,73 @@ def _build_calculix_deck(
 
 # ── CalculiX execution ────────────────────────────────────────────────────────
 
+def _count_solver_step_cards(deck_text: str) -> tuple[int, int]:
+    """Return (*BOUNDARY data lines, *CLOAD data lines) from a solver deck."""
+    boundary_count = 0
+    load_count = 0
+    section: str | None = None
+    for raw in deck_text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("**"):
+            continue
+        upper = stripped.upper()
+        if upper.startswith("*"):
+            if upper.startswith("*BOUNDARY"):
+                section = "boundary"
+            elif upper.startswith("*CLOAD"):
+                section = "cload"
+            else:
+                section = None
+            continue
+        if section == "boundary":
+            boundary_count += 1
+        elif section == "cload":
+            load_count += 1
+    return boundary_count, load_count
+
+
+def _build_core_solver_deck_from_mesh(
+    mesh_inp_text: str,
+    setup: dict[str, Any],
+    nsets: dict[str, list[int]],
+    cae_mapping: dict[str, Any],
+    *,
+    run_id: str = "run_runtime",
+) -> tuple[str, int, int, list[str]]:
+    """Build a solver deck through the canonical core deck generator.
+
+    The REST/sizing runtime starts from a live Gmsh mesh rather than an imported
+    source deck. Synthesize that source deck, then call the public
+    ``generate_solver_input_package`` API so runtime solves and MCP solver input
+    generation share material, BC, load, unit, and step assembly code.
+    """
+    ensure_aieng_on_path()
+    from aieng.simulation.deck_generator import generate_solver_input_package
+
+    source_deck, _empty_nsets = build_source_deck_from_mesh(mesh_inp_text, setup, nsets)
+    warnings: list[str] = []
+
+    with tempfile.TemporaryDirectory(prefix="aieng_core_deck_") as tmp_str:
+        pkg = Path(tmp_str) / "runtime_deck.aieng"
+        out_path = f"simulation/runs/{run_id}/solver_input.inp"
+        with zipfile.ZipFile(pkg, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "manifest.json",
+                json.dumps({"schema_version": "0.1", "model_id": "runtime_solver_deck"}),
+            )
+            zf.writestr("simulation/setup.yaml", yaml.safe_dump(setup))
+            zf.writestr(_CAE_MAPPING_PATH, json.dumps(cae_mapping, indent=2))
+            zf.writestr(SOURCE_SOLVER_DECK_PATH, source_deck)
+
+        result = generate_solver_input_package(pkg, run_id=run_id, overwrite=True)
+        warnings.extend(result.get("warnings") or [])
+        with zipfile.ZipFile(pkg, "r") as zf:
+            deck_text = zf.read(out_path).decode("utf-8", errors="replace")
+
+    bc_count, load_count = _count_solver_step_cards(deck_text)
+    return deck_text, bc_count, load_count, warnings
+
+
 def _run_calculix(
     inp_path: Path,
     work_dir: Path,
@@ -1888,8 +1955,13 @@ def solve_package_static(
                     "warnings": [], "error": "load/BC face(s) matched zero mesh nodes",
                 }
             mesh_text = mesh_inp.read_text(errors="replace")
-            deck_text, _bc_count, _load_count = _build_calculix_deck(
-                mesh_text, setup, nsets, cae_mapping
+            (
+                deck_text,
+                _bc_count,
+                _load_count,
+                deck_warnings,
+            ) = _build_core_solver_deck_from_mesh(
+                mesh_text, setup, nsets, cae_mapping, run_id="sizing_solve"
             )
             deck_inp = work / "aieng_run.inp"
             deck_inp.write_text(deck_text)
@@ -1915,7 +1987,7 @@ def solve_package_static(
         # Full computed_metrics doc (carries metrics_source.software=CalculiX) — used
         # by the design-study candidate solver to write candidate-local results.
         "computed_metrics": extracted,
-        "warnings": extracted.get("warnings") or [],
+        "warnings": deck_warnings + (extracted.get("warnings") or []),
     }
 
 
@@ -2103,8 +2175,13 @@ def _run_simulation_core(
 
         # ── Generate solver deck ──────────────────────────────────────────────
         mesh_text = mesh_inp.read_text(errors="replace")
-        deck_text, bc_count, load_count = _build_calculix_deck(
-            mesh_text, setup, nsets, cae_mapping
+        (
+            deck_text,
+            bc_count,
+            load_count,
+            deck_warnings,
+        ) = _build_core_solver_deck_from_mesh(
+            mesh_text, setup, nsets, cae_mapping, run_id="rest_simulation"
         )
         deck_inp = work_dir / "aieng_run.inp"
         deck_inp.write_text(deck_text)
@@ -2115,7 +2192,7 @@ def _run_simulation_core(
 
         # ── Step 6: parse results ─────────────────────────────────────────────
         yield {"step": "parsing", "message": "Parsing FRD results…"}
-        warnings: list[str] = []
+        warnings: list[str] = list(deck_warnings)
         if empty_nsets:
             warnings.append(f"NSETs with no matched nodes (face ID mismatch): {empty_nsets}")
         if bc_count == 0:

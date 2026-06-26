@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import zipfile
+from pathlib import Path
 from typing import Any
 
 
@@ -119,6 +121,11 @@ EXPECTED_EVIDENCE = (
     "engineering report HTML from report.generate or GET /api/projects/{id}/report",
 )
 
+PACKAGE_REQUIRED_EVIDENCE = tuple(
+    item for item in EXPECTED_EVIDENCE
+    if "/" in item and " or " not in item and not item.startswith("engineering report")
+)
+
 HONESTY_BOUNDARIES = (
     "The demo is linear static only.",
     "The numbers are mesh-dependent until a convergence study is run.",
@@ -147,6 +154,119 @@ def build_packet() -> dict[str, Any]:
             "Show real FRD fields in the viewer",
             "Show report.generate output with cited metrics and limitations",
         ],
+    }
+
+
+def _read_package_json(zf: zipfile.ZipFile, member: str) -> dict[str, Any] | None:
+    try:
+        raw = json.loads(zf.read(member).decode("utf-8"))
+    except Exception:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _check(status: str, check_id: str, message: str, *, required: bool = True) -> dict[str, Any]:
+    return {
+        "id": check_id,
+        "status": status,
+        "required": required,
+        "message": message,
+    }
+
+
+def check_package(package_path: str | Path) -> dict[str, Any]:
+    """Read-only value-demo evidence check for a generated .aieng package."""
+    path = Path(package_path)
+    checks: list[dict[str, Any]] = []
+    if not path.exists():
+        return {
+            "status": "blocked",
+            "package_path": str(path),
+            "checks": [_check("fail", "package_exists", f"Package not found: {path}")],
+            "missing_evidence": list(PACKAGE_REQUIRED_EVIDENCE),
+            "honesty_boundaries": list(HONESTY_BOUNDARIES),
+        }
+
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            members = set(zf.namelist())
+            checks.append(_check("pass", "package_readable", f"Package is readable ({len(members)} members)."))
+
+            missing = [member for member in PACKAGE_REQUIRED_EVIDENCE if member not in members]
+            if missing:
+                checks.append(_check("fail", "required_evidence", "Missing required package evidence: " + ", ".join(missing)))
+            else:
+                checks.append(_check("pass", "required_evidence", "All required package evidence members are present."))
+
+            solver_run = _read_package_json(zf, "simulation/runs/value_demo_run_001/solver_run.json")
+            if solver_run is None:
+                checks.append(_check("fail", "solver_run_record", "Missing or unreadable solver_run.json for value_demo_run_001."))
+            else:
+                return_code = solver_run.get("return_code")
+                solved = solver_run.get("solved")
+                status = str(solver_run.get("status") or solver_run.get("state") or "").lower()
+                if return_code == 0 or solved is True or status in {"completed", "ok", "success"}:
+                    checks.append(_check("pass", "solver_run_record", "Solver run record indicates a completed run."))
+                else:
+                    checks.append(_check("fail", "solver_run_record", "Solver run record does not prove successful execution."))
+
+            frd_path = "simulation/runs/value_demo_run_001/outputs/result.frd"
+            frd_info = zf.getinfo(frd_path) if frd_path in members else None
+            if frd_info and frd_info.file_size > 0:
+                checks.append(_check("pass", "real_frd_result", f"FRD result exists and is non-empty ({frd_info.file_size} bytes)."))
+            elif frd_info:
+                checks.append(_check("fail", "real_frd_result", "FRD result exists but is empty."))
+            else:
+                checks.append(_check("fail", "real_frd_result", "FRD result is missing."))
+
+            metrics = _read_package_json(zf, "results/computed_metrics.json")
+            if metrics is None:
+                checks.append(_check("fail", "computed_metrics", "Missing or unreadable results/computed_metrics.json."))
+            else:
+                metrics_blob = json.dumps(metrics, sort_keys=True).lower()
+                has_stress = "von_mises" in metrics_blob or "stress" in metrics_blob
+                has_disp = "displacement" in metrics_blob or "disp" in metrics_blob
+                if has_stress and has_disp:
+                    checks.append(_check("pass", "computed_metrics", "Computed metrics include stress and displacement signals."))
+                else:
+                    checks.append(_check("warn", "computed_metrics", "Computed metrics exist but stress/displacement signals were not both found."))
+
+            summary = _read_package_json(zf, "results/result_summary.json")
+            if summary is None:
+                checks.append(_check("fail", "result_summary", "Missing or unreadable results/result_summary.json."))
+            else:
+                summary_blob = json.dumps(summary, sort_keys=True).lower()
+                if "synthetic" in summary_blob and "source_frd" not in summary_blob:
+                    checks.append(_check("fail", "viewer_field_source", "Result summary appears synthetic without traceable FRD source."))
+                elif "source_frd" in summary_blob or frd_info:
+                    checks.append(_check("pass", "viewer_field_source", "Result summary / package can be traced to an FRD result."))
+                else:
+                    checks.append(_check("warn", "viewer_field_source", "Could not prove viewer field provenance from result_summary alone."))
+
+            report_members = sorted(
+                member for member in members
+                if member.startswith("reports/") and member.endswith((".html", ".htm"))
+            )
+            if report_members:
+                checks.append(_check("pass", "engineering_report", "Package contains report HTML: " + ", ".join(report_members), required=False))
+            else:
+                checks.append(_check("warn", "engineering_report", "No report HTML in package; GET /api/projects/{id}/report or report.generate may still satisfy the demo.", required=False))
+    except zipfile.BadZipFile:
+        checks.append(_check("fail", "package_readable", f"Package is not a readable zip archive: {path}"))
+
+    required_checks = [check for check in checks if check.get("required")]
+    failed_required = [check for check in required_checks if check["status"] == "fail"]
+    warned = [check for check in checks if check["status"] == "warn"]
+    status = "blocked" if failed_required else ("warning" if warned else "pass")
+    return {
+        "status": status,
+        "package_path": str(path),
+        "checks": checks,
+        "missing_evidence": [
+            member for member in PACKAGE_REQUIRED_EVIDENCE
+            if any(check["id"] == "required_evidence" and check["status"] == "fail" and member in check["message"] for check in checks)
+        ],
+        "honesty_boundaries": list(HONESTY_BOUNDARIES),
     }
 
 
@@ -195,12 +315,40 @@ def build_markdown() -> str:
     return "\n".join(lines)
 
 
+def render_check_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# Value Demo Evidence Check",
+        "",
+        f"Package: `{report.get('package_path')}`",
+        f"Status: **{report.get('status')}**",
+        "",
+        "## Checks",
+        "",
+    ]
+    for check in report.get("checks", []):
+        marker = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}.get(str(check.get("status")), str(check.get("status")).upper())
+        required = "required" if check.get("required") else "advisory"
+        lines.append(f"- **{marker}** `{check.get('id')}` ({required}) — {check.get('message')}")
+    lines.extend(["", "## Honesty Boundaries", ""])
+    lines.extend(f"- {item}" for item in report.get("honesty_boundaries", []))
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Print the issue #368 value-demo packet.")
     parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     parser.add_argument("--print-cad-code", action="store_true")
+    parser.add_argument("--check-package", help="Read-only evidence check for a generated .aieng package.")
     args = parser.parse_args()
 
+    if args.check_package:
+        report = check_package(args.check_package)
+        if args.format == "json":
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(render_check_markdown(report))
+        return 0 if report["status"] in {"pass", "warning"} else 1
     if args.print_cad_code:
         print(VALUE_DEMO_CAD_CODE, end="")
         return 0

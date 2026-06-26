@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import zipfile
 from pathlib import Path
 
 
@@ -43,3 +45,74 @@ def test_value_demo_runbook_links_packet_and_forbids_synthetic_success() -> None
     assert "Synthetic fallback fields are a failed demo condition" in text
     assert "Do not invent face" in text
     assert "not certification" in text
+
+
+def _write_demo_package(path: Path, *, complete: bool = True, synthetic_summary: bool = False) -> None:
+    members = {
+        "geometry/generated.step": "ISO-10303-21;\nEND-ISO-10303-21;\n",
+        "geometry/topology_map.json": json.dumps({"entities": []}),
+        "graph/feature_graph.json": json.dumps({"features": []}),
+        "simulation/setup.yaml": "materials: []\n",
+        "simulation/cae_mapping.json": json.dumps({"faces": {}}),
+        "simulation/mesh/mesh.inp": "*NODE\n1,0,0,0\n",
+        "simulation/runs/value_demo_run_001/solver_input.inp": "*HEADING\nvalue demo\n",
+        "simulation/runs/value_demo_run_001/solver_run.json": json.dumps({
+            "status": "completed",
+            "solved": True,
+            "return_code": 0,
+        }),
+        "results/computed_metrics.json": json.dumps({
+            "load_cases": [{
+                "metrics": {
+                    "max_displacement": {"value": 0.1, "unit": "mm"},
+                    "max_von_mises_stress": {"value": 12.0, "unit": "MPa"},
+                },
+            }],
+        }),
+        "results/result_summary.json": json.dumps({
+            "source": (
+                {"format": "vertex_synthetic", "note": "synthetic fallback"}
+                if synthetic_summary
+                else {"source_frd": "simulation/runs/value_demo_run_001/outputs/result.frd"}
+            ),
+        }),
+        "simulation/runs/value_demo_run_001/outputs/result.frd": "    1PSTEP\n",
+        "reports/value_demo.html": "<html><body>report</body></html>",
+    }
+    if not complete:
+        members.pop("simulation/runs/value_demo_run_001/outputs/result.frd")
+        members.pop("results/computed_metrics.json")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for member, content in members.items():
+            zf.writestr(member, content)
+
+
+def test_value_demo_package_checker_passes_complete_real_frd_package(tmp_path: Path) -> None:
+    module = _load_packet_module()
+    pkg = tmp_path / "complete.aieng"
+    _write_demo_package(pkg)
+
+    report = module.check_package(pkg)
+    markdown = module.render_check_markdown(report)
+
+    assert report["status"] == "pass"
+    assert not report["missing_evidence"]
+    assert {check["id"]: check["status"] for check in report["checks"]}["real_frd_result"] == "pass"
+    assert "PASS" in markdown
+    assert "not certification" in markdown
+
+
+def test_value_demo_package_checker_blocks_missing_or_synthetic_evidence(tmp_path: Path) -> None:
+    module = _load_packet_module()
+    pkg = tmp_path / "incomplete.aieng"
+    _write_demo_package(pkg, complete=False, synthetic_summary=True)
+
+    report = module.check_package(pkg)
+    by_id = {check["id"]: check for check in report["checks"]}
+
+    assert report["status"] == "blocked"
+    assert "simulation/runs/value_demo_run_001/outputs/result.frd" in report["missing_evidence"]
+    assert "results/computed_metrics.json" in report["missing_evidence"]
+    assert by_id["real_frd_result"]["status"] == "fail"
+    assert by_id["computed_metrics"]["status"] == "fail"
+    assert by_id["viewer_field_source"]["status"] == "fail"

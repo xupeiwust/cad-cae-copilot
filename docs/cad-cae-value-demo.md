@@ -41,6 +41,17 @@ Print only the build123d fixture code with:
 python aieng-ui/backend/scripts/value_demo_packet.py --print-cad-code
 ```
 
+After running the demo, perform a read-only evidence check on the resulting
+package:
+
+```bash
+python aieng-ui/backend/scripts/value_demo_packet.py --check-package path/to/project.aieng
+```
+
+Use `--format json` for machine-readable output. A blocked result means the demo
+is incomplete; do not treat synthetic fallback fields, empty FRD files, or
+missing computed metrics as a successful #368 demo.
+
 The fixture is intentionally a simple 100 x 20 x 10 mm single connected
 cantilever beam. That shape matches the real-ccx integration test dimensions,
 keeps topology selection easy, and avoids introducing assembly/contact failure

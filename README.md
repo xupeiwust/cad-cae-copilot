@@ -570,6 +570,22 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 overwrite; ranking is advisory.
 [Details →](aieng/docs/showcase_gallery.md)
 
+### 5. Real CAD->CAE Value Demo
+
+Runs one canonical single-solid cantilever through CAD creation, face-pointer
+selection, approval-gated CalculiX execution, FRD-derived viewer fields, and a
+shareable engineering report.
+
+```bash
+python aieng-ui/backend/scripts/value_demo_packet.py --format markdown
+```
+
+**Key artifacts:** `simulation/runs/value_demo_run_001/outputs/result.frd`,
+`results/computed_metrics.json`, engineering report HTML.
+**Boundary:** Requires real Gmsh/CalculiX; linear static and mesh-dependent; no
+synthetic fallback counts as a successful demo.
+[Runbook ->](docs/cad-cae-value-demo.md)
+
 ## Current limitations
 
 Honesty boundaries — outputs are review material, not production sign-off:

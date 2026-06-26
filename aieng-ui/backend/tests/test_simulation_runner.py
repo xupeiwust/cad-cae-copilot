@@ -1559,6 +1559,51 @@ def test_generate_solver_input_consumes_synthesized_source_deck(tmp_path: Path) 
     assert "*STATIC" in text
 
 
+def test_legacy_and_core_static_deck_semantics_match(tmp_path: Path) -> None:
+    """Regression guard for #352: the legacy REST runner and canonical MCP deck
+    path must agree on the static setup semantics that affect solver results."""
+    from app import aieng_bridge, simulation_runner
+    from app.simulation_runner import _build_calculix_deck, _read_member
+
+    def _first_numeric_after(deck: str, keyword: str) -> float:
+        lines = deck.splitlines()
+        for idx, line in enumerate(lines):
+            if line.strip().upper() == keyword.upper():
+                return float(lines[idx + 1].split(",", 1)[0].strip())
+        raise AssertionError(f"{keyword} not found in deck:\n{deck}")
+
+    pkg = tmp_path / "parity.aieng"
+    _build_meshed_setup_package(pkg)
+    simulation_runner.ensure_source_deck_from_mesh(pkg)
+    core_result = aieng_bridge.generate_solver_input(
+        pkg, aieng_root=_WORKSPACE_ROOT / "aieng", run_id="run_parity", overwrite=True
+    )
+    assert core_result["status"] == "ok"
+    core_deck = _read_member(pkg, "simulation/runs/run_parity/solver_input.inp").decode()
+
+    nsets = {"FEAT_HOLE_001": [5], "FEAT_BASE_001_L": [4]}
+    legacy_deck, bc_count, load_count = _build_calculix_deck(
+        _MINIMAL_MESH_INP, _SETUP_YAML, nsets, _CAE_MAPPING
+    )
+    assert bc_count == 1
+    assert load_count == 1
+
+    # Solid elements expose translational DOFs only; both paths must avoid the
+    # old legacy 1..6 rotational constraint.
+    assert "FEAT_HOLE_001, 1, 3" in legacy_deck
+    assert "FEAT_HOLE_001, 1, 3" in core_deck
+    assert "FEAT_HOLE_001, 1, 6" not in legacy_deck
+    assert "FEAT_HOLE_001, 1, 6" not in core_deck
+
+    # setup.yaml density is kg/m^3; both decks must emit tonne/mm^3.
+    assert abs(_first_numeric_after(legacy_deck, "*DENSITY") - 2.7e-9) < 1e-15
+    assert abs(_first_numeric_after(core_deck, "*DENSITY") - 2.7e-9) < 1e-15
+
+    # The downward setup load must remain negative and distributed over the NSET.
+    assert "FEAT_BASE_001_L, 3, -500.000000" in legacy_deck
+    assert "FEAT_BASE_001_L, 3, -500.000000" in core_deck
+
+
 def test_cae_generate_solver_input_synthesizes_source_deck_via_invoke(tmp_path: Path) -> None:
     """Handler wiring: cae.generate_solver_input synthesizes the source deck from a
     persisted mesh, so a meshed+setup project produces a deck via MCP with no

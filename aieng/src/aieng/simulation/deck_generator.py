@@ -255,7 +255,7 @@ def _resolve_materials(
                     entry["elastic"] = {"youngs_modulus": e, "poisson_ratio": nu}
                 rho = props.get("density_kg_m3")
                 if rho is not None:
-                    entry["density"] = rho
+                    entry["density"] = _density_kg_m3_to_tonne_mm3(rho)
                 k = (
                     props.get("thermal_conductivity_w_mk")
                     or props.get("conductivity")
@@ -279,6 +279,11 @@ def _resolve_materials(
             return [m for m in mats if isinstance(m, dict)]
 
     return []
+
+
+def _density_kg_m3_to_tonne_mm3(value: Any) -> float:
+    """Convert SI density to the mm-N-MPa-tonne system used by CalculiX decks."""
+    return float(f"{float(value) * 1e-12:.8g}")
 
 
 def _resolve_boundary_conditions(
@@ -346,16 +351,17 @@ def _resolve_loads(
                     )
                     continue
                 direction = load.get("direction", [0, -1, 0])
-                # For a concentrated force, map direction to primary DOF.
-                dof = _primary_dof_from_direction(direction)
-                mapped_loads.append(
-                    {
-                        "id": load.get("id", "unknown"),
-                        "target": nset,
-                        "dof": dof,
-                        "value": load.get("value_n", 0.0),
-                    }
-                )
+                value = float(load.get("value_n", 0.0) or 0.0)
+                components = _load_components(direction, value)
+                for dof, component in components:
+                    mapped_loads.append(
+                        {
+                            "id": f"{load.get('id', 'unknown')}_dof{dof}",
+                            "target": nset,
+                            "dof": dof,
+                            "value": component,
+                        }
+                    )
             if mapped_loads:
                 return mapped_loads
 
@@ -403,6 +409,29 @@ def _primary_dof_from_direction(direction: Any) -> int:
         abs_vals = [abs(direction[0]), abs(direction[1]), abs(direction[2])]
         return int(abs_vals.index(max(abs_vals))) + 1
     return 2  # default to y
+
+
+def _load_components(direction: Any, magnitude: float) -> list[tuple[int, float]]:
+    """Return signed load components for CalculiX DOFs 1..3.
+
+    Setup loads express ``value_n`` as a total force magnitude plus a direction
+    vector. Preserve the sign and every non-zero component; dropping everything
+    except the dominant axis would silently rotate diagonal or negative loads.
+    """
+    if isinstance(direction, list) and len(direction) >= 3:
+        components: list[tuple[int, float]] = []
+        for dof, raw in enumerate(direction[:3], start=1):
+            try:
+                component = float(raw)
+            except (TypeError, ValueError):
+                component = 0.0
+            if abs(component) > 1e-9:
+                components.append((dof, magnitude * component))
+        if components:
+            return components
+
+    dof = _primary_dof_from_direction(direction)
+    return [(dof, magnitude)]
 
 
 # ---------------------------------------------------------------------------

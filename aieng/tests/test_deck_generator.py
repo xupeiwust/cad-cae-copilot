@@ -209,11 +209,54 @@ def test_cload_distributes_total_force_across_nset_nodes(tmp_path: Path) -> None
         if ln.strip().startswith("N_LOAD,")
     ]
     assert cload_lines, f"expected an N_LOAD *CLOAD line; deck:\n{deck}"
-    # dof 2 (direction [0,-1,0]); per-node = 1000 / 2 nodes = 500.
+    # dof 2 (direction [0,-1,0]); per-node = -1000 / 2 nodes = -500.
     parts = [p.strip() for p in cload_lines[0].split(",")]
     assert parts[0] == "N_LOAD"
     assert parts[1] == "2"
-    assert abs(float(parts[2]) - 500.0) < 1e-3, cload_lines[0]
+    assert abs(float(parts[2]) + 500.0) < 1e-3, cload_lines[0]
+
+
+def test_setup_material_density_is_converted_to_deck_units(tmp_path: Path) -> None:
+    """setup.yaml stores density in kg/m^3; the CalculiX deck uses tonne/mm^3."""
+    pkg = _write_package(
+        tmp_path / "density.aieng",
+        setup=_SETUP_WITH_FEATURE_REFS,
+        cae_mapping=_CAE_MAPPING_WITH_FEATURES,
+    )
+    generate_solver_input_package(pkg, run_id="run_density")
+    deck = _read_deck(pkg, "run_density")
+
+    assert "*DENSITY\n7.85e-09" in deck
+    assert "\n7850.0\n" not in deck
+
+
+def test_setup_load_direction_preserves_signed_components(tmp_path: Path) -> None:
+    """Feature-referenced setup loads must not lose sign or off-axis components."""
+    setup = {
+        "materials": _SETUP_WITH_FEATURE_REFS["materials"],
+        "boundary_conditions": _SETUP_WITH_FEATURE_REFS["boundary_conditions"],
+        "loads": [
+            {
+                "id": "load_diag",
+                "target_feature": "feat_load",
+                "value_n": 1000.0,
+                "direction": [0.25, -0.5, 0.0],
+            }
+        ],
+    }
+    pkg = _write_package(
+        tmp_path / "signed_components.aieng",
+        setup=setup,
+        cae_mapping=_CAE_MAPPING_WITH_FEATURES,
+    )
+    generate_solver_input_package(pkg, run_id="run_signed_components")
+    deck = _read_deck(pkg, "run_signed_components")
+
+    cload_lines = sorted(
+        ln.strip() for ln in deck.splitlines()
+        if ln.strip().startswith("N_LOAD,")
+    )
+    assert cload_lines == ["N_LOAD, 1, 125.000000", "N_LOAD, 2, -250.000000"]
 
 
 def test_modal_step_block_emits_frequency_and_no_load_required(tmp_path: Path) -> None:

@@ -1593,7 +1593,10 @@ def _build_calculix_deck(
             bc_type = bc.get("type", "fixed")
             if bc_type == "fixed":
                 lines.append("*BOUNDARY")
-                lines.append(f"{safe}, 1, 6")  # fix all 6 DOFs
+                # Solid elements only have translational DOFs. Keep this legacy
+                # runner aligned with the canonical deck generator instead of
+                # emitting rotational DOFs that can make CalculiX input invalid.
+                lines.append(f"{safe}, 1, 3")
                 bc_written += 1
 
     # ── Loads ────────────────────────────────────────────────────────────────

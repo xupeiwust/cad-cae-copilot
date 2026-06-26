@@ -249,6 +249,8 @@ Schema definitions live in `aieng/schemas/`.
   backward-compatible with older packages that contain top-level
   `simulation/mesh.inp`, but new producers should not write that legacy path.
   When FreeCAD/Gmsh is unavailable, no fake mesh artifact is written.
+- CalculiX solver input assembly follows the canonical contract in
+  [`cae-deck-assembly-contract.md`](cae-deck-assembly-contract.md).
 - Does not auto-advance claims from solver output — explicit update required.
 - Does not guarantee face-ID stability across topology-changing edits.
 - Does not automatically remap boundary conditions after geometry changes

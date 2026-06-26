@@ -1024,6 +1024,20 @@ verify these paths — see `aieng/docs/nafems_vv_cases.md`.
 
 - **Docker image:** already bundles `ccx`; no extra setup needed.
 
+**Real-ccx V&V gate.** On a machine with CalculiX plus the optional CAD/mesh
+stack installed, run the strict numerical gate with:
+
+```bash
+AIENG_CCX_CMD=ccx python scripts/run_real_ccx_verification_gate.py
+```
+
+The script runs the NAFEMS real-ccx tests plus the backend CAD→mesh→deck→ccx→FRD
+integration test and fails if any selected test is skipped. Use
+`--allow-skips` only for exploratory local checks. The matching GitHub Actions
+workflow is `.github/workflows/real-ccx-verification.yml`; it is manual while
+the remaining #373 reference calibration work is being finished, then can be
+promoted to a required PR/push gate.
+
 **`cae.prepare_solver_run` returns `recommended_next_calls`.** When the package is
 not ready, the response includes a `recommended_next_calls` list. Each entry is
 either a tool call (`tool`, `input`, `reason`) or an environment/action item

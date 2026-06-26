@@ -8764,6 +8764,14 @@ def design_review(
     elif fidelity_level == "designed":
         recommendation += f" Modeling fidelity is 'designed' (score {fidelity.get('score')}/100)."
 
+    fastener_matches = int(standard_fastener_plan.get("matched_count") or 0)
+    if fastener_matches:
+        recommendation += (
+            f" Standard fastener planner matched {fastener_matches} hole feature(s); "
+            "review standard_fastener_plan and use the approval-gated cad.insert_fasteners "
+            "flow only if hardware insertion is desired."
+        )
+
     result: dict[str, Any] = {
         "status": "ok",
         "project_id": project_id,
@@ -8778,7 +8786,7 @@ def design_review(
             "spatial_issues": spatial_issues,
             "spatial_summary": spatial_summary,
             "modeling_fidelity": {"level": fidelity_level, "score": fidelity.get("score")},
-            "standard_fastener_matches": standard_fastener_plan.get("matched_count", 0),
+            "standard_fastener_matches": fastener_matches,
             "standard_fastener_plan_count": standard_fastener_plan.get("plan_count", 0),
         },
         "actions": actions,

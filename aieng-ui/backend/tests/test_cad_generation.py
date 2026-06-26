@@ -3494,6 +3494,7 @@ def test_design_review_surfaces_advisory_standard_fastener_plan(tmp_path: Path) 
     assert plan["plans"][0]["feature_id"] == "hole_m6"
     assert plan["plans"][0]["fastener_spec"]["designation"] == "M6"
     assert full["summary"]["standard_fastener_matches"] == 1
+    assert "approval-gated cad.insert_fasteners" in full["recommendation"]
     assert compact["standard_fastener_plan"]["matched_count"] == 1
     assert "plans" not in compact["standard_fastener_plan"]
 

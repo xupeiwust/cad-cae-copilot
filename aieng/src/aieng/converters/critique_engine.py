@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from aieng.modeling.standard_parts import FASTENERS
+
 from .credibility import classify_credibility
 
 
@@ -23,6 +25,17 @@ _STANDARD_HOLE_DIAMETERS_MM: tuple[float, ...] = (
     1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0,
     12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 27.0, 30.0,
 )
+
+_STANDARD_CLEARANCE_HOLE_DIAMETERS_MM: tuple[float, ...] = tuple(
+    sorted(
+        {
+            float(spec["clearance_hole"])
+            for spec in FASTENERS.values()
+            if isinstance(spec.get("clearance_hole"), (int, float))
+        }
+    )
+)
+_STANDARD_CLEARANCE_HOLE_TOLERANCE_MM = 0.25
 
 
 @dataclass(frozen=True)
@@ -127,6 +140,14 @@ _DFM_RULE_PACK_ALIASES: dict[str, str] = {
 
 def _normalize_process_token(process: str) -> str:
     return str(process or "cnc").lower().strip().replace("-", "_").replace(" ", "_")
+
+
+def _matches_standard_clearance_hole(diameter_mm: float) -> bool:
+    """Return True for metric screw clearance holes from the hardware catalog."""
+    return any(
+        abs(diameter_mm - clearance_mm) <= _STANDARD_CLEARANCE_HOLE_TOLERANCE_MM
+        for clearance_mm in _STANDARD_CLEARANCE_HOLE_DIAMETERS_MM
+    )
 
 
 def resolve_rule_pack_key(process: str) -> str:
@@ -484,6 +505,7 @@ def critique_geometry(
                 "max_unsupported_overhang_from_vertical_deg": max_overhang_from_vertical,
                 "check_standard_holes": pack.check_standard_holes,
                 "standard_hole_diameters_mm": list(standard_holes),
+                "standard_clearance_hole_diameters_mm": list(_STANDARD_CLEARANCE_HOLE_DIAMETERS_MM),
             },
             "rule_source": "aieng/converters/critique_engine DfMRulePack",
             "assumptions": list(pack.notes),
@@ -606,8 +628,11 @@ def critique_geometry(
                 if not isinstance(diameter, (int, float)):
                     diameter = params.get("diameter_mm")
                 if isinstance(diameter, (int, float)):
-                    nearest = min(standard_holes, key=lambda d: abs(d - float(diameter)))
-                    if abs(float(diameter) - nearest) > 0.3:
+                    diameter_mm = float(diameter)
+                    if _matches_standard_clearance_hole(diameter_mm):
+                        continue
+                    nearest = min(standard_holes, key=lambda d: abs(d - diameter_mm))
+                    if abs(diameter_mm - nearest) > 0.3:
                         counter = _add_finding(
                             findings,
                             counter,
@@ -617,8 +642,9 @@ def critique_geometry(
                             feat.get("name", "<unnamed>"),
                             (feat.get("geometry_refs", {}) or {}).get("body")
                             if isinstance(feat.get("geometry_refs"), dict) else None,
-                            f"{feat.get('name', '<unnamed>')}: hole diameter {float(diameter):.2f}mm is "
-                            f"non-standard for {pack.name}; closest standard drill is {nearest:.1f}mm.",
+                            f"{feat.get('name', '<unnamed>')}: hole diameter {diameter_mm:.2f}mm is "
+                            f"not a standard drill or metric clearance-hole size for {pack.name}; "
+                            f"closest standard drill is {nearest:.1f}mm.",
                             f"Round the hole diameter to {nearest:.1f}mm to use an off-the-shelf drill.",
                         )
 
@@ -759,6 +785,7 @@ def critique_geometry(
             "max_unsupported_overhang_from_vertical_deg": max_overhang_from_vertical,
             "check_standard_holes": pack.check_standard_holes,
             "standard_hole_diameters_mm": list(standard_holes),
+            "standard_clearance_hole_diameters_mm": list(_STANDARD_CLEARANCE_HOLE_DIAMETERS_MM),
         },
         "rule_source": "aieng/converters/critique_engine DfMRulePack",
         "assumptions": list(pack.notes),

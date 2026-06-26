@@ -112,6 +112,20 @@ def test_nonstandard_hole_detected_with_core_recognizer_diameter_field():
     assert finding["severity"] == "low"
 
 
+def test_m6_clearance_hole_is_not_flagged_as_nonstandard_drill():
+    topo = _topo(_body("b1", "base_plate", [0, 0, 0, 50, 50, 5]))
+    fg = _feature_graph(
+        _named_part("base_plate", "b1"),
+        {"id": "mh1", "type": "mounting_hole", "name": "M6 clearance hole",
+         "parameters": {"hole_diameter_mm": 6.6},
+         "geometry_refs": {"body": "b1", "faces": ["f_hole_1"]}},
+    )
+    result = critique_geometry(topo, fg, mode="engineering", process="cnc")
+    assert result["status"] == "ok"
+    assert not any(f["rule"] == "standard_hole_size" for f in result["findings"])
+    assert 6.6 in result["rules_applied"]["standard_clearance_hole_diameters_mm"]
+
+
 def test_small_corner_radius_flagged_for_casting_rule_pack():
     topo = _topo(_body("b1", "base_plate", [0, 0, 0, 80, 60, 6]))
     fg = _feature_graph(

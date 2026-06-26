@@ -520,6 +520,20 @@ pytest aieng-ui/backend/tests/test_design_study_demo.py -q
 **边界:** 演示中使用静态指标;无自主优化;无基线覆盖;排名仅供参考。
 [详情 →](aieng/docs/showcase_gallery.md)
 
+### 5. 真实 CAD->CAE 价值演示
+
+将一个规范的单体悬臂梁依次经过 CAD 创建、面指针选择、审批门控的 CalculiX
+执行、FRD 派生的查看器场结果,以及可分享的工程报告。
+
+```bash
+python aieng-ui/backend/scripts/value_demo_packet.py --format markdown
+```
+
+**关键产物:** `simulation/runs/value_demo_run_001/outputs/result.frd`,
+`results/computed_metrics.json`, 工程报告 HTML。
+**边界:** 需要真实 Gmsh/CalculiX;线性静力、网格相关;合成 fallback 不算成功演示。
+[运行手册 ->](docs/cad-cae-value-demo.md)
+
 ## 当前限制
 
 诚实边界 —— 输出是审查材料,而非生产签发:

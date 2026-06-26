@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from ..cad_generation import load_cad_brief
 from ..computed_metrics import get_computed_metrics
@@ -98,6 +98,28 @@ def _sync_main_symbols() -> None:
     sync_main_symbols(globals())
 
 
+def _unsupported_frd_reason(package_path: Path) -> str | None:
+    """Return a reason when the newest FRD is present but not text-parseable."""
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            candidates = sorted(
+                name for name in zf.namelist()
+                if name.endswith("/outputs/result.frd")
+            )
+            if not candidates:
+                return None
+            raw = zf.read(candidates[-1])
+    except (KeyError, zipfile.BadZipFile, OSError):
+        return None
+    if b"\x00" in raw:
+        return "binary or non-UTF-8 FRD files are unsupported by the field viewer; provide a CalculiX text FRD export"
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "binary or non-UTF-8 FRD files are unsupported by the field viewer; provide a CalculiX text FRD export"
+    return None
+
+
 def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
     _sync_main_symbols()
 
@@ -116,6 +138,17 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
         pkg = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
         frd_data: dict[str, Any] | None = None
         if pkg is not None and pkg.exists():
+            unsupported_frd = _unsupported_frd_reason(pkg)
+            if unsupported_frd:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "unsupported_frd_format",
+                        "message": unsupported_frd,
+                        "field_name": field_name,
+                        "source": "frd",
+                    },
+                )
             try:
                 frd_data = _extract_frd_field_data(
                     pkg, field_name, active_settings.aieng_root, load_case_id=load_case_id

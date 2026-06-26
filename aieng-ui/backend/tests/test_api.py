@@ -357,6 +357,34 @@ def test_field_descriptor_returns_real_frd_data(tmp_path: Path) -> None:
     assert data["max_value"] == 220.0
 
 
+def test_field_descriptor_rejects_binary_frd_instead_of_synthetic_fallback(tmp_path: Path) -> None:
+    """A present but unsupported FRD must not be hidden behind synthetic fields."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("binary-frd-field"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "binary-frd.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "binary-frd-field", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", b"FRD\x00binary payload")
+    project["aieng_file"] = "binary-frd.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/fields/stress")
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "unsupported_frd_format"
+    assert detail["source"] == "frd"
+    assert "binary or non-UTF-8 FRD files are unsupported" in detail["message"]
+
+
 def test_field_descriptor_load_case_switching(tmp_path: Path) -> None:
     """GET /fields/{name}?load_case_id=... selects the matching FRD step."""
     from app.main import create_app, default_project, project_dir, save_project

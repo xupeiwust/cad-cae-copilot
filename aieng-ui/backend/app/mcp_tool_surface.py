@@ -24,6 +24,7 @@ ESSENTIAL_MCP_TOOLS: frozenset[str] = frozenset({
     "aieng.list_projects",
     "aieng.agent_context",
     "aieng.inspect_package",
+    "aieng.value_demo_check",
     "aieng.convert",
 
     # AI-driven FEA preprocessing

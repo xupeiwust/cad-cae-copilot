@@ -52,6 +52,9 @@ Use `--format json` for machine-readable output. A blocked result means the demo
 is incomplete; do not treat synthetic fallback fields, empty FRD files, or
 missing computed metrics as a successful #368 demo.
 
+From an MCP client, call the read-only `aieng.value_demo_check` tool with the
+current `project_id` for the same package evidence check.
+
 The fixture is intentionally a simple 100 x 20 x 10 mm single connected
 cantilever beam. That shape matches the real-ccx integration test dimensions,
 keeps topology selection easy, and avoids introducing assembly/contact failure

@@ -858,6 +858,7 @@ def test_compact_tool_surface_keeps_onboarding_and_cad_cae_tools() -> None:
         "aieng_guide",
         "aieng_list_projects",
         "aieng_agent_context",
+        "aieng_value_demo_check",
         "cad_execute_build123d",
         "cad_critique",
         "cad_edit_parameter",

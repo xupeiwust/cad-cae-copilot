@@ -564,6 +564,58 @@ def register_aieng_tools(rt: Any, active_settings: Any, app_context: Any, _schem
             "warnings": result.get("report", {}).get("warnings") or [],
         }
 
+    def _tool_value_demo_check(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        import importlib.util
+        from pathlib import Path as _Path
+
+        package_path: str | None = inp.get("package_path") or inp.get("packagePath")
+        project_id = str(inp.get("project_id") or "").strip()
+        if not package_path and project_id:
+            proj = get_project(active_settings, project_id)
+            pkg = resolve_project_path(active_settings, project_id, proj.get("aieng_file"))
+            if pkg is not None:
+                package_path = str(pkg)
+        if not package_path:
+            return {
+                "ok": False,
+                "tool": "aieng.value_demo_check",
+                "status": "error",
+                "code": "missing_package",
+                "message": "Pass project_id for a project with an .aieng package, or pass package_path.",
+            }
+
+        script_path = _Path(__file__).resolve().parents[2] / "scripts" / "value_demo_packet.py"
+        spec = importlib.util.spec_from_file_location("value_demo_packet", script_path)
+        if spec is None or spec.loader is None:
+            return {
+                "ok": False,
+                "tool": "aieng.value_demo_check",
+                "status": "error",
+                "code": "checker_unavailable",
+                "message": f"Could not load value demo checker from {script_path}.",
+            }
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = module.check_package(package_path)
+        status = str(report.get("status") or "blocked")
+        return {
+            "ok": status in {"pass", "warning"},
+            "tool": "aieng.value_demo_check",
+            "status": status,
+            "project_id": project_id or None,
+            "package_path": report.get("package_path"),
+            "checks": report.get("checks", []),
+            "missing_evidence": report.get("missing_evidence", []),
+            "honesty_boundaries": report.get("honesty_boundaries", []),
+            "claim_advancement": "none",
+            "message": (
+                "Value demo evidence check passed."
+                if status == "pass"
+                else "Value demo evidence check has warnings." if status == "warning"
+                else "Value demo evidence check is blocked by missing or invalid evidence."
+            ),
+        }
+
     def _tool_aieng_write_completeness_report(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import aieng_bridge
         from pathlib import Path as _Path
@@ -1095,6 +1147,17 @@ def register_aieng_tools(rt: Any, active_settings: Any, app_context: Any, _schem
             "mesh, solver, post-processing, or package writes."
         ),
         input_schema=_schema("report.generate"),
+    )
+    rt.register_tool(
+        "aieng.value_demo_check",
+        _tool_value_demo_check,
+        read_only=True,
+        description=(
+            "Read-only: check whether a project/package satisfies the #368 CAD→CAE "
+            "value-demo evidence contract. Scans existing .aieng members only; runs "
+            "no CAD, mesher, solver, postprocess, report generation, or package writes."
+        ),
+        input_schema=_schema("aieng.value_demo_check"),
     )
     rt.register_tool(
         "aieng.update_validation_status",

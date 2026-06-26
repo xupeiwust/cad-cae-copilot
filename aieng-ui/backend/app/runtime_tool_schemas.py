@@ -758,6 +758,25 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "post-processing tools, or writing artifacts."
         ),
     },
+    "aieng.value_demo_check": {
+        "type": "object",
+        "properties": {
+            "project_id": {
+                "type": "string",
+                "description": "Workbench project ID whose current .aieng package should be checked.",
+            },
+            "package_path": {
+                "type": "string",
+                "description": "Optional explicit .aieng package path for local/offline checks.",
+            },
+        },
+        "additionalProperties": True,
+        "description": (
+            "Read-only issue #368 value-demo evidence checker. Accepts project_id "
+            "or package_path and reports pass/warn/fail evidence checks without "
+            "running CAD, meshing, solver, post-processing, report generation, or writes."
+        ),
+    },
     "aieng.update_validation_status": {
         "type": "object",
         "required": ["project_id"],

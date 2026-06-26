@@ -242,8 +242,11 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
             raise HTTPException(status_code=404, detail=".aieng package not found")
 
         frd_source: str | None = _resolve_frd_in_package(package_path)
+        unsupported_frd = _unsupported_frd_reason(package_path) if frd_source else None
         available_fields: list[dict[str, Any]] = []
         warnings: list[str] = []
+        if unsupported_frd:
+            warnings.append(unsupported_frd)
 
         computed_raw: dict[str, Any] | None = None
         try:
@@ -256,7 +259,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
                 LOGGER,
                 "Failed to read computed metrics while building field descriptor.",
                 subsystem="app_factory.field_descriptor.read_computed_metrics",
-                context={"project_id": project_id, "field_name": field_name},
+                context={"project_id": project_id},
             )
             warnings.append("Could not read results/computed_metrics.json.")
 
@@ -276,7 +279,7 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
                         "source_type": "computed_metrics",
                         "source_artifact": "results/computed_metrics.json",
                     })
-        elif frd_source:
+        elif frd_source and not unsupported_frd:
             for _fname, _fmeta in _CAE_RESULT_FIELDS.items():
                 available_fields.append({
                     "field_name": _fname,
@@ -319,10 +322,13 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
 
         _fmeta = _CAE_RESULT_FIELDS[field_name]
         frd_path_in_pkg = _resolve_frd_in_package(package_path)
+        unsupported_frd = _unsupported_frd_reason(package_path) if frd_path_in_pkg else None
         warnings: list[str] = []
+        if unsupported_frd:
+            warnings.append(unsupported_frd)
 
         frd_stats: dict[str, Any] | None = None
-        if frd_path_in_pkg is not None:
+        if frd_path_in_pkg is not None and not unsupported_frd:
             try:
                 _raw = _extract_frd_field_data(package_path, field_name, active_settings.aieng_root)
                 if _raw is not None:
@@ -365,6 +371,16 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
             )
 
         if frd_stats is None and cm_max_value is None:
+            if unsupported_frd:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "unsupported_frd_format",
+                        "message": unsupported_frd,
+                        "field_name": field_name,
+                        "source": "frd",
+                    },
+                )
             raise HTTPException(
                 status_code=404,
                 detail=f"No result data for '{field_name}'. Run solver and extract results first.",

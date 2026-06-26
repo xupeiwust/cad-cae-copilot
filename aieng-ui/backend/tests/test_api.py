@@ -385,6 +385,59 @@ def test_field_descriptor_rejects_binary_frd_instead_of_synthetic_fallback(tmp_p
     assert "binary or non-UTF-8 FRD files are unsupported" in detail["message"]
 
 
+def test_result_field_list_does_not_infer_fields_from_binary_frd(tmp_path: Path) -> None:
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("binary-frd-list"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "binary-list.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "binary-frd-list", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", b"FRD\x00binary payload")
+    project["aieng_file"] = "binary-list.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/cae-result-fields")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available_fields"] == []
+    assert data["frd_source"] == "simulation/runs/run_001/outputs/result.frd"
+    assert any("binary or non-UTF-8 FRD files are unsupported" in warning for warning in data["warnings"])
+
+
+def test_result_field_summary_rejects_binary_frd_without_computed_metrics(tmp_path: Path) -> None:
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    project = save_project(settings, default_project("binary-frd-summary"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "binary-summary.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "binary-frd-summary", "resources": {}}))
+        zf.writestr("simulation/runs/run_001/outputs/result.frd", b"FRD\x00binary payload")
+    project["aieng_file"] = "binary-summary.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/cae-result-fields/stress")
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["code"] == "unsupported_frd_format"
+    assert detail["field_name"] == "stress"
+
+
 def test_field_descriptor_load_case_switching(tmp_path: Path) -> None:
     """GET /fields/{name}?load_case_id=... selects the matching FRD step."""
     from app.main import create_app, default_project, project_dir, save_project

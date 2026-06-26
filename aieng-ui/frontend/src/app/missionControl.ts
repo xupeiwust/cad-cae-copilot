@@ -25,6 +25,14 @@ export type MissionControlNextAction = {
   draft: string | null;
 };
 
+export type MissionControlWorkflowStep = {
+  key: string;
+  label: string;
+  status: MissionControlStatus;
+  detail: string;
+  draft: string | null;
+};
+
 export type MissionControlModel = {
   projectName: string;
   packageName: string;
@@ -32,6 +40,7 @@ export type MissionControlModel = {
   packageDetail: string;
   headline: string;
   cards: MissionControlCard[];
+  workflowSteps: MissionControlWorkflowStep[];
   nextAction: MissionControlNextAction;
   evidenceNotes: string[];
 };
@@ -145,6 +154,103 @@ function bestTimelineAction(timeline: ProjectTimeline | null): MissionControlNex
   return null;
 }
 
+function buildWorkflowSteps(args: {
+  pkgPresent: boolean;
+  cadEvidence: boolean;
+  caeSetup: boolean;
+  missingRequired: string[];
+  meshEvidence: boolean;
+  meshBlocked: boolean;
+  meshVerdict: string | null;
+  resultEvidence: boolean;
+  designTargets: boolean;
+  approvals: number;
+}): MissionControlWorkflowStep[] {
+  const {
+    pkgPresent,
+    cadEvidence,
+    caeSetup,
+    missingRequired,
+    meshEvidence,
+    meshBlocked,
+    meshVerdict,
+    resultEvidence,
+    designTargets,
+    approvals,
+  } = args;
+
+  return [
+    {
+      key: "package",
+      label: "Create package",
+      status: pkgPresent ? "ready" : "missing",
+      detail: pkgPresent ? ".aieng package is available." : "Import STEP or open a .aieng package.",
+      draft: pkgPresent ? null : "Create or open a .aieng package, then inspect package evidence. Do not run solver tools.",
+    },
+    {
+      key: "geometry",
+      label: "Check geometry",
+      status: cadEvidence ? "ready" : pkgPresent ? "missing" : "unknown",
+      detail: cadEvidence ? "Topology or feature evidence is present." : "Package-level CAD evidence is not visible yet.",
+      draft: cadEvidence ? null : "Inspect the .aieng package and refresh CAD semantics/topology evidence. Do not mutate CAD geometry.",
+    },
+    {
+      key: "cae_setup",
+      label: "Bind CAE setup",
+      status: caeSetup ? (missingRequired.length ? "blocked" : "ready") : "missing",
+      detail: caeSetup
+        ? missingRequired.length
+          ? `Missing ${missingRequired.join(", ")}.`
+          : "Required setup evidence is available."
+        : "Materials, loads, constraints, or mapping evidence is missing.",
+      draft: caeSetup && !missingRequired.length
+        ? null
+        : `Inspect package evidence and propose missing CAE setup${missingRequired.length ? ` for: ${missingRequired.join(", ")}` : ""}. Keep changes reviewable and approval-gated where required.`,
+    },
+    {
+      key: "mesh",
+      label: "Check mesh",
+      status: meshEvidence ? (meshBlocked ? "blocked" : "ready") : caeSetup ? "missing" : "unknown",
+      detail: meshEvidence
+        ? meshVerdict
+          ? `Diagnostics: ${meshVerdict}.`
+          : "Mesh artifacts are present."
+        : "Mesh evidence is not available.",
+      draft: meshEvidence && !meshBlocked
+        ? null
+        : "Review mesh readiness for this .aieng package and propose mesh evidence or refinement. Do not claim solver results.",
+    },
+    {
+      key: "solver",
+      label: "Run solver",
+      status: resultEvidence ? "ready" : approvals > 0 ? "blocked" : meshEvidence && !meshBlocked ? "blocked" : "missing",
+      detail: resultEvidence
+        ? "Solver/result evidence is present."
+        : approvals > 0
+          ? "A gated runtime action is waiting for review."
+          : meshEvidence && !meshBlocked
+            ? "Solver run must go through existing approval gates."
+            : "Solver input/result evidence is not ready.",
+      draft: resultEvidence
+        ? null
+        : "Prepare a solver run from existing .aieng evidence. Keep solver execution approval-gated and report only evidence-backed outputs.",
+    },
+    {
+      key: "report",
+      label: "Review report",
+      status: resultEvidence ? "ready" : "missing",
+      detail: resultEvidence
+        ? designTargets
+          ? "Compare design targets and summarize limitations."
+          : "Result evidence exists; design targets are missing or not visible."
+        : "No result evidence is available for review.",
+      draft: resultEvidence
+        ? "Review .aieng result evidence, compare design targets if present, list limitations, and prepare an engineering report. Do not advance claims automatically."
+        : "Summarize current .aieng evidence gaps and recommended next actions. Do not invent solver values.",
+    },
+  ];
+}
+
 export function buildMissionControl(input: MissionControlInput): MissionControlModel {
   const {
     selectedProject,
@@ -175,6 +281,10 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
   const verdict = meshVerdict(meshDiagnostics);
   const meshBlocked = verdict === "fail" || verdict === "warning";
   const meshConverged = meshConvergenceReport?.overall_verdict === "converged";
+  const cadEvidence = Boolean(
+    pkgPresent &&
+      (summary?.feature_graph || summary?.topology || hasAnyMember(summary, ["graph/feature_graph.json", "geometry/topology_map.json"])),
+  );
 
   const cards: MissionControlCard[] = [
     {
@@ -187,9 +297,7 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
     {
       key: "cad",
       label: "CAD evidence",
-      status: pkgPresent && (summary?.feature_graph || summary?.topology || hasAnyMember(summary, ["graph/feature_graph.json", "geometry/topology_map.json"]))
-        ? "ready"
-        : pkgPresent ? "unknown" : "missing",
+      status: cadEvidence ? "ready" : pkgPresent ? "unknown" : "missing",
       detail: pkgPresent
         ? "Topology or feature evidence is available for agent inspection."
         : "No package-level CAD evidence is loaded yet.",
@@ -238,6 +346,18 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
       meta: "mutations remain gated",
     },
   ];
+  const workflowSteps = buildWorkflowSteps({
+    pkgPresent,
+    cadEvidence,
+    caeSetup,
+    missingRequired,
+    meshEvidence,
+    meshBlocked,
+    meshVerdict: verdict,
+    resultEvidence,
+    designTargets,
+    approvals,
+  });
 
   const timelineAction = bestTimelineAction(projectTimeline);
   let nextAction: MissionControlNextAction = {
@@ -328,6 +448,7 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
           ? "CAD evidence loaded; CAE setup not complete"
           : "Start by creating a portable .aieng evidence package",
     cards,
+    workflowSteps,
     nextAction,
     evidenceNotes,
   };

@@ -20,6 +20,11 @@ function model(overrides: Partial<MissionControlModel> = {}): MissionControlMode
       { key: "package", label: ".aieng package", status: "ready", detail: "bracket.aieng", meta: "4/5 key evidence members" },
       { key: "results", label: "Result evidence", status: "missing", detail: "No solver/result evidence is available.", meta: "claims not auto-advanced" },
     ],
+    workflowSteps: [
+      { key: "package", label: "Create package", status: "ready", detail: ".aieng package is available.", draft: null },
+      { key: "cae_setup", label: "Bind CAE setup", status: "missing", detail: "Materials are missing.", draft: "Propose missing CAE setup. Do not run solver." },
+      { key: "solver", label: "Run solver", status: "blocked", detail: "Solver run must go through existing approval gates.", draft: "Prepare approval-gated solver run. Do not claim validation." },
+    ],
     nextAction: {
       label: "Define CAE setup",
       detail: "Ask the agent to inspect package evidence.",
@@ -43,6 +48,9 @@ describe("MissionControlPanel", () => {
     expect(screen.getByText("Result evidence")).toBeTruthy();
     expect(screen.getByText("claims not auto-advanced")).toBeTruthy();
     expect(screen.getByText(/solver values must not be claimed/)).toBeTruthy();
+    expect(screen.getByText("CAD to CAE workflow")).toBeTruthy();
+    expect(screen.getByText("Bind CAE setup")).toBeTruthy();
+    expect(screen.getByText("Run solver")).toBeTruthy();
   });
 
   it("copies bounded agent prompt when available", () => {
@@ -58,5 +66,14 @@ describe("MissionControlPanel", () => {
     render(<MissionControlPanel model={model({ nextAction: { label: "Review approval", detail: "Use approval UI.", draft: null } })} />);
 
     expect(screen.queryByRole("button", { name: /Copy prompt/i })).toBeNull();
+  });
+
+  it("copies step-level prompts without executing the workflow", () => {
+    const onCopyDraft = vi.fn();
+    render(<MissionControlPanel model={model()} onCopyDraft={onCopyDraft} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy Run solver prompt" }));
+
+    expect(onCopyDraft).toHaveBeenCalledWith("Prepare approval-gated solver run. Do not claim validation.");
   });
 });

@@ -63,6 +63,39 @@ export function MissionControlPanel({ model, onCopyDraft }: MissionControlPanelP
         ))}
       </div>
 
+      <div className="mission-workflow" aria-label="Guided CAD to CAE workflow">
+        <div className="mission-workflow-head">
+          <strong>CAD to CAE workflow</strong>
+          <span>ready / missing evidence / blocked</span>
+        </div>
+        <ol className="mission-workflow-list">
+          {model.workflowSteps.map((step, index) => (
+            <li key={step.key} className={`mission-workflow-step mission-workflow-${step.status}`}>
+              <div className="mission-workflow-index">{index + 1}</div>
+              <div className="mission-workflow-body">
+                <div className="mission-workflow-row">
+                  <strong>{step.label}</strong>
+                  <em>{STATUS_LABEL[step.status]}</em>
+                </div>
+                <p>{step.detail}</p>
+              </div>
+              {step.draft ? (
+                <button
+                  type="button"
+                  className="mission-workflow-copy"
+                  onClick={() => onCopyDraft?.(step.draft as string)}
+                  disabled={!onCopyDraft}
+                  title={`Copy ${step.label} prompt`}
+                  aria-label={`Copy ${step.label} prompt`}
+                >
+                  <Clipboard className="h-3 w-3" aria-hidden="true" />
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      </div>
+
       <div className="mission-action">
         <div>
           <span>Next safe action</span>

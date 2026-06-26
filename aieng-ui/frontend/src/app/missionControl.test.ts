@@ -89,6 +89,14 @@ describe("buildMissionControl", () => {
     expect(model.cards.find((card) => card.key === "cae")?.status).toBe("missing");
     expect(model.nextAction.label).toBe("Define CAE setup");
     expect(model.nextAction.draft).toContain("Do not run the solver");
+    expect(model.workflowSteps.map((step) => [step.key, step.status])).toEqual([
+      ["package", "ready"],
+      ["geometry", "ready"],
+      ["cae_setup", "missing"],
+      ["mesh", "unknown"],
+      ["solver", "missing"],
+      ["report", "missing"],
+    ]);
   });
 
   it("blocks on missing required CAE inputs", () => {
@@ -125,6 +133,8 @@ describe("buildMissionControl", () => {
     expect(model.nextAction.label).toBe("Fill required CAE inputs");
     expect(model.nextAction.detail).toContain("material");
     expect(model.cards.find((card) => card.key === "cae")?.meta).toBe("design targets present");
+    expect(model.workflowSteps.find((step) => step.key === "cae_setup")?.status).toBe("blocked");
+    expect(model.workflowSteps.find((step) => step.key === "cae_setup")?.draft).toContain("approval-gated");
   });
 
   it("shows approval gates as the next safest action", () => {
@@ -140,6 +150,7 @@ describe("buildMissionControl", () => {
     expect(model.cards.find((card) => card.key === "approval")?.status).toBe("blocked");
     expect(model.nextAction.label).toBe("Review pending approval");
     expect(model.nextAction.draft).toBeNull();
+    expect(model.workflowSteps.find((step) => step.key === "solver")?.status).toBe("blocked");
   });
 
   it("does not present solver result evidence as claim advancement", () => {
@@ -170,5 +181,39 @@ describe("buildMissionControl", () => {
     expect(model.cards.find((card) => card.key === "results")?.status).toBe("ready");
     expect(model.cards.find((card) => card.key === "results")?.meta).toBe("claims not auto-advanced");
     expect(model.nextAction.draft).toContain("Do not advance claims automatically");
+    expect(model.workflowSteps.find((step) => step.key === "solver")?.status).toBe("ready");
+    expect(model.workflowSteps.find((step) => step.key === "report")?.draft).toContain("Do not advance claims automatically");
+  });
+
+  it("blocks the mesh workflow step on failing mesh diagnostics", () => {
+    const model = build({
+      summary: summary({
+        members: ["manifest.json", "simulation/mesh/mesh.inp"],
+        cae: {
+          present: true,
+          constraints_count: 1,
+          constraint_types: {},
+          materials_count: 1,
+          boundary_conditions_count: 1,
+          loads_count: 1,
+          evidence_count: 1,
+          result_evidence_count: 0,
+          results_available: false,
+          available_fields: [],
+          simulation_targets: [],
+          protected_regions: [],
+          materials: [],
+          boundary_conditions: [],
+          loads: [],
+          evidence: [],
+        },
+      }),
+      meshDiagnostics: { available: true, overall_verdict: "fail" },
+    });
+
+    const mesh = model.workflowSteps.find((step) => step.key === "mesh");
+    expect(mesh?.status).toBe("blocked");
+    expect(mesh?.detail).toContain("fail");
+    expect(mesh?.draft).toContain("Do not claim solver results");
   });
 });

@@ -2,10 +2,41 @@ name: Real CCX Verification
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/real-ccx-verification.yml"
+      - "scripts/run_real_ccx_verification_gate.py"
+      - "aieng/src/aieng/nafems_verification.py"
+      - "aieng/tests/test_nafems_verification.py"
+      - "aieng/tests/fixtures/nafems/**"
+      - "aieng/benchmarks/datasets/analytical_fea/**"
+      - "aieng/src/aieng/simulation/**"
+      - "aieng/tests/test_deck_generator.py"
+      - "aieng-ui/backend/app/aieng_bridge.py"
+      - "aieng-ui/backend/app/runtime_registry/cae.py"
+      - "aieng-ui/backend/app/simulation_runner.py"
+      - "aieng-ui/backend/tests/test_cae_solve_integration.py"
+      - "aieng-ui/backend/tests/test_simulation_runner.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/real-ccx-verification.yml"
+      - "scripts/run_real_ccx_verification_gate.py"
+      - "aieng/src/aieng/nafems_verification.py"
+      - "aieng/tests/test_nafems_verification.py"
+      - "aieng/tests/fixtures/nafems/**"
+      - "aieng/benchmarks/datasets/analytical_fea/**"
+      - "aieng/src/aieng/simulation/**"
+      - "aieng/tests/test_deck_generator.py"
+      - "aieng-ui/backend/app/aieng_bridge.py"
+      - "aieng-ui/backend/app/runtime_registry/cae.py"
+      - "aieng-ui/backend/app/simulation_runner.py"
+      - "aieng-ui/backend/tests/test_cae_solve_integration.py"
+      - "aieng-ui/backend/tests/test_simulation_runner.py"
 
-# Candidate required gate for #373. It is manual while the remaining NAFEMS
-# reference calibration is being finished; once the real suite is green, extend
-# this workflow to pull_request/push protection.
+# Candidate required gate for #373. It auto-runs for solver/V&V path changes and
+# remains manually runnable for release verification. Branch protection can mark
+# this required once runner stability and runtime cost are acceptable.
 concurrency:
   group: real-ccx-verification-${{ github.ref }}
   cancel-in-progress: true

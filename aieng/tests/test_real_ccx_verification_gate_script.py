@@ -8,6 +8,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = _ROOT / "scripts" / "run_real_ccx_verification_gate.py"
+_WORKFLOW = _ROOT / ".github" / "workflows" / "real-ccx-verification.yml"
 _SPEC = importlib.util.spec_from_file_location("real_ccx_gate", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 gate = importlib.util.module_from_spec(_SPEC)
@@ -86,3 +87,13 @@ def test_main_requires_resolvable_ccx_unless_skips_are_allowed(monkeypatch) -> N
     assert calls == []
     assert gate.main(["--suite", "nafems", "--allow-skips"]) == 0
     assert len(calls) == 1
+
+
+def test_real_ccx_workflow_is_not_manual_only() -> None:
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in text
+    assert "pull_request:" in text
+    assert "push:" in text
+    assert "aieng/src/aieng/nafems_verification.py" in text
+    assert "aieng-ui/backend/app/simulation_runner.py" in text
+    assert "reference calibration is being finished" not in text

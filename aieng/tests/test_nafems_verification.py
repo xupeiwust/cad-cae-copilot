@@ -328,6 +328,8 @@ def test_modal_fixture_deck_is_frequency_step_without_load(fixtures_dir: Path) -
     assert "*STATIC" not in deck
     assert "*CLOAD" not in deck  # modal needs no load
     assert "*DENSITY" in deck    # mass matrix
+    assert "*DENSITY\n7.85e-09" in deck
+    assert "7.85e-21" not in deck
 
 
 def test_buckling_fixture_deck_is_buckle_step_with_load(fixtures_dir: Path) -> None:

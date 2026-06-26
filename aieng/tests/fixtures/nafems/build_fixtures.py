@@ -39,17 +39,6 @@ STEEL = {
     "density_kg_m3": 7850.0,
 }
 
-# Steel in a CONSISTENT mm–tonne–s unit system: E in N/mm² (MPa), density in
-# tonne/mm³ (7850 kg/m³ = 7.85e-9 t/mm³). The deck generator emits the density
-# value verbatim, so an eigenvalue (modal/buckling) case must use the consistent
-# value for the reported frequencies (Hz) to be physically meaningful. Static
-# cases do not use density and keep the kg/m³ value above.
-STEEL_CONSISTENT = {
-    "youngs_modulus_mpa": 210000.0,
-    "poisson_ratio": 0.3,
-    "density_kg_m3": 7.85e-9,  # tonne/mm³ (consistent mm–t–s units)
-}
-
 # Schema/format constants.
 FORMAT_VERSION = "0.1.0"
 
@@ -582,7 +571,7 @@ def build_cantilever_modal_fixture(
         load_direction=[0, 0, 0],
         cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix")),
         source_deck=source_deck,
-        material=STEEL_CONSISTENT,
+        material=STEEL,
         include_load=False,
         solver_settings={"analysis_type": "modal", "num_modes": 6},
     )
@@ -624,7 +613,7 @@ def build_column_buckling_fixture(
         load_direction=[-1, 0, 0],
         cae_mapping=_build_cae_mapping(("N_FIX", "feat_fix"), ("N_LOAD", "feat_load")),
         source_deck=source_deck,
-        material=STEEL_CONSISTENT,
+        material=STEEL,
         solver_settings={"analysis_type": "buckling", "num_factors": 5},
     )
 

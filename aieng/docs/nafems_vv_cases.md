@@ -383,9 +383,10 @@ free elsewhere). Results are written to the CalculiX **`.dat`** file (not the
 
 Natural frequency depends on mass, so this case uses a **consistent mm–tonne–s
 unit system**: `E = 210000 N/mm²`, density `ρ = 7.85 × 10⁻⁹ tonne/mm³`
-(= 7850 kg/m³). The deck generator emits the density value verbatim, so the
-eigenvalue cases must supply the consistent value for the reported frequency
-(Hz) to be physically meaningful. (Static cases never use density.)
+(= 7850 kg/m³). Fixture setup files author `density_kg_m3` in SI kg/m³; the
+deck generator converts it to tonne/mm³ before writing `*DENSITY`. Supplying an
+already-converted `7.85e-9` value under the `_kg_m3` key would be converted a
+second time and make modal frequencies wrong by 1e6.
 
 ### Analytical reference (Euler-Bernoulli beam theory)
 

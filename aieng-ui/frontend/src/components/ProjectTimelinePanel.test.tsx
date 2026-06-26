@@ -50,6 +50,39 @@ function makeTimeline(): ProjectTimeline {
         nextActions: [],
         sourceRunId: "run_1",
       },
+      {
+        id: "run_1:result:cae.prepare_solver_run",
+        timestamp: "2026-06-25T09:57:00Z",
+        kind: "next_action",
+        status: "blocked",
+        title: "cae.prepare_solver_run: blocked",
+        detail: "Solver is not ready.",
+        diagnostic: null,
+        snapshots: [],
+        artifacts: [],
+        nextActions: [{
+          label: "Generate solver input",
+          tool: "cae.generate_solver_input",
+          availableNow: false,
+          blockedReason: "Mesh is missing.",
+          blockedReasonCodes: ["missing_mesh"],
+          blockedReasonCodeDetails: [{
+            code: "missing_mesh",
+            label: "Missing mesh",
+            description: "No FE mesh exists.",
+            recommendedAction: "Run cae.generate_mesh before generating the solver deck.",
+          }],
+          resolvesBlockedReasonCodes: ["deck_not_prepared"],
+          resolvesBlockedReasonCodeDetails: [{
+            code: "deck_not_prepared",
+            label: "Deck not prepared",
+            description: "The solver input deck is missing.",
+            recommendedAction: "Generate the solver input deck.",
+          }],
+          safetyFlags: ["mutates package"],
+        }],
+        sourceRunId: "run_1",
+      },
     ],
   };
 }
@@ -61,6 +94,7 @@ describe("ProjectTimelinePanel", () => {
     const onRestoreSnapshot = vi.fn();
     const onApproveRun = vi.fn();
     const onRejectRun = vi.fn();
+    const onCopyNextAction = vi.fn();
 
     render(
       <ProjectTimelinePanel
@@ -68,6 +102,7 @@ describe("ProjectTimelinePanel", () => {
         onRestoreSnapshot={onRestoreSnapshot}
         onApproveRun={onApproveRun}
         onRejectRun={onRejectRun}
+        onCopyNextAction={onCopyNextAction}
       />,
     );
 
@@ -79,5 +114,11 @@ describe("ProjectTimelinePanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
     expect(onRejectRun).toHaveBeenCalledWith("run_1");
+
+    fireEvent.click(screen.getByRole("button", { name: /Copy next action:/ }));
+    expect(onCopyNextAction).toHaveBeenCalledWith(expect.stringContaining("Tool: cae.generate_solver_input"));
+    expect(onCopyNextAction).toHaveBeenCalledWith(expect.stringContaining("Status: blocked or not available yet"));
+    expect(onCopyNextAction).toHaveBeenCalledWith(expect.stringContaining("missing_mesh"));
+    expect(onCopyNextAction).toHaveBeenCalledWith(expect.stringContaining("Never bypass approval"));
   });
 });

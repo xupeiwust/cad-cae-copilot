@@ -189,6 +189,7 @@ export function AppChrome({ app }: AppChromeProps) {
             onRestoreSnapshot={app.restoreCadSnapshot}
             onApproveRun={app.approveTimelineRun}
             onRejectRun={app.rejectTimelineRun}
+            onCopyNextAction={app.copyPointerText}
           />
 
           <EditDiffPanel editDiff={app.editDiff} />

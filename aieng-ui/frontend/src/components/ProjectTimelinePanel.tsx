@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, CheckCircle2, Clock3, FileText, History, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, FileText, History, ShieldCheck } from "lucide-react";
 
 import type { ProjectTimeline, ProjectTimelineEntry, ProjectTimelineEntryKind, TimelineNextAction, TimelineSnapshot } from "../app/projectTimeline";
 
@@ -7,6 +7,7 @@ type ProjectTimelinePanelProps = {
   onRestoreSnapshot?(snapshotId: string): void;
   onApproveRun?(runId: string): void;
   onRejectRun?(runId: string): void;
+  onCopyNextAction?(text: string): void;
 };
 
 const KIND_ICON: Record<ProjectTimelineEntryKind, typeof Activity> = {
@@ -56,6 +57,41 @@ function codeTitle(details: TimelineNextAction["blockedReasonCodeDetails"]): str
   return text || undefined;
 }
 
+function nextActionInstruction(action: TimelineNextAction): string {
+  const lines = [
+    "Use this advisory next action from the AIENG project timeline.",
+    action.tool ? `Tool: ${action.tool}` : "Tool: not specified; inspect the project context first.",
+    `Action: ${action.label}`,
+  ];
+  if (action.availableNow === false) {
+    lines.push("Status: blocked or not available yet; do not run until the blocker is resolved.");
+  } else if (action.availableNow === true) {
+    lines.push("Status: available now, subject to normal AIENG approval and safety gates.");
+  } else {
+    lines.push("Status: advisory; verify current project context before acting.");
+  }
+  if (action.blockedReason) lines.push(`Blocked reason: ${action.blockedReason}`);
+  if (action.blockedReasonCodeDetails.length) {
+    lines.push("Blocked reason details:");
+    for (const detail of action.blockedReasonCodeDetails) {
+      lines.push(`- ${detail.code}: ${detail.recommendedAction || detail.description || detail.label}`);
+    }
+  } else if (action.blockedReasonCodes.length) {
+    lines.push(`Blocked reason codes: ${action.blockedReasonCodes.join(", ")}`);
+  }
+  if (action.resolvesBlockedReasonCodeDetails.length) {
+    lines.push("May resolve:");
+    for (const detail of action.resolvesBlockedReasonCodeDetails) {
+      lines.push(`- ${detail.code}: ${detail.recommendedAction || detail.description || detail.label}`);
+    }
+  } else if (action.resolvesBlockedReasonCodes.length) {
+    lines.push(`May resolve codes: ${action.resolvesBlockedReasonCodes.join(", ")}`);
+  }
+  if (action.safetyFlags.length) lines.push(`Safety flags: ${action.safetyFlags.join(", ")}`);
+  lines.push("Never bypass approval, never claim solver evidence without a completed solver run.");
+  return lines.join("\n");
+}
+
 function snapshotMeta(snapshot: TimelineSnapshot): string {
   const parts = [
     snapshot.toolName,
@@ -70,6 +106,7 @@ export function ProjectTimelinePanel({
   onRestoreSnapshot,
   onApproveRun,
   onRejectRun,
+  onCopyNextAction,
 }: ProjectTimelinePanelProps) {
   if (!timeline || timeline.entries.length === 0) return null;
   const visible = timeline.entries.slice(0, 12);
@@ -183,7 +220,20 @@ export function ProjectTimelinePanel({
                   <div className="project-timeline-next" aria-label="Advisory next actions">
                     {entry.nextActions.slice(0, 3).map((action, index) => (
                       <span key={`${action.tool ?? "advisory"}:${action.label}:${index}`} className={nextActionTone(action)}>
-                        <strong>{nextActionTitle(action)}</strong>
+                        <span className="project-timeline-next-head">
+                          <strong>{nextActionTitle(action)}</strong>
+                          {onCopyNextAction ? (
+                            <button
+                              type="button"
+                              className="project-timeline-next-copy"
+                              onClick={() => onCopyNextAction(nextActionInstruction(action))}
+                              title="Copy MCP instruction for this next action"
+                              aria-label={`Copy next action: ${nextActionTitle(action)}`}
+                            >
+                              <Copy className="h-3 w-3" />
+                            </button>
+                          ) : null}
+                        </span>
                         {action.blockedReason ? <em>Blocked: {action.blockedReason}</em> : null}
                         {action.blockedReasonCodes.length ? (
                           <small title={codeTitle(action.blockedReasonCodeDetails)}>

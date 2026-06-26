@@ -11503,6 +11503,36 @@ textarea:focus,
   overflow-wrap: anywhere;
 }
 
+.project-timeline-next .project-timeline-next-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.project-timeline-next-copy {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  color: #ddd6fe;
+  background: rgba(15, 23, 42, 0.42);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.project-timeline-next-copy:hover {
+  color: #ffffff;
+  border-color: rgba(196, 181, 253, 0.55);
+  background: rgba(79, 70, 229, 0.28);
+}
+
 .project-timeline-next strong,
 .project-timeline-next em,
 .project-timeline-next small {

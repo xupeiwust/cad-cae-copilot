@@ -165,6 +165,47 @@ describe("product workflow trust guards", () => {
     expectNoOverclaim(missionText(model));
   });
 
+  it("keeps timeline next-action prompts approval-gated and evidence-bounded", () => {
+    const model = build({
+      projectTimeline: emptyTimeline({
+        runCount: 1,
+        entries: [
+          {
+            id: "entry_solver_action",
+            timestamp: "2026-06-27T00:01:00Z",
+            kind: "next_action",
+            status: "available",
+            title: "Prepared solver action",
+            detail: "Solver deck is prepared, but execution remains approval-gated.",
+            diagnostic: null,
+            snapshots: [],
+            artifacts: [],
+            sourceRunId: "run_solver_plan",
+            nextActions: [
+              {
+                label: "Run prepared solver deck",
+                tool: "cae.run_solver",
+                availableNow: true,
+                blockedReason: null,
+                blockedReasonCodes: [],
+                blockedReasonCodeDetails: [],
+                resolvesBlockedReasonCodes: ["missing_solver_result"],
+                resolvesBlockedReasonCodeDetails: [],
+                safetyFlags: ["requires approval", "runs solver", "mutates package"],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    expect(model.nextAction.label).toBe("Run prepared solver deck");
+    expect(model.nextAction.detail).toMatch(/requires approval|runs solver|mutates package/i);
+    expect(model.nextAction.draft).toMatch(/Use existing approval gates/i);
+    expect(model.nextAction.draft).toMatch(/Do not claim solver validation unless package evidence supports it/i);
+    expectNoOverclaim(missionText(model));
+  });
+
   it("keeps solver results separate from design target satisfaction and claim advancement", () => {
     const model = build({
       summary: baseSummary({

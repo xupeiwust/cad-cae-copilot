@@ -1448,6 +1448,7 @@ def test_runtime_capabilities_endpoint_returns_expected_structure(tmp_path: Path
     assert "environment" in data
     assert "tools" in data
     assert "result_fields" in data
+    assert "local_execution_boundary" in data
     assert "claim_policy" in data
 
 
@@ -1500,6 +1501,29 @@ def test_runtime_capabilities_claim_policy_no_auto_advancement(tmp_path: Path) -
 
     assert policy["automatic_claim_advancement"] is False
     assert policy["claim_advancement_requires_explicit_workflow"] is True
+
+
+def test_runtime_capabilities_local_execution_boundary_is_honest_and_redacted(tmp_path: Path) -> None:
+    """Capability profile surfaces local-first execution limits without secrets."""
+    settings = _make_patch_settings(tmp_path)
+    test_app = create_app(settings)
+    client = TestClient(test_app)
+
+    resp = client.get("/api/runtime/capabilities")
+    data = resp.json()
+    boundary = data["local_execution_boundary"]
+
+    assert boundary["backend_requires_api_key"] is False
+    assert boundary["project_data_local"] is True
+    assert boundary["external_model_calls_may_occur_outside_backend"] is True
+    assert boundary["cad_execution"]["runs_in_subprocess"] is True
+    assert boundary["cad_execution"]["wall_clock_timeout"] is True
+    assert boundary["cad_execution"]["full_untrusted_code_sandbox"] is False
+    assert "cae.run_solver" in boundary["approval_gated_tools"]
+    assert boundary["secret_redaction"]["backend_logs"] is True
+    assert "api_key" in boundary["secret_redaction"]["common_secret_keys"]
+    assert "docs/cad_execution_boundary.md" in boundary["docs"]
+    assert "api_key_value" not in json.dumps(boundary).lower()
 
 
 def test_structural_preflight_missing_tools_are_machine_readable(tmp_path: Path, monkeypatch) -> None:

@@ -10,6 +10,7 @@ applying. ``active_settings`` is passed in from create_app.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -44,6 +45,7 @@ def register_runtime_routes(app: FastAPI, *, active_settings: Any) -> None:
         """
         ccx_available: bool = _resolve_ccx_cmd() is not None
         registered: set[str] = set(_rt.registered_tool_names())
+        tool_metadata = _rt.list_tools_for_mcp()
 
         tool_caps: list[dict[str, Any]] = []
         for _entry in _TOOL_CAPABILITY_PROFILE:
@@ -68,6 +70,38 @@ def register_runtime_routes(app: FastAPI, *, active_settings: Any) -> None:
                 "supported": list(_CAE_RESULT_FIELDS.keys()),
                 "produces_evidence": False,
                 "advances_claims": False,
+            },
+            "local_execution_boundary": {
+                "backend_requires_api_key": False,
+                "project_data_local": True,
+                "data_root": str(active_settings.data_root),
+                "projects_root": str(active_settings.projects_root),
+                "external_model_provider": "BYO MCP client or runtime-configured provider",
+                "external_model_calls_may_occur_outside_backend": True,
+                "managed_approval_enabled": os.environ.get("AIENG_MCP_MANAGED_APPROVAL") == "1",
+                "approval_gated_tools": sorted(
+                    entry["name"]
+                    for entry in tool_metadata
+                    if entry.get("requires_approval") is True
+                ),
+                "cad_execution": {
+                    "runs_in_subprocess": True,
+                    "wall_clock_timeout": True,
+                    "posix_resource_limits_available": os.name == "posix",
+                    "full_untrusted_code_sandbox": False,
+                },
+                "secret_redaction": {
+                    "backend_logs": True,
+                    "common_secret_keys": [
+                        "api_key",
+                        "token",
+                        "secret",
+                        "password",
+                        "authorization",
+                        "bearer",
+                    ],
+                },
+                "docs": ["docs/cad_execution_boundary.md"],
             },
             "claim_policy": {
                 "automatic_claim_advancement": False,

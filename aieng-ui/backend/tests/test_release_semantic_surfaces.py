@@ -112,3 +112,20 @@ def test_mcp_tool_descriptions_have_no_prohibited_language() -> None:
         "Tool descriptions must not present certification or automatic claim "
         "advancement as a capability."
     )
+
+
+def test_readmes_explain_proof_not_just_screenshots() -> None:
+    english = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (_REPO_ROOT / "README.zh.md").read_text(encoding="utf-8")
+
+    assert "## Proof, not just screenshots" in english
+    assert "generated build123d source" in english
+    assert "STEP/STL/GLB exports" in english
+    assert "topology maps and stable `@face:*` pointers" in english
+    assert "instead of trusting a static render" in english
+
+    assert "## 不是只看截图" in chinese
+    assert "生成的 build123d 源码" in chinese
+    assert "STEP/STL/GLB 导出" in chinese
+    assert "稳定的 `@face:*` 指针" in chinese
+    assert "静态渲染图" in chinese

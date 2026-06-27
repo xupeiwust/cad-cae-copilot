@@ -385,6 +385,22 @@ text and code; mechanical engineers exploring AI-assisted CAD/CAE with real
 geometry; and makers, researchers, and open-source contributors interested in
 CAD, CAE, MCP, VS Code extensions, or build123d / OpenCASCADE.
 
+## Proof, not just screenshots
+
+Each successful CAD run can preserve inspectable artifacts, not just a rendered
+image:
+
+- generated build123d source,
+- STEP/STL/GLB exports,
+- named parts and editable parameters,
+- topology maps and stable `@face:*` pointers when mapping succeeds,
+- preview thumbnails,
+- critique and geometry-check results,
+- provenance and package metadata inside the `.aieng` evidence package.
+
+That means another engineer or MCP-capable agent can inspect, modify, rerun, and
+review the result instead of trusting a static render.
+
 ## Trust layer — verified & explainable by construction
 
 The crowded field is *generation*; the empty field is *trust*. Every

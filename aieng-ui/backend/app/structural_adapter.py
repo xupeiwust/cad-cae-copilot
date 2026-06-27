@@ -40,7 +40,7 @@ _CLAIM_BOUNDARY_PREFLIGHT_NOTE = (
 _SAFETY_NOTE = (
     "External mesh/solver tools are treated as untrusted execution backends. "
     "Mesh generation and solver execution require explicit approval. Missing "
-    "Gmsh / CalculiX dependencies are reported honestly; success is "
+    "FreeCAD / Gmsh / CalculiX dependencies are reported honestly; success is "
     "never faked."
 )
 
@@ -156,13 +156,75 @@ def _is_ci() -> bool:
     return os.environ.get("CI", "").lower() in {"1", "true", "yes"}
 
 
+def _capability_required_tools(capability_id: str) -> list[str]:
+    """Return the local tools needed before the capability can be attempted."""
+    if capability_id == "structural.generate_mesh":
+        return ["FreeCADCmd", "gmsh"]
+    if capability_id in {"structural.prepare_solver_run", "structural.run_solver"}:
+        return ["ccx"]
+    return []
+
+
+def _tool_preflight_status(tool_name: str, checked_paths: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    key = "freecad" if tool_name.lower().startswith("freecad") else tool_name.lower()
+    checked = checked_paths.get(key)
+    present = bool(checked and checked.get("present"))
+    return {
+        "name": tool_name,
+        "available": present,
+        "path": checked.get("path") if checked else tool_name,
+        "reason": None if present else f"{tool_name} executable was not found.",
+    }
+
+
+def _capability_statuses(
+    capabilities: list[ExternalToolCapability],
+    checked_paths: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Shape static manifest + local tool preflight into user/agent-facing status.
+
+    This is a read-only explanation layer. It never executes external tools and
+    never downgrades approval requirements.
+    """
+    statuses: list[dict[str, Any]] = []
+    for cap in capabilities:
+        required_tools = _capability_required_tools(cap.id)
+        tool_statuses = [_tool_preflight_status(tool, checked_paths) for tool in required_tools]
+        missing_tools = [tool["name"] for tool in tool_statuses if not tool["available"]]
+        status = "ready" if not missing_tools else "blocked"
+        statuses.append(
+            {
+                "capability_id": cap.id,
+                "label": cap.label,
+                "category": cap.category,
+                "status": status,
+                "required_tools": tool_statuses,
+                "missing_tools": missing_tools,
+                "blocked_reason": (
+                    f"Missing local tool(s): {', '.join(missing_tools)}."
+                    if missing_tools
+                    else None
+                ),
+                "requires_approval": cap.requires_approval,
+                "mutates_package": cap.mutates_package,
+                "runs_external_process": cap.runs_external_process,
+                "claim_advancement": cap.claim_advancement,
+                "estimated_outputs": cap.output_artifacts,
+                "stale_artifacts_on_success": cap.stale_artifacts_on_success,
+            }
+        )
+    return statuses
+
+
 def preflight_structural_adapter(settings: Settings) -> dict[str, Any]:
     """Return a read-only readiness snapshot for the structural toolchain."""
+    freecad_cmd = _which_existing("FreeCADCmd", "FreeCADCmd.exe")
     gmsh_cmd = _which_existing("gmsh", "gmsh.exe")
     ccx_cmd = _which_existing("ccx", "ccx_linux", "ccx2.21", "ccx_static", "ccx.exe")
 
     checked_paths = {
         "aieng_root": {"path": str(settings.aieng_root), "present": settings.aieng_root.exists()},
+        "freecad": {"path": str(freecad_cmd) if freecad_cmd else "FreeCADCmd", "present": freecad_cmd is not None},
         "gmsh": {"path": str(gmsh_cmd) if gmsh_cmd else "gmsh", "present": gmsh_cmd is not None},
         "ccx": {"path": str(ccx_cmd) if ccx_cmd else "ccx", "present": ccx_cmd is not None},
     }
@@ -172,6 +234,12 @@ def preflight_structural_adapter(settings: Settings) -> dict[str, Any]:
 
     if not checked_paths["aieng_root"]["present"]:
         missing_dependencies.append("aieng_root")
+    if freecad_cmd is None:
+        missing_dependencies.append("FreeCADCmd")
+        warnings.append(
+            "FreeCADCmd was not found. FreeCAD-backed geometry inspection/export "
+            "and some mesh handoff paths may be unavailable."
+        )
     if gmsh_cmd is None:
         missing_dependencies.append("gmsh")
         warnings.append("Gmsh executable was not found. Mesh generation is unavailable until Gmsh is installed.")
@@ -206,18 +274,21 @@ def preflight_structural_adapter(settings: Settings) -> dict[str, Any]:
     )
 
     environment = {
+        "freecad_cmd": str(freecad_cmd) if freecad_cmd else None,
         "gmsh_cmd": str(gmsh_cmd) if gmsh_cmd else None,
         "ccx_cmd": str(ccx_cmd) if ccx_cmd else None,
         "aieng_root": str(settings.aieng_root),
         "is_ci": _is_ci(),
     }
+    capabilities = structural_capabilities()
 
     result = {
         "schema_version": "0.1",
         "adapter_id": ADAPTER_ID,
         "adapter_label": ADAPTER_LABEL,
         "preflight": preflight.model_dump(),
-        "capabilities": [cap.model_dump() for cap in structural_capabilities()],
+        "capabilities": [cap.model_dump() for cap in capabilities],
+        "capability_status": _capability_statuses(capabilities, checked_paths),
         "environment": environment,
         "checked_paths": checked_paths,
         "safety_note": _SAFETY_NOTE,
@@ -410,4 +481,3 @@ def prepare_structural_run_preview(
     }
     profile_payload(result, label="structural_adapter.prepare_preview")
     return result
-

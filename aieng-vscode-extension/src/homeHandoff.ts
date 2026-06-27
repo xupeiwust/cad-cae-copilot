@@ -38,6 +38,7 @@ function projectPrompt(project: HomeProject, backendUrl: string): string {
     `Backend: ${backendUrl}.`,
     "Start by reading AIENG context and package evidence before proposing changes.",
     "Summarize the current .aieng evidence package: CAD evidence, CAE setup, design targets, result evidence, provenance, and claim boundary.",
+    "Before any mesh or solver workflow, inspect structural adapter preflight/capability status for FreeCADCmd, Gmsh, and CalculiX availability.",
     "Recommend the next safe CAD/CAE step. Do not run solver tools, mutate CAD, mutate the package, or advance engineering claims unless the existing AIENG approval gates explicitly allow it.",
     "Report only evidence-backed facts and call out missing evidence.",
   ].join("\n");
@@ -50,6 +51,7 @@ function setupPrompt(backendUrl: string): string {
     "Start by checking AIENG readiness and listing existing projects.",
     "If no project is suitable, create or import a project from STEP or an existing .aieng package.",
     "After the package exists, inspect the .aieng evidence package and summarize CAD evidence, missing CAE setup, design targets, result evidence, provenance, and claim boundary.",
+    "Before any mesh or solver workflow, inspect structural adapter preflight/capability status for FreeCADCmd, Gmsh, and CalculiX availability.",
     "Do not run solver tools, mutate CAD, mutate the package, or advance engineering claims unless the existing AIENG approval gates explicitly allow it.",
   ].join("\n");
 }

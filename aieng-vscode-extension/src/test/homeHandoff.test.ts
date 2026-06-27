@@ -78,6 +78,7 @@ describe("buildHomeHandoff", () => {
     assert.match(model.nextAction.prompt ?? "", /project Pump bracket \(new\)/);
     assert.match(model.nextAction.prompt ?? "", /\.aieng evidence package/);
     assert.match(model.nextAction.prompt ?? "", /approval gates/);
+    assert.match(model.nextAction.prompt ?? "", /FreeCADCmd, Gmsh, and CalculiX/);
     assert.match(model.nextAction.prompt ?? "", /Do not run solver tools/);
   });
 
@@ -88,6 +89,7 @@ describe("buildHomeHandoff", () => {
     assert.equal(model.nextAction.label, "Create or import a project");
     assert.match(model.nextAction.prompt ?? "", /Set up an AIENG project/);
     assert.match(model.nextAction.prompt ?? "", /STEP or an existing \.aieng package/);
+    assert.match(model.nextAction.prompt ?? "", /structural adapter preflight/);
     assert.match(model.nextAction.prompt ?? "", /approval gates/);
   });
 });

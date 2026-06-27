@@ -6,6 +6,8 @@ import { modifyPrompt, projectContextPrompt, starterPrompt } from "../prompts";
 function assertBoundedPrompt(prompt: string): void {
   assert.match(prompt, /\.aieng|evidence/i);
   assert.match(prompt, /approval gates/i);
+  assert.match(prompt, /structural adapter preflight\/capability status/i);
+  assert.match(prompt, /FreeCADCmd, Gmsh, and CalculiX/);
   assert.match(prompt, /do not run solver tools|Do not run solver tools/i);
   assert.match(prompt, /claims/i);
   assert.doesNotMatch(prompt, /\b(ignore|skip|bypass) approval/i);

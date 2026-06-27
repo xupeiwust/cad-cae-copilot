@@ -20,6 +20,7 @@ export function starterPrompt(input: ProjectPromptInput): string {
     "Then propose the first mechanical part and generate it with the existing AIENG CAD tools only if the workflow allows it.",
     "Keep CAD/package mutations reviewable and use existing approval gates; do not run solver tools or advance engineering claims.",
     "After the model exists, summarize the .aieng evidence package: CAD evidence, missing CAE setup, design targets, result evidence, provenance, and claim boundary.",
+    "Before any mesh or solver workflow, inspect structural adapter preflight/capability status for FreeCADCmd, Gmsh, and CalculiX availability.",
     "I have AIENG CAD Preview open on this project, so it refreshes automatically when the model updates - no need to tell me to look at a file.",
   ].join(" ");
 }
@@ -36,6 +37,7 @@ export function modifyPrompt(input: ModifyPromptInput): string {
     );
   }
   lines.push("Keep the geometry reproducible and reviewable; use existing approval gates for CAD/package mutations.");
+  lines.push("Before any mesh or solver workflow, inspect structural adapter preflight/capability status for FreeCADCmd, Gmsh, and CalculiX availability.");
   lines.push("Do not run solver tools or advance engineering claims unless AIENG evidence and approvals explicitly support it.");
   lines.push("AIENG CAD Preview will refresh automatically when the edit succeeds.");
   return lines.join(" ");

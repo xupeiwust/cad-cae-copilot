@@ -1848,6 +1848,27 @@ export type StructuralAdapterCapability = {
   claim_advancement: "none";
 };
 
+export type StructuralAdapterCapabilityStatus = {
+  capability_id: string;
+  label: string;
+  category: string;
+  status: "ready" | "blocked";
+  required_tools: Array<{
+    name: string;
+    available: boolean;
+    path?: string | null;
+    reason?: string | null;
+  }>;
+  missing_tools: string[];
+  blocked_reason?: string | null;
+  requires_approval: boolean;
+  mutates_package: boolean;
+  runs_external_process: boolean;
+  claim_advancement: "none";
+  estimated_outputs: string[];
+  stale_artifacts_on_success: string[];
+};
+
 export type StructuralAdapterPreflightResponse = {
   schema_version?: string;
   adapter_id?: string;
@@ -1862,6 +1883,7 @@ export type StructuralAdapterPreflightResponse = {
     requires_approval: boolean;
   };
   capabilities: StructuralAdapterCapability[];
+  capability_status?: StructuralAdapterCapabilityStatus[];
   environment?: Record<string, unknown>;
   checked_paths?: Record<string, { path: string; present: boolean }>;
   safety_note: string;

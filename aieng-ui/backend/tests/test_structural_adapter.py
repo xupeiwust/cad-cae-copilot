@@ -141,6 +141,35 @@ def test_preflight_partial_when_solver_only_present(tmp_path: Path, monkeypatch)
     preflight = result["preflight"]
     assert preflight["status"] == "partial"
     assert "ccx" not in set(preflight["missing_dependencies"])
+    statuses = {item["capability_id"]: item for item in result["capability_status"]}
+    assert statuses["structural.run_solver"]["status"] == "ready"
+    assert statuses["structural.generate_mesh"]["status"] == "blocked"
+    assert set(statuses["structural.generate_mesh"]["missing_tools"]) == {"FreeCADCmd", "gmsh"}
+    assert statuses["structural.run_solver"]["requires_approval"] is True
+    assert statuses["structural.run_solver"]["claim_advancement"] == "none"
+
+
+def test_preflight_capability_status_names_missing_tools(tmp_path: Path, monkeypatch) -> None:
+    _block_binaries(monkeypatch)
+    settings = _hermetic_settings(tmp_path)
+    result = preflight_structural_adapter(settings)
+
+    assert result["checked_paths"]["freecad"]["present"] is False
+    assert "FreeCADCmd" in result["preflight"]["missing_dependencies"]
+    statuses = {item["capability_id"]: item for item in result["capability_status"]}
+    mesh = statuses["structural.generate_mesh"]
+    solver = statuses["structural.run_solver"]
+    extract = statuses["structural.extract_results"]
+
+    assert mesh["status"] == "blocked"
+    assert "FreeCADCmd" in mesh["missing_tools"]
+    assert "gmsh" in mesh["missing_tools"]
+    assert mesh["blocked_reason"].startswith("Missing local tool")
+    assert solver["status"] == "blocked"
+    assert solver["missing_tools"] == ["ccx"]
+    assert extract["status"] == "ready"
+    assert extract["required_tools"] == []
+    assert all(item["claim_advancement"] == "none" for item in statuses.values())
 
 
 def test_api_endpoint_returns_structured_preflight(tmp_path: Path, monkeypatch) -> None:
@@ -152,6 +181,8 @@ def test_api_endpoint_returns_structured_preflight(tmp_path: Path, monkeypatch) 
     body = resp.json()
     assert body["adapter_id"] == "structural"
     assert "capabilities" in body and body["capabilities"]
+    assert "capability_status" in body and body["capability_status"]
+    assert body["checked_paths"]["freecad"]["path"] == "FreeCADCmd"
     assert body["claim_boundary"]
 
 

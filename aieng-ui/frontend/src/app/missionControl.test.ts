@@ -87,6 +87,13 @@ describe("buildMissionControl", () => {
     expect(model.cards.find((card) => card.key === "package")?.status).toBe("ready");
     expect(model.cards.find((card) => card.key === "cad")?.status).toBe("ready");
     expect(model.cards.find((card) => card.key === "cae")?.status).toBe("missing");
+    expect(model.packageIdentity.find((item) => item.key === "geometry")?.members).toEqual([
+      "geometry/topology_map.json",
+      "graph/feature_graph.json",
+      "manifest.json",
+    ]);
+    expect(model.packageIdentity.find((item) => item.key === "provenance")?.status).toBe("ready");
+    expect(model.packageIdentity.find((item) => item.key === "claims")?.status).toBe("unknown");
     expect(model.nextAction.label).toBe("Define CAE setup");
     expect(model.nextAction.draft).toContain("Do not run the solver");
     expect(model.trustBadges.map((badge) => badge.label)).toEqual([
@@ -162,7 +169,14 @@ describe("buildMissionControl", () => {
   it("does not present solver result evidence as claim advancement", () => {
     const model = build({
       summary: summary({
-        members: ["manifest.json", "results/evidence_index.json", "results/result_summary.json", "results/computed_metrics.json"],
+        members: [
+          "manifest.json",
+          "results/evidence_index.json",
+          "results/result_summary.json",
+          "results/computed_metrics.json",
+          "ai/claim_map.json",
+          "ai/summary.md",
+        ],
         cae: {
           present: true,
           constraints_count: 1,
@@ -230,6 +244,9 @@ describe("buildMissionControl", () => {
     expect(model.trustBadges.map((badge) => badge.label)).toContain("Computed metrics");
     expect(model.trustBadges.map((badge) => badge.label)).toContain("Result summary");
     expect(model.trustBadges.find((badge) => badge.kind === "claim_boundary")?.detail).toContain("does not advance");
+    expect(model.packageIdentity.find((item) => item.key === "results")?.status).toBe("ready");
+    expect(model.packageIdentity.find((item) => item.key === "claims")?.members).toEqual(["ai/claim_map.json"]);
+    expect(model.packageIdentity.find((item) => item.key === "handoff")?.members).toEqual(["ai/summary.md"]);
   });
 
   it("surfaces stale evidence only when revalidation is explicitly required", () => {

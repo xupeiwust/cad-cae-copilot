@@ -51,12 +51,21 @@ export type MissionTrustBadge = {
   detail: string;
 };
 
+export type MissionPackageIdentityItem = {
+  key: string;
+  label: string;
+  status: MissionControlStatus;
+  detail: string;
+  members: string[];
+};
+
 export type MissionControlModel = {
   projectName: string;
   packageName: string;
   packageStatus: MissionControlStatus;
   packageDetail: string;
   headline: string;
+  packageIdentity: MissionPackageIdentityItem[];
   cards: MissionControlCard[];
   trustBadges: MissionTrustBadge[];
   workflowSteps: MissionControlWorkflowStep[];
@@ -78,9 +87,20 @@ function memberSet(summary: ProjectSummary | null): Set<string> {
   return new Set((summary?.members ?? []).filter((item) => typeof item === "string" && item.length > 0));
 }
 
+function memberList(summary: ProjectSummary | null): string[] {
+  return [...memberSet(summary)].sort();
+}
+
 function hasAnyMember(summary: ProjectSummary | null, members: string[]): boolean {
   const set = memberSet(summary);
   return members.some((member) => set.has(member));
+}
+
+function presentMembers(summary: ProjectSummary | null, exactMembers: string[], prefixes: string[] = []): string[] {
+  const exact = new Set(exactMembers);
+  return memberList(summary).filter(
+    (member) => exact.has(member) || prefixes.some((prefix) => member.startsWith(prefix)),
+  );
 }
 
 function countPresent(summary: ProjectSummary | null, members: string[]): number {
@@ -147,6 +167,137 @@ function hasComputedMetrics(summary: ProjectSummary | null): boolean {
     summary?.cae?.result_summary?.computed_values?.extrema_computed ||
       hasAnyMember(summary, ["results/computed_metrics.json"]),
   );
+}
+
+function buildPackageIdentity(args: {
+  summary: ProjectSummary | null;
+  pkgPresent: boolean;
+  cadEvidence: boolean;
+  caeSetup: boolean;
+  resultEvidence: boolean;
+  designTargets: boolean;
+}): MissionPackageIdentityItem[] {
+  const { summary, pkgPresent, cadEvidence, caeSetup, resultEvidence, designTargets } = args;
+  const item = (
+    key: string,
+    label: string,
+    status: MissionControlStatus,
+    detail: string,
+    exactMembers: string[],
+    prefixes: string[] = [],
+  ): MissionPackageIdentityItem => ({
+    key,
+    label,
+    status,
+    detail,
+    members: presentMembers(summary, exactMembers, prefixes),
+  });
+  const hasClaims = hasAnyMember(summary, ["ai/claim_map.json", "results/claim_map.json"]);
+  const hasProvenance = hasAnyMember(summary, [
+    "provenance/tool_trace.json",
+    "validation/status.yaml",
+    "validation/completeness_report.json",
+    "validation/evidence_report.json",
+  ]);
+  const hasHandoff = hasAnyMember(summary, [
+    "README_FOR_AI.md",
+    "ai/summary.md",
+    "results/postprocessing_summary.md",
+    "simulation/preprocessing_summary.md",
+    "simulation/simulation_run_summary.md",
+  ]);
+
+  return [
+    item(
+      "geometry",
+      "Geometry passport",
+      cadEvidence ? "ready" : pkgPresent ? "missing" : "unknown",
+      cadEvidence
+        ? "CAD identity, topology, or feature evidence is inside the package."
+        : "CAD evidence members are not visible yet.",
+      [
+        "manifest.json",
+        "geometry/source.step",
+        "geometry/normalized.step",
+        "geometry/topology_map.json",
+        "graph/feature_graph.json",
+        "graph/aag.json",
+      ],
+    ),
+    item(
+      "cae",
+      "CAE setup passport",
+      caeSetup ? "ready" : pkgPresent ? "missing" : "unknown",
+      caeSetup
+        ? "Materials, loads, constraints, mapping, or preflight evidence is present."
+        : "CAE setup evidence is not visible in the package.",
+      [
+        "graph/constraints.json",
+        "simulation/cae_mapping.json",
+        "simulation/preprocessing_summary.json",
+        "simulation/cae_imports/parsed_materials.json",
+        "simulation/cae_imports/parsed_boundary_conditions.json",
+        "simulation/cae_imports/parsed_loads.json",
+      ],
+      ["simulation/mesh/"],
+    ),
+    item(
+      "targets",
+      "Design targets",
+      designTargets ? "ready" : pkgPresent ? "missing" : "unknown",
+      designTargets
+        ? "Explicit requirements are available for comparison."
+        : "No design target member is visible; result review has no target baseline.",
+      ["task/design_targets.yaml", "task/design_targets.yml", "task/task_spec.json", "task/task_spec.yaml"],
+    ),
+    item(
+      "results",
+      "Result evidence",
+      resultEvidence ? "ready" : pkgPresent ? "missing" : "unknown",
+      resultEvidence
+        ? "Result artifacts exist; they remain evidence, not automatic engineering claims."
+        : "No solver/result evidence member is visible.",
+      ["results/evidence_index.json", "results/result_summary.json", "results/computed_metrics.json", "results/solver/result.json"],
+    ),
+    item(
+      "provenance",
+      "Provenance and audit",
+      hasProvenance ? "ready" : pkgPresent ? "missing" : "unknown",
+      hasProvenance
+        ? "Tool trace, validation, or evidence reports can support review."
+        : "No provenance or audit member is visible.",
+      [
+        "provenance/tool_trace.json",
+        "validation/status.yaml",
+        "validation/completeness_report.json",
+        "validation/evidence_report.json",
+      ],
+    ),
+    item(
+      "claims",
+      "Claim boundary",
+      hasClaims ? "ready" : pkgPresent ? "unknown" : "missing",
+      hasClaims
+        ? "Claim map exists and should cite evidence before any claim is advanced."
+        : "No claim map is visible; claims must remain unadvanced.",
+      ["ai/claim_map.json", "results/claim_map.json"],
+    ),
+    item(
+      "handoff",
+      "Handoff summary",
+      hasHandoff ? "ready" : pkgPresent ? "missing" : "unknown",
+      hasHandoff
+        ? "Human/agent-readable summary members are available for package handoff."
+        : "No README or summary member is visible for handoff.",
+      [
+        "README_FOR_AI.md",
+        "ai/summary.md",
+        "results/postprocessing_summary.md",
+        "simulation/preprocessing_summary.md",
+        "simulation/simulation_run_summary.md",
+      ],
+    ),
+  ];
 }
 
 function hasStaleEvidence(summary: ProjectSummary | null): boolean {
@@ -494,6 +645,14 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
       meta: "mutations remain gated",
     },
   ];
+  const packageIdentity = buildPackageIdentity({
+    summary,
+    pkgPresent,
+    cadEvidence,
+    caeSetup,
+    resultEvidence,
+    designTargets,
+  });
   const workflowSteps = buildWorkflowSteps({
     pkgPresent,
     cadEvidence,
@@ -604,6 +763,7 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
         : pkgPresent
           ? "CAD evidence loaded; CAE setup not complete"
           : "Start by creating a portable .aieng evidence package",
+    packageIdentity,
     cards,
     trustBadges,
     workflowSteps,

@@ -16,6 +16,22 @@ function model(overrides: Partial<MissionControlModel> = {}): MissionControlMode
     packageStatus: "ready",
     packageDetail: "bracket.aieng preserves CAD, CAE, provenance, and review evidence.",
     headline: "CAD evidence loaded; CAE setup not complete",
+    packageIdentity: [
+      {
+        key: "geometry",
+        label: "Geometry passport",
+        status: "ready",
+        detail: "CAD identity, topology, or feature evidence is inside the package.",
+        members: ["manifest.json", "geometry/topology_map.json"],
+      },
+      {
+        key: "claims",
+        label: "Claim boundary",
+        status: "unknown",
+        detail: "No claim map is visible; claims must remain unadvanced.",
+        members: [],
+      },
+    ],
     cards: [
       { key: "package", label: ".aieng package", status: "ready", detail: "bracket.aieng", meta: "4/5 key evidence members" },
       { key: "results", label: "Result evidence", status: "missing", detail: "No solver/result evidence is available.", meta: "claims not auto-advanced" },
@@ -50,6 +66,10 @@ describe("MissionControlPanel", () => {
     expect(screen.getByText("Mission Control")).toBeTruthy();
     expect(screen.getByText(".aieng evidence package")).toBeTruthy();
     expect(screen.getAllByText("bracket.aieng").length).toBeGreaterThan(0);
+    expect(screen.getByText("Package passport")).toBeTruthy();
+    expect(screen.getByText("Geometry passport")).toBeTruthy();
+    expect(screen.getByText("2 members")).toBeTruthy();
+    expect(screen.getByText("Claim boundary")).toBeTruthy();
     expect(screen.getByText("Result evidence")).toBeTruthy();
     expect(screen.getByText("claims not auto-advanced")).toBeTruthy();
     expect(screen.getByText(/solver values must not be claimed/)).toBeTruthy();

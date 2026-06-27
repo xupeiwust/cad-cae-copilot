@@ -335,6 +335,14 @@ geometry generation as one step in a **reviewable engineering workflow** built
 around self-describing `.aieng` packages: editable parameters, stable topology,
 provenance, and a full CAD → CAE path all survive after the picture.
 
+Think of `.aieng` as a portable engineering evidence passport. It is not a CAD
+kernel, solver, PLM database, or certification stamp; it is the shared package
+where humans and MCP-capable agents can inspect what geometry exists, what CAE
+setup is present, what result evidence was written, which claims cite evidence,
+and what provenance explains how the package got there. A package can be handed
+to another engineer or agent without losing the CAD/CAE context that matters for
+review.
+
 | Capability | Typical text-to-CAD demo | aieng |
 |------------|:------------------------:|:-----:|
 | Generate real CAD exports (STEP/STL/GLB) | Yes | Yes |

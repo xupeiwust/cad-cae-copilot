@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, Clipboard, PackageCheck, ShieldCheck } from "lucide-react";
 
-import type { MissionControlModel, MissionControlStatus } from "../app/missionControl";
+import type { MissionControlModel, MissionControlStatus, MissionPackageIdentityItem } from "../app/missionControl";
 
 type MissionControlPanelProps = {
   model: MissionControlModel;
@@ -18,6 +18,12 @@ function statusIcon(status: MissionControlStatus) {
   if (status === "ready") return <CheckCircle2 className="h-4 w-4" aria-hidden="true" />;
   if (status === "blocked") return <AlertTriangle className="h-4 w-4" aria-hidden="true" />;
   return <ShieldCheck className="h-4 w-4" aria-hidden="true" />;
+}
+
+function packageMemberPreview(item: MissionPackageIdentityItem): string {
+  if (!item.members.length) return "No member visible";
+  const preview = item.members.slice(0, 2).join(", ");
+  return item.members.length > 2 ? `${preview}, +${item.members.length - 2}` : preview;
 }
 
 export function MissionControlPanel({ model, onCopyDraft }: MissionControlPanelProps) {
@@ -42,6 +48,32 @@ export function MissionControlPanel({ model, onCopyDraft }: MissionControlPanelP
           <strong>{model.packageName}</strong>
         </div>
         <p>{model.packageDetail}</p>
+      </div>
+
+      <div className="mission-passport" aria-label=".aieng package passport">
+        <div className="mission-passport-head">
+          <strong>Package passport</strong>
+          <span>evidence inside this .aieng</span>
+        </div>
+        <div className="mission-passport-list">
+          {model.packageIdentity.map((item) => (
+            <article
+              key={item.key}
+              className={`mission-passport-item mission-passport-${item.status}`}
+              title={item.detail}
+            >
+              <div>
+                <strong>{item.label}</strong>
+                <span>{packageMemberPreview(item)}</span>
+              </div>
+              <em>
+                {item.members.length
+                  ? `${item.members.length} member${item.members.length === 1 ? "" : "s"}`
+                  : STATUS_LABEL[item.status]}
+              </em>
+            </article>
+          ))}
+        </div>
       </div>
 
       <div className="mission-headline">

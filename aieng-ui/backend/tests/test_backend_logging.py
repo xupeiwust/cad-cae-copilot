@@ -71,6 +71,39 @@ def test_log_exception_writes_file_and_records_metric(tmp_path: Path) -> None:
     assert snapshot["buckets"][0] == {"bucket": "tests.backend_logging", "count": 1}
 
 
+def test_log_exception_redacts_secrets_from_context(tmp_path: Path) -> None:
+    reset_error_metrics()
+    log_path = configure_backend_logging(tmp_path / "data")
+    logger = logging.getLogger("app.tests.backend_logging")
+
+    try:
+        raise RuntimeError("provider failed")
+    except RuntimeError:
+        log_exception(
+            logger,
+            "Recoverable provider failure.",
+            subsystem="tests.secret_redaction",
+            context={
+                "api_key": "sk-live123456789",
+                "headers": {"Authorization": "Bearer abcdef123456789"},
+                "notes": "retry with token=plain-secret and sk-anothersecret123",
+                "project_id": "visible-project",
+            },
+        )
+
+    _flush_app_handlers()
+    text = log_path.read_text(encoding="utf-8")
+    assert "visible-project" in text
+    for secret in (
+        "sk-live123456789",
+        "abcdef123456789",
+        "plain-secret",
+        "sk-anothersecret123",
+    ):
+        assert secret not in text
+    assert "[redacted]" in text
+
+
 def test_error_metrics_endpoint_reports_log_path_and_buckets(tmp_path: Path) -> None:
     reset_error_metrics()
     settings = _settings(tmp_path)

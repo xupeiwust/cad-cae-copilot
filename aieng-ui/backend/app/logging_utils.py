@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from collections import Counter
 from logging.handlers import RotatingFileHandler
@@ -14,6 +15,15 @@ _DEFAULT_LOGGER_NAME = "app"
 _DEFAULT_LOG_FILENAME = "backend.log"
 _DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 _DEFAULT_BACKUP_COUNT = 5
+_SENSITIVE_KEY_RE = re.compile(
+    r"(api[_-]?key|token|secret|password|authorization|bearer)",
+    re.IGNORECASE,
+)
+_SECRET_VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"sk-[A-Za-z0-9_-]{8,}"), "sk-[redacted]"),
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1[redacted]"),
+    (re.compile(r"(?i)((?:api[_-]?key|token|password|secret)\s*[:=]\s*)\S+"), r"\1[redacted]"),
+)
 
 
 def configure_backend_logging(
@@ -105,17 +115,26 @@ def _increment_error_metric(bucket: str) -> None:
 def _serialize_context(context: dict[str, Any] | None) -> str | None:
     if not context:
         return None
-    safe_context = {str(key): _safe_value(value) for key, value in context.items()}
+    safe_context = {str(key): _safe_value(value, key=str(key)) for key, value in context.items()}
     return json.dumps(safe_context, ensure_ascii=True, sort_keys=True)
 
 
-def _safe_value(value: Any) -> Any:
+def _safe_value(value: Any, *, key: str | None = None) -> Any:
+    if key and _SENSITIVE_KEY_RE.search(key):
+        return "[redacted]"
     if value is None or isinstance(value, (bool, int, float, str)):
-        return value
+        return _redact_string(value) if isinstance(value, str) else value
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
-        return {str(key): _safe_value(item) for key, item in value.items()}
+        return {str(child_key): _safe_value(item, key=str(child_key)) for child_key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_safe_value(item) for item in value]
-    return str(value)
+    return _redact_string(str(value))
+
+
+def _redact_string(value: str) -> str:
+    redacted = value
+    for pattern, replacement in _SECRET_VALUE_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted

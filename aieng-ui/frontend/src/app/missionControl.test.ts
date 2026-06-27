@@ -89,6 +89,11 @@ describe("buildMissionControl", () => {
     expect(model.cards.find((card) => card.key === "cae")?.status).toBe("missing");
     expect(model.nextAction.label).toBe("Define CAE setup");
     expect(model.nextAction.draft).toContain("Do not run the solver");
+    expect(model.trustBadges.map((badge) => badge.label)).toEqual([
+      "Draft / setup",
+      "Results unknown",
+      "Claim not advanced",
+    ]);
     expect(model.workflowSteps.map((step) => [step.key, step.status])).toEqual([
       ["package", "ready"],
       ["geometry", "ready"],
@@ -151,12 +156,13 @@ describe("buildMissionControl", () => {
     expect(model.nextAction.label).toBe("Review pending approval");
     expect(model.nextAction.draft).toBeNull();
     expect(model.workflowSteps.find((step) => step.key === "solver")?.status).toBe("blocked");
+    expect(model.trustBadges.find((badge) => badge.kind === "approval")?.label).toBe("Approval blocked");
   });
 
   it("does not present solver result evidence as claim advancement", () => {
     const model = build({
       summary: summary({
-        members: ["manifest.json", "results/evidence_index.json", "results/result_summary.json"],
+        members: ["manifest.json", "results/evidence_index.json", "results/result_summary.json", "results/computed_metrics.json"],
         cae: {
           present: true,
           constraints_count: 1,
@@ -174,6 +180,44 @@ describe("buildMissionControl", () => {
           boundary_conditions: [],
           loads: [],
           evidence: [],
+          result_summary: {
+            schema_version: "0.1",
+            summary_type: "cae_result_summary",
+            source: { package_path: "/tmp/bracket.aieng", solver: "CalculiX", software: null, source_files: [] },
+            status: {
+              mode: "cae_result",
+              has_cae_setup: true,
+              has_mesh: true,
+              has_results: true,
+              has_fields: false,
+              has_validation: false,
+              warnings: [],
+            },
+            artifacts: {
+              mesh_files: [],
+              field_files: [],
+              result_summary_files: ["results/result_summary.json"],
+              evidence_files: ["results/evidence_index.json"],
+              validation_files: [],
+              setup_files: [],
+            },
+            solver_settings: null,
+            load_cases: [],
+            field_metadata: null,
+            computed_values: {
+              extrema_computed: true,
+              max_displacement: null,
+              max_von_mises_stress: null,
+              minimum_safety_factor: null,
+            },
+            llm_summary: {
+              one_line: "",
+              key_findings: [],
+              risks: [],
+              recommended_next_actions: [],
+              limitations: [],
+            },
+          },
         },
       }),
     });
@@ -183,6 +227,23 @@ describe("buildMissionControl", () => {
     expect(model.nextAction.draft).toContain("Do not advance claims automatically");
     expect(model.workflowSteps.find((step) => step.key === "solver")?.status).toBe("ready");
     expect(model.workflowSteps.find((step) => step.key === "report")?.draft).toContain("Do not advance claims automatically");
+    expect(model.trustBadges.map((badge) => badge.label)).toContain("Computed metrics");
+    expect(model.trustBadges.map((badge) => badge.label)).toContain("Result summary");
+    expect(model.trustBadges.find((badge) => badge.kind === "claim_boundary")?.detail).toContain("does not advance");
+  });
+
+  it("surfaces stale evidence only when revalidation is explicitly required", () => {
+    const model = build({
+      summary: summary({
+        derived: {
+          revalidation_status: {
+            requires_revalidation: true,
+          },
+        },
+      }),
+    });
+
+    expect(model.trustBadges.find((badge) => badge.kind === "stale")?.label).toBe("Needs rerun");
   });
 
   it("blocks the mesh workflow step on failing mesh diagnostics", () => {

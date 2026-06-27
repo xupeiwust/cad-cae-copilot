@@ -49,6 +49,15 @@ export function MissionControlPanel({ model, onCopyDraft }: MissionControlPanelP
         <span>Package evidence, runtime state, and approvals stay separate.</span>
       </div>
 
+      <div className="mission-trust-badges" aria-label="Evidence trust status">
+        {model.trustBadges.map((badge) => (
+          <span key={badge.key} className={`mission-trust-badge mission-trust-${badge.kind}`} title={badge.detail}>
+            <strong>{badge.label}</strong>
+            <em>{badge.detail}</em>
+          </span>
+        ))}
+      </div>
+
       <div className="mission-grid">
         {model.cards.map((card) => (
           <article key={card.key} className={`mission-tile mission-tile-${card.status}`}>

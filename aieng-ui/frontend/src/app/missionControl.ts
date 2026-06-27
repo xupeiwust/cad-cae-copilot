@@ -33,6 +33,24 @@ export type MissionControlWorkflowStep = {
   draft: string | null;
 };
 
+export type MissionTrustKind =
+  | "draft"
+  | "preflight"
+  | "real_evidence"
+  | "result_summary"
+  | "stale"
+  | "approval"
+  | "claim_boundary"
+  | "missing"
+  | "unknown";
+
+export type MissionTrustBadge = {
+  key: string;
+  kind: MissionTrustKind;
+  label: string;
+  detail: string;
+};
+
 export type MissionControlModel = {
   projectName: string;
   packageName: string;
@@ -40,6 +58,7 @@ export type MissionControlModel = {
   packageDetail: string;
   headline: string;
   cards: MissionControlCard[];
+  trustBadges: MissionTrustBadge[];
   workflowSteps: MissionControlWorkflowStep[];
   nextAction: MissionControlNextAction;
   evidenceNotes: string[];
@@ -113,6 +132,32 @@ function hasResultEvidence(summary: ProjectSummary | null): boolean {
 
 function hasDesignTargets(summary: ProjectSummary | null): boolean {
   return hasAnyMember(summary, ["task/design_targets.yaml", "task/design_targets.yml"]);
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function hasResultSummary(summary: ProjectSummary | null): boolean {
+  return Boolean(summary?.cae?.result_summary || hasAnyMember(summary, ["results/result_summary.json"]));
+}
+
+function hasComputedMetrics(summary: ProjectSummary | null): boolean {
+  return Boolean(
+    summary?.cae?.result_summary?.computed_values?.extrema_computed ||
+      hasAnyMember(summary, ["results/computed_metrics.json"]),
+  );
+}
+
+function hasStaleEvidence(summary: ProjectSummary | null): boolean {
+  const derived = record(summary?.derived);
+  const validation = record(summary?.validation);
+  const candidates = [
+    record(derived.revalidation_status),
+    record(validation.revalidation_status),
+    record(validation.status),
+  ];
+  return candidates.some((item) => item.requires_revalidation === true || item.geometry_modified === true);
 }
 
 function timelineApprovalCount(timeline: ProjectTimeline | null): number {
@@ -251,6 +296,106 @@ function buildWorkflowSteps(args: {
   ];
 }
 
+function buildTrustBadges(args: {
+  pkgPresent: boolean;
+  caeSetup: boolean;
+  resultEvidence: boolean;
+  resultSummary: boolean;
+  computedMetrics: boolean;
+  staleEvidence: boolean;
+  approvals: number;
+}): MissionTrustBadge[] {
+  const {
+    pkgPresent,
+    caeSetup,
+    resultEvidence,
+    resultSummary,
+    computedMetrics,
+    staleEvidence,
+    approvals,
+  } = args;
+  const badges: MissionTrustBadge[] = [];
+
+  if (!pkgPresent) {
+    badges.push({
+      key: "missing-package",
+      kind: "missing",
+      label: "Missing package",
+      detail: "No portable .aieng evidence package is loaded.",
+    });
+  } else if (!resultEvidence) {
+    badges.push({
+      key: "draft",
+      kind: "draft",
+      label: "Draft / setup",
+      detail: "No solver result evidence is available yet.",
+    });
+  }
+
+  if (caeSetup) {
+    badges.push({
+      key: "preflight",
+      kind: "preflight",
+      label: "Preflight",
+      detail: "CAE setup/readiness evidence exists, but it is not a solver result.",
+    });
+  }
+
+  if (computedMetrics || resultEvidence) {
+    badges.push({
+      key: "real-evidence",
+      kind: "real_evidence",
+      label: computedMetrics ? "Computed metrics" : "Result evidence",
+      detail: computedMetrics
+        ? "Package contains imported or extracted numeric result metrics."
+        : "Package contains result artifacts; review source and limitations.",
+    });
+  } else {
+    badges.push({
+      key: "unknown-results",
+      kind: "unknown",
+      label: "Results unknown",
+      detail: "Stress/displacement values must not be claimed.",
+    });
+  }
+
+  if (resultSummary) {
+    badges.push({
+      key: "result-summary",
+      kind: "result_summary",
+      label: "Result summary",
+      detail: "Human-readable result summary is present; it is evidence review, not certification.",
+    });
+  }
+
+  if (staleEvidence) {
+    badges.push({
+      key: "stale",
+      kind: "stale",
+      label: "Needs rerun",
+      detail: "Package marks downstream evidence as requiring revalidation.",
+    });
+  }
+
+  if (approvals > 0) {
+    badges.push({
+      key: "approval",
+      kind: "approval",
+      label: "Approval blocked",
+      detail: "A gated mutation or solver action is waiting for review.",
+    });
+  }
+
+  badges.push({
+    key: "claim-boundary",
+    kind: "claim_boundary",
+    label: "Claim not advanced",
+    detail: "AIENG does not advance engineering claims automatically.",
+  });
+
+  return badges;
+}
+
 export function buildMissionControl(input: MissionControlInput): MissionControlModel {
   const {
     selectedProject,
@@ -275,6 +420,9 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
   const caeSetup = hasCaeSetup(summary);
   const meshEvidence = hasMeshEvidence(summary);
   const resultEvidence = hasResultEvidence(summary);
+  const resultSummary = hasResultSummary(summary);
+  const computedMetrics = hasComputedMetrics(summary);
+  const staleEvidence = hasStaleEvidence(summary);
   const designTargets = hasDesignTargets(summary);
   const approvals = pendingApprovals.length + timelineApprovalCount(projectTimeline);
   const missingRequired = requiredMissing(simulationReadiness);
@@ -356,6 +504,15 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
     meshVerdict: verdict,
     resultEvidence,
     designTargets,
+    approvals,
+  });
+  const trustBadges = buildTrustBadges({
+    pkgPresent,
+    caeSetup,
+    resultEvidence,
+    resultSummary,
+    computedMetrics,
+    staleEvidence,
     approvals,
   });
 
@@ -448,6 +605,7 @@ export function buildMissionControl(input: MissionControlInput): MissionControlM
           ? "CAD evidence loaded; CAE setup not complete"
           : "Start by creating a portable .aieng evidence package",
     cards,
+    trustBadges,
     workflowSteps,
     nextAction,
     evidenceNotes,

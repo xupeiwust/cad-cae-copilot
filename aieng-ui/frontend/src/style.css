@@ -11407,10 +11407,11 @@ textarea:focus,
 }
 
 .mission-trust-badge {
-  display: inline-grid;
-  gap: 2px;
+  display: inline-flex;
+  align-items: center;
   max-width: 100%;
-  padding: 5px 7px;
+  min-height: 24px;
+  padding: 4px 7px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 7px;
   background: rgba(15, 23, 42, 0.34);
@@ -11424,14 +11425,7 @@ textarea:focus,
 }
 
 .mission-trust-badge em {
-  max-width: 260px;
-  color: #94a3b8;
-  font-size: 9.5px;
-  font-style: normal;
-  line-height: 1.25;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .mission-trust-draft,
@@ -11465,14 +11459,14 @@ textarea:focus,
 
 .mission-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .mission-tile {
   display: grid;
   gap: 7px;
-  min-height: 112px;
+  min-height: 104px;
   padding: 9px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
@@ -11724,12 +11718,6 @@ textarea:focus,
   border-radius: 6px;
   background: rgba(2, 6, 23, 0.26);
   overflow-wrap: anywhere;
-}
-
-@media (max-width: 1280px) {
-  .mission-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 720px) {

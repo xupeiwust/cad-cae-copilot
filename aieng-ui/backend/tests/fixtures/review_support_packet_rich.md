@@ -145,13 +145,39 @@ _Artifact:_ `results/computed_metrics.json`
 
 No Copilot Loops have been started for this project.
 
+## Evidence Lifecycle
+
+| Lifecycle state | Count |
+|---|---|
+| current | 7 |
+| stale | 3 |
+| unsupported | 0 |
+| claim_supporting | 0 |
+| missing | 5 |
+
+This rollup is read-only and does not advance claims. Missing evidence remains unknown/not evaluated.
+
+**Stale evidence**
+
+- `results/computed_metrics.json`
+- `simulation/runs/run_001/outputs/result.frd`
+- `simulation/runs/run_001/solver_run.json`
+
+**Missing evidence**
+
+- `geometry/*.{step,stp,iges,glb,stl}` - expected_evidence_not_found
+- `geometry/topology_map.json` - expected_evidence_not_found
+- `simulation/setup.{yaml,json}` - expected_evidence_not_found
+- `results/evidence_index.json` - expected_evidence_not_found
+- `results/result_summary.json` - expected_evidence_not_found
+
 ## Stale Evidence
 
 | Field | Value |
 |---|---|
 | Requires revalidation | True |
-| Current geometry revision | rev_2 |
-| Last validated geometry revision | rev_1 |
+| Current geometry revision | 2 |
+| Last validated geometry revision | 1 |
 | Stale artifact count | 1 |
 
 **Stale artifacts**
@@ -179,3 +205,7 @@ No Copilot Loops have been started for this project.
 
 - Engineering Setup Draft
 - Copilot Loop Summary
+
+**Partial / capped sections**
+
+- Evidence Lifecycle

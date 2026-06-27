@@ -148,8 +148,8 @@ def _write_rich_package(pkg_path: Path) -> None:
     )
     revalidation = {
         "requires_revalidation": True,
-        "current_geometry_revision": "rev_2",
-        "last_validated_geometry_revision": "rev_1",
+        "current_geometry_revision": 2,
+        "last_validated_geometry_revision": 1,
         "stale_artifacts": ["results/computed_metrics.json"],
     }
     with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -300,6 +300,23 @@ def test_target_comparison_summary_present_when_evaluable(tmp_path: Path) -> Non
 # ── export: writes only packet artifacts ──────────────────────────────────────
 
 
+def test_preview_includes_evidence_lifecycle_rollup(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project_id, pkg = _make_project(settings, "rich-lifecycle", "p.aieng")
+    _write_rich_package(pkg)
+
+    body = client.get(f"/api/projects/{project_id}/review-support-packet/preview").json()
+    sec = _section_by_id(body, "evidence_lifecycle")
+    md = body["preview_markdown"]
+
+    assert sec["status"] in {"included", "partial"}
+    assert "Evidence Lifecycle" in md
+    assert "| stale |" in md
+    assert "Missing evidence remains unknown/not evaluated" in md
+    assert body["claim_advancement"] == "none"
+
+
 def _members(pkg: Path) -> set[str]:
     with zipfile.ZipFile(pkg, "r") as zf:
         return set(zf.namelist())
@@ -351,6 +368,9 @@ def test_exported_markdown_and_manifest_are_consistent(tmp_path: Path) -> None:
     assert manifest["json_path"] == body["manifest_path"]
     sec_ids = {s["id"] for s in manifest["sections"]}
     assert "header" in sec_ids and "safety_boundary" in sec_ids
+    lifecycle = next(s for s in manifest["sections"] if s["id"] == "evidence_lifecycle")
+    assert lifecycle["data"]["claim_advancement"] == "none"
+    assert "missing" in lifecycle["data"]["summary"]
 
 
 def test_export_returns_404_or_error_when_package_missing(tmp_path: Path) -> None:

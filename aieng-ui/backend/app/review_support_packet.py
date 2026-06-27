@@ -741,6 +741,140 @@ def _section_stale_evidence(pkg: Path | None) -> dict[str, Any]:
     )
 
 
+def _fallback_evidence_lifecycle_summary(pkg: Path, project_id: str) -> dict[str, Any]:
+    members = set(_list_package_members(pkg))
+    rev = _read_package_json(pkg, REVALIDATION_STATUS_PATH)
+    stale_paths: list[str] = []
+    if isinstance(rev, dict):
+        stale_raw = rev.get("stale_artifacts") or rev.get("stale_paths") or []
+        if isinstance(stale_raw, list):
+            stale_paths = [str(path) for path in stale_raw if path]
+
+    unsupported: list[dict[str, Any]] = []
+    for member in sorted(members):
+        if not member.lower().endswith(".frd"):
+            continue
+        raw = _read_package_member(pkg, member)
+        if raw is None:
+            continue
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            unsupported.append({
+                "path": member,
+                "unsupported_reason": "binary or non-UTF-8 FRD evidence",
+            })
+
+    expected = [
+        "geometry/topology_map.json",
+        "graph/feature_graph.json",
+        "simulation/setup.yaml",
+        "results/computed_metrics.json",
+        "results/evidence_index.json",
+        "results/result_summary.json",
+    ]
+    missing = [
+        {
+            "path": path,
+            "reason": "expected_evidence_not_found",
+        }
+        for path in expected
+        if path not in members
+    ]
+    stale = [{"path": path} for path in stale_paths]
+    current_count = max(0, len(members) - len(stale_paths) - len(unsupported))
+    summary = {
+        "current": current_count,
+        "stale": len(stale),
+        "unsupported": len(unsupported),
+        "claim_supporting": 0,
+        "missing": len(missing),
+    }
+    status = "warning" if any(summary[key] for key in ("stale", "unsupported", "missing")) else "ok"
+    return {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "claim_advancement": CLAIM_ADVANCEMENT,
+        "status": status,
+        "summary": summary,
+        "governance": {
+            "automatic_claim_advancement": False,
+            "claim_advancement_requires_explicit_review": True,
+            "fallback_summary": True,
+        },
+        "stale_evidence": stale,
+        "unsupported_evidence": unsupported,
+        "claim_supporting_evidence": [],
+        "missing_evidence": missing,
+    }
+
+
+def _section_evidence_lifecycle(
+    settings: Settings,
+    project_id: str,
+    pkg: Path | None,
+) -> dict[str, Any]:
+    if pkg is None:
+        return _section(
+            "evidence_lifecycle",
+            "Evidence Lifecycle",
+            "missing",
+            "No evidence lifecycle summary available (project has no package).",
+        )
+    try:
+        from .routers.evidence import _build_evidence_lifecycle_summary
+
+        lifecycle = _build_evidence_lifecycle_summary(pkg, project_id=project_id)
+    except Exception as exc:
+        lifecycle = _fallback_evidence_lifecycle_summary(pkg, project_id)
+        lifecycle.setdefault("warnings", []).append(
+            f"Used compatibility fallback because full lifecycle summary failed: {type(exc).__name__}."
+        )
+
+    summary = lifecycle.get("summary") or {}
+    body = "| Lifecycle state | Count |\n|---|---|\n"
+    for key in ("current", "stale", "unsupported", "claim_supporting", "missing"):
+        body += f"| {key} | {int(summary.get(key) or 0)} |\n"
+    body += (
+        "\nThis rollup is read-only and does not advance claims. "
+        "Missing evidence remains unknown/not evaluated.\n"
+    )
+    for warning in lifecycle.get("warnings") or []:
+        body += f"\n_Warning: {_md_escape(warning)}_\n"
+
+    def add_items(title: str, items: list[dict[str, Any]]) -> None:
+        nonlocal body
+        if not items:
+            return
+        body += f"\n**{title}**\n\n"
+        for item in items[:_MAX_TABLE_ROWS]:
+            path = item.get("path")
+            reason = item.get("unsupported_reason") or item.get("reason") or ""
+            suffix = f" - {_md_escape(reason)}" if reason else ""
+            body += f"- `{_md_escape(path)}`{suffix}\n"
+
+    add_items("Stale evidence", lifecycle.get("stale_evidence") or [])
+    add_items("Unsupported evidence", lifecycle.get("unsupported_evidence") or [])
+    add_items("Claim-supporting evidence", lifecycle.get("claim_supporting_evidence") or [])
+    add_items("Missing evidence", lifecycle.get("missing_evidence") or [])
+
+    status: SectionStatus = "included" if lifecycle.get("status") == "ok" else "partial"
+    return _section(
+        "evidence_lifecycle",
+        "Evidence Lifecycle",
+        status,
+        body,
+        data={
+            "status": lifecycle.get("status"),
+            "summary": summary,
+            "claim_advancement": lifecycle.get("claim_advancement"),
+            "governance": lifecycle.get("governance") or {},
+        },
+        warnings=lifecycle.get("warnings") or [],
+        artifact_paths=[str(pkg)],
+    )
+
+
 def _section_audit_trail(pkg: Path | None) -> dict[str, Any]:
     events = _read_audit_events(pkg)
     if not events:
@@ -835,6 +969,7 @@ def _build_sections(settings: Settings, project_id: str, *, packet_id: str) -> l
     sections.append(_section_cad_approval_records(pkg))
     sections.append(_section_structural_solver(pkg))
     sections.append(_section_copilot_loop(settings, project_id))
+    sections.append(_section_evidence_lifecycle(settings, project_id, pkg))
     sections.append(_section_stale_evidence(pkg))
     sections.append(_section_audit_trail(pkg))
     sections.append(_section_known_limitations(sections))

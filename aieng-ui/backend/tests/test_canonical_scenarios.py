@@ -7,6 +7,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 CATALOG = ROOT / "docs" / "canonical_engineering_scenarios.json"
 DOC = ROOT / "docs" / "canonical_engineering_scenarios.md"
+REQUIRED_PACK_IDS = {
+    "value_demo_cantilever_real_cae",
+    "fixture_plate_holes_fasteners_material",
+    "mass_reduction_design_target_comparison",
+    "mesh_diagnostics_failure_recovery",
+    "sizing_sweep_ranked_candidates",
+}
 
 
 def _load_catalog() -> dict:
@@ -99,6 +106,23 @@ def test_completed_canonical_scenarios_have_pack_runbooks() -> None:
         assert any(path.exists() for path in runbooks), scenario["id"]
 
 
+def test_current_five_canonical_scenario_packs_have_no_remaining_gaps() -> None:
+    catalog = _load_catalog()
+    by_id = {scenario["id"]: scenario for scenario in catalog["scenarios"]}
+
+    assert REQUIRED_PACK_IDS <= set(by_id)
+    for scenario_id in REQUIRED_PACK_IDS:
+        scenario = by_id[scenario_id]
+        assert scenario["status"] != "cataloged_gap"
+        runbooks = [
+            ROOT / entry
+            for entry in scenario["entrypoints"]
+            if entry.startswith("docs/") and entry.endswith(".md")
+        ]
+        assert runbooks, scenario["id"]
+        assert any(path.exists() for path in runbooks), scenario["id"]
+
+
 def test_design_and_sizing_pack_runbooks_preserve_honesty_boundaries() -> None:
     design = (ROOT / "docs" / "canonical-scenarios" / "design-study-demo.md").read_text(encoding="utf-8")
     sizing = (ROOT / "docs" / "canonical-scenarios" / "sizing-sweep-demo.md").read_text(encoding="utf-8")
@@ -112,3 +136,19 @@ def test_design_and_sizing_pack_runbooks_preserve_honesty_boundaries() -> None:
     assert "Static metrics are not solver evidence" in sizing
     assert "Baseline geometry remains unchanged" in sizing
     assert "No autonomous production design approval" in sizing
+
+
+def test_fixture_and_mesh_pack_runbooks_preserve_honesty_boundaries() -> None:
+    fixture = (ROOT / "docs" / "canonical-scenarios" / "fixture-fasteners-material.md").read_text(encoding="utf-8")
+    mesh = (ROOT / "docs" / "canonical-scenarios" / "mesh-diagnostics-recovery.md").read_text(encoding="utf-8")
+
+    assert "SocketHeadCapScrew" in fixture
+    assert "standard_part" in fixture
+    assert "does not model bolt preload" in fixture
+    assert "not proof of preload" in fixture
+    assert "Missing material must be reported as missing" in fixture
+
+    assert "Preflight success is not solver success" in mesh
+    assert "A prepared deck is not solver evidence" in mesh
+    assert "Synthetic fields or fixture metrics must not be counted as real solver" in mesh
+    assert "converged: null" in mesh

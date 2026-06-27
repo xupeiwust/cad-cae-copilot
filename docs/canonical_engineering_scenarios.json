@@ -70,12 +70,13 @@
       "title": "Fixture plate with holes, fastener semantics, and material assignment",
       "priority": "P1",
       "capability_area": "manufacturing_semantics",
-      "status": "cataloged_gap",
+      "status": "ci_regression",
       "description": "Plate or fixture scenario that demonstrates recognized holes, standard-part semantics, BOM output, and explicit material assignment.",
       "entrypoints": [
         "aieng-ui/backend/tests/test_cad_generation.py",
         "aieng-ui/backend/tests/test_standards_bridge.py",
-        "aieng-ui/docs/standard_part_semantics.md"
+        "aieng-ui/docs/standard_part_semantics.md",
+        "docs/canonical-scenarios/fixture-fasteners-material.md"
       ],
       "verification_commands": [
         {
@@ -99,7 +100,7 @@
         "BOM export",
         "MCP critique"
       ],
-      "owner_notes": "Good next pack after a dedicated fixture package/runbook is added."
+      "owner_notes": "CI-regression scenario over real bd_warehouse fastener construction when dependencies are available plus pure BOM export checks."
     },
     {
       "id": "mass_reduction_design_target_comparison",
@@ -146,12 +147,13 @@
       "title": "Mesh diagnostics failure and recovery",
       "priority": "P1",
       "capability_area": "cae_preflight",
-      "status": "cataloged_gap",
+      "status": "ci_regression",
       "description": "Scenario that intentionally starts with missing or weak mesh/setup evidence, reports blockers before solver execution, then documents the recovery path.",
       "entrypoints": [
         "aieng-ui/backend/tests/test_simulation_runner.py",
         "aieng-ui/backend/tests/test_simulation_readiness.py",
-        "aieng-ui/docs/troubleshooting-vertical-cae-mvp.md"
+        "aieng-ui/docs/troubleshooting-vertical-cae-mvp.md",
+        "docs/canonical-scenarios/mesh-diagnostics-recovery.md"
       ],
       "verification_commands": [
         {
@@ -176,7 +178,7 @@
         "demo troubleshooting",
         "external-agent dogfood"
       ],
-      "owner_notes": "Needs a small dedicated fixture package before it can be considered a full scenario pack."
+      "owner_notes": "CI-regression scenario for readiness, mesh/deck diagnostics, blocked paths, and recovery guidance; real solver execution remains a separate operator-run path."
     },
     {
       "id": "sizing_sweep_ranked_candidates",

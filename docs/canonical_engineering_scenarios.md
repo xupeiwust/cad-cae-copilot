@@ -22,9 +22,9 @@ Machine-readable source: [`canonical_engineering_scenarios.json`](canonical_engi
 | Scenario | Status | Lightweight check | Boundary |
 |---|---|---|---|
 | Cantilever CAD to CAE value demo | operator-runbook | `python -m pytest aieng-ui/backend/tests/test_value_demo_packet.py -q` | Real Gmsh/CalculiX required for the real demo; synthetic fields fail the demo. |
-| Fixture plate with holes, fasteners, and material | cataloged gap | `python -m pytest aieng-ui/backend/tests/test_cad_generation.py aieng-ui/backend/tests/test_standards_bridge.py -q` | Standard-part semantics do not imply preload/contact physics. |
+| Fixture plate with holes, fasteners, and material | CI regression | `python -m pytest aieng-ui/backend/tests/test_cad_generation.py aieng-ui/backend/tests/test_standards_bridge.py -q` | Standard-part semantics do not imply preload/contact physics. [Pack](canonical-scenarios/fixture-fasteners-material.md) |
 | Mass-reduction design target comparison | CI regression | `python -m pytest aieng-ui/backend/tests/test_design_study_demo.py -q` | Ranking is advisory; baseline geometry is not overwritten. [Pack](canonical-scenarios/design-study-demo.md) |
-| Mesh diagnostics failure and recovery | cataloged gap | `python -m pytest aieng-ui/backend/tests/test_simulation_readiness.py aieng-ui/backend/tests/test_simulation_runner.py -q` | Preflight success is not solver success. |
+| Mesh diagnostics failure and recovery | CI regression | `python -m pytest aieng-ui/backend/tests/test_simulation_readiness.py aieng-ui/backend/tests/test_simulation_runner.py -q` | Preflight success is not solver success. [Pack](canonical-scenarios/mesh-diagnostics-recovery.md) |
 | Sizing sweep with ranked candidates | CI regression | `python -m pytest aieng-ui/backend/tests/test_optimization_sizing_demo.py aieng-ui/backend/tests/test_iterative_optimization_demo.py -q` | Analytical or fixture metrics are not solver evidence. [Pack](canonical-scenarios/sizing-sweep-demo.md) |
 
 ## Graduation Checklist
@@ -39,5 +39,6 @@ A scenario is ready for a teammate to claim when it has:
 - explicit limitations and claim boundaries;
 - a consumer surface such as README, MCP dogfood, Mission Control, or release demo.
 
-The catalog intentionally includes both complete packs and cataloged gaps. This
-lets us plan the demo surface without weakening the main CAD/CAE execution path.
+The catalog now keeps the five canonical packs runnable or operator-documented.
+Future additions should start as cataloged gaps until their verification command
+and honesty boundary are clear.

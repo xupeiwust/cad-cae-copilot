@@ -81,3 +81,34 @@ def test_canonical_engineering_scenario_doc_links_catalog_and_commands() -> None
     assert "python -m pytest aieng-ui/backend/tests/test_value_demo_packet.py -q" in doc
     assert "Preflight success is not solver success" in doc
     assert "must never be counted" in doc
+
+
+def test_completed_canonical_scenarios_have_pack_runbooks() -> None:
+    catalog = _load_catalog()
+    completed_statuses = {"ci_regression", "operator_runbook"}
+
+    for scenario in catalog["scenarios"]:
+        if scenario["status"] not in completed_statuses:
+            continue
+        runbooks = [
+            ROOT / entry
+            for entry in scenario["entrypoints"]
+            if entry.startswith("docs/") and entry.endswith(".md")
+        ]
+        assert runbooks, scenario["id"]
+        assert any(path.exists() for path in runbooks), scenario["id"]
+
+
+def test_design_and_sizing_pack_runbooks_preserve_honesty_boundaries() -> None:
+    design = (ROOT / "docs" / "canonical-scenarios" / "design-study-demo.md").read_text(encoding="utf-8")
+    sizing = (ROOT / "docs" / "canonical-scenarios" / "sizing-sweep-demo.md").read_text(encoding="utf-8")
+
+    assert "python -m pytest aieng-ui/backend/tests/test_design_study_demo.py -q" in design
+    assert "candidate-local static metrics" in design
+    assert "not real solver evidence" in design
+    assert "does not overwrite baseline" in design
+
+    assert "python -m pytest aieng-ui/backend/tests/test_optimization_sizing_demo.py" in sizing
+    assert "Static metrics are not solver evidence" in sizing
+    assert "Baseline geometry remains unchanged" in sizing
+    assert "No autonomous production design approval" in sizing

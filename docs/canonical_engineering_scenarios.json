@@ -111,7 +111,8 @@
       "entrypoints": [
         "aieng-ui/backend/tests/test_design_study_demo.py",
         "aieng-ui/backend/tests/fixtures/design_study_demo",
-        "aieng/docs/demo_catalog.md"
+        "aieng/docs/demo_catalog.md",
+        "docs/canonical-scenarios/design-study-demo.md"
       ],
       "verification_commands": [
         {
@@ -187,7 +188,8 @@
       "entrypoints": [
         "aieng-ui/backend/tests/test_optimization_sizing_demo.py",
         "aieng-ui/backend/tests/test_iterative_optimization_demo.py",
-        "aieng/docs/demo_catalog.md"
+        "aieng/docs/demo_catalog.md",
+        "docs/canonical-scenarios/sizing-sweep-demo.md"
       ],
       "verification_commands": [
         {
@@ -212,7 +214,7 @@
         "optimization demo",
         "agent dogfood"
       ],
-      "owner_notes": "Already testable; future pack should add a short operator README and expected screenshots."
+      "owner_notes": "Already testable with a short operator README; expected screenshots remain optional future polish."
     }
   ]
 }

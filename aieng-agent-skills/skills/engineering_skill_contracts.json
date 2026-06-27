@@ -1,0 +1,246 @@
+{
+  "format_version": "0.1.0",
+  "catalog_id": "aieng.engineering_skill_contracts",
+  "summary": "Contracted agent skills for repeatable AIENG CAD/CAE workflows. These are behavior contracts, not execution tools.",
+  "global_safety_rules": [
+    "Read .aieng package evidence before making CAD/CAE recommendations.",
+    "Fail closed when required evidence is missing or stale.",
+    "Do not bypass approval gates for CAD/package mutations, mesh generation, solver execution, or result extraction.",
+    "Do not advance engineering claims automatically.",
+    "Do not present solver/result artifacts as certification or production validation."
+  ],
+  "skills": [
+    {
+      "id": "cae-preflight",
+      "title": "CAE setup preflight",
+      "purpose": "Check whether a project has enough package evidence to prepare a solver run review.",
+      "required_inputs": [
+        "project_id",
+        ".aieng package",
+        "CAD evidence: manifest plus topology or feature graph",
+        "CAE evidence: material, load, constraint, mapping, mesh/deck status where available"
+      ],
+      "allowed_tools": [
+        "aieng.agent_context",
+        "aieng.inspect_package",
+        "aieng.write_completeness_report",
+        "cae.prepare_solver_run",
+        "structural_adapter.preflight"
+      ],
+      "refusal_conditions": [
+        "No selected project or no .aieng package.",
+        "Required material/load/constraint evidence is missing and the user has not supplied it.",
+        "Adapter preflight reports missing FreeCADCmd, Gmsh, or CalculiX for the requested workflow.",
+        "The user asks to run solver tools before preflight and approval."
+      ],
+      "outputs": [
+        "Read-only readiness summary.",
+        "Missing evidence list.",
+        "Blocked reason codes when available.",
+        "Recommended next safe action."
+      ],
+      "evidence_read": [
+        "manifest.json",
+        "geometry/topology_map.json",
+        "graph/feature_graph.json",
+        "graph/constraints.json",
+        "simulation/cae_mapping.json",
+        "simulation/mesh/mesh.inp",
+        "simulation/solver_settings.json",
+        "simulation/load_cases/*"
+      ],
+      "evidence_written": [],
+      "approval_required": false,
+      "claim_advancement": "none",
+      "verification_scenario": "Open a CAD-only project and confirm the skill reports missing CAE setup without proposing solver execution."
+    },
+    {
+      "id": "design-target-review",
+      "title": "Design target review",
+      "purpose": "Compare available result summaries and computed metrics against explicit design targets without advancing claims.",
+      "required_inputs": [
+        "project_id",
+        ".aieng package",
+        "task/design_targets.yaml or user-stated design targets",
+        "result evidence when reporting numerical comparisons"
+      ],
+      "allowed_tools": [
+        "aieng.agent_context",
+        "aieng.inspect_package",
+        "postprocess.refresh_cae_summary",
+        "target.compare_design_targets"
+      ],
+      "refusal_conditions": [
+        "Required design targets are missing and the user has not supplied comparison criteria.",
+        "No solver/result evidence exists for requested numerical conclusions.",
+        "Evidence is stale and the user asks for a current pass/fail verdict.",
+        "The user asks to certify or approve a design from summary artifacts alone."
+      ],
+      "outputs": [
+        "Target-by-target comparison using available evidence.",
+        "Missing or stale evidence notes.",
+        "Limitations and recommended follow-up."
+      ],
+      "evidence_read": [
+        "task/design_targets.yaml",
+        "results/result_summary.json",
+        "results/computed_metrics.json",
+        "results/evidence_index.json",
+        "validation/status.yaml"
+      ],
+      "evidence_written": [
+        "results/result_summary.json",
+        "results/evidence_index.json"
+      ],
+      "approval_required": true,
+      "claim_advancement": "none",
+      "verification_scenario": "Use a package with result_summary.json but no design_targets.yaml and confirm the skill reports no target baseline."
+    },
+    {
+      "id": "cad-mod-propose-verify",
+      "title": "CAD modification proposal and verification",
+      "purpose": "Propose one parameterized CAD change, check protected features and evidence impact, and stop before unsafe mutation.",
+      "required_inputs": [
+        "project_id",
+        "current CAD evidence",
+        "editable parameter list or explicit user-approved modeling scope",
+        "protected region / stable topology context when present"
+      ],
+      "allowed_tools": [
+        "aieng.agent_context",
+        "cad.list_editable_parameters",
+        "cad.get_source",
+        "cad.confirm_modeling_plan",
+        "cad.edit_parameter",
+        "cad.execute_build123d",
+        "cad.critique",
+        "aieng.inspect_package"
+      ],
+      "refusal_conditions": [
+        "No editable parameter or approved modeling scope exists.",
+        "The proposed edit touches protected geometry without explicit user approval.",
+        "The user asks for multiple geometry changes before verification without accepting attribution loss.",
+        "Post-edit regression or critique worsens safety/manufacturability and the user has not accepted that risk."
+      ],
+      "outputs": [
+        "One proposed CAD change and rationale.",
+        "Expected evidence impact and stale downstream artifacts.",
+        "Post-change critique/regression summary when a mutation is approved and performed."
+      ],
+      "evidence_read": [
+        "geometry/topology_map.json",
+        "graph/feature_graph.json",
+        "graph/constraints.json",
+        "ai/summary.md",
+        "validation/status.yaml"
+      ],
+      "evidence_written": [
+        "cad/source.py",
+        "geometry/topology_map.json",
+        "graph/feature_graph.json",
+        "validation/status.yaml"
+      ],
+      "approval_required": true,
+      "claim_advancement": "none",
+      "verification_scenario": "Use a project with editable parameters and confirm the skill proposes one bounded edit before any mutation."
+    },
+    {
+      "id": "solver-run-orchestrate",
+      "title": "Approval-gated solver run orchestration",
+      "purpose": "Prepare mesh/deck readiness, request approval-gated solver execution, extract results, and refresh summaries.",
+      "required_inputs": [
+        "project_id",
+        "CAE setup evidence",
+        "structural adapter preflight/capability status",
+        "FreeCADCmd/Gmsh availability for mesh workflows and CalculiX/ccx availability for solver workflows",
+        "mesh and solver deck readiness",
+        "explicit approval for solver execution"
+      ],
+      "allowed_tools": [
+        "aieng.agent_context",
+        "cae.prepare_solver_run",
+        "cae.generate_solver_input",
+        "cae.run_solver",
+        "cae.extract_solver_results",
+        "cae.extract_field_regions",
+        "postprocess.refresh_cae_summary",
+        "structural_adapter.preflight"
+      ],
+      "refusal_conditions": [
+        "Structural adapter capability status is blocked for required local tools.",
+        "Mesh, solver settings, load case, or input deck evidence is missing.",
+        "Approval is missing or denied.",
+        "The user asks to report solver values before solver/result evidence exists."
+      ],
+      "outputs": [
+        "Preflight summary.",
+        "Approval status.",
+        "Solver/result artifact list when execution succeeds.",
+        "Refreshed result summary and limitations."
+      ],
+      "evidence_read": [
+        "simulation/mesh/mesh.inp",
+        "simulation/solver_settings.json",
+        "simulation/load_cases/*",
+        "simulation/runs/*/solver_input.inp"
+      ],
+      "evidence_written": [
+        "simulation/runs/*/solver_run.json",
+        "simulation/runs/*/solver_log.txt",
+        "simulation/runs/*/outputs/result.frd",
+        "results/computed_metrics.json",
+        "results/result_summary.json",
+        "results/evidence_index.json"
+      ],
+      "approval_required": true,
+      "claim_advancement": "none",
+      "verification_scenario": "Use a package missing ccx or solver deck evidence and confirm the skill stops at blocked preflight."
+    },
+    {
+      "id": "evidence-report-synthesize",
+      "title": "Evidence report synthesis",
+      "purpose": "Create a review-ready summary from existing package evidence, limitations, stale state, and claim boundary.",
+      "required_inputs": [
+        "project_id",
+        ".aieng package",
+        "package evidence summary",
+        "optional result and design-target evidence"
+      ],
+      "allowed_tools": [
+        "aieng.agent_context",
+        "aieng.inspect_package",
+        "aieng.write_completeness_report",
+        "postprocess.refresh_cae_summary",
+        "report.generate_engineering_report"
+      ],
+      "refusal_conditions": [
+        "Required package evidence is missing.",
+        "The user asks to hide missing or stale evidence.",
+        "The user asks to certify the design or advance claims without explicit claim workflow."
+      ],
+      "outputs": [
+        "Evidence-backed summary.",
+        "Missing/stale evidence list.",
+        "Claim boundary statement.",
+        "Recommended next safe actions."
+      ],
+      "evidence_read": [
+        "manifest.json",
+        "README_FOR_AI.md",
+        "ai/summary.md",
+        "results/result_summary.json",
+        "results/evidence_index.json",
+        "validation/completeness_report.json",
+        "validation/evidence_report.json"
+      ],
+      "evidence_written": [
+        "validation/completeness_report.json",
+        "validation/evidence_report.json",
+        "reports/*"
+      ],
+      "approval_required": true,
+      "claim_advancement": "none",
+      "verification_scenario": "Use a CAD-only package and confirm the report identifies no solver evidence and no automatic claim advancement."
+    }
+  ]
+}

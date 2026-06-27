@@ -11,6 +11,10 @@ Skills in this directory:
 - Reference `aieng/` (format, CLI) and `aieng_freecad_mcp/` (FreeCAD backend) without belonging to either.
 - Version independently from both the `aieng` package and the `aieng_freecad_mcp` adapter.
 - Live in this repository (`aieng-agent-skills/`) so they can be released and distributed separately.
+- Use `engineering_skill_contracts.json` as the machine-readable contract index
+  for repeatable CAD/CAE loops. The JSON catalog defines required evidence,
+  allowed tools, refusal conditions, approval requirements, outputs, and a
+  dogfood scenario for each contracted workflow.
 
 ## Placement
 
@@ -23,6 +27,10 @@ Skills in this directory:
 - **aieng-cad-cae-copilot/** — Evidence-first CAE workflow skill prototype for inspect → setup patch → preflight → approval-gated solver run → FRD extraction → refreshed summary reporting.
   Validation note: `skills/aieng-cad-cae-copilot/validation.md`.
 - **aieng-closed-loop-copilot/** — Closes the loop on top of `aieng-cad-cae-copilot`: recommend ranked CAD modifications (Phase 36) → verify them through the pre-execution gate (Phase 37) → apply the surviving proposal via `cad.edit_parameter` → re-simulate → compare against design targets. Bounded iteration budget; trust-layer-gated; no auto-approval.
+- **engineering_skill_contracts.json** — Contract catalog for the initial product
+  loop skills: `cae-preflight`, `design-target-review`,
+  `cad-mod-propose-verify`, `solver-run-orchestrate`, and
+  `evidence-report-synthesize`.
 
 ## Versioning
 

@@ -14,6 +14,10 @@ Use this only when a baseline project has CAD, CAE setup/results, and explicit d
 - Prefer safe parameter edits over full regeneration when editable parameters exist.
 - Re-run CAE before claiming improvement.
 - Stop on target met, no evidence, approval denial, or budget exhaustion.
+- For repeatable loops, follow the relevant entry in
+  `../engineering_skill_contracts.json`: `cad-mod-propose-verify`,
+  `solver-run-orchestrate`, `design-target-review`, or
+  `evidence-report-synthesize`.
 
 ## Required workflow
 

@@ -7,6 +7,8 @@ Agent behavior skills for the `.aieng` ecosystem. These are SKILL.md-based behav
 ```text
 skills/
   README.md                    — skill index and handoff notes
+  engineering_skill_contracts.json
+                               — machine-readable CAD/CAE loop contracts
   aieng-cad-authoring/         — Phase 1 create-new CAD authoring skill
     SKILL.md
     agents/openai.yaml

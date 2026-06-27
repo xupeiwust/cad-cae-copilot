@@ -14,6 +14,10 @@ This skill teaches order of operations and claim discipline; it does not add sol
 - Prepare solver runs without inventing missing material, loads, or constraints.
 - Keep `cae.run_solver` behind the approval boundary.
 - Report only evidence-backed results and explicit limitations.
+- For repeatable loops, follow the relevant entry in
+  `../engineering_skill_contracts.json`: `cae-preflight`,
+  `solver-run-orchestrate`, `design-target-review`, or
+  `evidence-report-synthesize`.
 
 ## When to use
 

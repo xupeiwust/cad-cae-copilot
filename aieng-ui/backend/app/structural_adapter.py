@@ -66,6 +66,21 @@ _STALE_ON_SOLVER_RERUN = [
     "reports/copilot_loop/*",
 ]
 
+_TOOL_LIMITATIONS: dict[str, list[str]] = {
+    "freecad": [
+        "Preflight only verifies that a FreeCADCmd executable is discoverable; "
+        "it does not open a CAD document or verify export behavior.",
+    ],
+    "gmsh": [
+        "Preflight only verifies that a gmsh executable is discoverable; "
+        "it does not generate or validate a mesh.",
+    ],
+    "ccx": [
+        "Preflight only verifies that a CalculiX executable is discoverable; "
+        "it does not run a solver deck or verify convergence.",
+    ],
+}
+
 
 def structural_capabilities() -> list[ExternalToolCapability]:
     """Return the static structural adapter manifest."""
@@ -165,15 +180,54 @@ def _capability_required_tools(capability_id: str) -> list[str]:
     return []
 
 
+def _tool_key(tool_name: str) -> str:
+    return "freecad" if tool_name.lower().startswith("freecad") else tool_name.lower()
+
+
+def _checked_tool(
+    *,
+    key: str,
+    path: Path | None,
+    fallback_name: str,
+) -> dict[str, Any]:
+    present = path is not None
+    return {
+        "path": str(path) if path else fallback_name,
+        "present": present,
+        "availability_state": "configured" if present else "missing_binary",
+        "version": None,
+        "version_status": "unknown" if present else "not_available",
+        "verified_by_preflight": False,
+        "configured_but_not_tested": present,
+        "preflight_method": "path_lookup_only",
+        "known_limitations": _TOOL_LIMITATIONS.get(key, []),
+        "reason": (
+            "Executable path found; version and behavior are not checked because "
+            "this preflight is non-executing."
+            if present
+            else f"{fallback_name} executable was not found."
+        ),
+    }
+
+
 def _tool_preflight_status(tool_name: str, checked_paths: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    key = "freecad" if tool_name.lower().startswith("freecad") else tool_name.lower()
+    key = _tool_key(tool_name)
     checked = checked_paths.get(key)
     present = bool(checked and checked.get("present"))
     return {
         "name": tool_name,
         "available": present,
         "path": checked.get("path") if checked else tool_name,
-        "reason": None if present else f"{tool_name} executable was not found.",
+        "availability_state": (
+            checked.get("availability_state") if checked else "missing_binary"
+        ),
+        "version": checked.get("version") if checked else None,
+        "version_status": checked.get("version_status") if checked else "not_available",
+        "verified_by_preflight": bool(checked and checked.get("verified_by_preflight")),
+        "configured_but_not_tested": bool(checked and checked.get("configured_but_not_tested")),
+        "preflight_method": checked.get("preflight_method") if checked else "path_lookup_only",
+        "known_limitations": checked.get("known_limitations") if checked else [],
+        "reason": checked.get("reason") if checked else f"{tool_name} executable was not found.",
     }
 
 
@@ -224,9 +278,9 @@ def preflight_structural_adapter(settings: Settings) -> dict[str, Any]:
 
     checked_paths = {
         "aieng_root": {"path": str(settings.aieng_root), "present": settings.aieng_root.exists()},
-        "freecad": {"path": str(freecad_cmd) if freecad_cmd else "FreeCADCmd", "present": freecad_cmd is not None},
-        "gmsh": {"path": str(gmsh_cmd) if gmsh_cmd else "gmsh", "present": gmsh_cmd is not None},
-        "ccx": {"path": str(ccx_cmd) if ccx_cmd else "ccx", "present": ccx_cmd is not None},
+        "freecad": _checked_tool(key="freecad", path=freecad_cmd, fallback_name="FreeCADCmd"),
+        "gmsh": _checked_tool(key="gmsh", path=gmsh_cmd, fallback_name="gmsh"),
+        "ccx": _checked_tool(key="ccx", path=ccx_cmd, fallback_name="ccx"),
     }
 
     missing_dependencies: list[str] = []

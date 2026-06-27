@@ -1502,6 +1502,78 @@ def test_runtime_capabilities_claim_policy_no_auto_advancement(tmp_path: Path) -
     assert policy["claim_advancement_requires_explicit_workflow"] is True
 
 
+def test_structural_preflight_missing_tools_are_machine_readable(tmp_path: Path, monkeypatch) -> None:
+    """Structural preflight distinguishes missing binaries before a workflow is attempted."""
+    from app import structural_adapter
+
+    monkeypatch.setattr(structural_adapter, "_which_existing", lambda *names: None)
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    resp = client.get("/api/adapters/structural/preflight")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    ccx = data["checked_paths"]["ccx"]
+    assert ccx["present"] is False
+    assert ccx["availability_state"] == "missing_binary"
+    assert ccx["version_status"] == "not_available"
+    assert ccx["verified_by_preflight"] is False
+
+    run_solver = next(
+        item for item in data["capability_status"]
+        if item["capability_id"] == "structural.run_solver"
+    )
+    required_ccx = run_solver["required_tools"][0]
+    assert run_solver["status"] == "blocked"
+    assert required_ccx["availability_state"] == "missing_binary"
+    assert required_ccx["version_status"] == "not_available"
+
+
+def test_structural_preflight_found_tools_are_configured_but_not_tested(tmp_path: Path, monkeypatch) -> None:
+    """Found executables are reported as configured with unknown versions, not proven workflows."""
+    from app import structural_adapter
+
+    def fake_which(*names: str) -> Path | None:
+        first = names[0].lower()
+        if first.startswith("freecad"):
+            return Path(r"C:\tools\FreeCADCmd.exe")
+        if first == "gmsh":
+            return Path(r"C:\tools\gmsh.exe")
+        if first == "ccx":
+            return Path(r"C:\tools\ccx.exe")
+        return None
+
+    monkeypatch.setattr(structural_adapter, "_which_existing", fake_which)
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    resp = client.get("/api/adapters/structural/preflight")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    for key in ("freecad", "gmsh", "ccx"):
+        checked = data["checked_paths"][key]
+        assert checked["present"] is True
+        assert checked["availability_state"] == "configured"
+        assert checked["version"] is None
+        assert checked["version_status"] == "unknown"
+        assert checked["configured_but_not_tested"] is True
+        assert checked["verified_by_preflight"] is False
+        assert checked["preflight_method"] == "path_lookup_only"
+        assert checked["known_limitations"]
+
+    mesh = next(
+        item for item in data["capability_status"]
+        if item["capability_id"] == "structural.generate_mesh"
+    )
+    assert mesh["status"] == "ready"
+    assert all(tool["configured_but_not_tested"] for tool in mesh["required_tools"])
+    assert all(tool["version_status"] == "unknown" for tool in mesh["required_tools"])
+
+
 def test_runtime_plan_selects_refresh_cae_summary_intent(tmp_path: Path) -> None:
     """'refresh cae summary' includes postprocess.refresh_cae_summary in plan."""
     from app.runtime import build_plan

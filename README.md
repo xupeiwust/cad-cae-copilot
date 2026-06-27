@@ -341,7 +341,8 @@ where humans and MCP-capable agents can inspect what geometry exists, what CAE
 setup is present, what result evidence was written, which claims cite evidence,
 and what provenance explains how the package got there. A package can be handed
 to another engineer or agent without losing the CAD/CAE context that matters for
-review.
+review; see the [package handoff runbook](docs/aieng-package-handoff.md) for the
+safe send/receive flow.
 
 | Capability | Typical text-to-CAD demo | aieng |
 |------------|:------------------------:|:-----:|

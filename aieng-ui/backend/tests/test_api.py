@@ -9011,6 +9011,123 @@ def _setup_resolver_project(tmp_path: Path, *, stale: bool = False) -> tuple[Tes
     return client, project["id"], pkg_path
 
 
+def _setup_evidence_lifecycle_rollup_project(tmp_path: Path) -> tuple[TestClient, str, Path]:
+    """Return a package with stale, unsupported, claim-linked, and missing evidence."""
+    settings = _make_runtime_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("evidence-lifecycle"))
+    pkg_path = project_dir(settings, project["id"]) / "evidence-lifecycle.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cm_path = "results/computed_metrics.json"
+    frd_path = "simulation/runs/run_001/outputs/result.frd"
+    members: dict[str, str | bytes] = {
+        "manifest.json": json.dumps({"model_id": "lifecycle-test"}),
+        "geometry/generated.step": "ISO-10303-21;\nEND-ISO-10303-21;\n",
+        "geometry/topology_map.json": json.dumps({"entities": []}),
+        cm_path: json.dumps({"schema_version": "0.1", "load_cases": []}),
+        frd_path: b"FRD\x00BINARY",
+        "simulation/runs/run_001/solver_run.json": json.dumps({
+            "schema_version": "0.1",
+            "status": "completed",
+            "solver": "ccx",
+        }),
+        "results/evidence_index.json": json.dumps({
+            "evidence_type": "cae_artifacts",
+            "entries": [
+                {
+                    "id": "cm_entry",
+                    "path": cm_path,
+                    "kind": "result",
+                    "role": "computed_extrema",
+                    "exists": True,
+                    "supports": ["stress_claim"],
+                }
+            ],
+        }),
+    }
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+
+    _write_revalidation_status(
+        pkg_path,
+        requires_revalidation=True,
+        reason="geometry_changed",
+        triggering_tool="cad.edit_parameter",
+        affected_artifacts=[cm_path, frd_path],
+        current_geometry_revision=2,
+        last_validated_geometry_revision=1,
+    )
+    proposal = _build_claim_proposal(
+        claim_id="stress_limit_review",
+        proposed_status="needs_review",
+        supporting_evidence=[cm_path],
+        rationale="Computed stress evidence exists but must be reviewed after geometry changes.",
+    )
+    _write_claim_proposal_to_package(pkg_path, proposal)
+
+    project["aieng_file"] = "evidence-lifecycle.aieng"
+    save_project(settings, project)
+    return client, project["id"], pkg_path
+
+
+def test_evidence_lifecycle_surfaces_core_states(tmp_path: Path) -> None:
+    """Lifecycle rollup distinguishes stale, unsupported, claim-linked, and missing evidence."""
+    client, pid, _ = _setup_evidence_lifecycle_rollup_project(tmp_path)
+
+    resp = client.get(f"/api/projects/{pid}/evidence-lifecycle")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["schema_version"] == "0.1"
+    assert data["claim_advancement"] == "none"
+    assert data["status"] == "warning"
+    assert data["summary"]["stale"] >= 1
+    assert data["summary"]["unsupported"] >= 1
+    assert data["summary"]["claim_supporting"] >= 1
+    assert data["summary"]["missing"] >= 1
+    assert data["governance"]["automatic_claim_advancement"] is False
+    assert data["governance"]["unsupported_evidence_is_not_claim_support"] is True
+
+    by_path = {item["path"]: item for item in data["evidence"]}
+    computed = by_path["results/computed_metrics.json"]
+    assert computed["primary_state"] == "stale"
+    assert "claim_supporting" in computed["lifecycle_states"]
+    assert computed["supports_claim_proposal"] is True
+
+    frd = by_path["simulation/runs/run_001/outputs/result.frd"]
+    assert frd["primary_state"] == "unsupported"
+    assert frd["usable_for_claim_proposal"] is False
+    assert "unsupported by the field viewer" in frd["unsupported_reason"]
+
+    missing_paths = {item["path"] for item in data["missing_evidence"]}
+    assert "graph/feature_graph.json" in missing_paths
+    assert "simulation/setup.{yaml,json}" in missing_paths
+
+
+def test_evidence_lifecycle_endpoint_does_not_mutate_package(tmp_path: Path) -> None:
+    """GET /evidence-lifecycle is read-only and does not rewrite the package."""
+    client, pid, pkg_path = _setup_evidence_lifecycle_rollup_project(tmp_path)
+    before = pkg_path.read_bytes()
+
+    resp = client.get(f"/api/projects/{pid}/evidence-lifecycle")
+
+    assert resp.status_code == 200
+    assert pkg_path.read_bytes() == before
+
+
+def test_evidence_lifecycle_endpoint_404_when_no_package(tmp_path: Path) -> None:
+    """GET /evidence-lifecycle returns 404 when no .aieng package is registered."""
+    settings = _make_runtime_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("lifecycle-404"))
+
+    resp = client.get(f"/api/projects/{project['id']}/evidence-lifecycle")
+
+    assert resp.status_code == 404
+
+
 def test_resolve_existing_field_summary(tmp_path: Path) -> None:
     """Resolving a field summary artifact that exists returns exists=True."""
     client, pid, _ = _setup_resolver_project(tmp_path)

@@ -120,6 +120,223 @@ def _unsupported_frd_reason(package_path: Path) -> str | None:
     return None
 
 
+def _unsupported_frd_artifacts(package_path: Path) -> dict[str, str]:
+    """Return package FRD paths that cannot be decoded by the field viewer."""
+    unsupported: dict[str, str] = {}
+    message = (
+        "binary or non-UTF-8 FRD files are unsupported by the field viewer; "
+        "provide a CalculiX text FRD export"
+    )
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            candidates = sorted(
+                name for name in zf.namelist()
+                if name.endswith(".frd") or name.endswith("/outputs/result.frd")
+            )
+            for name in candidates:
+                raw = zf.read(name)
+                if b"\x00" in raw:
+                    unsupported[name] = message
+                    continue
+                try:
+                    raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    unsupported[name] = message
+    except (KeyError, zipfile.BadZipFile, OSError):
+        return unsupported
+    return unsupported
+
+
+def _read_evidence_index_entries(
+    package_path: Path,
+    pkg_names: set[str],
+) -> list[dict[str, Any]]:
+    if "results/evidence_index.json" not in pkg_names:
+        return []
+    try:
+        with zipfile.ZipFile(package_path, "r") as zf:
+            raw = json.loads(zf.read("results/evidence_index.json"))
+    except (json.JSONDecodeError, KeyError, zipfile.BadZipFile, OSError):
+        return []
+    entries = raw.get("entries") if isinstance(raw, dict) else None
+    return [entry for entry in (entries or []) if isinstance(entry, dict)]
+
+
+def _claim_support_paths(proposals: list[dict[str, Any]]) -> set[str]:
+    paths: set[str] = set()
+    for proposal in proposals:
+        for path in proposal.get("supporting_evidence") or []:
+            if isinstance(path, str) and path.strip():
+                paths.add(path.strip())
+    return paths
+
+
+def _missing_expected_evidence_items(pkg_names: set[str]) -> list[dict[str, Any]]:
+    has_geometry_file = any(
+        name.startswith("geometry/") and name.lower().endswith((".step", ".stp", ".iges", ".glb", ".stl"))
+        for name in pkg_names
+    )
+    has_solver_run = any(
+        name.startswith("simulation/runs/") and name.endswith("solver_run.json")
+        for name in pkg_names
+    )
+    has_solver_input = any(
+        name.startswith("simulation/runs/") and name.endswith("solver_input.inp")
+        for name in pkg_names
+    )
+    has_frd = any(
+        name.startswith("simulation/runs/") and name.endswith(".frd")
+        for name in pkg_names
+    )
+
+    expected: list[tuple[bool, str, str, str, str]] = [
+        (has_geometry_file, "geometry/*.{step,stp,iges,glb,stl}", "geometry", "geometry", "compiled CAD geometry"),
+        ("geometry/topology_map.json" in pkg_names, "geometry/topology_map.json", "topology_map", "geometry", "topology pointer map"),
+        ("graph/feature_graph.json" in pkg_names, "graph/feature_graph.json", "feature_graph", "geometry", "editable feature graph"),
+        ("simulation/setup.yaml" in pkg_names or "simulation/setup.json" in pkg_names, "simulation/setup.{yaml,json}", "cae_setup", "cae_setup", "CAE setup artifact"),
+        (has_solver_input, "simulation/runs/*/solver_input.inp", "solver_input", "solver_output", "solver deck"),
+        (has_solver_run, "simulation/runs/*/solver_run.json", "solver_run_metadata", "solver_output", "solver run metadata"),
+        (has_frd, "simulation/runs/*/outputs/*.frd", "solver_raw_output", "solver_output", "raw solver field output"),
+        ("results/computed_metrics.json" in pkg_names, "results/computed_metrics.json", "result", "solver_output", "computed result metrics"),
+        ("results/evidence_index.json" in pkg_names, "results/evidence_index.json", "evidence_index", "evidence_index", "evidence index"),
+        ("results/result_summary.json" in pkg_names, "results/result_summary.json", "cae_result_summary", "summary", "readable result summary"),
+    ]
+
+    missing: list[dict[str, Any]] = []
+    for exists, path, kind, category, description in expected:
+        if exists:
+            continue
+        missing.append({
+            "path": path,
+            "kind": kind,
+            "category": category,
+            "exists": False,
+            "primary_state": "missing",
+            "lifecycle_states": ["missing"],
+            "description": description,
+            "reason": "expected_evidence_not_found",
+            "claim_advancement": "none",
+        })
+    return missing
+
+
+def _rollup_lifecycle_status(counts: dict[str, int]) -> str:
+    if counts.get("unsupported", 0) or counts.get("stale", 0) or counts.get("missing", 0):
+        return "warning"
+    if counts.get("current", 0) or counts.get("claim_supporting", 0):
+        return "ok"
+    return "not_evaluated"
+
+
+def _build_evidence_lifecycle_summary(
+    package_path: Path,
+    *,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a read-only evidence lifecycle rollup from package artifacts."""
+    manifest = _generate_artifact_manifest(package_path)
+    rs = _read_revalidation_status(package_path)
+    revalidation = _build_revalidation_response(rs)
+    unsupported_frd = _unsupported_frd_artifacts(package_path)
+
+    with zipfile.ZipFile(package_path, "r") as zf:
+        pkg_names: set[str] = {name for name in zf.namelist() if not name.endswith("/")}
+
+    evidence_entries = _read_evidence_index_entries(package_path, pkg_names)
+    proposals = _read_claim_proposals_from_package(package_path)
+    supporting_paths = _claim_support_paths(proposals)
+
+    counts: dict[str, int] = {
+        "current": 0,
+        "stale": 0,
+        "unsupported": 0,
+        "claim_supporting": 0,
+        "missing": 0,
+    }
+    items: list[dict[str, Any]] = []
+    stale_items: list[dict[str, Any]] = []
+    unsupported_items: list[dict[str, Any]] = []
+    claim_supporting_items: list[dict[str, Any]] = []
+
+    for artifact in manifest.get("artifacts") or []:
+        path = artifact.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        resolved = _resolve_evidence_reference(
+            path=path,
+            pkg_names=pkg_names,
+            evidence_entries=evidence_entries,
+            revalidation_status=rs,
+        )
+        states: list[str] = []
+        if path in unsupported_frd:
+            primary = "unsupported"
+            states.append(primary)
+            counts["unsupported"] += 1
+        elif "evidence_from_stale_geometry_state" in resolved.get("warnings", []):
+            primary = "stale"
+            states.append(primary)
+            counts["stale"] += 1
+        else:
+            primary = "current"
+            states.append(primary)
+            counts["current"] += 1
+
+        supports_claim_proposal = path in supporting_paths
+        if supports_claim_proposal:
+            states.append("claim_supporting")
+            counts["claim_supporting"] += 1
+
+        item = {
+            "path": path,
+            "kind": artifact.get("kind"),
+            "category": artifact.get("category"),
+            "exists": True,
+            "primary_state": primary,
+            "lifecycle_states": states,
+            "evidence_role": resolved.get("evidence_role") or artifact.get("evidence_role"),
+            "in_evidence_index": resolved.get("in_evidence_index"),
+            "supports_claim_proposal": supports_claim_proposal,
+            "usable_for_claim_proposal": bool(resolved.get("usable_for_claim_proposal")) and primary != "unsupported",
+            "warnings": resolved.get("warnings") or [],
+            "unsupported_reason": unsupported_frd.get(path),
+            "claim_advancement": "none",
+        }
+        if primary == "stale":
+            stale_items.append(item)
+        if primary == "unsupported":
+            unsupported_items.append(item)
+        if supports_claim_proposal:
+            claim_supporting_items.append(item)
+        items.append(item)
+
+    missing_items = _missing_expected_evidence_items(pkg_names)
+    counts["missing"] += len(missing_items)
+    items.extend(missing_items)
+
+    return {
+        "schema_version": "0.1",
+        "project_id": project_id,
+        "generated_at": now_iso(),
+        "claim_advancement": "none",
+        "status": _rollup_lifecycle_status(counts),
+        "summary": counts,
+        "governance": {
+            "automatic_claim_advancement": False,
+            "claim_advancement_requires_explicit_review": True,
+            "stale_evidence_may_support_draft_proposals_only": True,
+            "unsupported_evidence_is_not_claim_support": True,
+        },
+        "revalidation_status": revalidation,
+        "claim_proposal_count": len(proposals),
+        "evidence": items,
+        "stale_evidence": stale_items,
+        "unsupported_evidence": unsupported_items,
+        "claim_supporting_evidence": claim_supporting_items,
+        "missing_evidence": missing_items,
+    }
+
+
 def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
     _sync_main_symbols()
 
@@ -448,6 +665,21 @@ def register_evidence_routes(app: FastAPI, *, active_settings: Any) -> None:
         if package_path is None or not package_path.exists():
             raise HTTPException(status_code=404, detail=".aieng package not found")
         return _generate_artifact_manifest(package_path)
+
+    @app.get("/api/projects/{project_id}/evidence-lifecycle")
+    def get_project_evidence_lifecycle(project_id: str) -> dict[str, Any]:
+        """Return a read-only evidence lifecycle rollup for the .aieng package.
+
+        Aggregates existing package artifacts into current, stale, unsupported,
+        claim-supporting, and missing evidence states. This endpoint is purely
+        observational: it never edits CAD/CAE artifacts, executes solvers, writes
+        package members, or advances engineering claims.
+        """
+        project = get_project(active_settings, project_id)
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            raise HTTPException(status_code=404, detail=".aieng package not found")
+        return _build_evidence_lifecycle_summary(package_path, project_id=project_id)
 
     @app.get("/api/projects/{project_id}/package-consistency")
     def get_package_consistency(project_id: str) -> dict[str, Any]:

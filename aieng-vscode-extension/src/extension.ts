@@ -165,7 +165,7 @@ class LivePreviewPanel {
       return;
     }
     if (message.kind === "copyProjectContext") {
-      await this.copyPrompt(projectContextPrompt({ projectId: this.projectId, projectName: this.projectName }));
+      await this.copyPrompt(projectContextPrompt({ projectId: this.projectId, projectName: this.projectName, backendUrl: backendUrl() }));
       return;
     }
     if (message.kind === "openHome") {

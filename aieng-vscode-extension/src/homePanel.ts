@@ -89,7 +89,7 @@ export class HomePanel {
       return;
     }
     if (message.kind === "copyProjectContext") {
-      await this.copy(projectContextPrompt(message));
+      await this.copy(projectContextPrompt({ ...message, backendUrl: backendUrl() }));
     }
   }
 

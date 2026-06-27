@@ -1,8 +1,7 @@
-import { backendUrl } from "./livePreview";
-
 type ProjectPromptInput = {
   projectId: string;
   projectName?: string;
+  backendUrl?: string;
 };
 
 type ModifyPromptInput = ProjectPromptInput & {
@@ -43,5 +42,6 @@ export function modifyPrompt(input: ModifyPromptInput): string {
 }
 
 export function projectContextPrompt(input: ProjectPromptInput): string {
-  return `Project ${projectLabel(input)}, backend ${backendUrl()}, open in AIENG CAD Preview.`;
+  const backend = input.backendUrl ?? "configured AIENG backend";
+  return `Project ${projectLabel(input)}, backend ${backend}, open in AIENG CAD Preview.`;
 }

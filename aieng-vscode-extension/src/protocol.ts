@@ -85,6 +85,7 @@ export type HomeWebviewMessage =
   | { kind: "createProject" }
   | { kind: "openLiveProject"; projectId?: string }
   | { kind: "openPackage" }
+  | { kind: "copyHomePrompt"; text: string }
   | { kind: "copyStarterPrompt"; projectId: string; projectName?: string }
   | { kind: "copyModifyPrompt"; projectId: string; projectName?: string }
   | { kind: "copyProjectContext"; projectId: string; projectName?: string };

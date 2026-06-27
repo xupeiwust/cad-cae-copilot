@@ -1,4 +1,5 @@
 import type { HomeProject, HomeStateMessage, HomeToWebviewMessage, HomeWebviewMessage } from "../src/protocol";
+import { buildHomeHandoff } from "../src/homeHandoff";
 
 declare function acquireVsCodeApi(): { postMessage(message: HomeWebviewMessage): void };
 const vscode = acquireVsCodeApi();
@@ -41,9 +42,22 @@ p { margin:0; color:var(--vscode-descriptionForeground); line-height:1.5; }
 .badge { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--vscode-foreground); background:var(--vscode-editorWidget-background,var(--vscode-input-background,transparent)); border:1px solid var(--line); border-radius:4px; padding:2px 7px; }
 .mini { border:1px solid var(--vscode-button-border,transparent); border-radius:4px; background:var(--vscode-button-secondaryBackground,rgba(128,128,128,0.18)); color:var(--vscode-button-secondaryForeground,var(--vscode-foreground)); padding:5px 10px; font-size:12px; }
 .mini:hover { background:var(--vscode-button-secondaryHoverBackground,rgba(128,128,128,0.28)); }
+.handoff { display:grid; gap:10px; padding:14px; border:1px solid var(--line); border-radius:6px; background:var(--vscode-editorWidget-background,var(--vscode-input-background,transparent)); }
+.handoff strong { font-size:13px; }
+.handoff p { font-size:12px; }
+.readiness { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.readiness-card { display:grid; gap:5px; min-height:74px; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--vscode-input-background,transparent); }
+.readiness-card strong { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.readiness-card span { color:var(--vscode-descriptionForeground); font-size:11px; line-height:1.35; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.readiness-card.ready { border-color:var(--vscode-testing-iconPassed, var(--line)); }
+.readiness-card.blocked { border-color:var(--vscode-testing-iconFailed, var(--line)); }
+.readiness-card.missing { border-style:dashed; }
+.readiness-card.checking { opacity:.76; }
+.copy-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .empty { border:1px dashed var(--line); border-radius:6px; padding:16px; color:var(--vscode-descriptionForeground); font-size:12px; }
 .toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--vscode-notifications-background,var(--vscode-editorWidget-background)); color:var(--vscode-notifications-foreground,var(--vscode-foreground)); border:1px solid var(--vscode-notifications-border,var(--line)); border-radius:6px; padding:8px 12px; font-size:12px; opacity:0; transition:opacity .18s; }
 .toast.show { opacity:1; }
+@media (max-width:560px) { .readiness { grid-template-columns:1fr; } .page { padding:22px 16px; } }
 `;
 document.head.appendChild(style);
 
@@ -63,6 +77,7 @@ function render(): void {
   const projects = state?.projects ?? [];
   const backendMode = state?.backendMode ?? "stopped";
   const mcp = state?.agentMcp;
+  const handoff = buildHomeHandoff(state);
 
   const backendBadge = checking ? `<span class="status">checking...</span>`
     : connected ? `<span class="status"><span class="ok">running</span></span>`
@@ -88,8 +103,26 @@ function render(): void {
     <section class="hero">
       <div>
         <div class="eyebrow">AIENG</div>
-        <h1>Model CAD with your AI agent, right in VS Code</h1>
-        <p>Open the workbench, then ask your agent to build. It models through AIENG's tools and the 3D preview updates live. No separate app to juggle.</p>
+        <h1>AIENG project handoff</h1>
+        <p>Use VS Code to start or connect AIENG, confirm MCP availability, choose a project, and copy a bounded prompt. The Web Workbench remains the detailed 3D, evidence, and approval surface.</p>
+      </div>
+    </section>
+
+    <section class="readiness" aria-label="AIENG readiness">
+      ${renderReadinessCard(handoff.backend.label, handoff.backend.detail, handoff.backend.state)}
+      ${renderReadinessCard(handoff.mcp.label, handoff.mcp.detail, handoff.mcp.state)}
+      ${renderReadinessCard(handoff.project.label, handoff.project.detail, handoff.project.state)}
+    </section>
+
+    <section class="handoff" aria-label="Recommended next step">
+      <div>
+        <div class="section-title">Recommended next step</div>
+        <strong>${escapeHtml(handoff.nextAction.label)}</strong>
+        <p>${escapeHtml(handoff.nextAction.detail)}</p>
+      </div>
+      <div class="copy-row">
+        ${handoff.project.selected ? `<button class="btn primary" data-action="open-project" data-project="${escapeAttr(handoff.project.selected.id)}">Open Workbench</button>` : ""}
+        ${handoff.nextAction.prompt ? `<button class="btn" data-action="copy-home-prompt">Copy agent prompt</button>` : ""}
       </div>
     </section>
 
@@ -113,7 +146,7 @@ function render(): void {
         <div class="step-n">3</div>
         <div class="step-body">
           <div class="step-head"><strong>Create a project, then ask your agent</strong></div>
-          <span>Open a project, click <b>Build</b> in the preview toolbar, and paste it into your agent chat.</span>
+          <span>Create/import a project here, then use the copied handoff prompt with your MCP-capable agent. Detailed evidence and approvals live in the Web Workbench.</span>
           <div class="step-actions">
             <button class="btn primary" data-action="create">Start new project</button>
             <button class="btn" data-action="open-live">Open existing</button>
@@ -139,7 +172,15 @@ function renderProject(project: HomeProject): string {
     <span>${escapeHtml(project.id)} - ${escapeHtml(parts)}</span>
     <div class="row">
       <button class="mini" data-action="open-project" data-project="${escapeAttr(project.id)}">Open workbench</button>
+      <button class="mini" data-action="copy-project-prompt" data-project="${escapeAttr(project.id)}" data-name="${escapeAttr(project.name)}">Copy prompt</button>
     </div>
+  </article>`;
+}
+
+function renderReadinessCard(label: string, detail: string, state: string): string {
+  return `<article class="readiness-card ${escapeAttr(state)}">
+    <strong>${escapeHtml(label)}</strong>
+    <span>${escapeHtml(detail)}</span>
   </article>`;
 }
 
@@ -157,10 +198,19 @@ function bind(): void {
   app.querySelector<HTMLElement>('[data-action="start-backend"]')?.addEventListener("click", () => send({ kind: "startBackend" }));
   app.querySelector<HTMLElement>('[data-action="stop-backend"]')?.addEventListener("click", () => send({ kind: "stopBackend" }));
   app.querySelector<HTMLElement>('[data-action="retry"]')?.addEventListener("click", () => send({ kind: "retry" }));
+  app.querySelectorAll<HTMLElement>('[data-action="copy-home-prompt"]').forEach((element) => {
+    element.addEventListener("click", () => {
+      const prompt = buildHomeHandoff(currentState).nextAction.prompt;
+      if (prompt) send({ kind: "copyHomePrompt", text: prompt });
+    });
+  });
   app.querySelectorAll<HTMLElement>("[data-project]").forEach((element) => {
     element.addEventListener("click", () => {
       const projectId = element.dataset.project ?? "";
       if (element.dataset.action === "open-project") send({ kind: "openLiveProject", projectId });
+      if (element.dataset.action === "copy-project-prompt") {
+        send({ kind: "copyStarterPrompt", projectId, projectName: element.dataset.name });
+      }
     });
   });
 }

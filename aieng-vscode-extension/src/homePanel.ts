@@ -66,6 +66,10 @@ export class HomePanel {
       await this.actions.openPackage();
       return;
     }
+    if (message.kind === "copyHomePrompt") {
+      await this.copy(message.text);
+      return;
+    }
     if (message.kind === "openLiveProject") {
       const projects = await this.safeProjects();
       const project = message.projectId ? projects.find((item) => item.id === message.projectId) : undefined;

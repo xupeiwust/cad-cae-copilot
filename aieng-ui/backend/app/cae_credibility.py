@@ -51,7 +51,7 @@ def assess_cae_credibility(evidence: dict[str, Any] | None) -> dict[str, Any]:
     solver_completed = bool(
         solver.get("solved") is True
         or solver.get("completed") is True
-        or str(solver.get("status") or "").lower() in {"completed", "success", "ok", "passed"}
+        or str(solver.get("status") or solver.get("state") or "").lower() in {"completed", "success", "ok", "passed"}
     )
     if not solver_completed:
         missing_next.append("solver_completed")

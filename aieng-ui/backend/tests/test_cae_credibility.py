@@ -23,7 +23,7 @@ def test_cae_credibility_no_artifact_is_insufficient() -> None:
 def test_cae_credibility_solver_completed_but_metrics_missing() -> None:
     result = assess_cae_credibility({
         "result_artifacts": ["result.frd"],
-        "solver_run": {"solved": True},
+        "solver_run": {"state": "completed"},
     })
 
     assert result["tier"] == "solver_completed"

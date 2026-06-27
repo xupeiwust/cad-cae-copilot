@@ -34,6 +34,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 
+from .cae_credibility import assess_cae_credibility
 from .computed_metrics import get_computed_metrics
 from .config import Settings
 from .copilot_loop import _resolve_package, list_loops
@@ -650,6 +651,92 @@ def _section_structural_solver(pkg: Path | None) -> dict[str, Any]:
     )
 
 
+def _section_cae_credibility(settings: Settings, project_id: str, pkg: Path | None) -> dict[str, Any]:
+    evidence = _cae_credibility_evidence(settings, project_id, pkg)
+    tier = assess_cae_credibility(evidence)
+    status: SectionStatus = "missing" if tier["tier"] == "no_result_artifact" else "partial"
+    if tier["status"] == "supported":
+        status = "included"
+
+    body = "| Field | Value |\n|---|---|\n"
+    body += f"| Credibility tier | `{_md_escape(tier['tier'])}` |\n"
+    body += f"| Tier index | {_md_escape(tier['tier_index'])} |\n"
+    body += f"| Status | `{_md_escape(tier['status'])}` |\n"
+    body += f"| Certified | {_md_escape(tier['certified'])} |\n"
+    body += f"| Missing next evidence | {_md_escape(', '.join(tier.get('missing_next') or []) or '(none)')} |\n"
+    body += "\n**Limitations**\n\n"
+    for item in tier.get("limitations") or []:
+        body += f"- {_md_escape(item)}\n"
+    body += (
+        "\nThis section is read-only. It distinguishes artifact presence, solver "
+        "completion, parsed metrics, plausibility checks, design-target comparison, "
+        "benchmark calibration, and human review support; it does not run a solver "
+        "or advance claims.\n"
+    )
+    return _section(
+        "cae_credibility",
+        "CAE Credibility",
+        status,
+        body,
+        data={"credibility": tier, "evidence_inputs": evidence},
+        warnings=list(tier.get("limitations") or []),
+        artifact_paths=list(evidence.get("result_artifacts") or [])[:_MAX_TABLE_ROWS],
+    )
+
+
+def _cae_credibility_evidence(settings: Settings, project_id: str, pkg: Path | None) -> dict[str, Any]:
+    if pkg is None:
+        return {}
+    members = _list_package_members(pkg)
+    result_artifacts = sorted(
+        member
+        for member in members
+        if member.endswith((".frd", ".dat"))
+        or member in {"results/computed_metrics.json", "results/result_summary.json"}
+    )
+    solver_run_members = sorted(
+        member for member in members if member.startswith("simulation/runs/") and member.endswith("/solver_run.json")
+    )
+    solver_run = _read_package_json(pkg, solver_run_members[-1]) if solver_run_members else None
+    metrics = _read_package_json(pkg, "results/computed_metrics.json")
+    plausibility = _read_package_json(pkg, "analysis/plausibility_checks.json")
+    mesh_convergence = (
+        _read_package_json(pkg, "analysis/mesh_convergence_report.json")
+        or _read_package_json(pkg, "analysis/mesh_quality_report.json")
+    )
+    benchmark = (
+        _read_package_json(pkg, "analysis/analytical_fea_scorecard.json")
+        or _read_package_json(pkg, "benchmarks/analytical_fea_scorecard.json")
+    )
+    target_status = None
+    try:
+        comparison = compare_package_targets(settings, project_id)
+        summary = ((comparison.get("comparisons") or {}).get("summary") or {})
+        if summary.get("fail"):
+            target_status = "failed"
+        elif summary.get("pass"):
+            target_status = "passed"
+        elif summary.get("unknown") or summary.get("not_evaluated"):
+            target_status = "warning"
+    except Exception:
+        target_status = None
+
+    evidence: dict[str, Any] = {
+        "result_artifacts": result_artifacts,
+        "solver_run": solver_run,
+        "parsed_metrics": metrics,
+    }
+    if plausibility is not None:
+        evidence["plausibility_checks"] = plausibility
+    if target_status is not None:
+        evidence["design_target_comparison"] = {"status": target_status}
+    if mesh_convergence is not None:
+        evidence["mesh_convergence"] = mesh_convergence
+    if benchmark is not None:
+        evidence["benchmark_comparison"] = benchmark
+    return evidence
+
+
 def _section_copilot_loop(settings: Settings, project_id: str) -> dict[str, Any]:
     try:
         loops_resp = list_loops(settings, project_id)
@@ -968,6 +1055,7 @@ def _build_sections(settings: Settings, project_id: str, *, packet_id: str) -> l
     sections.append(_section_geometry_inspection(pkg))
     sections.append(_section_cad_approval_records(pkg))
     sections.append(_section_structural_solver(pkg))
+    sections.append(_section_cae_credibility(settings, project_id, pkg))
     sections.append(_section_copilot_loop(settings, project_id))
     sections.append(_section_evidence_lifecycle(settings, project_id, pkg))
     sections.append(_section_stale_evidence(pkg))

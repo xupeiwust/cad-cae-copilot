@@ -141,6 +141,23 @@ _Artifact:_ `results/computed_metrics.json`
 |---|---|---|---|---|---|
 | `simulation/runs/run_001/solver_run.json` | completed | True | 0 | <ISO> | <ISO> |
 
+## CAE Credibility
+
+| Field | Value |
+|---|---|
+| Credibility tier | `numerical_result_parsed` |
+| Tier index | 3 |
+| Status | `warning` |
+| Certified | False |
+| Missing next evidence | plausibility_checked |
+
+**Limitations**
+
+- Credibility tier is review guidance, not certification or production sign-off.
+- Mesh quality or convergence evidence is unknown.
+
+This section is read-only. It distinguishes artifact presence, solver completion, parsed metrics, plausibility checks, design-target comparison, benchmark calibration, and human review support; it does not run a solver or advance claims.
+
 ## Copilot Loop Summary
 
 No Copilot Loops have been started for this project.
@@ -208,4 +225,5 @@ This rollup is read-only and does not advance claims. Missing evidence remains u
 
 **Partial / capped sections**
 
+- CAE Credibility
 - Evidence Lifecycle

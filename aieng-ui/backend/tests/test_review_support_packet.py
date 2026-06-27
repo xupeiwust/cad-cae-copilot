@@ -262,6 +262,9 @@ def test_missing_solver_evidence_is_explicit(tmp_path: Path) -> None:
     sec = _section_by_id(body, "structural_solver")
     assert sec["status"] == "missing"
     assert "No structural solver run evidence found" in body["preview_markdown"]
+    cred = _section_by_id(body, "cae_credibility")
+    assert cred["status"] == "missing"
+    assert "| Credibility tier | `no_result_artifact` |" in body["preview_markdown"]
 
 
 def test_preview_does_not_500_when_project_has_no_package(tmp_path: Path) -> None:
@@ -295,6 +298,26 @@ def test_target_comparison_summary_present_when_evaluable(tmp_path: Path) -> Non
     md = body["preview_markdown"]
     assert sec["status"] == "included"
     assert "pass" in md.lower() and "fail" in md.lower()
+
+
+def test_preview_includes_cae_credibility_tier(tmp_path: Path) -> None:
+    settings = _make_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project_id, pkg = _make_project(settings, "rich-credibility", "p.aieng")
+    _write_rich_package(pkg)
+
+    body = client.get(f"/api/projects/{project_id}/review-support-packet/preview").json()
+    sec = _section_by_id(body, "cae_credibility")
+    md = body["preview_markdown"]
+
+    assert sec["status"] == "partial"
+    assert "results/computed_metrics.json" in sec["artifact_paths"]
+    assert "simulation/runs/run_001/outputs/result.frd" in sec["artifact_paths"]
+    assert "CAE Credibility" in md
+    assert "| Credibility tier | `numerical_result_parsed` |" in md
+    assert "| Missing next evidence | plausibility_checked |" in md
+    assert "| Certified | False |" in md
+    assert "does not run a solver or advance claims" in md
 
 
 # ── export: writes only packet artifacts ──────────────────────────────────────

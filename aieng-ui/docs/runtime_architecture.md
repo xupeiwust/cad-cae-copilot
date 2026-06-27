@@ -177,6 +177,7 @@ Approval and conversation are intentionally separate API concepts:
 | `GET /api/projects/{id}/audit-events` endpoint | ✅ read-only; returns events in append order |
 | Package artifact manifest | ✅ on-demand classification of all ZIP members by kind/category; freshness context from revalidation status |
 | `GET /api/projects/{id}/artifact-manifest` endpoint | ✅ read-only; path-pattern catalog covers 9 categories |
+| Evidence lifecycle rollup | ✅ `GET /api/projects/{id}/evidence-lifecycle`; summarizes current/stale/unsupported/claim-supporting/missing evidence without mutating the package |
 | Package consistency diagnostics | ✅ 5 checks: evidence paths, audit refs, field summary sources, revalidation consistency, claim map absence |
 | `GET /api/projects/{id}/package-consistency` endpoint | ✅ read-only; status rollup `ok`/`warning`/`error`; stale state is warning not error |
 | Runtime metadata contracts | ✅ contract helper assertions for all metadata shapes; 11 tests covering all major endpoints |
@@ -542,6 +543,69 @@ The manifest is generated on demand from the ZIP namelist — it is not written
 back into the package. `ARTIFACT_MANIFEST_PATH = "manifest/artifacts.json"` is
 reserved as the canonical in-package path for future use, and any path equal
 to it is excluded from the artifact listing to avoid self-referential entries.
+
+---
+
+## Evidence lifecycle rollup
+
+`GET /api/projects/{id}/evidence-lifecycle` builds a read-only lifecycle view
+over the same package artifacts. It is intended for Mission Control, reports,
+and MCP agents that need to answer two questions quickly:
+
+- What evidence exists, and is it current or stale?
+- What evidence supports a draft claim-like statement, and what evidence is
+  missing or unusable?
+
+The endpoint never writes package members, never runs CAD/CAE tools, never
+executes a solver, and never advances engineering claims.
+
+### Lifecycle states
+
+| State | Meaning |
+|-------|---------|
+| `current` | Artifact exists and is not stale or unsupported according to current package metadata |
+| `stale` | Artifact exists but comes from a geometry state that requires revalidation |
+| `unsupported` | Artifact exists but cannot be used by the current viewer/postprocessor path, for example a binary/non-UTF-8 FRD |
+| `claim_supporting` | Artifact is referenced by at least one draft claim proposal |
+| `missing` | Expected evidence such as topology, feature graph, CAE setup, solver deck, result summary, or evidence index is absent |
+
+`claim_supporting` is an overlay state: an artifact can be both stale and
+claim-supporting. This is deliberate. Draft claim proposals can point at stale
+evidence so reviewers can see the problem, but the lifecycle view makes the
+staleness explicit.
+
+Unsupported evidence is reported separately from normal solver-result
+availability. For example, a package may contain `result.frd` while the field
+viewer still reports it as unsupported because the FRD is binary or non-UTF-8.
+That is not treated as claim-supporting evidence in the lifecycle rollup.
+
+### Response shape
+
+```json
+{
+  "schema_version": "0.1",
+  "project_id": "...",
+  "claim_advancement": "none",
+  "status": "warning",
+  "summary": {
+    "current": 8,
+    "stale": 2,
+    "unsupported": 1,
+    "claim_supporting": 1,
+    "missing": 3
+  },
+  "governance": {
+    "automatic_claim_advancement": false,
+    "claim_advancement_requires_explicit_review": true,
+    "stale_evidence_may_support_draft_proposals_only": true,
+    "unsupported_evidence_is_not_claim_support": true
+  }
+}
+```
+
+The rollup is intentionally advisory. `status: "warning"` means the package has
+review issues such as stale, unsupported, or missing evidence; it is not an
+engineering pass/fail result.
 
 ---
 

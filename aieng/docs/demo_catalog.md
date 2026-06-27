@@ -6,6 +6,10 @@ These are deterministic, backend-only tests that validate platform capabilities 
 
 For a higher-level showcase with demo talking points and visual guidance, see [`showcase_gallery.md`](showcase_gallery.md).
 
+For the cross-product scenario-pack index used for onboarding, dogfood, and
+release planning, see
+[`../../docs/canonical_engineering_scenarios.md`](../../docs/canonical_engineering_scenarios.md).
+
 ---
 
 ## Demo Matrix

@@ -1,0 +1,218 @@
+{
+  "schema_version": "0.1",
+  "catalog_id": "canonical_engineering_scenarios",
+  "issue": 431,
+  "policy": {
+    "purpose": "Small reproducible engineering scenarios for demos, onboarding, dogfood, and regression planning.",
+    "claim_boundary": "Scenario artifacts are review and regression evidence, not production certification or design sign-off.",
+    "synthetic_results_as_real_evidence_allowed": false,
+    "real_tool_scenarios_must_be_skip_gated": true,
+    "main_flow_safety": "Catalog-only metadata; it must not mutate CAD, run solvers, or change runtime behavior."
+  },
+  "scenarios": [
+    {
+      "id": "value_demo_cantilever_real_cae",
+      "title": "Cantilever CAD to CAE value demo",
+      "priority": "P0",
+      "capability_area": "cad_cae_value_chain",
+      "status": "operator_runbook",
+      "description": "Single connected cantilever driven through CAD creation, face-pointer selection, approval-gated CalculiX execution, FRD-derived fields, and an evidence report.",
+      "entrypoints": [
+        "docs/cad-cae-value-demo.md",
+        "aieng-ui/backend/scripts/value_demo_packet.py",
+        "aieng-ui/backend/tests/test_value_demo_packet.py"
+      ],
+      "verification_commands": [
+        {
+          "command": "python aieng-ui/backend/scripts/value_demo_packet.py --format markdown",
+          "kind": "packet",
+          "ci_lightweight": true
+        },
+        {
+          "command": "python -m pytest aieng-ui/backend/tests/test_value_demo_packet.py -q",
+          "kind": "test",
+          "ci_lightweight": true
+        },
+        {
+          "command": "python -m pytest aieng-ui/backend/tests/test_cae_solve_integration.py -q",
+          "kind": "real_tool_test",
+          "ci_lightweight": false,
+          "skip_gated": true
+        }
+      ],
+      "expected_artifacts": [
+        "geometry/generated.step",
+        "geometry/topology_map.json",
+        "graph/feature_graph.json",
+        "simulation/setup.yaml",
+        "simulation/cae_mapping.json",
+        "simulation/mesh/mesh.inp",
+        "simulation/runs/value_demo_run_001/solver_input.inp",
+        "simulation/runs/value_demo_run_001/solver_run.json",
+        "simulation/runs/value_demo_run_001/outputs/result.frd",
+        "results/computed_metrics.json",
+        "reports/value_demo.html"
+      ],
+      "honesty_boundaries": [
+        "Requires real Gmsh/CalculiX for the real demo path.",
+        "Synthetic fallback fields are a failed demo condition.",
+        "Linear-static and mesh-dependent; not certification."
+      ],
+      "consumer_surfaces": [
+        "README showcase",
+        "MCP dogfood",
+        "release demo"
+      ],
+      "owner_notes": "This is the strongest value story, but the real solver path remains operator-run and skip-gated."
+    },
+    {
+      "id": "fixture_plate_holes_fasteners_material",
+      "title": "Fixture plate with holes, fastener semantics, and material assignment",
+      "priority": "P1",
+      "capability_area": "manufacturing_semantics",
+      "status": "cataloged_gap",
+      "description": "Plate or fixture scenario that demonstrates recognized holes, standard-part semantics, BOM output, and explicit material assignment.",
+      "entrypoints": [
+        "aieng-ui/backend/tests/test_cad_generation.py",
+        "aieng-ui/backend/tests/test_standards_bridge.py",
+        "aieng-ui/docs/standard_part_semantics.md"
+      ],
+      "verification_commands": [
+        {
+          "command": "python -m pytest aieng-ui/backend/tests/test_cad_generation.py aieng-ui/backend/tests/test_standards_bridge.py -q",
+          "kind": "test",
+          "ci_lightweight": true
+        }
+      ],
+      "expected_artifacts": [
+        "graph/feature_graph.json",
+        "reports/bom.csv",
+        "reports/bom.json"
+      ],
+      "honesty_boundaries": [
+        "Standard-part semantics do not imply physical preload or contact modeling.",
+        "BOM evidence is semantic/export evidence, not procurement validation.",
+        "Material assignment must be explicit or reported as missing."
+      ],
+      "consumer_surfaces": [
+        "manufacturing review",
+        "BOM export",
+        "MCP critique"
+      ],
+      "owner_notes": "Good next pack after a dedicated fixture package/runbook is added."
+    },
+    {
+      "id": "mass_reduction_design_target_comparison",
+      "title": "Mass-reduction design target comparison",
+      "priority": "P1",
+      "capability_area": "design_study",
+      "status": "ci_regression",
+      "description": "Parameterized design-study scenario that evaluates candidate-local evidence, ranks variants, and accepts a derived winner without overwriting baseline geometry.",
+      "entrypoints": [
+        "aieng-ui/backend/tests/test_design_study_demo.py",
+        "aieng-ui/backend/tests/fixtures/design_study_demo",
+        "aieng/docs/demo_catalog.md"
+      ],
+      "verification_commands": [
+        {
+          "command": "python -m pytest aieng-ui/backend/tests/test_design_study_demo.py -q",
+          "kind": "test",
+          "ci_lightweight": true
+        }
+      ],
+      "expected_artifacts": [
+        "analysis/design_study_problem.json",
+        "candidates/candidate_good/analysis/evaluation.json",
+        "analysis/design_study_candidate_hints.json",
+        "analysis/design_study_candidate_ranking.json",
+        "analysis/design_study_acceptance.json",
+        "accepted/candidate_good/geometry/shape_ir.json"
+      ],
+      "honesty_boundaries": [
+        "Ranking is advisory.",
+        "Demo metrics are candidate-local static or neutral evidence unless a solver run is explicitly present.",
+        "Baseline geometry remains unchanged unless explicitly promoted."
+      ],
+      "consumer_surfaces": [
+        "README showcase",
+        "Mission Control",
+        "design review"
+      ],
+      "owner_notes": "Already has strong CI coverage; future work is a human-readable pack README."
+    },
+    {
+      "id": "mesh_diagnostics_failure_recovery",
+      "title": "Mesh diagnostics failure and recovery",
+      "priority": "P1",
+      "capability_area": "cae_preflight",
+      "status": "cataloged_gap",
+      "description": "Scenario that intentionally starts with missing or weak mesh/setup evidence, reports blockers before solver execution, then documents the recovery path.",
+      "entrypoints": [
+        "aieng-ui/backend/tests/test_simulation_runner.py",
+        "aieng-ui/backend/tests/test_simulation_readiness.py",
+        "aieng-ui/docs/troubleshooting-vertical-cae-mvp.md"
+      ],
+      "verification_commands": [
+        {
+          "command": "python -m pytest aieng-ui/backend/tests/test_simulation_readiness.py aieng-ui/backend/tests/test_simulation_runner.py -q",
+          "kind": "test",
+          "ci_lightweight": true
+        }
+      ],
+      "expected_artifacts": [
+        "simulation/setup.yaml",
+        "simulation/mesh/mesh.inp",
+        "simulation/runs/<run_id>/solver_input.inp",
+        "diagnostics/*"
+      ],
+      "honesty_boundaries": [
+        "Missing mesh/deck/load/constraint evidence must block or warn before solver claims.",
+        "Recovery docs must distinguish preflight success from solver success.",
+        "No synthetic solver success may be counted as real evidence."
+      ],
+      "consumer_surfaces": [
+        "Simulation Readiness",
+        "demo troubleshooting",
+        "external-agent dogfood"
+      ],
+      "owner_notes": "Needs a small dedicated fixture package before it can be considered a full scenario pack."
+    },
+    {
+      "id": "sizing_sweep_ranked_candidates",
+      "title": "Sizing sweep with ranked candidates",
+      "priority": "P1",
+      "capability_area": "optimization",
+      "status": "ci_regression",
+      "description": "Open-loop sizing scenario that sweeps bounded parameters, writes ranked candidates, and keeps the result advisory.",
+      "entrypoints": [
+        "aieng-ui/backend/tests/test_optimization_sizing_demo.py",
+        "aieng-ui/backend/tests/test_iterative_optimization_demo.py",
+        "aieng/docs/demo_catalog.md"
+      ],
+      "verification_commands": [
+        {
+          "command": "python -m pytest aieng-ui/backend/tests/test_optimization_sizing_demo.py aieng-ui/backend/tests/test_iterative_optimization_demo.py -q",
+          "kind": "test",
+          "ci_lightweight": true
+        }
+      ],
+      "expected_artifacts": [
+        "analysis/optimization_study.json",
+        "analysis/optimization_decision_log.json",
+        "analysis/design_study_candidate_ranking.json",
+        "diagnostics/optimization_report.json"
+      ],
+      "honesty_boundaries": [
+        "Advisory-only; no autonomous acceptance.",
+        "Baseline remains unchanged.",
+        "Analytical or fixture metrics must not be represented as solver evidence."
+      ],
+      "consumer_surfaces": [
+        "Sizing Sweep panel",
+        "optimization demo",
+        "agent dogfood"
+      ],
+      "owner_notes": "Already testable; future pack should add a short operator README and expected screenshots."
+    }
+  ]
+}

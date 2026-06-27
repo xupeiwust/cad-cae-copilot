@@ -622,6 +622,7 @@ Honesty boundaries — outputs are review material, not production sign-off:
 |-----|---------|
 | [AGENTS.md](AGENTS.md) | Canonical agent guide — tools, workflows, and conventions |
 | [aieng-ui/backend/MCP_SETUP.md](aieng-ui/backend/MCP_SETUP.md) | Per-agent MCP wiring for Claude Code, Copilot, Cursor, and Codex |
+| [docs/canonical_engineering_scenarios.md](docs/canonical_engineering_scenarios.md) | Canonical engineering scenarios - reproducible packs, verification commands, artifacts, and honesty boundaries |
 | [aieng-vscode-extension/README.md](aieng-vscode-extension/README.md) | VS Code extension usage and development notes |
 | [aieng/docs/showcase_gallery.md](aieng/docs/showcase_gallery.md) | Showcase gallery — demo talking points, visual guidance, and honesty boundaries |
 | [aieng/docs/demo_catalog.md](aieng/docs/demo_catalog.md) | Backend demo catalog — run commands, expected artifacts, and maturity levels |

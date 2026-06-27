@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNBOOK = ROOT / "docs" / "aieng-package-handoff.md"
+REVIEW_WORKFLOW = ROOT / "docs" / "review-handoff-workflow.md"
 README = ROOT / "README.md"
 
 
@@ -68,3 +69,28 @@ def test_readme_links_package_handoff_runbook() -> None:
 
     assert "docs/aieng-package-handoff.md" in text
     assert "portable engineering evidence passport" in text
+
+
+def test_review_handoff_workflow_defines_export_and_receive_path() -> None:
+    text = REVIEW_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "GET  /api/projects/{project_id}/review-support-packet/preview" in text
+    assert "POST /api/projects/{project_id}/review-support-packet/export" in text
+    assert "The `.aieng` package is the source of package evidence" in text
+    assert "Mission Control" in text
+    assert "VS Code Home" in text
+    assert "approval-gated" in text
+
+
+def test_review_handoff_workflow_keeps_report_claim_boundary() -> None:
+    text = REVIEW_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "A review packet is a summary, not hidden validation" in text
+    assert "Package completeness is not certification" in text
+    assert "Result availability is not design-target satisfaction" in text
+    assert "Design-target satisfaction is not claim advancement" in text
+    assert "Synthetic or fixture evidence must not be reported as a real solver result" in text
+    assert "schema migration" in text
+
+    package_runbook = RUNBOOK.read_text(encoding="utf-8")
+    assert "review-handoff-workflow.md" in package_runbook

@@ -22,7 +22,9 @@ another.
    provenance, claim-boundary, and handoff-summary members.
 3. Export or share the project `.aieng` package.
 4. If review context is needed, also export the review support packet from the
-   Workbench report surface.
+   Workbench report surface. See the
+   [review handoff workflow](review-handoff-workflow.md) for the package plus
+   report flow.
 5. Send both files with a short note that package evidence is advisory until a
    reviewer confirms the relevant artifacts.
 

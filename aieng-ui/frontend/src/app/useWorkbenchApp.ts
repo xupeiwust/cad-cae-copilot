@@ -37,6 +37,7 @@ import { useSimulationReadiness } from "./useSimulationReadiness";
 import { useMeshDiagnostics } from "./useMeshDiagnostics";
 import { useEditableParameters } from "./useEditableParameters";
 import { useProjectCritique } from "./useProjectCritique";
+import { useValueDemoCheck } from "./useValueDemoCheck";
 
 export function useWorkbenchApp() {
   const {
@@ -145,6 +146,7 @@ export function useWorkbenchApp() {
     selectedId,
     geometryVersion,
   });
+  const { valueDemoCheck } = useValueDemoCheck({ selectedId, geometryVersion });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
   const rawViewerUrl = cadPreviewUrl ?? summary?.viewer_url ?? fallbackViewerUrl;
@@ -598,6 +600,7 @@ export function useWorkbenchApp() {
     critiqueFindings,
     critiqueCredibility,
     standardFastenerPlan,
+    valueDemoCheck,
     refreshGeometry,
   };
 }

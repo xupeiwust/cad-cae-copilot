@@ -181,3 +181,37 @@ def test_value_demo_check_runtime_tool_blocks_missing_package(tmp_path: Path) ->
     body = resp.json()
     assert body["status"] == "error"
     assert body["code"] == "missing_package"
+
+
+def test_value_demo_check_endpoint_reports_complete_project_package(tmp_path: Path) -> None:
+    pkg = tmp_path / "complete.aieng"
+    _write_demo_package(pkg)
+    settings = _make_settings(tmp_path)
+    project_id = _make_project_with_package(settings, pkg)
+    client = TestClient(create_app(settings))
+
+    resp = client.get(f"/api/projects/{project_id}/value-demo-check")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "pass"
+    assert body["ok"] is True
+    assert body["project_id"] == project_id
+    assert body["claim_advancement"] == "none"
+    assert any(check["id"] == "real_frd_result" and check["status"] == "pass" for check in body["checks"])
+
+
+def test_value_demo_check_endpoint_missing_package_is_graceful(tmp_path: Path) -> None:
+    from app.main import default_project, save_project
+
+    settings = _make_settings(tmp_path)
+    project_id = save_project(settings, default_project("empty-value-demo"))["id"]
+    client = TestClient(create_app(settings))
+
+    resp = client.get(f"/api/projects/{project_id}/value-demo-check")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "error"
+    assert body["code"] == "missing_package"
+    assert body["checks"] == []

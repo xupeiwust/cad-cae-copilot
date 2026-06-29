@@ -20,6 +20,7 @@ import { CritiquePanel } from "../components/CritiquePanel";
 import { EditableParametersPanel } from "../components/EditableParametersPanel";
 import { ParametricEditProposalPanel } from "../components/ParametricEditProposalPanel";
 import { MissionControlPanel } from "../components/MissionControlPanel";
+import { ValueDemoCheckPanel } from "../components/ValueDemoCheckPanel";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
 import { isEmbedMode } from "./embed";
@@ -317,6 +318,8 @@ export function AppChrome({ app }: AppChromeProps) {
                 onCopyDraft={app.copyPointerText}
               />
             )}
+
+            <ValueDemoCheckPanel check={app.valueDemoCheck} />
 
             <ProjectTimelinePanel
               timeline={app.projectTimeline}

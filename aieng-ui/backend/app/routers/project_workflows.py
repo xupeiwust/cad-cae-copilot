@@ -393,6 +393,82 @@ def register_project_workflow_routes(
             setup_artifact = None
         return build_simulation_readiness_report(cae_block, setup_artifact=setup_artifact)
 
+    @app.get("/api/projects/{project_id}/value-demo-check")
+    def get_value_demo_check_endpoint(project_id: str) -> dict[str, Any]:
+        """Read-only #368 value-demo evidence check for the Workbench panel.
+
+        Reuses the canonical value_demo_packet checker. This endpoint never runs
+        CAD, meshing, the solver, post-processing, or report generation; it only
+        inspects the current .aieng package and reports whether the demo evidence
+        proves a real-FRD path rather than a synthetic fallback.
+        """
+        import importlib.util as _importlib_util
+        from pathlib import Path as _Path
+
+        from ..project_io import get_project, resolve_project_path
+
+        try:
+            project = get_project(active_settings, project_id)
+        except Exception:
+            return {
+                "ok": False,
+                "status": "error",
+                "code": "project_not_found",
+                "project_id": project_id,
+                "checks": [],
+                "missing_evidence": [],
+                "honesty_boundaries": [],
+                "claim_advancement": "none",
+            }
+        package_path = resolve_project_path(active_settings, project_id, project.get("aieng_file"))
+        if package_path is None or not package_path.exists():
+            return {
+                "ok": False,
+                "status": "error",
+                "code": "missing_package",
+                "project_id": project_id,
+                "checks": [],
+                "missing_evidence": [],
+                "honesty_boundaries": [],
+                "claim_advancement": "none",
+                "message": "No .aieng package is available for the value-demo evidence check.",
+            }
+
+        script_path = _Path(__file__).resolve().parents[2] / "scripts" / "value_demo_packet.py"
+        spec = _importlib_util.spec_from_file_location("value_demo_packet", script_path)
+        if spec is None or spec.loader is None:
+            return {
+                "ok": False,
+                "status": "error",
+                "code": "checker_unavailable",
+                "project_id": project_id,
+                "checks": [],
+                "missing_evidence": [],
+                "honesty_boundaries": [],
+                "claim_advancement": "none",
+                "message": f"Could not load value demo checker from {script_path}.",
+            }
+        module = _importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = module.check_package(package_path)
+        status = str(report.get("status") or "blocked")
+        return {
+            "ok": status in {"pass", "warning"},
+            "status": status,
+            "project_id": project_id,
+            "package_path": report.get("package_path"),
+            "checks": report.get("checks", []),
+            "missing_evidence": report.get("missing_evidence", []),
+            "honesty_boundaries": report.get("honesty_boundaries", []),
+            "claim_advancement": "none",
+            "message": (
+                "Value demo evidence check passed."
+                if status == "pass"
+                else "Value demo evidence check has warnings." if status == "warning"
+                else "Value demo evidence check is blocked by missing or invalid evidence."
+            ),
+        }
+
     def _load_latest_json_artifact(project_id: str, artifact_path: str) -> dict[str, Any]:
         import json as _json
         import zipfile as _zipfile

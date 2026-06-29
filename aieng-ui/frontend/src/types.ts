@@ -2144,6 +2144,26 @@ export type ReviewSupportPacketResponse = {
   claim_boundary: string;
 };
 
+export type ValueDemoCheckItem = {
+  id: string;
+  status: "pass" | "warn" | "warning" | "fail" | "skip" | string;
+  required?: boolean;
+  message?: string;
+};
+
+export type ValueDemoCheckResponse = {
+  ok?: boolean;
+  status?: "pass" | "warning" | "blocked" | "error" | string;
+  code?: string;
+  project_id?: string | null;
+  package_path?: string | null;
+  checks?: ValueDemoCheckItem[];
+  missing_evidence?: string[];
+  honesty_boundaries?: string[];
+  claim_advancement?: string;
+  message?: string;
+};
+
 export type StructuralPreparePreviewResponse = {
   ok: boolean;
   tool: "structural.prepare_solver_run";

@@ -16,6 +16,8 @@ import { OptimizationPanel } from "../components/OptimizationPanel";
 import { EditDiffPanel } from "../components/EditDiffPanel";
 import { SizingSweepPanel } from "../components/SizingSweepPanel";
 import { MeshConvergencePanel } from "../components/MeshConvergencePanel";
+import { EditableParametersPanel } from "../components/EditableParametersPanel";
+import { ParametricEditProposalPanel } from "../components/ParametricEditProposalPanel";
 import { MissionControlPanel } from "../components/MissionControlPanel";
 import { GlobalSettingsDrawer } from "../components/settings/GlobalSettingsDrawer";
 import { RuntimeSettingsDrawer } from "../components/settings/RuntimeSettingsDrawer";
@@ -23,8 +25,14 @@ import { isEmbedMode } from "./embed";
 import { useBrowserStorageState } from "./useBrowserStorageState";
 import { buildMissionControl } from "./missionControl";
 import type { useWorkbenchApp } from "./useWorkbenchApp";
+import type { EditableParameter } from "../types";
 
 type LibraryTab = "materials" | "standards" | "bom";
+
+type PendingParametricEdit = {
+  param: EditableParameter;
+  value: number;
+};
 
 type AppChromeProps = {
   app: ReturnType<typeof useWorkbenchApp>;
@@ -34,6 +42,7 @@ export function AppChrome({ app }: AppChromeProps) {
   const embed = isEmbedMode();
   const [libraryTab, setLibraryTab] = useState<LibraryTab | null>(null);
   const [commandRefOpen, setCommandRefOpen] = useState(false);
+  const [pendingParametricEdit, setPendingParametricEdit] = useState<PendingParametricEdit | null>(null);
   const [welcomeDismissed, setWelcomeDismissed] = useBrowserStorageState<boolean>(
     "aieng.onboarding.welcomeDismissed",
     false,
@@ -287,6 +296,25 @@ export function AppChrome({ app }: AppChromeProps) {
               report={app.meshConvergenceReport}
               onUseInChat={draftNotice("Mesh convergence draft")}
             />
+
+            <EditableParametersPanel
+              parameters={app.editableParameters}
+              onUseInChat={draftNotice("Parametric edit draft")}
+              onPreview={(param, value) => setPendingParametricEdit({ param, value })}
+            />
+
+            {pendingParametricEdit && app.selectedId ? (
+              <ParametricEditProposalPanel
+                projectId={app.selectedId}
+                param={pendingParametricEdit.param}
+                value={pendingParametricEdit.value}
+                onApplied={() => {
+                  setPendingParametricEdit(null);
+                  app.refreshGeometry();
+                }}
+                onCancelled={() => setPendingParametricEdit(null)}
+              />
+            ) : null}
           </aside>
 
           {libraryTab && !embed && (

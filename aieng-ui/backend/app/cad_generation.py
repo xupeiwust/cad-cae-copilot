@@ -12,6 +12,7 @@ import ast
 import hashlib
 import importlib.metadata as importlib_metadata
 import json
+import logging
 import math
 import os
 import re
@@ -24,6 +25,7 @@ import zipfile
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,8 @@ from aieng.converters.critique_engine import (
     critique_geometry,
     is_named_part_feature as _is_named_part_feature,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _fidelity_brief(topology_map: dict[str, Any], feature_graph: dict[str, Any]) -> dict[str, Any] | None:
@@ -8889,102 +8893,30 @@ def serve_cad_preview(settings: Any, project_id: str) -> tuple[bytes, str]:
 
 # ── parametric edit: fast text replacement in source.py ────────────────────────
 
-def edit_build123d_parameter(
+def _compute_parameter_edit_preview(
     settings: Any,
-    project_id: str,
-    feature_id: str,
-    parameter_name: str,
+    pkg_path: Path,
+    contract: dict[str, Any],
     new_value: Any,
+    *,
     timeout: int = 120,
-    response_detail: str = "full",
-    thumbnail: bool | None = None,
-    confirm_scope_risk: bool = False,
 ) -> dict[str, Any]:
-    """Apply a parametric edit by replacing a named constant in source.py.
+    """Execute the modified source in memory and return diffs/metadata.
 
-    Workflow:
-        1. Validate the edit contract against graph/feature_graph.json.
-        2. Read geometry/source.py from the .aieng package.
-        3. Locate the UPPER_SNAKE_CASE constant and replace its value.
-        4. Re-execute build123d with the modified source.
-        5. Write new geometry/topology/feature_graph back into the package.
-        6. Return a thumbnail so the caller can visually verify the change.
-
-    This is deterministic and fast (sub-second to a few seconds) because it
-    bypasses the LLM entirely — only a text substitution + rebuild.
+    This is the shared core of ``preview_build123d_parameter_edit`` and
+    ``edit_build123d_parameter``. It does NOT write to the package, so a failed
+    preview leaves the project untouched.
     """
-    from .project_io import (
-        _validate_cad_parameter_edit_contract,
-        get_project,
-        resolve_project_path,
-    )
-    response_detail = _normalize_response_detail(response_detail)
-
-    # 1. Load project & package
-    try:
-        project = get_project(settings, project_id)
-    except Exception as exc:
-        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
-
-    pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
-    if pkg_path is None or not pkg_path.exists():
-        return {
-            "status": "error",
-            "code": "package_not_found",
-            "message": ".aieng package not found — generate a model first",
-        }
-
-    # 2. Validate contract (reads feature_graph.json, checks min/max bounds)
-    try:
-        contract = _validate_cad_parameter_edit_contract(
-            pkg_path, feature_id, parameter_name, new_value
-        )
-    except ValueError as exc:
-        return {"status": "error", "code": "invalid_contract", "message": str(exc)}
-
     param_info = contract["parameter"]
-    cad_parameter_name = param_info.get("cad_parameter_name") or parameter_name
+    cad_parameter_name = param_info.get("cad_parameter_name") or contract.get("parameter_name", "")
     previous_value = param_info.get("current_value")
     edited_feature = contract.get("feature") or {}
-    feature_type = str(edited_feature.get("type") or "")
-    scope_risk: dict[str, Any] | None = None
-    if feature_type == "global_params":
-        scope_risk = {
-            "scope": "global",
-            "reason": "parameter belongs to shared/global dimensions and may affect multiple parts",
-            "confirmation_field": "confirmScopeRisk",
-        }
-    elif feature_type == "model_params":
-        scope_risk = {
-            "scope": "unscoped",
-            "reason": "parameter could not be bound to one named part",
-            "confirmation_field": "confirmScopeRisk",
-        }
-    if scope_risk and not confirm_scope_risk:
-        return {
-            "status": "error",
-            "code": "scope_risk_confirmation_required",
-            "message": (
-                f"Editing {cad_parameter_name!r} is a {scope_risk['scope']} parameter edit; "
-                "set confirmScopeRisk=true only after the approved modeling plan explicitly "
-                "accepts that the edit may affect multiple or unscoped geometry."
-            ),
-            "previous_value": previous_value,
-            "new_value": new_value,
-            "cad_parameter_name": cad_parameter_name,
-            "scope_risk": scope_risk,
-        }
 
-    # 3. Read source.py + reference image + the BEFORE topology (for regression diff)
+    # Read source.py + the BEFORE topology/feature graph (for regression diff)
     try:
         with zipfile.ZipFile(pkg_path, "r") as zf:
             names = zf.namelist()
             source_code = zf.read("geometry/source.py").decode("utf-8")
-            ref_bytes = (
-                zf.read("geometry/reference.png")
-                if "geometry/reference.png" in names
-                else None
-            )
             before_topo: dict[str, Any] = (
                 json.loads(zf.read("geometry/topology_map.json").decode("utf-8"))
                 if "geometry/topology_map.json" in names
@@ -9002,9 +8934,9 @@ def edit_build123d_parameter(
             "message": f"Failed to read source.py from package: {exc}",
         }
 
-    # 4. Text replacement: find `CONSTANT_NAME = <expression>` and replace only
-    #    the RHS. Preserve indentation and inline comments, then parse the full
-    #    source before executing so syntax failures never corrupt the package.
+    # Text replacement: find `CONSTANT_NAME = <expression>` and replace only
+    # the RHS. Preserve indentation and inline comments, then parse the full
+    # source before executing so syntax failures never corrupt the package.
     try:
         rhs_source = _cad_parameter_rhs_source(new_value)
     except ValueError as exc:
@@ -9045,7 +8977,6 @@ def edit_build123d_parameter(
             "cad_parameter_name": cad_parameter_name,
         }
 
-    # 5. Re-execute build123d with the modified source
     backend = Build123dBackend(settings)
     if not backend.can_generate():
         return {
@@ -9063,8 +8994,6 @@ def edit_build123d_parameter(
             timeout=timeout,
         )
     except DesignRuleViolation as exc:
-        # An authored require()/assert rejected the new value — surface it as a
-        # structured design-rule violation. The prior geometry is preserved.
         return {
             "status": "error",
             "code": "design_rule_violation",
@@ -9075,8 +9004,6 @@ def edit_build123d_parameter(
             "cad_parameter_name": cad_parameter_name,
         }
     except Exception as exc:
-        # If the edit breaks the model, return the error but preserve the
-        # previous state (do NOT write the broken source back into the package).
         return {
             "status": "error",
             "code": "execution_failed",
@@ -9089,19 +9016,10 @@ def edit_build123d_parameter(
             "cad_parameter_name": cad_parameter_name,
         }
 
-    step_bytes = cached_result["step_bytes"]
-    stl_bytes = cached_result["stl_bytes"]
-    glb_bytes = cached_result["glb_bytes"]
     topo = cached_result["topo"]
     feature_graph = cached_result["feature_graph"]
     geometry_report_full = cached_result["geometry_report"]
-    mesh_meta = cached_result.get("mesh_meta")
-    cache_hit = cached_result["cache_hit"]
 
-    # 6b. Geometry regression diff — confirm the edit changed only what it should.
-    # The set of parts we EXPECT to move: for a named_part feature, just that
-    # part; for a shared/global constant, any part is fair game (no collateral
-    # judgment); otherwise we can't attribute it to one part, so skip the verdict.
     before_names = set(_solids_by_name(before_topo))
     if edited_feature.get("type") == "global_params":
         expected_parts: set[str] | None = None
@@ -9111,10 +9029,8 @@ def edit_build123d_parameter(
         expected_parts = None
     regression_diff = _diff_topology(before_topo, topo, expected_parts=expected_parts)
     topology_change = _topology_change_summary(before_topo, topo)
-    # 6c. Engineering-diagnostics diff — flag if the edit worsened manufacturability.
     critique_diff = _diff_critique(before_topo, before_fg, topo, feature_graph)
 
-    # 6d. Topology / export survival evidence for downstream trust checks.
     referenced_face_ids = (
         _feature_reference_ids(edited_feature, "face")
         if isinstance(edited_feature, dict) else None
@@ -9126,14 +9042,276 @@ def edit_build123d_parameter(
     geometry_verification = _geometry_verification(
         before_topo,
         topo,
-        step_bytes=step_bytes,
-        stl_bytes=stl_bytes,
-        glb_bytes=glb_bytes,
+        step_bytes=cached_result["step_bytes"],
+        stl_bytes=cached_result["stl_bytes"],
+        glb_bytes=cached_result["glb_bytes"],
         referenced_face_ids=referenced_face_ids,
         referenced_edge_ids=referenced_edge_ids,
     )
 
-    # 7. Write artifacts back into the package atomically
+    return {
+        "status": "ok",
+        "previous_value": previous_value,
+        "new_value": new_value,
+        "cad_parameter_name": cad_parameter_name,
+        "modified_source": modified_source,
+        "cached_result": cached_result,
+        "before_topo": before_topo,
+        "before_fg": before_fg,
+        "topology": topo,
+        "feature_graph": feature_graph,
+        "geometry_report_full": geometry_report_full,
+        "regression_diff": regression_diff,
+        "topology_change": topology_change,
+        "critique_diff": critique_diff,
+        "geometry_verification": geometry_verification,
+        "before_volume_mm3": _total_solid_volume(before_topo),
+        "after_volume_mm3": _total_solid_volume(topo),
+    }
+
+
+def preview_build123d_parameter_edit(
+    settings: Any,
+    project_id: str,
+    feature_id: str,
+    parameter_name: str,
+    new_value: Any,
+    timeout: int = 120,
+) -> dict[str, Any]:
+    """Preview a parametric edit without writing to the package.
+
+    Returns the geometry/topology diffs and volume estimates that a user should
+    review before approving the edit. The package is not modified, so rejected
+    previews leave no side effects.
+    """
+    from .project_io import (
+        _validate_cad_parameter_edit_contract,
+        get_project,
+        resolve_project_path,
+    )
+
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+
+    pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if pkg_path is None or not pkg_path.exists():
+        return {
+            "status": "error",
+            "code": "package_not_found",
+            "message": ".aieng package not found — generate a model first",
+        }
+
+    try:
+        contract = _validate_cad_parameter_edit_contract(
+            pkg_path, feature_id, parameter_name, new_value
+        )
+    except ValueError as exc:
+        return {"status": "error", "code": "invalid_contract", "message": str(exc)}
+
+    preview = _compute_parameter_edit_preview(
+        settings, pkg_path, contract, new_value, timeout=timeout
+    )
+    if preview.get("status") != "ok":
+        return preview
+
+    return {
+        "status": "ok",
+        "feature_id": feature_id,
+        "parameter_name": parameter_name,
+        "cad_parameter_name": preview["cad_parameter_name"],
+        "previous_value": preview["previous_value"],
+        "new_value": preview["new_value"],
+        "topology_changed": preview["topology_change"]["topology_changed"],
+        "topology_change": preview["topology_change"],
+        "regression_diff": preview["regression_diff"],
+        "critique_diff": preview["critique_diff"],
+        "geometry_verification": preview["geometry_verification"],
+        "before_volume_mm3": preview["before_volume_mm3"],
+        "after_volume_mm3": preview["after_volume_mm3"],
+        "geometry_report": _geometry_report_for_response(
+            preview["geometry_report_full"], "full"
+        ),
+        "geometry_report_summary": _geometry_report_summary(preview["geometry_report_full"]),
+    }
+
+
+def edit_build123d_parameter(
+    settings: Any,
+    project_id: str,
+    feature_id: str,
+    parameter_name: str,
+    new_value: Any,
+    timeout: int = 120,
+    response_detail: str = "full",
+    thumbnail: bool | None = None,
+    confirm_scope_risk: bool = False,
+    proposal_id: str | None = None,
+) -> dict[str, Any]:
+    """Apply a parametric edit by replacing a named constant in source.py.
+
+    Workflow:
+        1. Validate the edit contract against graph/feature_graph.json.
+        2. Read geometry/source.py from the .aieng package.
+        3. Locate the UPPER_SNAKE_CASE constant and replace its value.
+        4. Re-execute build123d with the modified source.
+        5. Record a pre-edit package snapshot (restore point).
+        6. Write new geometry/topology/feature_graph back into the package.
+        7. Mark downstream CAE evidence stale and append an audit entry.
+        8. Return a thumbnail so the caller can visually verify the change.
+
+    This is deterministic and fast (sub-second to a few seconds) because it
+    bypasses the LLM entirely — only a text substitution + rebuild.
+    """
+    from .project_io import (
+        _record_geometry_edit_in_package,
+        _validate_cad_parameter_edit_contract,
+        get_project,
+        resolve_project_path,
+    )
+    from .snapshots import record_snapshot
+
+    response_detail = _normalize_response_detail(response_detail)
+
+    # 1. Load project & package
+    try:
+        project = get_project(settings, project_id)
+    except Exception as exc:
+        return {"status": "error", "code": "project_not_found", "message": f"{exc}"}
+
+    pkg_path = resolve_project_path(settings, project_id, project.get("aieng_file"))
+    if pkg_path is None or not pkg_path.exists():
+        return {
+            "status": "error",
+            "code": "package_not_found",
+            "message": ".aieng package not found — generate a model first",
+        }
+
+    # 2. Validate contract (reads feature_graph.json, checks min/max bounds)
+    try:
+        contract = _validate_cad_parameter_edit_contract(
+            pkg_path, feature_id, parameter_name, new_value
+        )
+    except ValueError as exc:
+        return {"status": "error", "code": "invalid_contract", "message": str(exc)}
+
+    param_info = contract["parameter"]
+    cad_parameter_name = param_info.get("cad_parameter_name") or parameter_name
+    previous_value = param_info.get("current_value")
+    edited_feature = contract.get("feature") or {}
+
+    if proposal_id:
+        from . import parametric_edit_proposal as _pep
+
+        proposal = _pep.load_parametric_edit_proposal(settings, project_id, proposal_id)
+        if proposal is None:
+            return {
+                "status": "error",
+                "code": "proposal_not_found",
+                "message": f"Parametric edit proposal {proposal_id!r} was not found.",
+                "proposal_id": proposal_id,
+            }
+        proposal_target = proposal.get("target") if isinstance(proposal, dict) else {}
+        proposal_change = proposal.get("change") if isinstance(proposal, dict) else {}
+        proposed_feature = str((proposal_target or {}).get("feature_id") or "")
+        proposed_parameter = str((proposal_target or {}).get("parameter_name") or "")
+        proposed_cad_parameter = str((proposal_target or {}).get("cad_parameter_name") or "")
+        proposed_old_value = (proposal_change or {}).get("old_value")
+        proposed_new_value = (proposal_change or {}).get("new_value")
+        target_matches = (
+            proposed_feature == feature_id
+            and proposed_parameter == parameter_name
+            and (not proposed_cad_parameter or proposed_cad_parameter == cad_parameter_name)
+        )
+        if not target_matches or not _cad_parameter_values_equal(proposed_new_value, new_value):
+            return {
+                "status": "error",
+                "code": "proposal_target_mismatch",
+                "message": (
+                    "The proposal no longer matches the requested feature, parameter, "
+                    "or value; create a fresh proposal before applying."
+                ),
+                "proposal_id": proposal_id,
+                "proposal_target": proposal_target,
+                "requested": {
+                    "feature_id": feature_id,
+                    "parameter_name": parameter_name,
+                    "cad_parameter_name": cad_parameter_name,
+                    "new_value": new_value,
+                },
+            }
+        if not _cad_parameter_values_equal(proposed_old_value, previous_value):
+            return {
+                "status": "error",
+                "code": "stale_parametric_edit_proposal",
+                "message": (
+                    "The CAD parameter value has changed since this proposal was created; "
+                    "create a fresh proposal against the current model before applying."
+                ),
+                "proposal_id": proposal_id,
+                "cad_parameter_name": cad_parameter_name,
+                "proposal_old_value": proposed_old_value,
+                "current_value": previous_value,
+                "new_value": new_value,
+            }
+
+    feature_type = str(edited_feature.get("type") or "")
+    scope_risk: dict[str, Any] | None = None
+    if feature_type == "global_params":
+        scope_risk = {
+            "scope": "global",
+            "reason": "parameter belongs to shared/global dimensions and may affect multiple parts",
+            "confirmation_field": "confirmScopeRisk",
+        }
+    elif feature_type == "model_params":
+        scope_risk = {
+            "scope": "unscoped",
+            "reason": "parameter could not be bound to one named part",
+            "confirmation_field": "confirmScopeRisk",
+        }
+    if scope_risk and not confirm_scope_risk:
+        return {
+            "status": "error",
+            "code": "scope_risk_confirmation_required",
+            "message": (
+                f"Editing {cad_parameter_name!r} is a {scope_risk['scope']} parameter edit; "
+                "set confirmScopeRisk=true only after the approved modeling plan explicitly "
+                "accepts that the edit may affect multiple or unscoped geometry."
+            ),
+            "previous_value": previous_value,
+            "new_value": new_value,
+            "cad_parameter_name": cad_parameter_name,
+            "scope_risk": scope_risk,
+            "proposal_id": proposal_id,
+        }
+
+    # 3. Preview / build the modified geometry in memory (package not touched)
+    preview = _compute_parameter_edit_preview(
+        settings, pkg_path, contract, new_value, timeout=timeout
+    )
+    if preview.get("status") != "ok":
+        # Preserve prior package state on failure.
+        return {**preview, "proposal_id": proposal_id}
+
+    cached_result = preview["cached_result"]
+    step_bytes = cached_result["step_bytes"]
+    stl_bytes = cached_result["stl_bytes"]
+    glb_bytes = cached_result["glb_bytes"]
+    topo = preview["topology"]
+    feature_graph = preview["feature_graph"]
+    geometry_report_full = preview["geometry_report_full"]
+    mesh_meta = cached_result.get("mesh_meta")
+    regression_diff = preview["regression_diff"]
+    topology_change = preview["topology_change"]
+    critique_diff = preview["critique_diff"]
+    geometry_verification = preview["geometry_verification"]
+    modified_source = preview["modified_source"]
+
+    # 4. Record a pre-edit snapshot (restore point) before mutating the package.
+    snapshot_record = record_snapshot(settings, project_id, "cad.edit_parameter")
+
+    # 5. Write artifacts back into the package atomically
     _write_cad_artifacts(
         pkg_path=pkg_path,
         step_bytes=step_bytes,
@@ -9143,14 +9321,35 @@ def edit_build123d_parameter(
         generated_code=modified_source,
         glb_bytes=glb_bytes,
     )
-    _clear_revalidation_status(pkg_path)
+    # Mark downstream CAE/revalidation evidence stale with a structured audit trail.
+    _record_geometry_edit_in_package(
+        pkg_path,
+        affected_artifacts=[
+            "results/computed_metrics.json",
+            "results/result_summary.json",
+            "simulation/mesh/mesh_metadata.json",
+            "cae/*",
+            "analysis/field_regions.json",
+        ],
+    )
     _write_last_edit_diff(
         pkg_path, tool="cad.edit_parameter",
         regression_diff=regression_diff, critique_diff=critique_diff,
         geometry_verification=geometry_verification,
     )
+    _append_parametric_edit_audit_log(
+        pkg_path,
+        project_id=project_id,
+        feature_id=feature_id,
+        parameter_name=parameter_name,
+        cad_parameter_name=cad_parameter_name,
+        previous_value=previous_value,
+        new_value=new_value,
+        proposal_id=proposal_id,
+        snapshot_id=snapshot_record.get("snapshot_id") if snapshot_record else None,
+    )
 
-    # 8. Mark project as updated
+    # 6. Mark project as updated
     try:
         from .main import save_project as _save_project, now_iso as _now_iso
         project["status"] = "viewer_ready_glb" if glb_bytes else "viewer_ready_stl"
@@ -9160,26 +9359,29 @@ def edit_build123d_parameter(
         pass
     _publish_preview_to_viewer(settings, project_id, project, glb_bytes, stl_bytes)
 
-    # 9. Render thumbnail so the caller can verify visually
-    # mesh_meta is returned explicitly by _execute_build123d_cached.
+    # 7. Render thumbnail so the caller can verify visually
     thumb = None
     if _should_render_thumbnail(thumbnail, response_detail):
         face_colors = _build_face_colors_from_mesh_meta(mesh_meta)
+        ref_bytes = None
+        try:
+            with zipfile.ZipFile(pkg_path, "r") as zf:
+                if "geometry/reference.png" in zf.namelist():
+                    ref_bytes = zf.read("geometry/reference.png")
+        except Exception:
+            pass
         thumb = render_mesh_thumbnail(
             stl_bytes or b"",
             face_colors=face_colors,
             reference_image_bytes=ref_bytes,
         )
 
-    solid = next(
-        (e for e in topo.get("entities", []) if e.get("type") == "solid"), None
-    )
-    # geometry_report_full already computed by _execute_build123d_cached.
-
     result = {
         "status": "ok",
         "schema_version": "0.1",
         "project_id": project_id,
+        "proposal_id": proposal_id,
+        "snapshot_id": snapshot_record.get("snapshot_id") if snapshot_record else None,
         "response_detail": response_detail,
         "feature_id": feature_id,
         "parameter_name": parameter_name,
@@ -9218,6 +9420,93 @@ def edit_build123d_parameter(
     if not thumb:
         result.pop("thumbnail_png_base64", None)
     return result
+
+
+def _cad_parameter_values_equal(left: Any, right: Any) -> bool:
+    """Compare proposal/edit values without false negatives from int/float shape."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left is right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-9)
+    return left == right
+
+
+def _total_solid_volume(topo: dict[str, Any]) -> float | None:
+    """Sum volume of all solid entities in a topology map, if available."""
+    total = 0.0
+    has_any = False
+    if not isinstance(topo, dict):
+        return None
+    for entity in topo.get("entities", []):
+        if isinstance(entity, dict) and entity.get("type") == "solid":
+            vol = entity.get("volume")
+            if isinstance(vol, (int, float)) and vol is not None:
+                total += float(vol)
+                has_any = True
+    return total if has_any else None
+
+
+def _append_parametric_edit_audit_log(
+    pkg_path: Path,
+    *,
+    project_id: str,
+    feature_id: str,
+    parameter_name: str,
+    cad_parameter_name: str,
+    previous_value: Any,
+    new_value: Any,
+    proposal_id: str | None,
+    snapshot_id: str | None,
+) -> None:
+    """Append a reversible-change audit entry to the package audit log."""
+    _AUDIT_LOG_MEMBER = "audit_log.jsonl"
+    try:
+        with zipfile.ZipFile(pkg_path, "r") as zf:
+            members = [
+                (info, b"" if info.is_dir() else zf.read(info.filename))
+                for info in zf.infolist()
+                if info.filename != _AUDIT_LOG_MEMBER
+            ]
+            existing_log = (
+                zf.read(_AUDIT_LOG_MEMBER).decode("utf-8")
+                if _AUDIT_LOG_MEMBER in zf.namelist()
+                else ""
+            )
+    except Exception:
+        return
+
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tool": "cad.edit_parameter",
+        "project_id": project_id,
+        "feature_id": feature_id,
+        "parameter_name": parameter_name,
+        "cad_parameter_name": cad_parameter_name,
+        "previous_value": previous_value,
+        "new_value": new_value,
+        "proposal_id": proposal_id,
+        "snapshot_id": snapshot_id,
+        "action": "accepted_parametric_edit",
+    }
+    new_log = existing_log + json.dumps(entry) + "\n"
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".aieng", dir=pkg_path.parent) as tmp:
+            tmp_path = Path(tmp.name)
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as out_zf:
+            seen: set[str] = set()
+            for info, data in members:
+                if info.filename in seen:
+                    continue
+                seen.add(info.filename)
+                out_zf.writestr(info, data)
+            out_zf.writestr(_AUDIT_LOG_MEMBER, new_log)
+        shutil.move(str(tmp_path), pkg_path)
+    except Exception as exc:
+        LOGGER.warning("Failed to append parametric edit audit log: %s", exc)
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
 
 
 # ── part-level edits: remove / replace a named part (F2) ──────────────────────

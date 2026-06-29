@@ -1516,6 +1516,31 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
 
     # ── CAD edit (approval-gated) ────────────────────────────────────────────
+    "cad.propose_edit_parameter": {
+        "type": "object",
+        "required": ["project_id", "featureId", "parameterName", "newValue"],
+        "properties": {
+            "project_id": {"type": "string"},
+            "featureId": {
+                "type": "string",
+                "description": "Feature ID carrying the editable parameter (from cad.list_editable_parameters / feature_graph).",
+            },
+            "parameterName": {
+                "type": "string",
+                "description": "Parameter name on the feature (its UPPER_SNAKE_CASE constant is what gets edited).",
+            },
+            "newValue": {
+                "type": ["number", "string", "boolean"],
+                "description": "Proposed replacement value. Primitive only: number, string, or boolean.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Optional human-readable reason for the proposed change.",
+            },
+            "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
+        },
+        "additionalProperties": False,
+    },
     "cad.edit_parameter": {
         "type": "object",
         "required": ["project_id", "featureId", "parameterName", "newValue"],
@@ -1531,6 +1556,10 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "newValue": {
                 "description": "Replacement value. Type follows the parameter's declared schema (number, string, bool).",
+            },
+            "proposal_id": {
+                "type": "string",
+                "description": "Optional proposal_id from cad.propose_edit_parameter. If supplied, it must resolve to a persisted proposal whose target, new value, and old/current value still match the live model.",
             },
             "confirmScopeRisk": {
                 "type": "boolean",

@@ -592,6 +592,40 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         ),
     )
 
+    def _tool_cad_propose_edit_parameter(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
+        from .. import parametric_edit_proposal as _pep
+
+        project_id = inp.get("project_id")
+        if not project_id:
+            return {"status": "error", "code": "missing_project_id", "message": "project_id is required."}
+        proposal = _pep.propose_parametric_edit(
+            settings=active_settings,
+            project_id=str(project_id),
+            feature_id=str(inp.get("featureId") or ""),
+            parameter_name=str(inp.get("parameterName") or ""),
+            new_value=inp.get("newValue"),
+            reason=str(inp.get("reason") or ""),
+            timeout=int(inp.get("timeout", 120)),
+        )
+        if proposal.get("status") != "ok":
+            return proposal
+        return _pep.save_parametric_edit_proposal(active_settings, str(project_id), proposal)
+
+    rt.register_tool(
+        "cad.propose_edit_parameter",
+        _tool_cad_propose_edit_parameter,
+        read_only=False,
+        input_schema=_schema("cad.propose_edit_parameter"),
+        description=(
+            "Build a structured, reviewable parametric edit proposal for user review before "
+            "mutating CAD. Returns target feature/parameter, old/new values, unit, scope, "
+            "protected-feature risks, design-target impacts, and an in-memory geometry preview "
+            "(regression/critique diffs) without writing the CAD package. The proposal is "
+            "persisted for review; the edit is applied only by a separate approved "
+            "cad.edit_parameter call with the returned proposal_id."
+        ),
+    )
+
     def _tool_cad_edit_parameter(inp: dict[str, Any], _ctx: dict[str, Any]) -> dict[str, Any]:
         from .. import cad_generation as _cg
         result = _cg.edit_build123d_parameter(
@@ -604,8 +638,10 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
             response_detail=str(inp.get("response_detail") or "full"),
             thumbnail=inp.get("thumbnail") if isinstance(inp.get("thumbnail"), bool) else None,
             confirm_scope_risk=bool(inp.get("confirmScopeRisk")),
+            proposal_id=str(inp.get("proposal_id")) if inp.get("proposal_id") else None,
         )
-        _record_cad_snapshot(result, inp.get("project_id"), "cad.edit_parameter")
+        # edit_build123d_parameter already records a pre-edit snapshot before mutating
+        # the package; that is the restore point for this command.
         return _receipt.receipt_from_edit_parameter(result)
 
     rt.register_tool(
@@ -615,11 +651,14 @@ def register_cad_tools(rt: Any, active_settings: Any, app_context: Any, _schema:
         destructive=False,
         input_schema=_schema("cad.edit_parameter"),
         description=(
-            "Apply a parametric edit to a CAD model feature. "
+            "Apply an approved parametric edit to a CAD model feature. "
             "The encompassing modeling plan must already be explicitly approved. "
-            "Performs a fast deterministic text replacement in geometry/source.py "
-            "(no LLM round-trip) and re-executes build123d so the change is immediate. "
-            "The feature graph must carry editable parameters (UPPER_SNAKE_CASE constants)."
+            "Records a pre-edit package snapshot (restore point), performs a fast deterministic "
+            "text replacement in geometry/source.py (no LLM round-trip), re-executes build123d, "
+            "and marks downstream CAE evidence stale. The feature graph must carry editable "
+            "parameters (UPPER_SNAKE_CASE constants). Pass proposal_id from "
+            "cad.propose_edit_parameter to link the accepted edit to its proposal; stale or "
+            "mismatched proposals are rejected before any rebuild/write."
         ),
     )
 

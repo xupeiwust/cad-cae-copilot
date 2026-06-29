@@ -7,6 +7,9 @@ story and [`../examples/package_semantics_cookbook.py`](../examples/package_sema
 for a dependency-free in-memory walkthrough. For the current release-notes draft, see
 [`releases/v0.1.0-alpha.1.md`](releases/v0.1.0-alpha.1.md).
 
+For the current repository publish gate, see
+[`release/current_alpha_release_gate.md`](release/current_alpha_release_gate.md).
+
 ## Scope of v0.1-alpha
 
 Stable-ish and contract-tested core semantics live in `aieng` and are imported

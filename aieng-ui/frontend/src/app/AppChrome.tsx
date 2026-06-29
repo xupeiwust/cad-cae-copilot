@@ -172,6 +172,20 @@ export function AppChrome({ app }: AppChromeProps) {
               <span className="app-topbar-divider" />
               <span className="app-topbar-project">{app.selectedProject?.name || "Workbench"}</span>
               <span className="app-topbar-mcp">Live CAD/CAE workbench + MCP server</span>
+              <div className="app-topbar-context" aria-label="Workbench project status">
+                <span className={`app-topbar-chip app-topbar-chip-${missionControl.packageStatus}`}>
+                  <span>Package</span>
+                  <strong>{missionControl.packageStatus}</strong>
+                </span>
+                <span className={projectApprovals.length ? "app-topbar-chip app-topbar-chip-blocked" : "app-topbar-chip app-topbar-chip-ready"}>
+                  <span>Approvals</span>
+                  <strong>{projectApprovals.length ? `${projectApprovals.length} waiting` : "clear"}</strong>
+                </span>
+                <span className="app-topbar-next" title={missionControl.nextAction.detail}>
+                  <span>Next</span>
+                  <strong>{missionControl.nextAction.label}</strong>
+                </span>
+              </div>
             </div>
             <div className="app-topbar-actions">
               <button

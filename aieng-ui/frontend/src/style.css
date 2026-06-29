@@ -9845,7 +9845,7 @@ textarea:focus,
 
 .app-shell {
   display: grid;
-  grid-template-rows: 44px 1fr;
+  grid-template-rows: 56px 1fr;
   height: 100dvh;
   overflow: hidden;
   background: var(--bg-root);
@@ -9861,7 +9861,7 @@ textarea:focus,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 16px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   z-index: 10;
@@ -9900,6 +9900,75 @@ textarea:focus,
   font-size: 12px;
   color: var(--text-tertiary);
   white-space: nowrap;
+}
+
+.app-topbar-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: 2px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.app-topbar-chip,
+.app-topbar-next {
+  display: inline-grid;
+  align-content: center;
+  min-height: 32px;
+  max-width: 190px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.app-topbar-chip span,
+.app-topbar-next span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.app-topbar-chip strong,
+.app-topbar-next strong {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-topbar-chip-ready {
+  border-color: rgba(74, 222, 128, 0.24);
+  background: rgba(22, 101, 52, 0.12);
+}
+
+.app-topbar-chip-ready strong {
+  color: #bbf7d0;
+}
+
+.app-topbar-chip-blocked {
+  border-color: rgba(250, 204, 21, 0.26);
+  background: rgba(113, 63, 18, 0.16);
+}
+
+.app-topbar-chip-blocked strong {
+  color: #fde68a;
+}
+
+.app-topbar-chip-missing,
+.app-topbar-chip-unknown {
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+.app-topbar-next {
+  width: clamp(160px, 18vw, 240px);
 }
 
 .app-topbar-actions {
@@ -11261,6 +11330,12 @@ textarea:focus,
 
   .app-main.sidebar-collapsed.library-open {
     grid-template-columns: 56px 1fr 340px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app-topbar-context {
+    display: none;
   }
 }
 

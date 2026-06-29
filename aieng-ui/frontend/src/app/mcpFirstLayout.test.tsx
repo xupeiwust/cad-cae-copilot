@@ -156,6 +156,35 @@ test("topbar report button opens the read-only engineering report", () => {
   expect(open).toHaveBeenCalledWith("/api/projects/project%2042/report", "_blank", "noopener,noreferrer");
 });
 
+test("normal workbench topbar summarizes package, approvals, and next action", () => {
+  const { container } = render(<AppChrome app={createMockApp({
+    selectedId: "project 42",
+    selectedProject: {
+      id: "project 42",
+      name: "Bracket",
+      status: "ready",
+      created_at: "2026-06-25T10:00:00Z",
+      updated_at: "2026-06-25T10:00:00Z",
+    },
+    pendingApprovals: [
+      {
+        permissionId: "perm-1",
+        toolName: "run_solver",
+        projectId: "project 42",
+        explanation: "Needs review",
+        codePreview: null,
+      },
+    ],
+  })} />);
+
+  const context = container.querySelector('[aria-label="Workbench project status"]');
+  expect(context).not.toBeNull();
+  expect(context?.textContent).toContain("Package");
+  expect(context?.textContent).toContain("Approvals");
+  expect(context?.textContent).toContain("1 waiting");
+  expect(context?.textContent).toContain("Next");
+});
+
 test("topbar packet button exports a review support packet", async () => {
   const exportSpy = vi.spyOn(api, "exportReviewSupportPacket").mockResolvedValue({
     ok: true,

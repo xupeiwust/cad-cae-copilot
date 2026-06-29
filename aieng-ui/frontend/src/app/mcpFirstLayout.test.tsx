@@ -2,9 +2,10 @@
  * @vitest-environment happy-dom
  */
 import { test, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
+import { api } from "../api";
 import { AppChrome } from "./AppChrome";
 
 // Source-level assertions for MCP-first architecture constraints
@@ -66,6 +67,7 @@ function createMockApp(overrides: Partial<Parameters<typeof AppChrome>[0]["app"]
     runBusyTask: vi.fn(),
     refreshProjects: vi.fn(),
     runWorkbenchImportFlow: vi.fn(),
+    refreshGeometry: vi.fn(),
     runtimeReady: false,
     runtimeProvider: null,
     liveSyncStatus: "",
@@ -152,6 +154,49 @@ test("topbar report button opens the read-only engineering report", () => {
   expect(button?.disabled).toBe(false);
   fireEvent.click(button!);
   expect(open).toHaveBeenCalledWith("/api/projects/project%2042/report", "_blank", "noopener,noreferrer");
+});
+
+test("topbar packet button exports a review support packet", async () => {
+  const exportSpy = vi.spyOn(api, "exportReviewSupportPacket").mockResolvedValue({
+    ok: true,
+    packet_id: "packet_001",
+    markdown_path: "reports/review_support/packet_001.md",
+    manifest_path: "reports/review_support/packet_001.json",
+    preview_markdown: null,
+    sections: [],
+    warnings: [],
+    errors: [],
+    claim_advancement: "none",
+    claim_boundary: "review support only",
+  });
+  const setNotice = vi.fn();
+  const refreshGeometry = vi.fn();
+  const { container } = render(<AppChrome app={createMockApp({
+    selectedId: "project 42",
+    selectedProject: {
+      id: "project 42",
+      name: "Bracket",
+      status: "ready",
+      created_at: "2026-06-25T10:00:00Z",
+      updated_at: "2026-06-25T10:00:00Z",
+    },
+    setNotice,
+    refreshGeometry,
+  })} />);
+
+  const button = container.querySelector('button[title="Export review support packet"]') as HTMLButtonElement | null;
+  expect(button).not.toBeNull();
+  expect(button?.disabled).toBe(false);
+  fireEvent.click(button!);
+
+  await waitFor(() => {
+    expect(exportSpy).toHaveBeenCalledWith("project 42", { include_preview_markdown: true });
+  });
+  expect(setNotice).toHaveBeenCalledWith(expect.objectContaining({
+    tone: "success",
+    title: "Review packet exported",
+  }));
+  expect(refreshGeometry).toHaveBeenCalled();
 });
 
 beforeEach(() => {

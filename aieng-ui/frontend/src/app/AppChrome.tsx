@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Settings, Database, Puzzle, List, FileText, Terminal } from "lucide-react";
+import { Settings, Database, Puzzle, List, FileText, Terminal, Download } from "lucide-react";
 
 import { api } from "../api";
 import { NoticeCenter } from "../components/common";
@@ -43,6 +43,7 @@ export function AppChrome({ app }: AppChromeProps) {
   const [libraryTab, setLibraryTab] = useState<LibraryTab | null>(null);
   const [commandRefOpen, setCommandRefOpen] = useState(false);
   const [pendingParametricEdit, setPendingParametricEdit] = useState<PendingParametricEdit | null>(null);
+  const [reviewPacketExporting, setReviewPacketExporting] = useState(false);
   const [welcomeDismissed, setWelcomeDismissed] = useBrowserStorageState<boolean>(
     "aieng.onboarding.welcomeDismissed",
     false,
@@ -111,6 +112,44 @@ export function AppChrome({ app }: AppChromeProps) {
     window.open(reportUrl, "_blank", "noopener,noreferrer");
   }
 
+  async function exportReviewSupportPacket() {
+    if (!app.selectedId) {
+      app.setNotice({
+        tone: "info",
+        title: "Select a project first",
+        detail: "Choose a project before exporting a review support packet.",
+      });
+      return;
+    }
+    setReviewPacketExporting(true);
+    try {
+      const packet = await api.exportReviewSupportPacket(app.selectedId, { include_preview_markdown: true });
+      if (!packet.ok) {
+        app.setNotice({
+          tone: "error",
+          title: "Review packet export failed",
+          detail: [...(packet.errors ?? []), ...(packet.warnings ?? [])].join(" ") || "The packet could not be exported.",
+        });
+        return;
+      }
+      const paths = [packet.markdown_path, packet.manifest_path].filter(Boolean).join(", ");
+      app.setNotice({
+        tone: "success",
+        title: "Review packet exported",
+        detail: paths ? `Wrote ${paths}` : `Wrote packet ${packet.packet_id}.`,
+      });
+      app.refreshGeometry();
+    } catch (err) {
+      app.setNotice({
+        tone: "error",
+        title: "Review packet export failed",
+        detail: err instanceof Error ? err.message : "The packet could not be exported.",
+      });
+    } finally {
+      setReviewPacketExporting(false);
+    }
+  }
+
   return (
     <PointerProvider value={app.pointerContextValue}>
       <NoticeCenter
@@ -169,6 +208,16 @@ export function AppChrome({ app }: AppChromeProps) {
               >
                 <FileText className="h-4 w-4" />
                 <span className="app-topbar-btn-label">Report</span>
+              </button>
+              <button
+                type="button"
+                className="app-topbar-btn"
+                onClick={() => void exportReviewSupportPacket()}
+                disabled={!app.selectedId || reviewPacketExporting}
+                title="Export review support packet"
+              >
+                <Download className="h-4 w-4" />
+                <span className="app-topbar-btn-label">{reviewPacketExporting ? "Exporting" : "Packet"}</span>
               </button>
               <button
                 type="button"

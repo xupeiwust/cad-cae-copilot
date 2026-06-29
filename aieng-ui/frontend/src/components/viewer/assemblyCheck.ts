@@ -1,12 +1,19 @@
 import * as THREE from "three";
 
-import { brokenSymmetryPartBoxes, floatingPartBoxes, type PartBox } from "../../app/geometryReport";
+import {
+  brokenSymmetryPartBoxes,
+  floatingPartBoxes,
+  spatialIssueBoxes,
+  type PartBox,
+  type SpatialIssueBox,
+} from "../../app/geometryReport";
 import type { GeometryReportResponse } from "../../types";
 import { modelToDisplayVec, type DisplayTransform } from "./coordinateFrames";
 
 // Red = floating (detached) part; amber = part in a broken / missing symmetry pair.
 const FLOATING_COLOR = 0xef4444;
 const SYMMETRY_COLOR = 0xf59e0b;
+const SPATIAL_COLOR = 0xa855f7;
 
 /**
  * Map a model-frame AABB to a display-frame AABB. The display transform is an
@@ -36,9 +43,20 @@ function addBoxes(group: THREE.Group, parts: PartBox[], color: number, t: Displa
   }
 }
 
+function addSpatialBoxes(group: THREE.Group, issues: SpatialIssueBox[], t: DisplayTransform): void {
+  for (const issue of issues) {
+    const helper = new THREE.Box3Helper(displayBox(issue.bbox, t), new THREE.Color(SPATIAL_COLOR));
+    helper.name = `spatial-issue:${issue.names.join("+")}`;
+    helper.renderOrder = 1001;
+    (helper.material as THREE.LineBasicMaterial).depthTest = false;
+    group.add(helper);
+  }
+}
+
 /**
  * Build the assembly-check overlay group: a red wireframe box around each
- * floating part and an amber box around each part in a broken symmetry pair.
+ * floating part, an amber box around each part in a broken symmetry pair, and
+ * a purple box around any detected deep-overlap / containment volume.
  * Pure given the transform; mounts under the viewer scene. Returns an empty
  * group when there is no report (nothing to flag).
  */
@@ -51,6 +69,7 @@ export function buildAssemblyCheckGroup(
   if (!report) return group;
   addBoxes(group, floatingPartBoxes(report), FLOATING_COLOR, transform);
   addBoxes(group, brokenSymmetryPartBoxes(report), SYMMETRY_COLOR, transform);
+  addSpatialBoxes(group, spatialIssueBoxes(report), transform);
   return group;
 }
 

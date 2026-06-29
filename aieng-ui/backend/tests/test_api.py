@@ -13751,8 +13751,8 @@ def test_design_study_run_candidate_endpoint_real_compile(tmp_path: Path) -> Non
     assert not list(pkg.parent.glob("*.dscand_*.aieng"))
 
 
-def test_geometry_report_endpoint_surfaces_floating_and_symmetry(tmp_path: Path) -> None:
-    """GET /geometry-report returns floating parts, broken symmetry, and per-part boxes."""
+def test_geometry_report_endpoint_surfaces_floating_symmetry_and_spatial_issues(tmp_path: Path) -> None:
+    """GET /geometry-report returns floating parts, symmetry, spatial issues, and boxes."""
     from app.main import create_app, default_project, project_dir, save_project
     from starlette.testclient import TestClient
 
@@ -13768,6 +13768,7 @@ def test_geometry_report_endpoint_surfaces_floating_and_symmetry(tmp_path: Path)
         {"type": "solid", "id": "b2", "name": "arm_L", "bounding_box": [-50, -10, 150, -30, 10, 290]},
         {"type": "solid", "id": "b3", "name": "arm_R", "bounding_box": [30, -10, 150, 50, 10, 250]},
         {"type": "solid", "id": "b4", "name": "foot_FL", "bounding_box": [-200, -10, -20, -180, 10, 0]},
+        {"type": "solid", "id": "b5", "name": "buried_insert", "bounding_box": [-5, -5, 150, 5, 5, 160]},
     ]}
     with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps({"model_id": "assembly-check", "resources": {}}))
@@ -13781,11 +13782,16 @@ def test_geometry_report_endpoint_surfaces_floating_and_symmetry(tmp_path: Path)
     assert data["available"] is True
     assert "foot_FL" in data["floating_parts"]
     # per-part boxes for every named solid, each a 6-number bbox
-    assert set(data["part_boxes"]) == {"torso", "arm_L", "arm_R", "foot_FL"}
+    assert set(data["part_boxes"]) == {"torso", "arm_L", "arm_R", "foot_FL", "buried_insert"}
     assert len(data["part_boxes"]["arm_L"]) == 6
     # the arm pair is flagged asymmetric
     arm = next(s for s in data["symmetry"] if s.get("pair") == ["arm_L", "arm_R"])
     assert arm["ok"] is False
+    assert data["spatial_summary"]["containments"] >= 1
+    assert any(
+        rel.get("status") == "contained" and set(rel.get("parts", [])) == {"torso", "buried_insert"}
+        for rel in data["spatial_relationships"]
+    )
 
 
 def test_geometry_report_endpoint_no_package_is_graceful(tmp_path: Path) -> None:

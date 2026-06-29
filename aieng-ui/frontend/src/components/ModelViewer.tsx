@@ -341,7 +341,7 @@ export function ModelViewer({
           type="button"
           className="viewer-assembly-toggle"
           onClick={() => setShowAssemblyCheck((value) => !value)}
-          title="Highlight floating parts and broken left/right symmetry detected in the geometry"
+          title="Highlight floating parts, broken left/right symmetry, and deep overlap/containment detected in the geometry"
           style={{
             position: "absolute",
             top: 8,

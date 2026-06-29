@@ -9,7 +9,8 @@ import { buildAssemblyCheckGroup, disposeAssemblyCheckGroup } from "../../viewer
  * Assembly-check overlay manager.
  *
  * Rebuilds the wireframe box overlay (red = floating parts, amber = broken
- * symmetry) whenever the toggle, geometry report, or model reload changes.
+ * symmetry, purple = deep overlap / containment volume) whenever the toggle,
+ * geometry report, or model reload changes.
  */
 export function useAssemblyCheckOverlay(
   assemblyGroupRef: React.RefObject<THREE.Group | null>,

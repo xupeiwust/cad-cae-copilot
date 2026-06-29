@@ -523,6 +523,8 @@ def register_project_workflow_routes(
             "floating_parts": report.get("floating_parts", []),
             "symmetry": report.get("symmetry", []),
             "gaps": report.get("gaps", []),
+            "spatial_relationships": report.get("spatial_relationships", []),
+            "spatial_summary": report.get("spatial_summary", {}),
             "part_boxes": part_boxes,
         }
 

@@ -3,14 +3,15 @@
  *
  * Turns the backend `/geometry-report` payload into the overlay's display model:
  * the named parts that are floating (drawn with a red box) and the parts in a
- * broken / missing-partner symmetry pair (drawn amber), each resolved to its
- * model-frame bounding box from `part_boxes`. A part without a box is dropped
- * (nothing to draw) rather than guessed.
+ * broken / missing-partner symmetry pair (drawn amber), plus deep-overlap /
+ * containment volumes (drawn purple). All boxes resolve from `part_boxes`; a
+ * relationship without enough boxes is dropped rather than guessed.
  */
 
-import type { GeometryReportResponse, GeometrySymmetryPair } from "../types";
+import type { GeometryReportResponse, GeometrySpatialRelationship, GeometrySymmetryPair } from "../types";
 
 export type PartBox = { name: string; bbox: number[] };
+export type SpatialIssueBox = { names: string[]; bbox: number[]; status: string };
 
 function partBox(report: GeometryReportResponse | null, name: string): number[] | null {
   const box = report?.part_boxes?.[name];
@@ -55,11 +56,47 @@ export function brokenSymmetryPartBoxes(report: GeometryReportResponse | null): 
   return out;
 }
 
+function isSpatialIssue(entry: GeometrySpatialRelationship | null | undefined): boolean {
+  return entry?.status === "deep_overlap" || entry?.status === "contained";
+}
+
+function intersectionBox(a: number[], b: number[]): number[] | null {
+  const box = [
+    Math.max(a[0], b[0]),
+    Math.max(a[1], b[1]),
+    Math.max(a[2], b[2]),
+    Math.min(a[3], b[3]),
+    Math.min(a[4], b[4]),
+    Math.min(a[5], b[5]),
+  ];
+  return box[0] < box[3] && box[1] < box[4] && box[2] < box[5] ? box : null;
+}
+
+/**
+ * Interpenetration/containment relationships with a drawable intersection box.
+ * We draw the overlapping volume rather than guessing which whole part is wrong.
+ */
+export function spatialIssueBoxes(report: GeometryReportResponse | null): SpatialIssueBox[] {
+  const out: SpatialIssueBox[] = [];
+  for (const entry of report?.spatial_relationships ?? []) {
+    if (!isSpatialIssue(entry)) continue;
+    const names = (entry.parts ?? []).map(String).filter(Boolean);
+    if (names.length < 2) continue;
+    const a = partBox(report, names[0]);
+    const b = partBox(report, names[1]);
+    if (!a || !b) continue;
+    const bbox = intersectionBox(a, b);
+    if (bbox) out.push({ names: names.slice(0, 2), bbox, status: String(entry.status ?? "spatial_issue") });
+  }
+  return out;
+}
+
 /** Headline counts for the toggle badge. `total` drives whether to offer it. */
 export function assemblyAlertCounts(
   report: GeometryReportResponse | null,
-): { floating: number; symmetry: number; total: number } {
+): { floating: number; symmetry: number; spatial: number; total: number } {
   const floating = (report?.floating_parts ?? []).length;
   const symmetry = (report?.symmetry ?? []).filter(isBrokenSymmetry).length;
-  return { floating, symmetry, total: floating + symmetry };
+  const spatial = (report?.spatial_relationships ?? []).filter(isSpatialIssue).length;
+  return { floating, symmetry, spatial, total: floating + symmetry + spatial };
 }

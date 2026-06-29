@@ -1527,6 +1527,16 @@ export type GeometryGap = {
   status?: "touching" | "near" | "floating" | string;
 };
 
+export type GeometrySpatialRelationship = {
+  parts?: string[];
+  status?: "deep_overlap" | "contained" | "contained_in_hollow" | string;
+  relationship?: string;
+  overlap_ratio_of_smaller?: number;
+  overlap_depths_mm?: number[];
+  container_fill_ratio?: number | null;
+  note?: string;
+};
+
 export type GeometryReportResponse = {
   available: boolean;
   reason?: string;
@@ -1534,6 +1544,13 @@ export type GeometryReportResponse = {
   floating_parts?: string[];
   symmetry?: GeometrySymmetryPair[];
   gaps?: GeometryGap[];
+  spatial_relationships?: GeometrySpatialRelationship[];
+  spatial_summary?: {
+    deep_overlaps?: number;
+    containments?: number;
+    contained_in_hollow?: number;
+    total?: number;
+  };
   /** Per-named-part bounding box [xmin, ymin, zmin, xmax, ymax, zmax] in mm. */
   part_boxes?: Record<string, number[]>;
 };

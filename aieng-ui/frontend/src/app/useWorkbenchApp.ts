@@ -36,6 +36,7 @@ import { useProjectTimeline } from "./useProjectTimeline";
 import { useSimulationReadiness } from "./useSimulationReadiness";
 import { useMeshDiagnostics } from "./useMeshDiagnostics";
 import { useEditableParameters } from "./useEditableParameters";
+import { useProjectCritique } from "./useProjectCritique";
 
 export function useWorkbenchApp() {
   const {
@@ -140,6 +141,10 @@ export function useWorkbenchApp() {
   const { simulationReadiness } = useSimulationReadiness({ selectedId, geometryVersion });
   const { meshDiagnostics } = useMeshDiagnostics({ selectedId, geometryVersion });
   const { editableParameters } = useEditableParameters({ selectedId, geometryVersion });
+  const { critiqueFindings, critiqueCredibility, standardFastenerPlan } = useProjectCritique({
+    selectedId,
+    geometryVersion,
+  });
 
   const fallbackViewerUrl = useMemo(() => projectViewerUrl(selectedProject), [selectedProject]);
   const rawViewerUrl = cadPreviewUrl ?? summary?.viewer_url ?? fallbackViewerUrl;
@@ -590,6 +595,9 @@ export function useWorkbenchApp() {
     simulationReadiness,
     meshDiagnostics,
     editableParameters,
+    critiqueFindings,
+    critiqueCredibility,
+    standardFastenerPlan,
     refreshGeometry,
   };
 }

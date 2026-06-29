@@ -5570,6 +5570,41 @@ textarea {
   background: rgba(148, 163, 184, 0.06);
 }
 
+.critique-fastener-plan {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.critique-fastener-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: #cfe6ff;
+  font-size: 12px;
+}
+
+.critique-fastener-head span,
+.critique-fastener-note {
+  color: #9fb6d6;
+  font-size: 11px;
+}
+
+.critique-fastener-note {
+  grid-column: 1 / -1;
+}
+
+.critique-fastener-action {
+  grid-column: 2;
+  grid-row: 1;
+}
+
 .critique-row-main {
   display: flex;
   align-items: center;

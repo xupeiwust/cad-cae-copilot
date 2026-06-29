@@ -7,7 +7,7 @@
  * fix loop instead of a buried report.
  */
 
-import type { CritiqueFinding } from "../types";
+import type { CritiqueFinding, StandardFastenerPlanSummary } from "../types";
 
 export type Severity = "high" | "medium" | "low";
 
@@ -57,4 +57,27 @@ export function fixDraftForFinding(finding: CritiqueFinding): string | null {
   const fix = (finding.suggested_fix ?? "").trim();
   if (!fix) return null;
   return `/modify ${fix}`;
+}
+
+function safeCount(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+export function fastenerPlanHasMatches(plan: StandardFastenerPlanSummary | null | undefined): boolean {
+  return safeCount(plan?.matched_count) > 0;
+}
+
+export function fastenerPlanSummary(plan: StandardFastenerPlanSummary | null | undefined): string | null {
+  const matched = safeCount(plan?.matched_count);
+  if (matched <= 0) return null;
+  const planned = safeCount(plan?.plan_count);
+  const matchLabel = matched === 1 ? "1 matched hole" : `${matched} matched holes`;
+  if (planned <= 0) return matchLabel;
+  const planLabel = planned === 1 ? "1 advisory fastener plan" : `${planned} advisory fastener plans`;
+  return `${matchLabel}; ${planLabel}`;
+}
+
+export function fastenerPlanDraft(plan: StandardFastenerPlanSummary | null | undefined): string | null {
+  if (!fastenerPlanHasMatches(plan)) return null;
+  return "/modify insert standard fasteners for matched mounting holes";
 }

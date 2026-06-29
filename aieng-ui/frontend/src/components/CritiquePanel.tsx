@@ -1,16 +1,20 @@
 import { useMemo } from "react";
 
 import {
+  fastenerPlanDraft,
+  fastenerPlanHasMatches,
+  fastenerPlanSummary,
   fixDraftForFinding,
   groupFindingsBySeverity,
   SEVERITY_LABEL,
   type Severity,
 } from "../app/critiqueFindings";
-import type { CredibilityStamp, CritiqueFinding } from "../types";
+import type { CredibilityStamp, CritiqueFinding, StandardFastenerPlanSummary } from "../types";
 import { CredibilityBadge } from "./CredibilityBadge";
 
 type CritiquePanelProps = {
   findings: CritiqueFinding[];
+  standardFastenerPlan?: StandardFastenerPlanSummary | null;
   /** Shared V&V-40 credibility stamp for this critique (#218). */
   credibility?: CredibilityStamp | null;
   /** Prefill the composer with a "/modify <suggested_fix>" draft. */
@@ -24,18 +28,45 @@ type CritiquePanelProps = {
  * composer. The edit itself still runs through the approval-gated path — the panel
  * never mutates geometry.
  */
-export function CritiquePanel({ findings, credibility, onUseInChat }: CritiquePanelProps) {
-  const groups = useMemo(() => groupFindingsBySeverity(findings), [findings]);
+export function CritiquePanel({ findings, standardFastenerPlan, credibility, onUseInChat }: CritiquePanelProps) {
+  const safeFindings = findings ?? [];
+  const groups = useMemo(() => groupFindingsBySeverity(safeFindings), [safeFindings]);
+  const fastenerPlan = fastenerPlanHasMatches(standardFastenerPlan) ? standardFastenerPlan : null;
+  const fastenerSummary = fastenerPlanSummary(fastenerPlan);
+  const fastenerDraft = fastenerPlanDraft(fastenerPlan);
 
-  if (!findings.length) return null;
+  if (!safeFindings.length && !fastenerPlan) return null;
 
   return (
     <section className="critique-card" aria-label="Engineering critique">
       <div className="critique-head">
         <strong>Engineering critique</strong>
         <CredibilityBadge credibility={credibility} />
-        <span>{findings.length} finding{findings.length !== 1 ? "s" : ""}</span>
+        <span>{safeFindings.length} finding{safeFindings.length !== 1 ? "s" : ""}</span>
       </div>
+
+      {fastenerPlan ? (
+        <div className="critique-fastener-plan">
+          <div className="critique-fastener-head">
+            <strong>Standard fasteners</strong>
+            {fastenerSummary ? <span>{fastenerSummary}</span> : null}
+          </div>
+          <div className="critique-fastener-note">
+            Advisory only. Geometry changes still require an approval-gated <code>/modify</code>.
+          </div>
+          {fastenerDraft ? (
+            <button
+              type="button"
+              className="critique-fix critique-fastener-action"
+              onClick={() => onUseInChat?.(fastenerDraft)}
+              disabled={!onUseInChat}
+              title="Draft standard fastener insertion for review"
+            >
+              Draft insertion
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {groups.map((group) => (
         <div key={group.severity} className="critique-group">

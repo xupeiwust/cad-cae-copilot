@@ -1646,9 +1646,25 @@ export type CredibilityStamp = {
 export type CritiqueResponse = {
   status?: string;
   findings?: CritiqueFinding[];
-  summary?: { by_severity?: { high?: number; medium?: number; low?: number } };
+  summary?: {
+    by_severity?: { high?: number; medium?: number; low?: number };
+    standard_fastener_matches?: number;
+    standard_fastener_plan_count?: number;
+  };
   fail_first_objections?: string[];
   credibility?: CredibilityStamp;
+  standard_fastener_plan?: StandardFastenerPlanSummary | null;
+  recommendation?: string | null;
+};
+
+export type StandardFastenerPlanSummary = {
+  status?: string;
+  reason?: string | null;
+  advisory_only?: boolean;
+  mutates_geometry?: boolean;
+  plan_count?: number;
+  matched_count?: number;
+  next_action?: string | null;
 };
 
 /** One core simulation input's readiness (from build_simulation_readiness_report). */

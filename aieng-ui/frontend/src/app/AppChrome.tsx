@@ -16,6 +16,7 @@ import { OptimizationPanel } from "../components/OptimizationPanel";
 import { EditDiffPanel } from "../components/EditDiffPanel";
 import { SizingSweepPanel } from "../components/SizingSweepPanel";
 import { MeshConvergencePanel } from "../components/MeshConvergencePanel";
+import { CritiquePanel } from "../components/CritiquePanel";
 import { EditableParametersPanel } from "../components/EditableParametersPanel";
 import { ParametricEditProposalPanel } from "../components/ParametricEditProposalPanel";
 import { MissionControlPanel } from "../components/MissionControlPanel";
@@ -344,6 +345,13 @@ export function AppChrome({ app }: AppChromeProps) {
             <MeshConvergencePanel
               report={app.meshConvergenceReport}
               onUseInChat={draftNotice("Mesh convergence draft")}
+            />
+
+            <CritiquePanel
+              findings={app.critiqueFindings ?? []}
+              standardFastenerPlan={app.standardFastenerPlan}
+              credibility={app.critiqueCredibility}
+              onUseInChat={draftNotice("Critique draft")}
             />
 
             <EditableParametersPanel

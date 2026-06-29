@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
-import type { CredibilityStamp, CritiqueFinding } from "../types";
+import type { CredibilityStamp, CritiqueFinding, StandardFastenerPlanSummary } from "../types";
 
 type UseProjectCritiqueArgs = {
   selectedId: string | null;
@@ -17,10 +17,12 @@ type UseProjectCritiqueArgs = {
 export function useProjectCritique({ selectedId, geometryVersion = null }: UseProjectCritiqueArgs) {
   const [findings, setFindings] = useState<CritiqueFinding[]>([]);
   const [credibility, setCredibility] = useState<CredibilityStamp | null>(null);
+  const [standardFastenerPlan, setStandardFastenerPlan] = useState<StandardFastenerPlanSummary | null>(null);
 
   useEffect(() => {
     setFindings([]);
     setCredibility(null);
+    setStandardFastenerPlan(null);
   }, [selectedId]);
 
   useEffect(() => {
@@ -32,10 +34,12 @@ export function useProjectCritique({ selectedId, geometryVersion = null }: UsePr
         if (controller.signal.aborted) return;
         setFindings(Array.isArray(data.findings) ? data.findings : []);
         setCredibility(data.credibility ?? null);
+        setStandardFastenerPlan(data.standard_fastener_plan ?? null);
       } catch {
         if (!controller.signal.aborted) {
           setFindings([]);
           setCredibility(null);
+          setStandardFastenerPlan(null);
         }
       }
     })();
@@ -44,5 +48,5 @@ export function useProjectCritique({ selectedId, geometryVersion = null }: UsePr
     };
   }, [selectedId, geometryVersion]);
 
-  return { critiqueFindings: findings, critiqueCredibility: credibility };
+  return { critiqueFindings: findings, critiqueCredibility: credibility, standardFastenerPlan };
 }

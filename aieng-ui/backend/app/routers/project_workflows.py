@@ -306,7 +306,11 @@ def register_project_workflow_routes(
 
         Runs the same cad.critique audit (min wall, hole sizes, floating parts, …)
         and returns its findings + severity summary. Best-effort: any failure /
-        no-geometry project resolves to an empty findings set the panel hides."""
+        no-geometry project resolves to an empty findings set the panel hides.
+
+        Also attaches the compact, read-only standard-fastener plan from
+        cad.design_review when available. That plan is advisory UI context only;
+        fastener insertion still requires the normal /modify + approval path."""
         from .. import cad_generation as _cg
 
         empty = {"status": "ok", "findings": [], "summary": {"by_severity": {"high": 0, "medium": 0, "low": 0}}}
@@ -324,6 +328,31 @@ def register_project_workflow_routes(
             # No package / no geometry yet (critique returns an error shape) — the
             # panel treats an empty findings set as "nothing to show".
             return empty
+        try:
+            review = _cg.design_review(active_settings, project_id, {"response_detail": "compact"})
+        except Exception:
+            log_exception(
+                LOGGER,
+                "CAD design review enrichment failed; returning critique findings only.",
+                subsystem="app_factory.project_critique.design_review",
+                context={"project_id": project_id},
+            )
+            return result
+        if isinstance(review, dict):
+            plan = review.get("standard_fastener_plan")
+            if isinstance(plan, dict):
+                result["standard_fastener_plan"] = plan
+            recommendation = review.get("recommendation")
+            if isinstance(recommendation, str) and recommendation.strip():
+                result["recommendation"] = recommendation
+            review_summary = review.get("summary")
+            if isinstance(review_summary, dict):
+                summary = result.setdefault("summary", {})
+                if isinstance(summary, dict):
+                    for key in ("standard_fastener_matches", "standard_fastener_plan_count"):
+                        value = review_summary.get(key)
+                        if isinstance(value, (int, float)):
+                            summary[key] = value
         return result
 
     @app.get("/api/projects/{project_id}/simulation-readiness")

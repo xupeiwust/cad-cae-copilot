@@ -2320,6 +2320,54 @@ def _make_setup_package(pkg_path: Path, extra: dict | None = None) -> None:
                 zf.writestr(name, json.dumps(content) if isinstance(content, dict) else content)
 
 
+def test_project_critique_endpoint_includes_advisory_fastener_plan(monkeypatch, tmp_path: Path) -> None:
+    """The UI critique endpoint can surface manufacturing advice without mutation."""
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("critique-fasteners"))
+
+    from app import cad_generation as _cg
+
+    def fake_critique(settings_arg, project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert settings_arg is settings
+        assert project_id == project["id"]
+        return {
+            "status": "ok",
+            "findings": [],
+            "summary": {"by_severity": {"high": 0, "medium": 0, "low": 0}},
+            "credibility": {"tier": "critique_finding", "rank": 1},
+        }
+
+    def fake_design_review(settings_arg, project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert settings_arg is settings
+        assert project_id == project["id"]
+        assert payload.get("response_detail") == "compact"
+        return {
+            "status": "ok",
+            "standard_fastener_plan": {
+                "status": "ok",
+                "advisory_only": True,
+                "mutates_geometry": False,
+                "matched_count": 2,
+                "plan_count": 2,
+            },
+            "summary": {"standard_fastener_matches": 2, "standard_fastener_plan_count": 2},
+            "recommendation": "review standard_fastener_plan before insertion",
+        }
+
+    monkeypatch.setattr(_cg, "critique", fake_critique)
+    monkeypatch.setattr(_cg, "design_review", fake_design_review)
+
+    response = client.get(f"/api/projects/{project['id']}/critique")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["standard_fastener_plan"]["matched_count"] == 2
+    assert data["standard_fastener_plan"]["advisory_only"] is True
+    assert data["standard_fastener_plan"]["mutates_geometry"] is False
+    assert data["summary"]["standard_fastener_matches"] == 2
+    assert "review standard_fastener_plan" in data["recommendation"]
+
+
 def test_cae_setup_patch_rejects_path_traversal(tmp_path: Path) -> None:
     """cae.apply_setup_patch rejects paths containing '..'."""
     from app.main import create_app, default_project, project_dir, save_project

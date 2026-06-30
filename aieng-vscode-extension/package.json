@@ -2,7 +2,7 @@
   "name": "aieng-cad-preview",
   "displayName": "AIENG CAD Preview",
   "description": "Preview AIENG CAD packages and copy stable face pointers into any chat.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "aieng",
   "license": "MIT",
   "repository": {

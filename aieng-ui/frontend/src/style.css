@@ -6145,9 +6145,10 @@ textarea {
   font-weight: 600;
 }
 
-/* Sizing-sweep + mesh-convergence panels */
+/* Sizing-sweep + mesh-convergence + tolerance-stackup panels */
 .sizing-sweep-card,
-.mesh-convergence-card {
+.mesh-convergence-card,
+.tolerance-stackup-card {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -6159,7 +6160,8 @@ textarea {
 }
 
 .sizing-sweep-head,
-.mesh-convergence-head {
+.mesh-convergence-head,
+.tolerance-stackup-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -6169,19 +6171,22 @@ textarea {
 }
 
 .sizing-sweep-head strong,
-.mesh-convergence-head strong {
+.mesh-convergence-head strong,
+.tolerance-stackup-head strong {
   color: var(--text-primary);
 }
 
 .sizing-sweep-summary,
-.mesh-convergence-head > span:not(.mesh-convergence-ok):not(.mesh-convergence-caution) {
+.mesh-convergence-head > span:not(.mesh-convergence-ok):not(.mesh-convergence-caution),
+.tolerance-stackup-head > span {
   flex: 1;
   min-width: 0;
   font-size: 12px;
 }
 
 .sizing-sweep-action,
-.mesh-convergence-action {
+.mesh-convergence-action,
+.tolerance-stackup-action {
   appearance: none;
   flex: 0 0 auto;
   padding: 2px 10px;
@@ -6196,23 +6201,27 @@ textarea {
 }
 
 .sizing-sweep-action:hover:not(:disabled),
-.mesh-convergence-action:hover:not(:disabled) {
+.mesh-convergence-action:hover:not(:disabled),
+.tolerance-stackup-action:hover:not(:disabled) {
   background: rgba(56, 189, 248, 0.2);
 }
 
 .sizing-sweep-action:disabled,
-.mesh-convergence-action:disabled {
+.mesh-convergence-action:disabled,
+.tolerance-stackup-action:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 .sizing-sweep-table-wrap,
-.mesh-convergence-table-wrap {
+.mesh-convergence-table-wrap,
+.tolerance-stackup-table-wrap {
   overflow-x: auto;
 }
 
 .sizing-sweep-table,
-.mesh-convergence-table {
+.mesh-convergence-table,
+.tolerance-stackup-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
@@ -6222,21 +6231,25 @@ textarea {
 .sizing-sweep-table th,
 .sizing-sweep-table td,
 .mesh-convergence-table th,
-.mesh-convergence-table td {
+.mesh-convergence-table td,
+.tolerance-stackup-table th,
+.tolerance-stackup-table td {
   padding: 4px 6px;
   text-align: left;
   white-space: nowrap;
 }
 
 .sizing-sweep-table th,
-.mesh-convergence-table th {
+.mesh-convergence-table th,
+.tolerance-stackup-table th {
   color: #8aa0c0;
   font-weight: 650;
   border-bottom: 1px solid rgba(148, 163, 184, 0.15);
 }
 
 .sizing-sweep-table tbody tr:hover,
-.mesh-convergence-table tbody tr:hover {
+.mesh-convergence-table tbody tr:hover,
+.tolerance-stackup-table tbody tr:hover {
   background: rgba(148, 163, 184, 0.06);
 }
 
@@ -6291,16 +6304,64 @@ textarea {
 }
 
 .sizing-sweep-foot,
-.mesh-convergence-foot {
+.mesh-convergence-foot,
+.tolerance-stackup-foot {
   color: #7f93b4;
   font-size: 11px;
 }
 
 .sizing-sweep-foot code,
-.mesh-convergence-foot code {
+.mesh-convergence-foot code,
+.tolerance-stackup-foot code {
   padding: 0 4px;
   border-radius: 4px;
   background: var(--surface-nested);
+}
+
+.tolerance-stackup-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tolerance-stackup-metrics > div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.22);
+}
+
+.tolerance-stackup-metrics span,
+.tolerance-stackup-drivers > span {
+  display: block;
+  color: #8aa0c0;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.tolerance-stackup-metrics strong {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.tolerance-stackup-drivers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.tolerance-stackup-drivers code {
+  padding: 1px 5px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 5px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #bfe3ff;
 }
 
 /* Optimization panel */

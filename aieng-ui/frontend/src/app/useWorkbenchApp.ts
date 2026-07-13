@@ -31,6 +31,7 @@ import { useEditDiff } from "./useEditDiff";
 import { useOptimizationConvergence } from "./useOptimizationConvergence";
 import { useSizingSweepReport } from "./useSizingSweepReport";
 import { useMeshConvergenceReport } from "./useMeshConvergenceReport";
+import { useToleranceStackupReport } from "./useToleranceStackupReport";
 import { useCaeSetupOverlay } from "./useCaeSetupOverlay";
 import { useProjectTimeline } from "./useProjectTimeline";
 import { useSimulationReadiness } from "./useSimulationReadiness";
@@ -137,6 +138,7 @@ export function useWorkbenchApp() {
   const { optimizationConvergence } = useOptimizationConvergence({ selectedId, geometryVersion });
   const { sizingSweepReport } = useSizingSweepReport({ selectedId, geometryVersion });
   const { meshConvergenceReport } = useMeshConvergenceReport({ selectedId, geometryVersion });
+  const { toleranceStackupReport } = useToleranceStackupReport({ selectedId, geometryVersion });
   const { caeSetupOverlay } = useCaeSetupOverlay({ selectedId, geometryVersion });
   const { projectTimeline } = useProjectTimeline({ selectedId, geometryVersion, refreshKey: timelineRefreshKey });
   const { simulationReadiness } = useSimulationReadiness({ selectedId, geometryVersion });
@@ -592,6 +594,7 @@ export function useWorkbenchApp() {
     editDiff,
     sizingSweepReport,
     meshConvergenceReport,
+    toleranceStackupReport,
     projectTimeline,
     caeSetupOverlay,
     simulationReadiness,

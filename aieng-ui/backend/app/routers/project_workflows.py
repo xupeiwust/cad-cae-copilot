@@ -508,6 +508,34 @@ def register_project_workflow_routes(
         """
         return _load_latest_json_artifact(project_id, "analysis/mesh_convergence_report.json")
 
+    @app.get("/api/projects/{project_id}/tolerance-stackup-report")
+    def get_tolerance_stackup_report_endpoint(project_id: str) -> dict[str, Any]:
+        """Latest tolerance stack-up report for the workbench panel (read-only).
+
+        This deliberately does not infer a tolerance chain from geometry or run
+        CAD. It only exposes a report an agent/tool has already written, keeping
+        the manufacturing panel observational and non-mutating.
+        """
+        candidates = [
+            "analysis/tolerance_stackup_report.json",
+            "manufacturing/tolerance_stackup_report.json",
+            "diagnostics/tolerance_stackup_report.json",
+        ]
+        missing_reason: str | None = None
+        for artifact_path in candidates:
+            loaded = _load_latest_json_artifact(project_id, artifact_path)
+            if loaded.get("available"):
+                return {"artifact_path": artifact_path, **loaded}
+            if missing_reason is None and isinstance(loaded.get("reason"), str):
+                missing_reason = str(loaded["reason"])
+            if loaded.get("reason") not in {"not_found"}:
+                return {"artifact_path": artifact_path, **loaded}
+        return {
+            "available": False,
+            "reason": missing_reason or "not_found",
+            "searched_paths": candidates,
+        }
+
     @app.get("/api/projects/{project_id}/design-study/summary")
     def get_design_study_summary_endpoint(project_id: str) -> dict[str, Any]:
         """Read-only design-study artifact envelope for the workbench panel (#277).

@@ -16,6 +16,7 @@ import { OptimizationPanel } from "../components/OptimizationPanel";
 import { EditDiffPanel } from "../components/EditDiffPanel";
 import { SizingSweepPanel } from "../components/SizingSweepPanel";
 import { MeshConvergencePanel } from "../components/MeshConvergencePanel";
+import { ToleranceStackupPanel } from "../components/ToleranceStackupPanel";
 import { CritiquePanel } from "../components/CritiquePanel";
 import { EditableParametersPanel } from "../components/EditableParametersPanel";
 import { ParametricEditProposalPanel } from "../components/ParametricEditProposalPanel";
@@ -363,6 +364,11 @@ export function AppChrome({ app }: AppChromeProps) {
             <MeshConvergencePanel
               report={app.meshConvergenceReport}
               onUseInChat={draftNotice("Mesh convergence draft")}
+            />
+
+            <ToleranceStackupPanel
+              report={app.toleranceStackupReport}
+              onUseInChat={draftNotice("Tolerance stack-up draft")}
             />
 
             <CritiquePanel

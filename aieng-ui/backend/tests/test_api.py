@@ -13875,3 +13875,62 @@ def test_geometry_report_endpoint_no_package_is_graceful(tmp_path: Path) -> None
     unknown = client.get("/api/projects/doesnotexist99/geometry-report")
     assert unknown.status_code == 200
     assert unknown.json()["available"] is False
+
+
+def test_tolerance_stackup_report_endpoint_reads_existing_artifact(tmp_path: Path) -> None:
+    """GET /tolerance-stackup-report only exposes a persisted read-only report."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    project = save_project(settings, default_project("tolerance-report"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "tolerance.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    report = {
+        "status": "ok",
+        "tool": "cad.tolerance_stackup",
+        "nominal_total": 60.0,
+        "contributors": [{"name": "link", "nominal": 60.0, "plus": 0.2, "minus": 0.2}],
+        "worst_case": {"min": 59.8, "max": 60.2, "plus_total": 0.2, "minus_total": 0.2},
+        "rss": {"confidence_level": 0.95, "min": 59.9, "max": 60.1},
+    }
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "tolerance-report", "resources": {}}))
+        zf.writestr("analysis/tolerance_stackup_report.json", json.dumps(report))
+    project["aieng_file"] = "tolerance.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/tolerance-stackup-report")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is True
+    assert data["artifact_path"] == "analysis/tolerance_stackup_report.json"
+    assert data["report"]["tool"] == "cad.tolerance_stackup"
+    assert data["report"]["nominal_total"] == 60.0
+
+
+def test_tolerance_stackup_report_endpoint_missing_is_graceful(tmp_path: Path) -> None:
+    """No tolerance report returns available=False instead of interrupting the UI."""
+    from app.main import create_app, default_project, project_dir, save_project
+    from starlette.testclient import TestClient
+
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+
+    project = save_project(settings, default_project("no-tolerance"))
+    project_id = project["id"]
+    pkg_path = project_dir(settings, project_id) / "empty.aieng"
+    pkg_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pkg_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps({"model_id": "no-tolerance", "resources": {}}))
+    project["aieng_file"] = "empty.aieng"
+    save_project(settings, project)
+
+    resp = client.get(f"/api/projects/{project_id}/tolerance-stackup-report")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is False
+    assert "analysis/tolerance_stackup_report.json" in data["searched_paths"]

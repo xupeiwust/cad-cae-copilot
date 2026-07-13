@@ -1791,6 +1791,55 @@ export type MeshConvergenceReportResponse = {
   error?: string;
 };
 
+/** 1D tolerance stack-up report from analysis/tolerance_stackup_report.json. */
+export type ToleranceStackupContributor = {
+  name?: string;
+  nominal?: number;
+  plus?: number;
+  minus?: number;
+  distribution?: string;
+  upper?: number;
+  lower?: number;
+  tolerance_band?: number;
+  variance?: number;
+};
+
+export type ToleranceStackupReport = {
+  status?: string;
+  tool?: string;
+  project_id?: string;
+  nominal_total?: number;
+  worst_case?: {
+    min?: number;
+    max?: number;
+    plus_total?: number;
+    minus_total?: number;
+  };
+  rss?: {
+    sigma?: number;
+    confidence_level?: number;
+    z?: number;
+    min?: number;
+    max?: number;
+  };
+  contributors?: ToleranceStackupContributor[];
+  controlling_contributors?: {
+    worst_case?: Array<{ name?: string; tolerance_band?: number }>;
+    rss?: Array<{ name?: string; variance?: number }>;
+  };
+  assumptions?: string[];
+  artifact_path?: string;
+};
+
+export type ToleranceStackupReportResponse = {
+  available: boolean;
+  reason?: string;
+  report?: ToleranceStackupReport;
+  artifact_path?: string;
+  searched_paths?: string[];
+  error?: string;
+};
+
 export type CaeSetupOverlayFace = {
   face_id: string;
   center_mm?: number[] | null;

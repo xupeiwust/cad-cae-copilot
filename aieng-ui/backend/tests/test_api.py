@@ -2341,9 +2341,9 @@ def test_project_critique_endpoint_includes_advisory_fastener_plan(monkeypatch, 
     def fake_design_review(settings_arg, project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         assert settings_arg is settings
         assert project_id == project["id"]
-        assert payload.get("response_detail") == "compact"
         return {
             "status": "ok",
+            "findings": [],
             "standard_fastener_plan": {
                 "status": "ok",
                 "advisory_only": True,
@@ -2351,7 +2351,11 @@ def test_project_critique_endpoint_includes_advisory_fastener_plan(monkeypatch, 
                 "matched_count": 2,
                 "plan_count": 2,
             },
-            "summary": {"standard_fastener_matches": 2, "standard_fastener_plan_count": 2},
+            "summary": {
+                "by_severity": {"high": 0, "medium": 0, "low": 0},
+                "standard_fastener_matches": 2,
+                "standard_fastener_plan_count": 2,
+            },
             "recommendation": "review standard_fastener_plan before insertion",
         }
 
@@ -2366,6 +2370,48 @@ def test_project_critique_endpoint_includes_advisory_fastener_plan(monkeypatch, 
     assert data["standard_fastener_plan"]["mutates_geometry"] is False
     assert data["summary"]["standard_fastener_matches"] == 2
     assert "review standard_fastener_plan" in data["recommendation"]
+
+
+def test_project_critique_endpoint_surfaces_design_review_structure_findings(monkeypatch, tmp_path: Path) -> None:
+    """The UI critique endpoint includes placement findings from cad.design_review."""
+    settings = _make_patch_settings(tmp_path)
+    client = TestClient(create_app(settings))
+    project = save_project(settings, default_project("critique-placement"))
+
+    from app import cad_generation as _cg
+
+    def fake_design_review(settings_arg, project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert settings_arg is settings
+        assert project_id == project["id"]
+        return {
+            "status": "ok",
+            "findings": [
+                {
+                    "id": "spatial_001",
+                    "severity": "high",
+                    "category": "structure",
+                    "rule": "bbox_interference",
+                    "feature": "shaft / housing",
+                    "observation": "parts may be interpenetrating or incorrectly placed.",
+                    "suggested_fix": "Re-check the shared coordinate landmarks.",
+                }
+            ],
+            "summary": {
+                "by_severity": {"high": 1, "medium": 0, "low": 0},
+                "spatial_issues": ["shaft / housing"],
+            },
+            "credibility": {"tier": "critique_finding", "rank": 1},
+            "standard_fastener_plan": {"status": "unavailable", "matched_count": 0},
+        }
+
+    monkeypatch.setattr(_cg, "design_review", fake_design_review)
+
+    response = client.get(f"/api/projects/{project['id']}/critique")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["findings"][0]["rule"] == "bbox_interference"
+    assert data["summary"]["spatial_issues"] == ["shaft / housing"]
+    assert data["credibility"]["tier"] == "critique_finding"
 
 
 def test_cae_setup_patch_rejects_path_traversal(tmp_path: Path) -> None:

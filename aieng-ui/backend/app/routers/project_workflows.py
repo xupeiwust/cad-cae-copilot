@@ -302,57 +302,34 @@ def register_project_workflow_routes(
 
     @app.get("/api/projects/{project_id}/critique")
     def get_critique_endpoint(project_id: str) -> dict[str, Any]:
-        """Deterministic engineering critique for the Critique panel (read-only).
+        """Deterministic engineering review for the Critique panel (read-only).
+        Current behavior calls cad.design_review directly so structure and
+        placement findings reach the UI without a second mutation path.
 
-        Runs the same cad.critique audit (min wall, hole sizes, floating parts, …)
-        and returns its findings + severity summary. Best-effort: any failure /
-        no-geometry project resolves to an empty findings set the panel hides.
-
-        Also attaches the compact, read-only standard-fastener plan from
-        cad.design_review when available. That plan is advisory UI context only;
-        fastener insertion still requires the normal /modify + approval path."""
+        Best-effort: any failure / no-geometry project resolves to an empty
+        findings set the panel hides. Fastener insertion and fixes still require
+        the normal /modify + approval path."""
         from .. import cad_generation as _cg
 
         empty = {"status": "ok", "findings": [], "summary": {"by_severity": {"high": 0, "medium": 0, "low": 0}}}
         try:
-            result = _cg.critique(active_settings, project_id, {})
+            result = _cg.design_review(active_settings, project_id, {})
         except Exception:
             log_exception(
                 LOGGER,
-                "CAD critique endpoint failed; returning empty findings.",
+                "CAD design review endpoint failed; returning empty findings.",
                 subsystem="app_factory.project_critique",
                 context={"project_id": project_id},
             )
             return empty
-        if not isinstance(result, dict) or not isinstance(result.get("findings"), list):
+        if not isinstance(result, dict) or result.get("status") != "ok":
             # No package / no geometry yet (critique returns an error shape) — the
             # panel treats an empty findings set as "nothing to show".
             return empty
-        try:
-            review = _cg.design_review(active_settings, project_id, {"response_detail": "compact"})
-        except Exception:
-            log_exception(
-                LOGGER,
-                "CAD design review enrichment failed; returning critique findings only.",
-                subsystem="app_factory.project_critique.design_review",
-                context={"project_id": project_id},
-            )
-            return result
-        if isinstance(review, dict):
-            plan = review.get("standard_fastener_plan")
-            if isinstance(plan, dict):
-                result["standard_fastener_plan"] = plan
-            recommendation = review.get("recommendation")
-            if isinstance(recommendation, str) and recommendation.strip():
-                result["recommendation"] = recommendation
-            review_summary = review.get("summary")
-            if isinstance(review_summary, dict):
-                summary = result.setdefault("summary", {})
-                if isinstance(summary, dict):
-                    for key in ("standard_fastener_matches", "standard_fastener_plan_count"):
-                        value = review_summary.get(key)
-                        if isinstance(value, (int, float)):
-                            summary[key] = value
+        if not isinstance(result.get("findings"), list):
+            result["findings"] = []
+        if not isinstance(result.get("summary"), dict):
+            result["summary"] = {"by_severity": {"high": 0, "medium": 0, "low": 0}}
         return result
 
     @app.get("/api/projects/{project_id}/simulation-readiness")

@@ -8799,6 +8799,7 @@ def design_review(
             if detail != "compact"
             else _compact_standard_fastener_plan(standard_fastener_plan)
         ),
+        "credibility": crit.get("credibility"),
         "fidelity": fidelity,
         "recommendation": recommendation,
         "message": (
